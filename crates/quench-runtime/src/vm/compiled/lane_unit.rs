@@ -593,8 +593,8 @@ impl Emitter {
 }
 
 /// `function` (`function_id`) with each call `targets` names (by function and PC), whose
-/// callee `body` gives and qualifies, spliced in, transitively. A unit with no inlined call
-/// is the function itself.
+/// callee `body` gives and qualifies, spliced in transitively under the default inlining
+/// budget. A unit with no inlined call is the function itself.
 pub(crate) fn unit<'f>(
     program: &crate::ResidualProgram,
     function_id: u32,
@@ -602,8 +602,20 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
+    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
+}
+
+/// Plan the same unit under a smaller inlining budget after code-size rejection.
+pub(crate) fn with_budget<'f>(
+    program: &crate::ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    budget: usize,
+    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
+    body: &dyn Fn(u32) -> Option<&'f Function>,
+) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget: MAX_UNIT_INLINED_INSTRUCTIONS };
+    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

@@ -106,6 +106,7 @@ pub(crate) struct NarrowLayout;
 
 impl NarrowLayout {
     pub(crate) const INTEGER_FLAG: u32 = NARROW_INTEGER_FLAG;
+    pub(crate) const INTEGER_BITS: u32 = NARROW_INTEGER_BITS;
     pub(crate) const CODE_SHIFT: u32 = NARROW_CODE_SHIFT;
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
@@ -699,7 +700,7 @@ impl Value {
 
 /// Magnitudes below 2^63 truncate exactly into an `i64`, whose low 32 bits are the value
 /// modulo 2^32.
-const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
+pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 /// ToUint32 (ToInt32 is its bits reinterpreted as `i32`).
 #[inline]

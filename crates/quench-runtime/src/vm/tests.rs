@@ -57,7 +57,7 @@ fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
         function fraction(x){for(let k=0;k<1;k=(k+1)|0)x=x+1.5;return x|0;}
         const object={calls:0,leaf:fraction,outer(x){this.calls=this.calls+1;return this.leaf(x);}};
         let sum=0;
-        for(let i=0;i<4000;i=(i+1)|0)sum=(sum+object.outer(i))|0;
+        for(let i=0;i<4000;i=(i+1)|0)sum=(sum+object.outer(i===3000?1e100:i))|0;
         globalThis.answer=sum;
         globalThis.calls=object.calls;
     })();"#;
@@ -81,7 +81,7 @@ fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
         }
     }
     assert_eq!(answers[0], answers[1]);
-    assert_eq!(answers[1], (Value::integer(8_002_000), Value::integer(4000)));
+    assert_eq!(answers[1], (Value::integer(8_002_000 - 3001), Value::integer(4000)));
 }
 
 #[test]
@@ -21938,6 +21938,319 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
 }
 
 #[test]
+fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
+    // A double's ToInt32 is its truncation modulo 2^32 natively below 2^63 in magnitude;
+    // larger magnitudes, infinities and NaN leave, and every one matches the interpreter.
+    let source = r#"(function () {
+      function toInt(xs, scale) { var s = 0; for (var i = 0; i < xs.length; i++) s = (s + ((xs[i] * scale) | 0)) | 0; return s; }
+      function bits(x) { return ((x | 0) + (x ^ 0) + (x & -1) + (x << 0)) * 4294967296 + (x >>> 0); }
+      var xs = [1.5, -1.5, -0.5, 2147483647.9, -2147483648.9, 4294967301.25, 9007199254740993,
+        -9007199254740993, 1e19, -1e19, 1e300, NaN, Infinity, -Infinity, -0];
+      var total = 0;
+      for (var k = 0; k < 3000; k++) total = toInt(xs, 1) + bits(xs[k % xs.length] * 1);
+      for (var j = 0; j < xs.length; j++) total += bits(xs[j] * 1);
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-to-int32.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
+fn lane_int_stores_to_packed_objects_keep_their_narrow_form_like_the_interpreter() {
+    // An int32 stored to a packed object's inline slot is written as its narrow word; a
+    // value past the narrow range, an object with extras (a prototype) and a widened slot
+    // take the VM's store.
+    let source = r#"(function () {
+      function C(v) { this.count = v; this.step = 1; }
+      function bump(c, n, d) { for (var i = 0; i < n; i++) c.count = (c.count + d) | 0; return c.count; }
+      var a = new C(0), b = new C(536870900), proto = new C(-536870920), child = Object.create(proto), total = 0;
+      for (var k = 0; k < 2000; k++) {
+        total = (total + bump(a, 50, k & 1 ? 3 : -2) + bump(b, 3, 7) + bump(proto, 3, -5)) | 0;
+      }
+      total = (total + child.count) | 0;
+      a.count = 0.5;
+      for (var k = 0; k < 100; k++) total = (total + bump(a, 5, 1)) | 0;
+      globalThis.answer = total + a.count + b.count - proto.count;
+    })();"#;
+    let program = Engine::specialize(source, "lane-narrow-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(vm.heap.unrepresented_slots(), 0);
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(598804650.0); 2]);
+}
+
+#[test]
+fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter() {
+    // A block that only earlier blocks enter keeps the proofs every edge into it carries:
+    // an object proved before a branch is not proved again after it, while one redefined
+    // or changed on any path is.
+    let source = r#"(function () {
+      function T(s) { this.state = s; this.a = 1; this.b = 2; this.c = 3; }
+      function U() { this.pad = 0; this.state = 1; this.a = 4; this.b = 5; this.c = 6; }
+      function step(t, u, k) {
+        var x = t.a;
+        if (t.state == 0) { t.state = 1; x = x + t.b; } else if (k & 1) { t = u; x = x + t.c; } else { t.state = 0; }
+        return x + t.a + t.c + t.state;
+      }
+      var t = new T(0), u = new U(), total = 0;
+      for (var k = 0; k < 4000; k++) total = (total + step(k % 5 ? t : u, k % 3 ? u : t, k)) | 0;
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-shared-proofs.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(40930.0); 2]);
+}
+
+#[test]
+fn lane_element_stores_fill_holes_like_the_interpreter() {
+    // A lane store fills a hole of an extensible array that owns its elements when no
+    // prototype claims the index; a prototype setter, a non-extensible array and shared
+    // elements take the interpreter's [[Set]].
+    let source = r#"(function () {
+      function fill(a, n, v) { for (var i = 0; i < n; i++) a[i] = v + i; return a[n - 1]; }
+      var total = 0, seen = 0, last = 0;
+      for (var k = 0; k < 3000; k++) total = (total + fill(new Array(8), 8, k)) | 0;
+      Object.defineProperty(Array.prototype, 3, { set(v) { seen++; last = v; }, get() { return -1; }, configurable: true });
+      for (var k = 0; k < 50; k++) total = (total + fill(new Array(8), 8, k)) | 0;
+      delete Array.prototype[3];
+      var sealed = Object.preventExtensions(new Array(8));
+      for (var k = 0; k < 50; k++) total = (total + (fill(sealed, 8, k) | 0)) | 0;
+      var shared = new Array(8); var copy = shared;
+      for (var k = 0; k < 50; k++) total = (total + fill(shared, 8, k)) | 0;
+      globalThis.answer = (total + seen * 7 + last + (sealed[2] === undefined ? 1 : 2) + copy[7] + Object.keys(sealed).length);
+    })();"#;
+    let program = Engine::specialize(source, "lane-hole-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(4523109.0); 2]);
+}
+
+#[test]
+fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
+    // A loop that stores keeps reading each atom it stores, on whichever object: one object
+    // under two names, a method beside a stored field, a prototype's field under a getter.
+    let source = r#"(function () {
+      function P(x, y) { this.x = x; this.y = y; }
+      P.prototype.get = function () { return this.x; };
+      function same(p, q, n) { var s = 0; for (var i = 0; i < n; i++) { q.x = (q.x + 1) | 0; s = (s + p.x) | 0; } return s; }
+      function other(p, n) { var s = 0; for (var i = 0; i < n; i++) { p.y = (p.y + p.x) | 0; s = (s + p.get() + p.y) | 0; } return s; }
+      function proto(p, n) { var s = 0; for (var i = 0; i < n; i++) { P.prototype.x = i; s = (s + p.get()) | 0; } return s; }
+      var a = new P(1, 2), b = new P(3, 4), c = Object.create(P.prototype), total = 0;
+      for (var k = 0; k < 3000; k++) {
+        total = (total + same(a, k & 1 ? a : b, 20) + other(b, 10)) | 0;
+        if (k % 100 == 0) total = (total + proto(c, 5)) | 0;
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-store-loops.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(2005786796.0); 2]);
+}
+
+#[test]
+fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
+    // A loop that only reads takes its invariant fields on its entry edge: the field may
+    // change between runs, another shape or a non-object leaves at the header, a loop that
+    // never runs reads nothing the interpreter would not, and a widened slot reads anew.
+    let source = r#"(function () {
+      function P(x, y) { this.x = x; this.y = y; }
+      function Q(x, y) { this.z = 0; this.x = x; this.y = y; }
+      function sum(p, n) { var s = 0; for (var i = 0; i < n; i++) s = (s + p.x + p.y) | 0; return s; }
+      var p = new P(3, 4), q = new Q(5, 6), total = 0;
+      for (var k = 0; k < 3000; k++) { p.x = k & 15; total = (total + sum(k % 7 ? p : q, k & 31)) | 0; }
+      total = (total + sum(undefined, 0)) | 0;
+      p.y = 0.5;
+      for (var k = 0; k < 300; k++) total = (total + sum(p, 9)) | 0;
+      p.y = "2";
+      for (var k = 0; k < 300; k++) total = (total + sum(p, 3)) | 0;
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-invariant-reads.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(3000684.0); 2]);
+}
+
+#[test]
+fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
+    // A bitwise operand only its tag types is its int where the tag says so, else its
+    // Number's ToInt32: doubles, NaN, infinities and values past 2^31 and 2^63.
+    let source = r#"(function () {
+      var MASK = 4, SHIFT = 3;
+      function held(o) { return ((o.state & MASK) != 0 ? 1 : 0) + ((o.state | 0) >> SHIFT) + (o.state ^ MASK); }
+      var vals = [5, 4, 0, 2.5, -7.75, NaN, Infinity, -Infinity, 2147483648.5, -2147483649, 1e19, 9007199254740993, -0];
+      var total = 0;
+      for (var k = 0; k < 4000; k++) total = (total * 3 + held({ state: vals[k % vals.length] })) % 1000003;
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-tagged-bitwise.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(-558229.0); 2]);
+}
+
+#[test]
+fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpreter() {
+    // Operands only their tags type compare as int32 where both are ints, else as Numbers:
+    // NaN, -0, the int32 bounds and doubles take the Number path.
+    let source = r#"(function () {
+      var STATE = 2;
+      function rank(o, b) { var a = o.v; if (a < b) return 1; if (a == STATE) return 2; if (a >= b) return 3; return 4; }
+      var xs = [1, 2, 3, 2.5, -0, 0, NaN, 2147483647, -2147483648, 1e300, 2.0000001];
+      var total = 0;
+      for (var k = 0; k < 4000; k++) {
+        var o = { v: xs[k % xs.length] };
+        total = (total * 5 + rank(o, xs[(k * 7) % xs.length])) % 1000003;
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-tagged-relations.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(61024.0); 2]);
+}
+
+#[test]
+fn lane_field_reads_speculate_on_slot_representations_like_the_interpreter() {
+    // A slot that has held only int32 values is read as one; a lane store of a wider value
+    // joins it, and a read the slot no longer matches leaves, so a field that widens to a
+    // double and then a string mid-run reads as the interpreter does.
+    let source = r#"(function () {
+      function Point(x, y) { this.x = x; this.y = y; }
+      function sum(p, n) { var s = 0; for (var i = 0; i < n; i++) s = (s + p.x + p.y) | 0; return s; }
+      function bump(p, v) { p.y = v; return p.y; }
+      var p = new Point(3, 4), total = 0, mixed = 0;
+      for (var k = 0; k < 3000; k++) total = (total + sum(p, 50)) | 0;
+      for (var k = 0; k < 3000; k++) total += bump(p, k & 7);
+      bump(p, 0.5);
+      for (var k = 0; k < 600; k++) total = (total + sum(p, 50)) | 0;
+      bump(p, "1");
+      for (var k = 0; k < 600; k++) mixed = (mixed + sum(p, 3) + (p.x + p.y).length) | 0;
+      globalThis.answer = total * 7 + mixed;
+    })();"#;
+    let program = Engine::specialize(source, "lane-field-representations.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(vm.heap.unrepresented_slots(), 0);
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(10119300.0); 2]);
+}
+
+#[test]
+fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
+    // A sum only `| 0` reads wraps without an overflow exit; an increment its loop's `i < n`
+    // bounds runs without one; one no test bounds keeps it and overflows to a double.
+    let source = r#"(function () {
+      function wrapAdd(a, n) { var s = a; for (var i = 0; i < n; i++) s = (s + 2147483000) | 0; return s; }
+      function wrapSub(a, n) { var s = a; for (var i = 0; i < n; i++) s = (s - 2147483000) | 0; return s; }
+      function nearMax(start, bound) { var c = 0; for (var i = start; i < bound; i++) c = (c + 1) | 0; return c * 4294967296 + i; }
+      function unbounded(start, n) { var i = start, c = 0; while (c < n) { i++; c++; } return i; }
+      var total = 0;
+      for (var r = 0; r < 3000; r++) {
+        total = wrapAdd(r, 7) + wrapSub(-r, 7) + nearMax(2147483640, 2147483647) + unbounded(2147483645, 5);
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-int-arithmetic.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert_eq!(answers[0], Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn lane_bodies_leave_before_a_store_changes_property_storage() {
     use crate::bytecode::Op;
@@ -22131,7 +22444,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
 #[cfg(not(quench_profiled))]
 fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let program = Engine::specialize(r#"
-      function exposed(value) { value=123; return globalThis.probe.value; }
+      function exposed(value, done) { value=123; if (done) return 0; return globalThis.probe.value; }
       globalThis.probe={ get value() { return exposed.arguments[0]; } };
     "#, "typed-lane-reflected-parameter.js").unwrap();
     let mut vm = Vm::new(TestHost::default());

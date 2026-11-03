@@ -846,7 +846,7 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     // Shape `n` holds `n` properties; the add past the inline values migrates them.
     let migrated = INLINE_PROPERTY_COUNT + 1;
     for shape in 1..=migrated {
-        heap.register_property_shape(shape as u32, shape);
+        heap.register_property_shape(shape as u32, shape, None);
     }
     let first = heap.alloc(Cell::Error("first".into()));
     let replaced = heap.alloc(Cell::Error("replaced".into()));
@@ -896,7 +896,7 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
 fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     let mut heap = Heap::new();
     // A shape of two properties, the pair below, whatever the inline count.
-    heap.register_property_shape(1, 2);
+    heap.register_property_shape(1, 2, None);
     let kept = heap.alloc(Cell::Error("kept".into()));
     let deleted = heap.alloc(Cell::Error("deleted".into()));
     let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);

@@ -11075,16 +11075,18 @@ impl<H: Host> Vm<H> {
             linked
         } else {
             let index = self.script_call_index(callee)?;
-            // A record that linked another callee is polymorphic: its earlier target joins
-            // its history (`LaneStack::call_sites`).
+            // A record that linked another callee is polymorphic: the callee it calls now joins
+            // its history (`LaneStack::call_sites`). The entry it linked may hold another
+            // site's callee since, so only the callee in hand is the site's own.
             if let Some(previous) = self.lane_stack.script_targets.entries.get(linked)
                 && previous.callee != callee
                 && previous.generation == self.lane_stack.generation
             {
+                let current = &self.lane_stack.script_targets.entries[index];
                 let mut sites = self.lane_stack.call_sites.borrow_mut();
                 let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
                 let target = super::compiled::CallTarget {
-                    callee: super::compiled::CalleeBinding::Identity(previous.callee), function: previous.function };
+                    callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function };
                 if !site.contains(&target) {
                     if site.len() == CALL_SITE_TARGETS {
                         site.remove(0);
@@ -19243,10 +19245,11 @@ fn install_loop_sites<'live, H: Host>(
                             rejections.push((reason, 1));
                         }
                     }
+                    // A loop the region analysis rejects keeps its site, diagnostics or not: its
+                    // function's lane body may run it (`lane_loop_body_or_retire`), and the
+                    // site retires to the plain jump where none does. A diagnostics run tiers
+                    // as any other.
                     if !general_dispatch {
-                        if !diagnostics {
-                            return None;
-                        }
                         (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                     } else {
                         (std::cell::OnceCell::new(), true, Some(failure), Vec::new())
