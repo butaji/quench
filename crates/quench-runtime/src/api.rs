@@ -236,10 +236,8 @@ impl<H: Host> Runtime<H> {
         }
         let program = Engine::compile(request)?;
         if program.validate().is_ok() {
-            if self.vm.host.keeps_compiled_programs() {
-                let bytes = program.encode_trusted();
-                self.vm.host.keep_compiled_program(&program.source_name, &parts, &bytes);
-            }
+            let bytes = program.encode_trusted();
+            self.vm.host.keep_compiled_program(&program.source_name, &parts, &bytes);
             program.validated.establish();
         }
         Ok(program)

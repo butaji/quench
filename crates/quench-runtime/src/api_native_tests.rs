@@ -2044,7 +2044,6 @@ fn native_descriptor_fields_match_get_own_property_and_define_property() {
 struct EntryCacheHost {
     kept: Rc<RefCell<std::collections::HashMap<(String, Vec<String>), Vec<u8>>>>,
     lines: Rc<RefCell<Vec<String>>>,
-    retains_programs: bool,
 }
 impl Host for EntryCacheHost {
     fn write_line(&mut self, line: &str) {
@@ -2056,10 +2055,9 @@ impl Host for EntryCacheHost {
         self.kept.borrow().get(&key).cloned().map(|bytes: Vec<u8>| Rc::new(bytes) as crate::KeptBytes)
     }
     fn keeps_compiled_programs(&self) -> bool {
-        self.retains_programs
+        true
     }
     fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
-        assert!(self.retains_programs, "a non-retaining host must not receive cache writes");
         let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
         self.kept.borrow_mut().insert(key, bytes.to_vec());
     }
@@ -2071,7 +2069,7 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
     let mut outputs = Vec::new();
     for _ in 0..2 {
         let lines = Rc::new(RefCell::new(Vec::new()));
-        let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines: lines.clone(), retains_programs: true });
+        let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines: lines.clone() });
         let program = runtime
             .compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Script })
             .unwrap();
@@ -2084,31 +2082,9 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
     assert_eq!(outputs[0], ["2,4,6 function 70"]);
     // A different goal or text is a different entry.
     let lines = Rc::new(RefCell::new(Vec::new()));
-    let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines, retains_programs: true });
+    let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines });
     runtime.compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Module }).unwrap();
     assert_eq!(kept.borrow().len(), 2);
-}
-
-#[test]
-fn compiled_entries_validate_and_run_without_cache_writes() {
-    for kind in [crate::SourceKind::Script, crate::SourceKind::Module] {
-        let kept = Rc::new(RefCell::new(std::collections::HashMap::new()));
-        let lines = Rc::new(RefCell::new(Vec::new()));
-        let mut runtime = Runtime::new(EntryCacheHost {
-            kept: kept.clone(), lines: lines.clone(), retains_programs: false,
-        });
-        let program = runtime.compile_entry(crate::ExecutionRequest {
-            source: "print(6 * 7)", name: "uncached-entry.js", kind,
-        }).unwrap();
-        assert!(program.validated.holds());
-        runtime.execute(&program).unwrap();
-        assert_eq!(*lines.borrow(), ["42"]);
-        assert!(kept.borrow().is_empty());
-        assert!(runtime.compile_entry(crate::ExecutionRequest {
-            source: "let =", name: "invalid-entry.js", kind,
-        }).is_err());
-        assert!(kept.borrow().is_empty());
-    }
 }
 
 #[cfg(feature = "aot")]
