@@ -31,8 +31,13 @@ fn run() -> Result<std::process::ExitCode, String> {
             // SAFETY: this resolver belongs to the same compiler-owned image.
             unsafe { resolve(&namespace, name, parts) }
         });
-    quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT)
-        .map(|completion| completion.exit_code())
+    #[cfg(quench_native_bootstrap)]
+    let result = quench_node::aot::execute_native_process_entry_with_bootstrap(
+        host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
+    );
+    #[cfg(not(quench_native_bootstrap))]
+    let result = quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT);
+    result.map(|completion| completion.exit_code())
 }
 
 fn main() -> std::process::ExitCode {

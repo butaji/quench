@@ -17,12 +17,14 @@ pub struct NativeImageInputs {
     directory: PathBuf,
     objects: Vec<PathBuf>,
     host_exports: BTreeSet<String>,
+    bootstrap: Option<PathBuf>,
 }
 
 impl NativeImageInputs {
     pub fn new(directory: PathBuf, objects: Vec<PathBuf>, host_exports: BTreeSet<String>) -> Self {
-        Self { directory, objects, host_exports }
+        Self { directory, objects, host_exports, bootstrap: None }
     }
+    pub fn with_bootstrap(mut self, bootstrap: PathBuf) -> Self { self.bootstrap = Some(bootstrap); self }
     pub fn catalog(&self) -> PathBuf { self.directory.join(CATALOG_FILENAME) }
     pub fn required_exports(&self) -> PathBuf { self.directory.join(REQUIRED_EXPORTS_FILENAME) }
     pub fn objects(&self) -> impl Iterator<Item = &Path> { self.objects.iter().map(PathBuf::as_path) }

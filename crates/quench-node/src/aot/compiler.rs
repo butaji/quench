@@ -8,6 +8,7 @@ mod source_pool;
 use source_pool::SourcePool;
 
 pub(super) const NATIVE_ENTRY_NAME: &str = "<quench:aot-entry>";
+pub(super) const NATIVE_ENTRY_UNIT: &str = "entry";
 
 /// Original source keys, sorted and deduplicated by full equality. This manifest
 /// is compiler input, rather than a list of sources inferred from benchmark names.
@@ -81,7 +82,7 @@ impl CompiledSources {
             }
             Ok((metadata, symbol))
         };
-        let (entry, entry_symbol) = write(&self.entry, "entry", None)?;
+        let (entry, entry_symbol) = write(&self.entry, NATIVE_ENTRY_UNIT, None)?;
         let mut catalog = fs::File::create(directory.join(CATALOG_FILENAME)).map_err(|error| error.to_string())?;
         writeln!(catalog, "quench_node::linked_source_pool!(quench_native_source_text, {:?});", pool_path.to_str().ok_or("source pool path is not UTF-8")?)
             .map_err(|error| error.to_string())?;

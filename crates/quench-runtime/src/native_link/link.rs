@@ -219,6 +219,10 @@ impl NativeSupport {
         if self.support.allows_dynamic_source() {
             command.args(["--cfg", "quench_native_dynamic_source"]);
         }
+        if let Some(bootstrap) = &inputs.bootstrap {
+            command.args(["--cfg", "quench_native_bootstrap"])
+                .env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
+        }
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }

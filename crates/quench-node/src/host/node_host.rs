@@ -436,6 +436,14 @@ impl SharedNodeState {
 }
 
 impl NodeHost {
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn accepts_native_bootstrap(&self) -> bool {
+        let state = self.shared_state.borrow();
+        state.exec_argv.is_empty() && state.initial_node_options.is_none()
+            && !state.initial_pending_deprecation
+            && crate::host::startup_snapshot::native_bootstrap_environment_is_neutral()
+    }
+
     pub fn new(argv: Vec<String>) -> Self {
         // The Node test common/tmpdir helper exposes a per-process host path.
         // Under the test runner, materialize that parent at host construction so

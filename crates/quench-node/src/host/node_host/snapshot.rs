@@ -5,6 +5,28 @@ use super::*;
 use crate::host::startup_snapshot::{require_quiescent, HostSnap};
 use quench_runtime::{SnapshotReader, SnapshotWriter};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quench_runtime::{Engine, Runtime};
+
+    #[test]
+    fn incompatible_bootstrap_host_abi_is_rejected_before_host_state_is_read() {
+        let program = Engine::specialize("", "host-abi.js").unwrap();
+        let mut host = NodeHost::new(vec!["quench".into()]);
+        host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
+        let mut builder = Runtime::new(host);
+        let bytes = builder.build_snapshot(&program, |_, writer| {
+            writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI.wrapping_add(1));
+            Ok(())
+        }).unwrap();
+        let mut runtime = Runtime::new(NodeHost::new(vec!["quench".into()]));
+        let error = runtime.restore_snapshot(Rc::new(bytes), &program, |host, reader| host.read_snapshot(reader)).unwrap_err();
+        assert!(error.contains("Node bootstrap ABI does not match runtime"), "{error}");
+        assert!(!runtime.host_mut().bootstrapped);
+    }
+}
+
 impl NodeHost {
     pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         let Self {
@@ -34,10 +56,14 @@ impl NodeHost {
             net_pending_writes.is_empty() && net_pending_ends.is_empty() && net_pending_destroys.is_empty(),
             "socket writes",
         )?;
+        writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI);
         shared_state.borrow().write_snapshot(writer)
     }
 
     pub(crate) fn read_snapshot(&mut self, reader: &mut SnapshotReader<'_, '_>) -> Result<(), String> {
+        if reader.u64()? != crate::host::shared_vm::BOOTSTRAP_ABI {
+            return Err("Node bootstrap ABI does not match runtime".into());
+        }
         self.shared_state.borrow_mut().read_snapshot(reader)
     }
 }

@@ -11,11 +11,47 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
 
+const ABI_HASH_OFFSET: u64 = 0xcbf29ce484222325;
+const ABI_HASH_PRIME: u64 = 0x100000001b3;
+const ABI_FIELD_END: u8 = u8::MAX;
+
+const fn operation_abi(scope: &str, name: &str, length: u64, callback: &str) -> u64 {
+    let mut hash = ABI_HASH_OFFSET;
+    let fields = [scope, name, callback];
+    let mut field = 0;
+    while field < fields.len() {
+        let bytes = fields[field].as_bytes();
+        let mut byte = 0;
+        while byte < bytes.len() {
+            hash = (hash ^ bytes[byte] as u64).wrapping_mul(ABI_HASH_PRIME);
+            byte += 1;
+        }
+        hash = (hash ^ ABI_FIELD_END as u64).wrapping_mul(ABI_HASH_PRIME);
+        field += 1;
+    }
+    (hash ^ length).wrapping_mul(ABI_HASH_PRIME)
+}
+
+const fn bootstrap_abi(words: &[u64]) -> u64 {
+    let mut hash = ABI_HASH_OFFSET;
+    let mut word = 0;
+    while word < words.len() {
+        hash = (hash ^ words[word]).wrapping_mul(ABI_HASH_PRIME);
+        word += 1;
+    }
+    hash
+}
+
 // Operation identities must remain available without retaining callback addresses.
 // Both projections preserve declaration order and platform-specific entries.
 macro_rules! node_bindings {
     ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
         const OPERATION_NAMES: &[&str] = &[$($(#[$attribute])* $name),*];
+        pub(crate) const BOOTSTRAP_ABI: u64 = bootstrap_abi(&[
+            crate::host::startup_snapshot::BOOTSTRAP_SCHEMA_VERSION,
+            cfg!(quench_icu) as u64, cfg!(quench_openssl_provider) as u64,
+            $($(#[$attribute])* const { operation_abi(stringify!($scope), $name, $length, stringify!($callback)) }),*
+        ]);
 
         pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
             quench_runtime::host_functions![
@@ -2846,10 +2882,7 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
     let shared = shared.borrow();
-    let expose_gc = shared
-        .exec_argv
-        .iter()
-        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
+    let expose_gc = shared.cli_options.expose_gc;
     drop(shared);
     if expose_gc {
         // `gc()` collects at once; Node's `{ execution: 'async' }` form is not implemented.

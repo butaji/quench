@@ -3,12 +3,14 @@ use quench_runtime::NativeImageSupport;
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 const COMPILE_REPORT_VERSION: u64 = 1;
+const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
@@ -107,15 +109,38 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         println!("{USAGE}");
         return Ok(ExitCode::SUCCESS);
     }
-    let options = Options::parse(arguments)?;
+    enum Work {
+        Application(Options),
+        Bootstrap { program: PathBuf, output: PathBuf },
+    }
+    let work = match arguments.as_slice() {
+        [option, program, output] if option == BOOTSTRAP_WORKER_OPTION =>
+            Work::Bootstrap { program: program.into(), output: output.into() },
+        _ => Work::Application(Options::parse(arguments)?),
+    };
     std::thread::Builder::new()
         .name("quench-compile".into())
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
-        .spawn(move || compile(options))
+        .spawn(move || match work {
+            Work::Application(options) => compile(options),
+            Work::Bootstrap { program, output } => build_bootstrap(&program, &output),
+        })
         .map_err(|error| error.to_string())?
         .join()
         .unwrap_or_else(|_| Err("compiler worker panicked".into()))
         .map(|()| ExitCode::SUCCESS)
+}
+
+fn build_bootstrap(program: &Path, output: &Path) -> Result<(), String> {
+    if !crate::host::startup_snapshot::native_bootstrap_environment_is_neutral() {
+        return Err("native bootstrap worker received process-specific configuration".into());
+    }
+    let program = quench_runtime::ResidualProgram::read_binary(program)?;
+    let mut host = crate::NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?;
+    host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
+    let mut runtime = quench_runtime::Runtime::new(host);
+    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
+    fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
 fn compile(options: Options) -> Result<(), String> {
@@ -205,7 +230,28 @@ fn compile(options: Options) -> Result<(), String> {
     let compiled = manifest.compile()?;
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
-    let inputs = compiled.emit(&work.0.join("images"))?;
+    let images = work.0.join("images");
+    let inputs = compiled.emit(&images)?;
+    let bootstrap = work.0.join("bootstrap.bin");
+    let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
+        .arg(images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT)))
+        .arg(&bootstrap);
+    crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
+    let inputs = match quench_runtime::native_link::checked_output(&mut worker, "native bootstrap preparation") {
+        Ok(_) => {
+            let mut catalog = fs::OpenOptions::new().append(true).open(inputs.catalog()).map_err(|error| error.to_string())?;
+            writeln!(catalog, "const _: () = assert!(quench_node::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
+                .map_err(|error| error.to_string())?;
+            report["bootstrap"] = json!({"status": "prepared", "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
+                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
+            inputs.with_bootstrap(bootstrap)
+        },
+        Err(error) => {
+            report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
+            inputs
+        },
+    };
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?

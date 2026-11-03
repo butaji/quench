@@ -5,6 +5,105 @@ use quench_runtime::{HostScriptOptions, NativeJsCompiler, NativeSourceKey, emit_
 use std::path::Path;
 
 #[test]
+fn bootstrap_worker_residualizes_initialization_without_running_the_application() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-native-bootstrap-worker-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let program = quench_runtime::Engine::specialize(
+        "throw new Error('application training is forbidden');", "bootstrap-entry.js",
+    ).unwrap();
+    let metadata = directory.join("entry.bin");
+    program.write_binary(&metadata).unwrap();
+    let bootstrap = directory.join("bootstrap.bin");
+    let run = |configured: bool, output: &Path| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        command.env_clear().args(["compile", "--bootstrap-worker"]).arg(&metadata).arg(output);
+        if configured { command.env("HOME", "/different-bootstrap-configuration"); }
+        command.output().unwrap()
+    };
+    let prepared = run(false, &bootstrap);
+    assert!(prepared.status.success(), "{}", String::from_utf8_lossy(&prepared.stderr));
+    assert!(!fs::read(&bootstrap).unwrap().is_empty());
+    let incompatible = directory.join("incompatible.bin");
+    let rejected = run(true, &incompatible);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("process-specific configuration"));
+    assert!(!incompatible.exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit production SDK qualification of native bootstrap fresh inputs and configuration fallback"]
+fn native_bootstrap_keeps_process_inputs_fresh_after_source_removal() {
+    use std::{fs, process::{Command, Stdio}, time::{SystemTime, UNIX_EPOCH}};
+    let directory = std::env::temp_dir().join(format!("quench-native-bootstrap-inputs-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    let cwd = directory.join("different-cwd");
+    fs::create_dir(&cwd).unwrap();
+    let sdk = directory.join("sdk.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let source = r#"
+const descriptor = Object.getOwnPropertyDescriptor(process, 'argv');
+console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid: process.ppid,
+  cwd: process.cwd(), marker: process.env.QUENCH_BOOTSTRAP_TEST_MARKER, gc: typeof globalThis.gc,
+  execPath: process.execPath, now: Date.now(), origin: performance.timeOrigin,
+  attributes: [descriptor.writable, descriptor.enumerable, descriptor.configurable],
+  paths: require('node:module').globalPaths}));
+"#;
+    let run = |binary: &Path, script: Option<&Path>, configured: bool| {
+        let mut command = Command::new(binary);
+        command.env_clear().env("TZ", "UTC").env("QUENCH_MEMORY_POLICY", "throughput")
+            .env("QUENCH_BOOTSTRAP_TEST_MARKER", "fresh-runtime-value").current_dir(&cwd)
+            .stdout(Stdio::piped()).stderr(Stdio::piped());
+        if configured {
+            command.env("HOME", directory.join("runtime-home"))
+                .env("NODE_OPTIONS", "--expose-gc --no-warnings");
+        }
+        if let Some(script) = script { command.arg(script); }
+        command.args(["fresh-argv", "λ"]);
+        let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as f64;
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let output = child.wait_with_output().unwrap();
+        let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as f64;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+        let mut value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["pid"], pid);
+        #[cfg(unix)]
+        assert_eq!(value["ppid"], std::process::id());
+        assert!((before..=after).contains(&value["now"].as_f64().unwrap()));
+        assert!((before..=after).contains(&value["origin"].as_f64().unwrap()), "{value}");
+        assert_eq!(value["gc"], if configured { "function" } else { "undefined" });
+        let executable = Path::new(value["execPath"].as_str().unwrap());
+        let prefix = executable.parent().unwrap().parent().unwrap().join("lib").join("node");
+        assert_eq!(value["paths"].as_array_mut().unwrap().pop().unwrap(), prefix.to_string_lossy().as_ref());
+        for key in ["pid", "ppid", "now", "origin", "execPath"] { value.as_object_mut().unwrap().remove(key); }
+        value
+    };
+    let oracle = std::env::var_os("QUENCH_NODE_ORACLE").unwrap_or_else(|| "node".into());
+    for extension in ["cjs", "cts"] {
+        let entry = directory.join(format!("entry.{extension}"));
+        fs::write(&entry, if extension == "cts" { format!("const typed: number = 1;\n{source}") } else { source.into() }).unwrap();
+        let expected = [run(Path::new(&oracle), Some(&entry), false), run(Path::new(&oracle), Some(&entry), true)];
+        let binary = directory.join(format!("native-{extension}"));
+        let report = directory.join(format!("native-{extension}.json"));
+        let output = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+            .args(["compile"]).arg(&entry).arg("-o").arg(&binary)
+            .args(["--profile", "production", "--sdk-report"]).arg(&sdk).arg("--report").arg(&report).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(report["bootstrap"]["status"], "prepared");
+        fs::remove_file(&entry).unwrap();
+        for (configured, expected) in [false, true].into_iter().zip(expected) {
+            assert_eq!(run(&binary, None, configured), expected, "{extension}, configured={configured}");
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn frozen_module_inputs_reject_conflicting_entries_without_changing_the_manifest() {
     use std::fs;
     let directory = std::env::temp_dir().join(format!("quench-assets-conflict-{}", std::process::id()));

@@ -10,6 +10,9 @@
 
 mod entry_graph;
 
+/// Bump when the serialized host state or its bootstrap/resume invariants change.
+pub(crate) const BOOTSTRAP_SCHEMA_VERSION: u64 = 1;
+
 use quench_runtime::{HostWeakRoot, RootId, SnapshotReader, SnapshotWriter};
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -218,6 +221,18 @@ const KEYED_VARIABLES: &[&str] = &[
     "NODE_PATH",
     "QUENCH_PLATFORM",
 ];
+
+/// The compiler's canonical bootstrap has no process-specific configuration. The same
+/// dependency list selects that input and verifies it once before native restoration.
+#[cfg(feature = "native-execution")]
+pub(crate) fn native_bootstrap_environment_is_neutral() -> bool {
+    KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES).all(|name| std::env::var_os(name).is_none())
+}
+
+#[cfg(feature = "aot")]
+pub(crate) fn neutralize_native_bootstrap_environment(command: &mut std::process::Command) {
+    for name in KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES) { command.env_remove(name); }
+}
 /// How eligible processes use a snapshot (`SnapshotUse`): `on` always, `trace` always and
 /// reporting why one was not used, `off` never; otherwise by what the entry loads.
 pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";

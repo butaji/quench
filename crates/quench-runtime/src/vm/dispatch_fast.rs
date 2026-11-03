@@ -7534,9 +7534,9 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = || {
-        // A function whose loop the loop tier admitted runs that loop in its region, which
-        // a body would only leave for at each of the loop's entries.
-        if own.loops.iter().any(|site| site.active_region().is_some()) { return None; }
+        // Keep closed loops in their admitted region. A region that leaves for calls
+        // must still allow a lane body to inline those callees into its typed unit.
+        if own.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some()) { return None; }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header);
         if diagnostics && let Some(method) = &method {

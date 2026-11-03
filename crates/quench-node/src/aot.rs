@@ -3,6 +3,8 @@
 use crate::NodeHost;
 use quench_runtime::{Runtime, NativeImageSupport};
 
+pub const BOOTSTRAP_ABI: u64 = crate::host::shared_vm::BOOTSTRAP_ABI;
+
 mod assets;
 pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceView, EmbeddedModules, EmbeddedImportResolution, EmbeddedModuleSource, ModuleAssets, ModuleFile, PreparedModuleSource};
 pub(crate) use assets::ModuleAssetState;
@@ -80,7 +82,7 @@ macro_rules! linked_module_assets {
 pub fn execute_native(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
-    execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, NativeImageSupport::Static)
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, NativeImageSupport::Static, None)
 }
 
 pub fn execute_native_process_entry(
@@ -92,16 +94,28 @@ pub fn execute_native_process_entry(
 pub fn execute_native_process_entry_with_support(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, support: NativeImageSupport,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
-    execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support)
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, None)
+}
+
+pub fn execute_native_process_entry_with_bootstrap(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, support: NativeImageSupport,
+    bootstrap: &'static [u8],
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, Some(bootstrap))
 }
 
 fn execute_native_with_teardown(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, teardown: crate::shared_run::Teardown, support: NativeImageSupport,
+    bootstrap: Option<&'static [u8]>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
+    let bootstrap = bootstrap.filter(|_| host.accepts_native_bootstrap());
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(support.execution_mode());
     runtime.set_memory_policy(crate::shared_run::select_memory_policy(None)?);
-    let execution = runtime.execute_native_deferred_jobs(program);
+    let execution = match bootstrap {
+        Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
+        None => runtime.execute_native_deferred_jobs(program),
+    };
     let completion = crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)?;
     let rejected = runtime.native_execution_rejections();
     if rejected != 0 {

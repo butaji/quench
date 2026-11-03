@@ -180,6 +180,19 @@ impl<H: Host> Runtime<H> {
         self.vm.execute_native_program(program, false).map(drop)
     }
 
+    /// Resume canonical bootstrap state for this native program's exact atom namespace,
+    /// then run through the shared installed-entry and host-resume path, leaving jobs queued.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_from_snapshot(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        program: &crate::NativeJsProgram<H>,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), JsError> {
+        self.vm.restore_native_snapshot(snapshot, program, read_host)?;
+        self.vm.execute_restored(program.residual()).map(drop)
+    }
+
     /// Run precompiled global Scripts before a native entry in the same realm.
     #[cfg(feature = "native-execution")]
     pub fn execute_native_after_scripts(&mut self, scripts: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {

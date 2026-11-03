@@ -155,6 +155,25 @@ impl AtomSequence {
         }
     }
 
+    /// Ownership proves an unchanged prefix without reading its names. Independent tables
+    /// and another sequence's appended names still need a semantic comparison at admission.
+    #[cfg(any(feature = "native-execution", test))]
+    pub(crate) fn proves_prefix(self: &Rc<Self>, atoms: &AtomTable) -> bool {
+        if atoms.belongs_to(self) {
+            return true;
+        }
+        let AtomNames::Packed { text, ends } = &self.base.names else { return false; };
+        let (candidate_text, candidate_ends) = match &atoms.names {
+            AtomNames::Packed { text, ends } => (text, ends),
+            AtomNames::Shared { sequence, len } if *len <= ends.len() => {
+                let AtomNames::Packed { text, ends } = &sequence.base.names else { return false; };
+                (text, ends)
+            },
+            _ => return false,
+        };
+        Rc::ptr_eq(text, candidate_text) && Rc::ptr_eq(ends, candidate_ends)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.base.len() + self.appended_len()
     }
@@ -220,6 +239,22 @@ impl fmt::Debug for AtomSequence {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn namespace_prefix_proof_follows_shared_storage_but_not_foreign_appends() {
+        let base = AtomTable::from_rcs(&[Rc::from("alpha"), Rc::from("beta")]);
+        let current = Rc::new(AtomSequence::new(base.clone()));
+        let source = Rc::new(AtomSequence::new(base.clone()));
+        assert!(current.proves_prefix(&base));
+        assert!(current.proves_prefix(&AtomTable::shared(source.clone(), 1)));
+        current.append(JsString::from_str("current"));
+        source.append(JsString::from_str("foreign"));
+        assert!(current.proves_prefix(&AtomTable::shared(current.clone(), 3)));
+        assert!(current.proves_prefix(&AtomTable::shared(source.clone(), 2)));
+        assert!(!current.proves_prefix(&AtomTable::shared(source, 3)));
+        let independent = AtomTable::from_rcs(&[Rc::from("alpha"), Rc::from("beta")]);
+        assert!(!current.proves_prefix(&independent));
+    }
 
     #[test]
     fn packed_atoms_preserve_empty_and_unicode_boundaries() {
