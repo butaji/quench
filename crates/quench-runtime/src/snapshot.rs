@@ -166,7 +166,7 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn finish(mut self) -> SnapshotResult<()> {
-        self.release_read();
+        self.release_through(self.cursor);
         (self.cursor == self.bytes.len())
             .then_some(())
             .ok_or_else(|| SnapshotError("trailing snapshot bytes".into()))
@@ -175,17 +175,17 @@ impl<'a> Reader<'a> {
     /// Gives the bytes read since the last release to `release`. A program's encoding, which
     /// its decoder reads past this reader's cursor (`skip`), goes once that decoder is done:
     /// when the next read follows.
-    fn release_read(&mut self) {
+    fn release_through(&mut self, end: usize) {
         if let Some(release) = self.release {
-            release(&self.bytes[self.released..self.cursor]);
-            self.released = self.cursor;
+            release(&self.bytes[self.released..end]);
+            self.released = end;
         }
     }
 
     #[inline]
     fn take(&mut self, len: usize) -> SnapshotResult<&'a [u8]> {
         if self.cursor - self.released >= RELEASE_STRIDE {
-            self.release_read();
+            self.release_through(self.cursor);
         }
         let end = self.cursor.checked_add(len).ok_or_else(|| SnapshotError("snapshot overflow".into()))?;
         let bytes = self.bytes.get(self.cursor..end).ok_or_else(|| SnapshotError("truncated snapshot".into()))?;
@@ -267,12 +267,29 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn values(&mut self) -> SnapshotResult<Vec<crate::value::Value>> {
-        let len = self.len()?;
-        let mut values = Vec::with_capacity(len.min(self.remaining() / size_of::<u64>()));
-        for _ in 0..len {
-            values.push(self.value()?);
+        let words = self.words()?;
+        if self.cursor - self.released < RELEASE_STRIDE {
+            return Ok(words.iter().map(|word| crate::value::Value::from_bits(u64::from_le_bytes(*word))).collect());
         }
-        Ok(values)
+        Ok(self.values_releasing(words))
+    }
+
+    // Keep release handling out of the direct-copy path's instruction footprint.
+    #[inline(never)]
+    fn values_releasing(&mut self, words: &[[u8; size_of::<u64>()]]) -> Vec<crate::value::Value> {
+        let mut values = Vec::with_capacity(words.len());
+        let payload_start = self.cursor - size_of_val(words);
+        // Preserve incremental reclamation for large mapped snapshots. Bounds
+        // admission is still once for the whole span, not once per value.
+        const VALUES_PER_RELEASE: usize = RELEASE_STRIDE / size_of::<u64>();
+        for chunk in words.chunks(VALUES_PER_RELEASE) {
+            values.extend(chunk.iter().map(|word| crate::value::Value::from_bits(u64::from_le_bytes(*word))));
+            let copied_through = payload_start + values.len() * size_of::<u64>();
+            if copied_through - self.released >= RELEASE_STRIDE {
+                self.release_through(copied_through);
+            }
+        }
+        values
     }
 
     pub(crate) fn option_value(&mut self) -> SnapshotResult<Option<crate::value::Value>> {
@@ -297,9 +314,7 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn u16s(&mut self) -> SnapshotResult<Vec<u16>> {
-        let len = self.len()?;
-        let bytes = self.take(len.checked_mul(2).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
-        Ok(bytes.as_chunks::<2>().0.iter().map(|unit| u16::from_le_bytes(*unit)).collect())
+        Ok(self.words()?.iter().copied().map(u16::from_le_bytes).collect())
     }
 
     pub(crate) fn u32s(&mut self) -> SnapshotResult<Vec<u32>> {
@@ -310,17 +325,16 @@ impl<'a> Reader<'a> {
     /// Borrow the reader until consumption so later reads cannot release these pages.
     /// Decoding requires no aligned loads.
     pub(crate) fn u32_iter(&mut self) -> SnapshotResult<impl ExactSizeIterator<Item = u32> + '_> {
-        let len = self.len()?;
-        let bytes = self.take(len.checked_mul(size_of::<u32>()).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
-        Ok(bytes
-            .as_chunks::<{ size_of::<u32>() }>()
-            .0
-            .iter()
-            .map(|word| u32::from_le_bytes(*word)))
+        Ok(self.words()?.iter().copied().map(u32::from_le_bytes))
     }
 
-    fn remaining(&self) -> usize {
-        self.bytes.len() - self.cursor
+    /// One checked byte span owns the bounds proof for every fixed-width element.
+    /// Escaping iterators retain a reader borrow; owned decoders may release
+    /// completed batches while the immutable input remains mapped.
+    fn words<const WIDTH: usize>(&mut self) -> SnapshotResult<&'a [[u8; WIDTH]]> {
+        let len = self.len()?;
+        let bytes = self.take(len.checked_mul(WIDTH).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
+        Ok(bytes.as_chunks::<WIDTH>().0)
     }
 }
 
@@ -423,6 +437,57 @@ mod tests {
             let bytes = writer.finish();
             assert!(Reader::new(&bytes, None).unwrap().u32_iter().is_err());
         }
+    }
+
+    #[test]
+    fn value_spans_preserve_bits_and_reject_truncation_before_decoding() {
+        let bits = [0, (-0.0_f64).to_bits(), f64::INFINITY.to_bits(), f64::NAN.to_bits(), u64::MAX];
+        let values = bits.map(crate::value::Value::from_bits);
+        let mut writer = Writer::new();
+        writer.u8(1); // Exercise an unaligned payload.
+        writer.values(&values);
+        writer.values(&[]);
+        let bytes = writer.finish();
+        let mut reader = Reader::new(&bytes, None).unwrap();
+        assert_eq!(reader.u8().unwrap(), 1);
+        assert_eq!(reader.values().unwrap().iter().map(|value| value.to_bits()).collect::<Vec<_>>(), bits);
+        assert!(reader.values().unwrap().is_empty());
+        reader.finish().unwrap();
+        for available in 0..size_of_val(&bits) {
+            let mut writer = Writer::new();
+            writer.len(bits.len());
+            for _ in 0..available { writer.u8(0); }
+            let bytes = writer.finish();
+            assert!(Reader::new(&bytes, None).unwrap().values().is_err());
+        }
+    }
+
+    #[test]
+    fn word_spans_release_only_preceding_bytes() {
+        let mut bytes = vec![0; RELEASE_STRIDE];
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+        let mut reader = Reader {
+            bytes: &bytes, cursor: RELEASE_STRIDE, released: 0,
+            release: Some(|read| assert!(!read.is_empty())),
+        };
+        assert_eq!(reader.values().unwrap()[0].to_bits(), u64::MAX);
+        assert_eq!(reader.released, RELEASE_STRIDE);
+        reader.finish().unwrap();
+    }
+
+    #[test]
+    fn large_value_spans_release_completed_batches() {
+        let values = vec![crate::value::Value::from_bits(u64::MAX); RELEASE_STRIDE / size_of::<u64>() * 3 + 1];
+        let mut writer = Writer::new();
+        writer.values(&values);
+        let bytes = writer.finish();
+        let mut reader = Reader::new(&bytes, Some(|read| assert!(read.len() <= RELEASE_STRIDE * 2))).unwrap();
+        let restored = reader.values().unwrap();
+        assert_eq!(restored.len(), values.len());
+        assert!(restored.iter().all(|value| value.to_bits() == u64::MAX));
+        assert_eq!(reader.cursor - reader.released, size_of::<u64>());
+        reader.finish().unwrap();
     }
 
     #[test]
