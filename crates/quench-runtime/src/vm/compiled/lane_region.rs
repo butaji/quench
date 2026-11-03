@@ -503,10 +503,18 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
     }
 }
 
+/// Whether `instruction` is a store natively: of its atom, into a slot the object already
+/// has, so it changes no shape, layout or other property; anything else leaves first.
+fn stores_own(instruction: WideInstruction) -> bool {
+    matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict)
+        && !instruction.returns_from_frame()
+}
+
 /// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
 /// entered by one edge from before it and no other, of instructions that only read
-/// (`reads_only`), whose reads of a register it never writes, by one cached atom, see the
-/// same object and value every iteration. Entries (`starts`) enter no such loop.
+/// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
+/// writes, by one cached atom it stores to no object, see the same object and value every
+/// iteration. Entries (`starts`) enter no such loop.
 fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
     -> BTreeMap<usize, Vec<usize>> {
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
@@ -521,10 +529,13 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
-        if entries != 1 || side || !body.iter().all(|candidate| reads_only(constants, *candidate)) { continue }
+        if entries != 1 || side
+            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)) { continue }
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
+        let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
+            .map(|candidate| candidate.atom_index()).collect();
         let reads: Vec<usize> = body.iter().enumerate().filter_map(|(offset, candidate)| match candidate.field_lookup() {
-            Some(FieldLookup::Atom { base, .. }) if candidate.op() == Op::GetField
+            Some(FieldLookup::Atom { atom, base, .. }) if candidate.op() == Op::GetField && !stored.contains(&atom)
                 && base.register_index().is_some_and(|register| !written.contains(&register)) => Some(header + offset),
             _ => None,
         }).collect();

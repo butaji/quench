@@ -21427,6 +21427,38 @@ fn lane_int_stores_to_packed_objects_keep_their_narrow_form_like_the_interpreter
 }
 
 #[test]
+fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
+    // A loop that stores keeps reading each atom it stores, on whichever object: one object
+    // under two names, a method beside a stored field, a prototype's field under a getter.
+    let source = r#"(function () {
+      function P(x, y) { this.x = x; this.y = y; }
+      P.prototype.get = function () { return this.x; };
+      function same(p, q, n) { var s = 0; for (var i = 0; i < n; i++) { q.x = (q.x + 1) | 0; s = (s + p.x) | 0; } return s; }
+      function other(p, n) { var s = 0; for (var i = 0; i < n; i++) { p.y = (p.y + p.x) | 0; s = (s + p.get() + p.y) | 0; } return s; }
+      function proto(p, n) { var s = 0; for (var i = 0; i < n; i++) { P.prototype.x = i; s = (s + p.get()) | 0; } return s; }
+      var a = new P(1, 2), b = new P(3, 4), c = Object.create(P.prototype), total = 0;
+      for (var k = 0; k < 3000; k++) {
+        total = (total + same(a, k & 1 ? a : b, 20) + other(b, 10)) | 0;
+        if (k % 100 == 0) total = (total + proto(c, 5)) | 0;
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-store-loops.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(2005786796.0); 2]);
+}
+
+#[test]
 fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
     // A loop that only reads takes its invariant fields on its entry edge: the field may
     // change between runs, another shape or a non-object leaves at the header, a loop that
