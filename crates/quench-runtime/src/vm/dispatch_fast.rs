@@ -10792,15 +10792,17 @@ impl<H: Host> Vm<H> {
             linked
         } else {
             let index = self.script_call_index(callee)?;
-            // A record that linked another callee is polymorphic: its earlier target joins
-            // its history (`LaneStack::call_sites`).
+            // A record that linked another callee is polymorphic: the callee it calls now joins
+            // its history (`LaneStack::call_sites`). The entry it linked may hold another
+            // site's callee since, so only the callee in hand is the site's own.
             if let Some(previous) = self.lane_stack.script_targets.entries.get(linked)
                 && previous.callee != callee
                 && previous.generation == self.lane_stack.generation
             {
+                let current = &self.lane_stack.script_targets.entries[index];
                 let mut sites = self.lane_stack.call_sites.borrow_mut();
                 let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
-                let target = super::compiled::CallTarget { callee: previous.callee, function: previous.function };
+                let target = super::compiled::CallTarget { callee: current.callee, function: current.function };
                 if !site.contains(&target) {
                     if site.len() == CALL_SITE_TARGETS {
                         site.remove(0);
