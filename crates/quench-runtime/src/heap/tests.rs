@@ -1465,6 +1465,67 @@ fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
 
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
+fn memory_census_counts_array_allocations_once_across_storage_and_collection() {
+    let mut heap = Heap::new();
+    let empty_direct = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), ArrayElements::new()),
+    });
+    let empty_legacy = heap.alloc_in_slot(Cell::Array {
+        object: ArrayObject::new(plain_object(), ArrayElements::new()),
+    }, false);
+    let empty = heap.memory_composition();
+    assert_eq!(empty.dense_array_backing_count, 0);
+    assert_eq!(empty.dense_array_elements_bytes, 0);
+    assert_eq!(empty.dense_array_headers_bytes, 0);
+
+    let source = ArrayElements::from([Value::integer(1), Value::integer(2), Value::integer(3)]);
+    let source_payload_bytes = source.capacity() * size_of::<Value>();
+    let header_bytes = source.allocated_bytes() - source_payload_bytes;
+    let direct = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), source.clone()),
+    });
+    let legacy = heap.alloc_in_slot(Cell::Array {
+        object: ArrayObject::new(plain_object(), source.clone()),
+    }, false);
+    assert!(direct.direct_array_index().is_some());
+    assert!(legacy.direct_array_index().is_none());
+    let shared = heap.memory_composition();
+    assert_eq!(shared.dense_array_backing_count, 1);
+    assert_eq!(shared.dense_array_elements_bytes, source_payload_bytes);
+    assert_eq!(shared.dense_array_headers_bytes, header_bytes);
+
+    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::integer(4));
+    let grown = heap.array_elements(direct).unwrap();
+    assert!(grown.capacity() > source.capacity());
+    let grown_payload_bytes = grown.capacity() * size_of::<Value>();
+    assert_eq!(source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
+    heap.collect([empty_direct, empty_legacy, direct, legacy]);
+    let detached = heap.memory_composition();
+    assert_eq!(detached.dense_array_backing_count, 2);
+    assert_eq!(detached.dense_array_elements_bytes, source_payload_bytes + grown_payload_bytes);
+    assert_eq!(detached.dense_array_headers_bytes, 2 * header_bytes);
+
+    heap.array_elements_mut(direct).unwrap().make_mut().truncate(0);
+    assert!(heap.array_elements(direct).unwrap().is_empty());
+    let reserved_empty = heap.memory_composition();
+    assert_eq!(reserved_empty.dense_array_backing_count, 2);
+    assert_eq!(reserved_empty.dense_array_elements_bytes, source_payload_bytes + grown_payload_bytes);
+    assert_eq!(reserved_empty.dense_array_headers_bytes, 2 * header_bytes);
+
+    heap.collect([legacy]);
+    let survivor = heap.memory_composition();
+    assert_eq!(survivor.dense_array_backing_count, 1);
+    assert_eq!(survivor.dense_array_elements_bytes, source_payload_bytes);
+    assert_eq!(survivor.dense_array_headers_bytes, header_bytes);
+    heap.collect([]);
+    let collected = heap.memory_composition();
+    assert_eq!(collected.dense_array_backing_count, 0);
+    assert_eq!(collected.dense_array_elements_bytes, 0);
+    assert_eq!(collected.dense_array_headers_bytes, 0);
+}
+
+#[test]
+#[cfg(not(feature = "profile-aggregate"))]
 fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
     let mut heap = Heap::new();
     let before = heap.memory_composition();

@@ -1,5 +1,10 @@
 use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
+
+#[cfg(all(test, feature = "bench-primitives"))]
+mod primitive_bench;
+#[cfg(test)]
+mod vacancy_tests;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::alloc::Layout;
@@ -428,7 +433,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// increasing order, each marked (old), as after a full collection; the ids skipped are
     /// reusable once `finish_snapshot_inserts` runs. `false` when the id cannot be placed.
     pub(super) fn insert_snapshot(&mut self, id: RecordId, value: T) -> bool {
-        if !self.ensure_reserved() || id as usize >= RECORD_SPACE_CAPACITY || id < self.next_id {
+        if !self.ensure_reserved() || id as usize >= CAPACITY || id < self.next_id {
             return false;
         }
         let (block_index, record_index) = Self::split_id(id);

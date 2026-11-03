@@ -194,6 +194,14 @@ impl ArrayElements {
         self.header().capacity as usize
     }
 
+    /// Requested allocation extent; the shared static empty header owns no allocation.
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        match self.capacity() {
+            0 => 0,
+            capacity => Self::layout(capacity).size(),
+        }
+    }
+
     /// Whether every value is an int32 (so none is a hole).
     pub(crate) fn holds_only_int32(&self) -> bool {
         self.header().others == 0
