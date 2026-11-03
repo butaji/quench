@@ -677,6 +677,19 @@ mod namespace_tests {
     use crate::{Engine, test_host::TestHost};
 
     #[test]
+    fn a_new_realm_can_use_the_creators_unobserved_math_namespace() {
+        for compile in [Engine::specialize as fn(&str, &str) -> _, Engine::specialize_unspecialized] {
+            let program = compile("var other = $262.createRealm().global; print(typeof other.Math); print(typeof other.Math.sin); print(other.Math.abs(-4));", "lazy-realm-math.js").unwrap();
+            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                vm.set_execution_mode(mode);
+                vm.execute(&program).unwrap();
+                assert_eq!(&*vm.host.lines(), &["object", "function", "4"]);
+            }
+        }
+    }
+
+    #[test]
     fn independent_builtin_namespaces_remain_unallocated_until_observed() {
         let program = Engine::specialize("0", "namespace-preparation.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
