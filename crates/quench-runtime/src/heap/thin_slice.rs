@@ -18,6 +18,23 @@ pub(crate) struct ThinBoxSlice<T> {
 }
 
 impl<T> ThinBoxSlice<T> {
+    /// The allocation's header, stable while this storage remains live and unchanged.
+    #[inline(always)]
+    pub(crate) fn storage(&self) -> NonNull<usize> {
+        self.header
+    }
+
+    /// Reconstructs a non-owning descriptor without duplicating the storage layout.
+    ///
+    /// # Safety
+    /// `header` came from `storage` and its allocation (or shared empty header) remains
+    /// live for every use of the returned descriptor. Do not replace/drop its inner
+    /// owner or change its header. Element borrows must obey the usual aliasing rules.
+    #[inline(always)]
+    pub(crate) unsafe fn borrow_storage(header: NonNull<usize>) -> std::mem::ManuallyDrop<Self> {
+        std::mem::ManuallyDrop::new(Self { header, marker: std::marker::PhantomData })
+    }
+
     fn layout(len: usize) -> (Layout, usize) {
         let (layout, offset) = Layout::new::<usize>()
             .extend(Layout::array::<T>(len).expect("slice layout overflow"))

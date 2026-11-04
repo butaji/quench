@@ -7620,13 +7620,12 @@ impl<H: Host> Vm<H> {
         residual: &ResidualProgram,
         registers: *mut Value,
         receiver: Value,
-        captures: *const crate::heap::EnvironmentSlots,
+        captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
         let frame = lane_frame();
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { captures.as_ref() }
-            .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
             .unwrap_or((std::ptr::null(), 0));
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
@@ -7731,7 +7730,7 @@ impl<H: Host> Vm<H> {
         residual: &ResidualProgram,
         registers: *mut Value,
         receiver: Value,
-        captures: *const crate::heap::EnvironmentSlots,
+        captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
         let frame = lane_frame();

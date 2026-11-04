@@ -1133,6 +1133,45 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
 }
 
 #[test]
+fn dense_storage_reads_writes_and_native_views_share_the_owner_checks() {
+    let mut slots = EnvironmentSlots::from(vec![Value::UNDEFINED, Value::DELETED, Value::integer(42)]);
+    let storage = slots.dense_storage().unwrap();
+    // SAFETY: all owners below stay live; operations borrow only for their duration.
+    // Writes contain no heap references and no guest or collection can run here.
+    unsafe {
+        assert_eq!(EnvironmentSlots::read_storage(storage, 0), Some(Value::UNDEFINED));
+        assert_eq!(EnvironmentSlots::read_storage(storage, 1), None);
+        assert_eq!(EnvironmentSlots::read_storage(storage, slots.len()), None);
+        assert_eq!(EnvironmentSlots::read_storage(std::ptr::null(), 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(storage, 0, Value::integer(7)), Some(()));
+        assert_eq!(EnvironmentSlots::write_storage(storage, 1, Value::integer(7)), None);
+        assert_eq!(EnvironmentSlots::write_storage(storage, slots.len(), Value::integer(7)), None);
+        assert_eq!(EnvironmentSlots::write_storage(std::ptr::null(), 0, Value::integer(7)), None);
+        assert_eq!(slots.owned(0), Some(Value::integer(7)));
+        *slots.owned_mut(2).unwrap() = Value::integer(99);
+        assert_eq!(EnvironmentSlots::read_storage(storage, 2), Some(Value::integer(99)));
+        assert_eq!(EnvironmentSlots::native_storage_view(storage), slots.native_dense_view());
+        assert_eq!(EnvironmentSlots::native_storage_view(std::ptr::null()), None);
+        let empty = EnvironmentSlots::from(Vec::new());
+        let empty_storage = empty.dense_storage().unwrap();
+        assert_eq!(EnvironmentSlots::read_storage(empty_storage, 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(empty_storage, 0, Value::TRUE), None);
+        assert_eq!(EnvironmentSlots::native_storage_view(empty_storage), empty.native_dense_view());
+        let mut heap = Heap::new();
+        let owner = heap.alloc_environment(Value::NULL, 1, slots.clone(), EnvironmentScopeRef::of_program(0)).0;
+        let shared = slots.iteration_copy(owner, &[], &[], |_, _| unreachable!()).unwrap();
+        let shared_storage = shared.dense_storage().unwrap();
+        assert_eq!(EnvironmentSlots::read_storage(shared_storage, 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(shared_storage, 0, Value::TRUE), None);
+        assert!(matches!(shared.state(0), Some(EnvironmentSlotState::Shared(value)) if value == owner));
+    }
+    // Scoped descriptors did not consume the owner or leave it marked/uninitialized.
+    assert_eq!(slots.dense_plain(0), Some(Value::integer(7)));
+    assert_eq!(slots.dense_plain(1), None);
+    assert_eq!(slots.dense_plain(2), Some(Value::integer(99)));
+}
+
+#[test]
 fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let mut heap = Heap::new();
     let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
@@ -1157,6 +1196,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
     // A length and owner, then the fresh and reset slots, each with its index.
     assert_eq!((first.len(), first.0.len()), (width, 6));
+    assert!(first.dense_storage().is_none());
     let first = environment(&mut heap, first);
     assert_eq!(heap.environment_slot(first, 3), Some(Value::number(3.0)));
     assert_eq!(heap.environment_slot(first, 5), Some(Value::UNDEFINED));

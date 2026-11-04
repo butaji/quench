@@ -2963,6 +2963,56 @@ const SPARSE_ENTRIES_START: usize = 2;
 const SPARSE_ENTRY_WORDS: usize = 2;
 
 impl EnvironmentSlots {
+    /// Dense backing storage for a cache that already owns the environment's lifetime.
+    /// The pointer expires when the storage is replaced or collected.
+    #[inline(always)]
+    pub(crate) fn dense_storage(&self) -> Option<*const usize> {
+        Some(self.dense()?.0.storage().as_ptr().cast_const())
+    }
+
+    /// # Safety
+    /// A non-null pointer came from `dense_storage`, whose owner and dense layout remain
+    /// live. The returned descriptor must stay within that lifetime; its elements obey
+    /// normal aliasing rules. Only the scoped read/write/bridge operations below use it.
+    #[inline(always)]
+    unsafe fn borrow_storage(storage: *const usize) -> Option<std::mem::ManuallyDrop<Self>> {
+        let header = std::ptr::NonNull::new(storage.cast_mut())?;
+        // SAFETY: the caller keeps the original storage live. Rewrap the descriptor
+        // immediately so neither wrapper can destroy the original owner's elements.
+        let slots = unsafe { super::thin_slice::ThinBoxSlice::borrow_storage(header) };
+        Some(std::mem::ManuallyDrop::new(Self(std::mem::ManuallyDrop::into_inner(slots))))
+    }
+
+    /// Read through a live dense-storage cache, retaining the ordinary bounds/marker checks.
+    /// # Safety
+    /// `storage` is null or live as for `dense_storage`; no element is mutably borrowed.
+    #[inline(always)]
+    pub(crate) unsafe fn read_storage(storage: *const usize, slot: usize) -> Option<Value> {
+        // SAFETY: as guaranteed by the caller, for this read only.
+        unsafe { Self::borrow_storage(storage) }?.dense_plain(slot)
+    }
+
+    /// Write through a cache whose caller has already admitted the store and taken its barrier.
+    /// # Safety
+    /// As `read_storage`, with exclusive access to the element for this operation and the
+    /// environment's write authorization/barrier satisfied. No reference escapes the write.
+    #[inline(always)]
+    pub(crate) unsafe fn write_storage(storage: *const usize, slot: usize, value: Value) -> Option<()> {
+        // SAFETY: as guaranteed by the caller, for this write only.
+        let mut slots = unsafe { Self::borrow_storage(storage) }?;
+        *slots.dense_plain_mut(slot)? = value;
+        Some(())
+    }
+
+    /// Native entry's values/count projection of the same cached storage.
+    /// # Safety
+    /// As `read_storage`; the returned pointer expires with the original storage.
+    #[inline(always)]
+    pub(crate) unsafe fn native_storage_view(storage: *const usize) -> Option<(*const Value, usize)> {
+        // SAFETY: the original owner, not this temporary descriptor, owns the result.
+        unsafe { Self::borrow_storage(storage) }?.native_dense_view()
+    }
+
     /// A dense slot view for native reads. The caller must keep the environment live and
     /// discard the pointer at a safepoint, where collection or mutation can replace storage.
     pub(crate) fn native_dense_view(&self) -> Option<(*const Value, usize)> {

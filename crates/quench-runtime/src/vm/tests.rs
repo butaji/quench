@@ -21798,7 +21798,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         registers[usize::from(parameter)] = Value::number(5.0);
         let env = vm.heap.function(caller).unwrap().env;
         let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
-        let slots = std::ptr::from_ref(slots);
+        let slots = slots.dense_storage().unwrap();
         let exit = vm.run_lane_method(&method, super::compiled::LaneStart::First, false, super::program_store::ProgramId::MAIN,
             &program, registers.as_mut_ptr(), receiver, slots, std::ptr::null_mut());
         assert_eq!(registers[usize::from(parameter)], Value::number(6.0), "suspended caller retains its reflected parameter");
@@ -21968,7 +21968,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let expected_total = if expected_total > 1000.0 { expected_total - 1000.0 } else { expected_total };
         let env = vm.heap.function(caller).unwrap().env;
         let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
-        let slots = std::ptr::from_ref(slots);
+        let slots = slots.dense_storage().unwrap();
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
         registers[usize::from(parameter)] = Value::number(3.0);
