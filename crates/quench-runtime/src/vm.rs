@@ -2067,6 +2067,10 @@ pub(crate) struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
+    /// The callees lane bodies name by identity (`lane_unit::Frame::target`,
+    /// `compiled::DirectCallee`): roots of every collection, so no callee a body guards dies
+    /// and gives its record and environment to another function while the code lives.
+    lane_code_roots: Vec<Value>,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,

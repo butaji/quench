@@ -470,6 +470,7 @@ impl<H: Host> Vm<H> {
         let mut roots = Vec::with_capacity(self.gc_root_count);
         self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         roots.extend(self.wasm_js.roots());
+        roots.extend_from_slice(&self.lane_code_roots);
         roots.extend([
             self.realm.globals,
             self.object_proto,

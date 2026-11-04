@@ -407,6 +407,8 @@ impl<H: Host> Vm<H> {
             object_shapes: _,
             descriptors,
             function_values,
+            // Lane code is not snapshotted, so neither are the callees it names.
+            lane_code_roots: _,
             wasm_exported_functions,
             private_homes,
             default_collation: _,

@@ -2181,7 +2181,8 @@ impl Lowering<'_, '_> {
         let probed = NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-            let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, lowering.payload, generic);
+            let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+            let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
             lowering.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, generic)
         }))
     }
@@ -2394,8 +2395,9 @@ impl Lowering<'_, '_> {
         let bits = bits(self, state);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let header = if read {
+            let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             state.readable.insert(owner);
-            ObjectHeader::prove_readable(&mut self.builder, bits, records, self.payload, exit)
+            ObjectHeader::prove_readable(&mut self.builder, bits, records, functions, exit)
         } else {
             state.readable.remove(&owner);
             ObjectHeader::prove(&mut self.builder, bits, records, exit)

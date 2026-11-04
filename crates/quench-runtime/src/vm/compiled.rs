@@ -7304,6 +7304,11 @@ impl<H: Host> Vm<H> {
         let caller_registers = unit.caller_registers;
         let closed = unit.instructions.iter().enumerate()
             .all(|(pc, instruction)| instruction.op() != Op::Call || sites.contains_key(&pc));
+        for callee in unit.frames.iter().map(|frame| frame.target.callee).chain(_direct.iter().map(|callee| callee.callee)) {
+            if !self.lane_code_roots.contains(&callee) {
+                self.lane_code_roots.push(callee);
+            }
+        }
         let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed });
         method.bind_self_calls();
         Some(method)
