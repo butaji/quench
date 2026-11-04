@@ -43,6 +43,8 @@ impl ObjectHeader {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
         let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
+        // A function's own read is the rare one; the object path stays the straight line.
+        builder.set_cold_block(function_block);
         let record = builder.append_block_param(join, types::I64);
         let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
         let id = builder.ins().ireduce(types::I32, bits);

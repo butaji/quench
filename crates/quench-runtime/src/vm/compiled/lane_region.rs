@@ -2352,12 +2352,22 @@ impl Lowering<'_, '_> {
     /// `read`, an object's or a function's (`ObjectHeader::prove_readable`); for a store, an
     /// object's only, which a read's proof is not known to be.
     fn object_record(&mut self, state: &mut State, owner: Option<Register>, read: bool, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
-        if let Some(known) = state.shapes.get(&owner).copied()
-            && (read || !state.readable.contains(&owner)) { return known; }
-        let bits = match owner {
-            Some(register) => self.tagged(state, register),
-            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+        let bits = |lowering: &mut Self, state: &mut State| match owner {
+            Some(register) => lowering.tagged(state, register),
+            None => lowering.builder.use_var(lowering.entry.as_ref().expect("entry facts").this),
         };
+        if let Some(known) = state.shapes.get(&owner).copied() {
+            // A store of a read's proof needs only that it names an object's record: its
+            // family, tested once, after which the proof is the object's.
+            if !read && state.readable.remove(&owner) {
+                let value = bits(self, state);
+                let family = self.ins().band_imm_u(value, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+                let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                emit_js_guard(&mut self.builder, object, exit);
+            }
+            return known;
+        }
+        let bits = bits(self, state);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let header = if read {
             let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
