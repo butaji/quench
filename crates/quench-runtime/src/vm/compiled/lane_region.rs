@@ -2220,7 +2220,6 @@ impl Lowering<'_, '_> {
     ) -> Option<ir::Value> {
         let entry = self.entry.as_ref().expect("entry facts");
         let properties = self.builder.use_var(entry.receiver.properties);
-        let properties_len = self.builder.use_var(entry.receiver.properties_len);
         // One shape: its test is a guard, and the shape it proves is the owner's from then on
         // (`prove_shape`), so a later read of the owner tests nothing.
         if let [field] = shapes && let Some(holder) = field.holder {
@@ -2234,7 +2233,7 @@ impl Lowering<'_, '_> {
                 _ => {
                     self.prove_shape(state, owner, shape, field.shape, exit);
                     let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                        properties_len, *field, PackedAccess::Reload, exit)?;
+                        *field, PackedAccess::Reload, exit)?;
                     if let Some(owner) = owner {
                         state.layouts.insert((owner, field.shape), projection);
                     }
@@ -2255,7 +2254,7 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, member, exit);
             let shortest = shapes.iter().copied().min_by_key(|field| field.storage_len).expect("a family has a shape");
             let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                properties_len, shortest, PackedAccess::Reload, exit)?;
+                shortest, PackedAccess::Reload, exit)?;
             return Some(projection.read(&mut self.builder, first.slot));
         }
         let join = self.builder.create_block();
@@ -2268,7 +2267,7 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(matched);
             let read = match field.holder {
                 None => CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    properties_len, *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
+                    *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
                 Some(holder) => self.holder_read(object, holder, *field, exit)?,
             };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
@@ -2342,12 +2341,10 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, present, exit);
         let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
         let start = self.ins().uextend(types::I64, start);
+        // The prototype's run lies inside the arena, as every live flat object's does
+        // (`object_slots::arena_range`).
         let entry = self.entry.as_ref().expect("entry facts");
         let properties = self.builder.use_var(entry.receiver.properties);
-        let properties_len = self.builder.use_var(entry.receiver.properties_len);
-        let end = self.ins().iadd_imm_u(start, field.storage_len as i64);
-        let inside = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, properties_len);
-        emit_js_guard(&mut self.builder, inside, exit);
         let index = self.ins().iadd_imm_u(start, i64::from(field.slot));
         let offset = self.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
         let address = self.ins().iadd(properties, offset);
@@ -2507,7 +2504,6 @@ impl Lowering<'_, '_> {
             self.builder.use_var(entry.receiver.inline),
         ));
         let properties = self.builder.use_var(entry.receiver.properties);
-        let properties_len = self.builder.use_var(entry.receiver.properties_len);
         let direct = self.builder.create_block();
         let general = self.builder.create_block();
         let done = self.builder.create_block();
@@ -2535,7 +2531,7 @@ impl Lowering<'_, '_> {
             None => {
                 let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
                 CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    properties_len, plan, PackedAccess::Reload, general)?
+                    plan, PackedAccess::Reload, general)?
             }
         };
         let address = projection.arena_address(&mut self.builder, field.slot, general)?;
@@ -2774,7 +2770,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aliased_own_fields_share_the_complete_storage_bound() {
+    fn own_field_reads_take_no_arena_bound() {
         let program = crate::Engine::specialize(
             include_str!("../../../tests/fixtures/own-slot-proofs.js"), "own-slot-proofs.js",
         ).unwrap();
@@ -2801,7 +2797,9 @@ mod tests {
                 matches!(native.dfg.insts[length], ir::InstructionData::Load { offset, .. }
                     if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, property_len) as i32)
             }).count();
-        assert_eq!(bounds, 1, "two aliased own fields share one complete arena bound:\n{native}");
+        // A live object's run lies inside the arena (`object_slots::arena_range`): neither read
+        // compares it with the arena's length.
+        assert_eq!(bounds, 0, "own field reads take no arena bound:\n{native}");
     }
 
     #[test]

@@ -5803,10 +5803,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, header.shape, i64::from(load.shape));
         self.guard(pc, wrong_shape);
         let base = self.word(heap_base + 1);
-        let length = self.word(heap_base + 2);
         let exit = self.exit_block(pc);
         let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-        let checked = CheckedObject::prove(&mut self.body.builder, header.record, header.inline, base, length,
+        let checked = CheckedObject::prove(&mut self.body.builder, header.record, header.inline, base,
             load, access, exit)?;
         let current = self.body.builder.current_block().expect("checked projection");
         self.chains.insert(current, chain);
@@ -5836,7 +5835,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let exit = self.exit_block(pc);
             let header = ObjectHeader::prove(&mut self.body.builder, receiver, records, exit);
             let base = self.word(heap_base + 1);
-            let length = self.word(heap_base + 2);
             let join = self.body.builder.create_block();
             let bits = self.body.builder.append_block_param(join, types::I64);
             for load in loads {
@@ -5848,7 +5846,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.seal_block(matched);
                 let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
                 let object = CheckedObject::prove(&mut self.body.builder, header.record, header.inline,
-                    base, length, *load, access, exit)?;
+                    base, *load, access, exit)?;
                 let value = object.read(&mut self.body.builder, load.slot);
                 self.body.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
                 self.body.builder.switch_to_block(next);

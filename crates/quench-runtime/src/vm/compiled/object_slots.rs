@@ -179,19 +179,16 @@ enum Slots {
     Dynamic { packed: PackedValue, inline: ir::Value, arena: ir::Value },
 }
 
-/// The address of the first arena slot of the object whose payload word is `payload`, its
-/// `storage_len` slots proved inside the arena of `base` and `length`; else `miss`.
-fn arena_range(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, length: ir::Value,
-    storage_len: usize, miss: ir::Block) -> ir::Value {
+/// The address of the first arena slot of the object whose payload word is `payload`, in the
+/// arena at `base`. A live object of an exact shape with flat storage holds its run inside the
+/// arena: allocation places it there, compaction moves position and base together, and native
+/// code reads the base again after anything that allocates and spans no collection. So the
+/// range needs no bound.
+fn arena_range(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> ir::Value {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let start = builder.ins().ireduce(types::I32, payload);
     let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
     let start = builder.ins().uextend(types::I64, start);
-    let end = builder.ins().iadd_imm_u(start, storage_len as i64);
-    let inside = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, length);
-    let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
-    let valid = builder.ins().band(inside, present);
-    emit_js_guard(builder, valid, miss);
     let offset = builder.ins().imul_imm_u(start, layout.property_value_size as i64);
     builder.ins().iadd(base, offset)
 }
@@ -229,7 +226,6 @@ impl CheckedObject {
         record: ir::Value,
         inline: ir::Value,
         base: ir::Value,
-        length: ir::Value,
         plan: NativeFieldLoad,
         access: PackedAccess,
         miss: ir::Block,
@@ -255,7 +251,7 @@ impl CheckedObject {
             builder.ins().brif(inline, join, &[ir::BlockArg::Value(none)], arena_block, &[]);
             builder.switch_to_block(arena_block);
             builder.seal_block(arena_block);
-            let address = arena_range(builder, payload, base, length, plan.storage_len, miss);
+            let address = arena_range(builder, payload, base);
             builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
             builder.switch_to_block(join);
             builder.seal_block(join);
@@ -263,7 +259,7 @@ impl CheckedObject {
         } else {
             let flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
             emit_js_guard(builder, flat, miss);
-            Slots::Arena(arena_range(builder, payload, base, length, plan.storage_len, miss))
+            Slots::Arena(arena_range(builder, payload, base))
         };
         Some(Self { slots, storage_len: plan.storage_len })
     }
