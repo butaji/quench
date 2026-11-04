@@ -1200,7 +1200,7 @@ impl Heap {
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
         let cell = match cell {
-            Cell::Object(object) => match self.object_records.try_insert(object) {
+            Cell::Object(object) => match self.try_publish_object_record(object) {
                 Ok(record_id) => {
                     let value = Value::direct_object(record_id);
                     #[cfg(feature = "profile-memory")]
@@ -1296,10 +1296,6 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        if self.properties.tracks() {
-            let length = self.properties.shape_length(header.shape());
-            self.properties.note_shape_values(header.shape(), &inline[..length.min(INLINE_PROPERTY_COUNT)]);
-        }
         let Some(object) = Object::from_inline_header(header, inline) else {
             return self.alloc_object_with_properties_of_header(header, prototype, inline);
         };
@@ -1319,7 +1315,6 @@ impl Heap {
     ) -> Value {
         debug_assert!(values.len() > INLINE_PROPERTY_COUNT);
         self.properties.assert_shape_length(header.shape(), values.len());
-        self.properties.note_shape_values(header.shape(), values);
         match self.properties.run_of(values) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
             None => self.alloc_object_with_properties(prototype, header.shape(), values),
@@ -1371,7 +1366,7 @@ impl Heap {
     fn insert_object_record(&mut self, object: Object) -> Value {
         self.allocated += 1;
         self.total_allocations += 1;
-        match self.object_records.try_insert(object) {
+        match self.try_publish_object_record(object) {
             Ok(record_id) => {
                 let value = Value::direct_object(record_id);
                 #[cfg(feature = "profile-memory")]
@@ -1380,6 +1375,16 @@ impl Heap {
             }
             Err(object) => self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells()),
         }
+    }
+
+    /// Admit initial contents before a new record becomes visible to native readers.
+    /// Planned constructors and generic Object/Cell publication share this boundary.
+    #[inline(always)]
+    fn try_publish_object_record(&mut self, object: Object) -> Result<u32, Object> {
+        if self.properties.tracks() {
+            join_object_slot_values(&object, &mut self.properties);
+        }
+        self.object_records.try_insert(object)
     }
 
     /// `alloc(Cell::Function(..))` without boxing the function first: a function record
@@ -1608,7 +1613,6 @@ impl Heap {
         values: &[Value],
     ) -> Value {
         self.properties.assert_shape_length(shape, values.len());
-        self.properties.note_shape_values(shape, values);
         if values.len() <= INLINE_PROPERTY_COUNT
             && let Some(object) = Object::with_inline_values(proto, shape, values)
         {
@@ -1752,13 +1756,7 @@ impl Heap {
         if !self.properties.tracks() { return; }
         let properties = &mut self.properties;
         self.object_records.for_each_live(|_, object| {
-            let shape = object.exact_shape();
-            if shape != object.shape() { return; }
-            for slot in 0..properties.shape_length(shape) {
-                // SAFETY: the live record's exact, non-dictionary shape holds the slot.
-                let value = unsafe { read_exact_slot(object, properties, slot) };
-                if !value.is_deleted() { properties.note_slot_value(shape, slot, value); }
-            }
+            join_object_slot_values(object, properties);
         });
     }
     /// Slide every live arena range down over released ones, in offset order.
@@ -4402,6 +4400,18 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
+}
+
+/// Join an initialized object's contents at publication or a new live-heap census.
+/// Dictionary properties do not participate in shape-owned slot observations.
+fn join_object_slot_values(object: &Object, properties: &mut ValueArena) {
+    let shape = object.exact_shape();
+    if shape != object.shape() { return; }
+    for slot in 0..properties.shape_length(shape) {
+        // SAFETY: the initialized object's exact, non-dictionary shape holds the slot.
+        let value = unsafe { read_exact_slot(object, properties, slot) };
+        if !value.is_deleted() { properties.note_slot_value(shape, slot, value); }
+    }
 }
 
 /// Reads a live slot outside dictionary storage, shared by execution and type admission.

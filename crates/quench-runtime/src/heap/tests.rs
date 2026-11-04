@@ -1573,3 +1573,29 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
     unsafe { pointer.write(child); }
     assert_eq!(heap.unrepresented_slots(), 0);
 }
+
+#[test]
+fn object_publication_admits_preinitialized_slots_after_census() {
+    use crate::typed_ir::Type;
+    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 3] = [
+        ("object", Heap::alloc_object),
+        ("flagged-prototype", Heap::alloc_object_under_flagged_prototype),
+        ("cell", |heap, object| heap.alloc(Cell::Object(object))),
+    ];
+    for (publisher, publish) in publishers {
+        for storage in ["inline", "arena", "extras"] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None)]);
+            assert_eq!(heap.slot_type(1, 0), Type::NEVER);
+            let value = if storage == "arena" { Value::number(0.5) } else { Value::NULL };
+            let (properties, inline) = heap.initial_object_storage(1, &[value], storage != "arena");
+            let mut object = Object::with_property_storage(Value::NULL, properties, inline);
+            if storage == "extras" { object.set_extensible(false); }
+            let published = publish(&mut heap, object);
+            assert!(published.direct_object_index().is_some());
+            assert_eq!(heap.slot_type(1, 0), Type::immediate(value), "{publisher}/{storage}");
+            assert_eq!(heap.unrepresented_slots(), 0, "{publisher}/{storage}");
+            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+        }
+    }
+}
