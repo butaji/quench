@@ -40,6 +40,8 @@ gc-tuning = []
 reference = []
 # Test-only measurements of shared primitives; workflow and evidence: Linear TOD-9.
 bench-primitives = []
+# Opt-in allocator routing for direct backing-growth measurements only.
+bench-alloc-routes = ["bench-primitives"]
 # Recompiles each replayable function after its program loads and logs any difference
 # (`QUENCH_REPLAY_LOG`); verification builds only.
 verify-replay = []
@@ -108,6 +110,7 @@ syn = { version = "2", features = ["full", "visit-mut"] }
 phf = { version = "0.14", features = ["macros"] }
 
 [dev-dependencies]
+quench-alloc = { path = "../quench-alloc" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
