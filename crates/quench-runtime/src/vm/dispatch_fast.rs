@@ -592,6 +592,16 @@ impl LaneLeaves {
         }
     }
 
+    /// These and `other`'s exits together.
+    fn union(self, other: Self) -> Self {
+        other.exits().fold(self, Self::with)
+    }
+
+    /// Whether every exit these name is one of `other`'s: nothing new where they are few.
+    fn within(&self, other: &Self) -> bool {
+        matches!(self, Self::Few(_)) && self.exits().all(|exit| other.exits().any(|known| known == exit))
+    }
+
     /// The exits these name: none where scattered.
     fn exits(&self) -> impl Iterator<Item = super::compiled::LaneExit> + '_ {
         let exits: &[_] = match self { Self::Few(exits) => exits, Self::Scattered => &[] };
@@ -782,12 +792,13 @@ impl LaneView {
         if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES {
             return;
         }
-        // A body that left at few places takes them generically next (`specialize_lane_body`);
-        // one that left at the same places again, or left from many and never completed,
-        // gains nothing from another compile.
-        let feedback = leaves_at.get();
-        let unmoved = (feedback != LaneLeaves::NONE && feedback == *stuck)
-            || (feedback == LaneLeaves::Scattered && !completed.get());
+        // A body that left at few places takes them, and its predecessors', generically next
+        // (`specialize_lane_body`); one that left only where they did, or left from many
+        // places and never completed, gains nothing from another compile.
+        let leaves = leaves_at.get();
+        let unmoved = (leaves != LaneLeaves::NONE && leaves.within(stuck))
+            || (leaves == LaneLeaves::Scattered && !completed.get());
+        let feedback = stuck.union(leaves);
         let recompiles = *recompiles + 1;
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };

@@ -21718,9 +21718,12 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
     // A method reading a captured constructor's own field (a static method) leaves its first
     // body at that read on every run; the next takes the read through the VM's cache
     // (`Vm::lane_unit_fields`), and a replaced static method reads as the interpreter reads.
+    // Inside a function, as a CommonJS module's code is, the constructor is a capture.
     let source = r#"
+     (function () {
       function Strength(v) { this.v = v; }
       Strength.stronger = function (a, b) { return a.v > b.v; };
+      Strength.weakestOf = function (a, b) { return this.stronger(a, b) ? b : a; };
       Strength.WEAK = new Strength(1);
       function Constraint(s) { this.strength = s; }
       Constraint.prototype.pick = function (other) { return Strength.stronger(this.strength, other) ? 1 : 2; };
@@ -21729,7 +21732,9 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
       for (let r = 0; r < 4000; r++) for (let i = 0; i < cs.length; i++) total += cs[i].pick(Strength.WEAK);
       Strength.stronger = function (a, b) { return a.v < b.v; };
       for (let r = 0; r < 500; r++) for (let i = 0; i < cs.length; i++) total += cs[i].pick(Strength.WEAK);
+      for (let r = 0; r < 4000; r++) for (let i = 0; i < cs.length; i++) total += Strength.weakestOf(cs[i].strength, Strength.WEAK).v;
       globalThis.answer = total;
+     })();
     "#;
     let program = Engine::specialize(source, "lane-static-methods.js").unwrap();
     let mut answers = Vec::new();
@@ -21743,7 +21748,39 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
     }
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(47500.0); 2]);
+    assert_eq!(answers, [Some(163500.0); 2]);
+}
+
+#[test]
+fn lane_loose_equality_decides_records_and_nullish_only() {
+    // A lane body decides `==` and `!=` of object records, `null` and `undefined` and
+    // Numbers natively; strings, Booleans, functions and objects converted to primitives
+    // leave, and every pair reads what the interpreter reads.
+    let source = r#"
+      function P(v) { this.v = v; }
+      const a = new P(1), b = new P(2), arr = [1], f = function () {};
+      const values = [a, b, arr, null, undefined, 0, 1, 1.5, NaN, "1", "", true, false, f, { valueOf() { return 1; } }];
+      function eq(x, y) { return x == y ? 1 : 0; }
+      function ne(x, y) { if (x != y) return 2; return 3; }
+      let total = 0;
+      for (let r = 0; r < 300; r++)
+        for (let i = 0; i < values.length; i++)
+          for (let j = 0; j < values.length; j++) total += eq(values[i], values[j]) * (i + 1) + ne(values[i], values[j]) * (j + 1);
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-loose-equality.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1290000.0); 2]);
 }
 
 #[test]

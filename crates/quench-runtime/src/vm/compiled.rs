@@ -7139,7 +7139,14 @@ impl<H: Host> Vm<H> {
         // inlining, down to the function alone.
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let (unit, region, fields, sites) = loop {
-            let unit = lane_unit::unit(function, body, budget, targets, &|callee| program.function_get(callee as usize))?;
+            // A call the body left at takes no inlined callee: its call binds what the inlined
+            // frame could not (a receiver its callee's `this` proofs do not hold for).
+            let called = |callee: u32, pc: u32| if callee == function && generic.contains(&LaneExit::At(pc as usize)) {
+                Vec::new()
+            } else {
+                targets(callee, pc)
+            };
+            let unit = lane_unit::unit(function, body, budget, &called, &|callee| program.function_get(callee as usize))?;
             let loop_entry = match loop_header {
                 Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
                 None => None,

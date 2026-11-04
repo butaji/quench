@@ -1377,9 +1377,8 @@ impl Lowering<'_, '_> {
     /// Whether the numeric relation `operator` holds of `left` and `right`, as an `i8`: in
     /// int32 where both are proved int32, else in Float64, each operand proved a Number or
     /// leaving at `pc`; `None` for any other operator or operand.
-    /// A relation's predicate: `instanceof` by the prototype chain (`instance_of`), strict
-    /// (in)equality of operands not both Numbers by identity (`strict_equality`), every other
-    /// relation of Numbers.
+    /// A relation's predicate: `instanceof` by the prototype chain (`instance_of`),
+    /// (in)equality of operands not both Numbers (`equality`), every other relation of Numbers.
     fn relation(&mut self, state: &mut State, pc: u32, operator: u32,
         left: Operand, right: Operand) -> Option<ir::Value> {
         let numbers = [left, right].iter().all(|operand| super::facts::operand_type(
@@ -1389,8 +1388,8 @@ impl Lowering<'_, '_> {
             return self.instance_of(state, pc, left, right);
         }
         match super::operations::equality_operator(operator) {
-            Some((true, negated)) if !numbers && self.operand_supported(left) && self.operand_supported(right) => {
-                let equal = self.strict_equality(state, pc, left, right)?;
+            Some((strict, negated)) if !numbers && self.operand_supported(left) && self.operand_supported(right) => {
+                let equal = self.equality(state, pc, left, right, strict)?;
                 Some(if negated { self.ins().bxor_imm_u(equal, 1) } else { equal })
             }
             _ => self.number_relation(state, pc, operator, left, right),
@@ -1508,10 +1507,14 @@ impl Lowering<'_, '_> {
         Some(self.ins().ireduce(types::I8, holds))
     }
 
-    /// `Vm::strict_equal` of two tagged operands: identical bits are equal unless NaN, two
-    /// Numbers compare as Numbers, a pair of strings or of legacy cells (BigInts) of one
-    /// family by contents (`lane_strict_equal_cells`), and every other pair is unequal.
-    fn strict_equality(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand) -> Option<ir::Value> {
+    /// `Vm::strict_equal` (`strict`) or `==` of two tagged operands. Identical bits are equal
+    /// unless NaN, and two Numbers compare as Numbers. Strictly, a pair of strings or of
+    /// legacy cells (BigInts) of one family compares by contents (`lane_strict_equal_cells`)
+    /// and every other pair is unequal. Loosely, without conversions only: `null` and
+    /// `undefined` equal each other and no object record, and two distinct object records are
+    /// unequal; any other pair (a string, a Boolean, a function, which may be the IsHTMLDDA
+    /// object) leaves at `pc`.
+    fn equality(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
         use crate::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
@@ -1538,6 +1541,31 @@ impl Lowering<'_, '_> {
         let number_equal = self.ins().fcmp(FloatCC::Equal, left_value, right_value);
         self.ins().jump(join, &[ir::BlockArg::Value(number_equal)]);
         self.builder.switch_to_block(others);
+        if !strict {
+            let nullish = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+                let null = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+                let undefined = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+                builder.ins().bor(null, undefined)
+            };
+            let record = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+                let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+                let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+                builder.ins().bor(object, array)
+            };
+            let (left_nullish, right_nullish) = (nullish(&mut self.builder, left), nullish(&mut self.builder, right));
+            let (left_record, right_record) = (record(&mut self.builder, left), record(&mut self.builder, right));
+            // Each side nullish or an object record: decided without a conversion.
+            let left_known = self.ins().bor(left_nullish, left_record);
+            let right_known = self.ins().bor(right_nullish, right_record);
+            let known = self.ins().band(left_known, right_known);
+            emit_js_guard(&mut self.builder, known, exit);
+            // Distinct bits: equal only as `null` and `undefined`.
+            let nullish_pair = self.ins().band(left_nullish, right_nullish);
+            self.ins().jump(join, &[ir::BlockArg::Value(nullish_pair)]);
+            self.builder.switch_to_block(join);
+            return Some(equal);
+        }
         let family = self.ins().band_imm_u(left, ValueLayout::HEAP_FAMILY_MASK as i64);
         let right_family = self.ins().band_imm_u(right, ValueLayout::HEAP_FAMILY_MASK as i64);
         let one_family = self.ins().icmp(IntCC::Equal, family, right_family);
