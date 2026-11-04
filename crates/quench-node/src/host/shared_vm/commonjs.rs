@@ -3138,7 +3138,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                 }
             };
             if parent.is_none() {
-                crate::host::resident_pages::release_read_only_code_and_data();
+                crate::host::resident_pages::release_after_entry_compile();
                 crate::host::resident_pages::release_free_heap_pages();
                 crate::host::resident_pages::quench_entry_compiled();
             }
