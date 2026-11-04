@@ -1,5 +1,5 @@
 //! Unswitch an invariant conditional polling effect. Only the loop is copied;
-//! escaping SSA values join at its existing exit, leaving cold recovery shared.
+//! escaping SSA values join at their existing exits, leaving cold recovery shared.
 //! One uniform effect choice per loop keeps code growth linear.
 
 use crate::{bitset::CompoundBitSet, cursor::{Cursor, FuncCursor}, dominator_tree::DominatorTree,
@@ -33,8 +33,10 @@ fn gate(f: &Function, cfg: &ControlFlowGraph, used: &CompoundBitSet, inst: Inst)
     None
 }
 
-struct Plan { header: Block, blocks: Vec<Block>, inside: CompoundBitSet, exit: Block,
-    condition: Value, gates: Vec<Gate>, escapes: Vec<Value> }
+struct Exit { block: Block, escapes: Vec<Value> }
+
+struct Plan { header: Block, blocks: Vec<Block>, inside: CompoundBitSet, exits: Vec<Exit>,
+    condition: Value, gates: Vec<Gate> }
 
 impl Plan {
     fn find(f: &Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis, used: &CompoundBitSet, lp: Loop) -> Option<Self> {
@@ -54,7 +56,7 @@ impl Plan {
         if gates.iter().any(|(value, gate)| *value != condition || gate.fast_truth != first.fast_truth
             || !inside.contains(gate.fast.index()) || !inside.contains(gate.slow.index())) { return None; }
         let gates = gates.into_iter().map(|(_, gate)| gate).collect();
-        let mut exit = None;
+        let mut exits = Vec::new();
         let mut defined = CompoundBitSet::<usize>::with_capacity(f.dfg.num_values());
         for &block in &blocks {
             for &value in f.dfg.block_params(block) { defined.insert(value.index()); }
@@ -65,47 +67,56 @@ impl Plan {
                 for branch in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables) {
                     let target = branch.block(&f.dfg.value_lists);
                     if !inside.contains(target.index()) {
-                        if exit.is_some_and(|exit| exit != target) { return None; }
-                        exit = Some(target);
+                        if !exits.contains(&target) { exits.push(target); }
                     }
                 }
             }
         }
-        let exit = exit?;
-        // Explicit exit arguments already distinguish a zero-trip predecessor
-        // from either loop copy. Implicit escaping values still require the
-        // definition/exit dominance proofs below before adding join parameters.
-        let mut escaping = CompoundBitSet::<usize>::with_capacity(f.dfg.num_values());
+        if exits.is_empty() { return None; }
+        // Explicit edge arguments already distinguish loop copies and zero-trip
+        // predecessors. Implicit uses need a dedicated, dominating exit join.
+        let mut escapes: Vec<CompoundBitSet> = exits.iter()
+            .map(|_| CompoundBitSet::with_capacity(f.dfg.num_values())).collect();
         for block in f.layout.blocks().filter(|block| !inside.contains(block.index())) {
             for inst in f.layout.block_insts(block) {
                 for value in f.dfg.inst_values(inst).map(|value| f.dfg.resolve_aliases(value)) {
-                    if defined.contains(value.index()) {
-                        if !dom.block_dominates(exit, block) { return None; }
-                        let definition = match f.dfg.value_def(value) { ValueDef::Param(block, _) => block,
-                            ValueDef::Result(inst, _) => f.layout.inst_block(inst)?, _ => return None };
-                        if !dom.block_dominates(definition, exit) { return None; }
-                        escaping.insert(value.index());
-                    }
+                    if !defined.contains(value.index()) { continue; }
+                    let definition = match f.dfg.value_def(value) { ValueDef::Param(block, _) => block,
+                        ValueDef::Result(inst, _) => f.layout.inst_block(inst)?, _ => return None };
+                    let mut candidates = exits.iter().enumerate().filter(|(_, exit)|
+                        dom.block_dominates(**exit, block) && dom.block_dominates(definition, **exit)
+                            && cfg.pred_iter(**exit).all(|edge| inside.contains(edge.block.index())));
+                    let (index, _) = candidates.next()?;
+                    if candidates.next().is_some() { return None; }
+                    escapes[index].insert(value.index());
                 }
             }
         }
-        Some(Self { header, blocks, inside, exit, condition, gates,
-            escapes: escaping.iter().map(Value::new).collect() })
+        let exits = exits.into_iter().zip(escapes).map(|(block, values)|
+            Exit { block, escapes: values.iter().map(Value::new).collect() }).collect();
+        Some(Self { header, blocks, inside, exits, condition, gates })
     }
 
-    fn apply(self, f: &mut Function, cfg: &ControlFlowGraph) {
+    fn apply(self, f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree) {
         f.dfg.resolve_all_aliases();
-        let mut joins = SecondaryMap::<Value, Option<Value>>::with_capacity(f.dfg.num_values());
-        for &value in &self.escapes { let ty = f.dfg.value_type(value); joins[value] = Some(f.dfg.append_block_param(self.exit, ty)); }
-        let outside: Vec<_> = f.layout.blocks().filter(|block| !self.inside.contains(block.index())).collect();
-        for block in outside { for inst in f.layout.block_insts(block).collect::<Vec<_>>() {
-            f.dfg.map_inst_values(inst, |value| joins[value].unwrap_or(value));
-        }}
+        for exit in &self.exits {
+            if exit.escapes.is_empty() { continue; }
+            let mut joins = SecondaryMap::<Value, Option<Value>>::with_capacity(f.dfg.num_values());
+            for &value in &exit.escapes {
+                let ty = f.dfg.value_type(value);
+                joins[value] = Some(f.dfg.append_block_param(exit.block, ty));
+            }
+            let outside: Vec<_> = f.layout.blocks().filter(|block|
+                !self.inside.contains(block.index()) && dom.block_dominates(exit.block, *block)).collect();
+            for block in outside { for inst in f.layout.block_insts(block).collect::<Vec<_>>() {
+                f.dfg.map_inst_values(inst, |value| joins[value].unwrap_or(value));
+            }}
+        }
         for &block in &self.blocks { for inst in f.layout.block_insts(block).collect::<Vec<_>>() {
             let dfg = &mut f.stencil.dfg;
             for branch in dfg.insts[inst].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables) {
-                if branch.block(&dfg.value_lists) == self.exit {
-                    for &value in &self.escapes { branch.append_argument(value, &mut dfg.value_lists); }
+                if let Some(exit) = self.exits.iter().find(|exit| exit.block == branch.block(&dfg.value_lists)) {
+                    for &value in &exit.escapes { branch.append_argument(value, &mut dfg.value_lists); }
                 }
             }
         }}
@@ -120,6 +131,7 @@ impl Plan {
             }
             for inst in f.layout.block_insts(block).collect::<Vec<_>>() {
                 let copy_inst = f.dfg.clone_inst(inst); f.layout.append_inst(copy_inst, copy);
+                f.debug_tags.clone_tags(inst, copy_inst);
                 let location = f.srcloc(inst); f.set_srcloc(copy_inst, location); instructions[inst] = Some(copy_inst);
                 for (&old, &new) in f.dfg.inst_results(inst).iter().zip(f.dfg.inst_results(copy_inst)) { values[old] = Some(new); }
             }
@@ -162,7 +174,7 @@ pub(crate) fn run(f: &mut Function) -> bool {
             for value in f.dfg.inst_values(inst) { used.insert(f.dfg.resolve_aliases(value).index()); }
         }}
         let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, &cfg, &dom, &loops, &used, lp)) else { break; };
-        plan.apply(f, &cfg); changed = true;
+        plan.apply(f, &cfg, &dom); changed = true;
     }
     for specialization in core::mem::take(&mut f.effect_specializations) {
         for (inst, truth) in specialization.gates {
@@ -208,7 +220,7 @@ mod tests {
         cursor.insert_block(pre); cursor.ins().jump(header, &[zero.into(), one.into()]);
         cursor.insert_block(other); cursor.ins().jump(header, &[zero.into(), zero.into()]);
         cursor.insert_block(header);
-        let condition = if invariant { private } else { cursor.ins().icmp_imm(IntCC::Equal, count, 0) };
+        let condition = if invariant { private } else { cursor.ins().icmp_imm_s(IntCC::Equal, count, 0) };
         if reverse { cursor.ins().brif(condition, poll, &[], body, &[]); }
         else { cursor.ins().brif(condition, body, &[], poll, &[]); }
         cursor.insert_block(poll); let loaded = cursor.ins().atomic_load(types::I8, MemFlagsData::trusted(), pointer);
@@ -243,6 +255,103 @@ mod tests {
         }
     }
 
+    fn add_early_exit(f: &mut Function, merge: bool) {
+        let header = f.layout.blocks().find(|block| f.dfg.block_params(*block).len() == 2).unwrap();
+        let count = f.dfg.block_params(header)[0];
+        let sum = f.dfg.block_params(header)[1];
+        let body = f.layout.blocks().find(|block| f.layout.first_inst(*block)
+            .is_some_and(|inst| f.dfg.insts[inst].opcode() == Opcode::Iadd)).unwrap();
+        let first = f.layout.first_inst(body).unwrap();
+        let rest = f.dfg.make_block(); f.layout.split_block(rest, first);
+        let early = f.dfg.make_block(); f.layout.append_block(early);
+        let original_exit = f.layout.blocks().find(|block| f.layout.last_inst(*block)
+            .is_some_and(|inst| f.dfg.insts[inst].opcode() == Opcode::Return)).unwrap();
+        let mut cursor = FuncCursor::new(f); cursor.goto_bottom(body);
+        let stop = cursor.ins().icmp_imm_s(IntCC::Equal, count, 3);
+        cursor.ins().brif(stop, early, &[], rest, &[]);
+        cursor.goto_bottom(early);
+        let value = cursor.ins().bxor(count, sum); cursor.ins().return_(&[value]);
+        if merge {
+            let joined = cursor.func.dfg.make_block(); cursor.func.layout.append_block(joined);
+            for exit in [early, original_exit] {
+                let ret = cursor.func.layout.last_inst(exit).unwrap();
+                cursor.func.replace(ret).jump(joined, &[]);
+            }
+            cursor.goto_bottom(joined); cursor.ins().return_(&[count]);
+        }
+    }
+
+    #[test]
+    fn distinct_recovery_exits_join_their_own_typed_values() {
+        let mut f = fixture(true, false, false); add_early_exit(&mut f, false);
+        let header = f.layout.blocks().find(|block| f.dfg.block_params(*block).len() == 2).unwrap();
+        let first = f.layout.first_inst(header).unwrap();
+        let mut cursor = FuncCursor::new(&mut f); cursor.goto_inst(first);
+        let point = cursor.ins().sequence_point();
+        let tags = [ir::DebugTag::User(0)];
+        cursor.func.debug_tags.set(point, tags.clone());
+        let flags = crate::settings::Flags::new(crate::settings::builder());
+        crate::verifier::verify_function(&f, &flags).unwrap();
+        assert!(run(&mut f));
+        crate::verifier::verify_function(&f, &flags).unwrap_or_else(|error| panic!("{error}\n{f}"));
+        let exits: Vec<_> = f.layout.blocks().filter(|block| f.layout.last_inst(*block)
+            .is_some_and(|inst| f.dfg.insts[inst].opcode() == Opcode::Return)).collect();
+        assert_eq!(exits.len(), 2);
+        let points: Vec<_> = f.layout.blocks().flat_map(|block| f.layout.block_insts(block))
+            .filter(|inst| f.dfg.insts[*inst].opcode() == Opcode::SequencePoint).collect();
+        assert_eq!(points.len(), 2);
+        for point in points { assert_eq!(f.debug_tags.get(point), tags); }
+        for exit in exits {
+            assert_eq!(f.dfg.block_params(exit).len(), 2);
+            assert!(f.dfg.block_params(exit).iter().all(|value| f.dfg.value_type(*value) == types::I32));
+        }
+        assert!(!run(&mut f));
+    }
+
+    #[test]
+    fn merging_implicit_uses_need_an_explicit_ssa_join() {
+        let mut f = fixture(true, false, false); add_early_exit(&mut f, true);
+        crate::verifier::verify_function(&f, &crate::settings::Flags::new(crate::settings::builder())).unwrap();
+        let original = f.clone();
+        assert!(!run(&mut f)); assert_eq!(f, original);
+    }
+
+    #[test]
+    fn explicit_exit_arguments_preserve_zero_trip_predecessors() {
+        let mut f = fixture(true, false, false); add_early_exit(&mut f, false);
+        let exit = f.layout.blocks().find(|block| f.layout.last_inst(*block)
+            .is_some_and(|inst| f.dfg.insts[inst].opcode() == Opcode::Return)).unwrap();
+        let result = f.layout.first_inst(exit).unwrap();
+        let inputs = f.dfg.inst_args(result).to_vec();
+        let params: Vec<_> = inputs.iter().map(|value| {
+            let ty = f.dfg.value_type(*value); f.dfg.append_block_param(exit, ty)
+        }).collect();
+        f.dfg.map_inst_values(result, |value| params[inputs.iter().position(|input| *input == value).unwrap()]);
+        let cfg = ControlFlowGraph::with_function(&f);
+        for edge in cfg.pred_iter(exit) {
+            let dfg = &mut f.stencil.dfg;
+            for branch in dfg.insts[edge.inst].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables) {
+                if branch.block(&dfg.value_lists) == exit {
+                    for &value in &inputs { branch.append_argument(value, &mut dfg.value_lists); }
+                }
+            }
+        }
+        let entry = f.layout.entry_block().unwrap();
+        let bound = f.dfg.block_params(entry)[2];
+        let entry_branch = f.layout.last_inst(entry).unwrap();
+        let other = f.dfg.insts[entry_branch].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables)[1]
+            .block(&f.dfg.value_lists);
+        let zero_trip = f.layout.last_inst(other).unwrap();
+        f.replace(zero_trip).jump(exit, &[bound.into(), bound.into()]);
+        let original_zero_trip = f.dfg.insts[zero_trip];
+        let flags = crate::settings::Flags::new(crate::settings::builder());
+        crate::verifier::verify_function(&f, &flags).unwrap();
+        assert!(run(&mut f));
+        crate::verifier::verify_function(&f, &flags).unwrap_or_else(|error| panic!("{error}\n{f}"));
+        assert_eq!(f.dfg.block_params(exit).len(), params.len());
+        assert_eq!(f.dfg.insts[zero_trip], original_zero_trip);
+    }
+
     #[test]
     fn changing_conditions_and_observed_atomic_values_are_not_polling_contracts() {
         for (invariant, observed) in [(false, false), (true, true)] {
@@ -263,7 +372,7 @@ mod tests {
         let rest = f.dfg.make_block(); f.layout.split_block(rest, first);
         let poll = f.dfg.make_block(); f.layout.append_block(poll);
         let last = f.layout.last_inst(entry).unwrap(); let mut cursor = FuncCursor::new(&mut f); cursor.goto_inst(last);
-        let condition = cursor.ins().icmp_imm(IntCC::SignedGreaterThan, bound, 17);
+        let condition = cursor.ins().icmp_imm_s(IntCC::SignedGreaterThan, bound, 17);
         cursor.goto_bottom(body); cursor.ins().brif(condition, rest, &[], poll, &[]);
         cursor.goto_bottom(poll); cursor.ins().atomic_load(types::I8, MemFlagsData::trusted(), pointer); cursor.ins().jump(rest, &[]);
         let original = f.clone(); assert!(!run(&mut f)); assert_eq!(f, original);
@@ -279,7 +388,7 @@ mod tests {
         }).unwrap();
         let bound = f.dfg.block_params(entry)[2]; let last = f.layout.last_inst(entry).unwrap();
         let mut cursor = FuncCursor::new(f); cursor.goto_inst(last);
-        let query = cursor.ins().icmp_imm(IntCC::Equal, bound, 0);
+        let query = cursor.ins().icmp_imm_s(IntCC::Equal, bound, 0);
         let ValueDef::Result(proof, _) = cursor.func.dfg.value_def(query) else { unreachable!() };
         cursor.func.effect_specializations.push(ir::function::EffectSpecialization { proof, gates: alloc::vec![(gate, false)] });
         (proof, gate)
