@@ -812,6 +812,12 @@ impl LaneView {
         }
     }
 
+    /// Whether it has no body yet and counts entries toward one, its first or a next.
+    fn warming(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. })
+    }
+
     /// Whether its body left too often and specializes again at its next entry.
     fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
@@ -2162,6 +2168,10 @@ struct LaneContext<H: Host> {
     /// activation it made (`lane_body_call`), and the accumulator that record reads.
     callee_resume: Ip,
     callee_acc: Value,
+    /// Whether that callee left the lane because it has no body yet and is still warming
+    /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
+    /// specialization (`lane_leave_counts`).
+    callee_warming: bool,
 }
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
@@ -7399,7 +7409,9 @@ script_handler! {
         let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let resumed = lane_body_left(cx, r, own, method, exit);
         // Counted once nothing reads the body: a reoptimization moves it.
-        own.note_lane_body_end(exit);
+        if lane_leave_counts(cx, exit) {
+            own.note_lane_body_end(exit);
+        }
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value, true),
@@ -14206,11 +14218,14 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
+        let counts = lane_leave_counts(cx, exit);
+        let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let resumed = lane_body_left(cx, r, own, method, exit);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
-        own.note_lane_body_end(exit);
+        if counts {
+            own.note_lane_body_end(exit);
+        }
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value, true),
@@ -14691,7 +14706,7 @@ fn lane_body_activate<H: Host>(
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
     let vm = unsafe { vm(cx) };
     let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
-    let leave = |resume: Ip, acc: Value| {
+    let leave = move |resume: Ip, acc: Value| {
         unsafe {
             (*cx).callee_resume = resume;
             (*cx).callee_acc = acc;
@@ -14709,6 +14724,7 @@ fn lane_body_activate<H: Host>(
         lane_specialize(cx, own, target.function, None, false);
     }
     let Some(method) = own.lane_body().filter(|_| lane_body_admits(cx, own)) else {
+        unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
@@ -14716,7 +14732,9 @@ fn lane_body_activate<H: Host>(
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
     let resumed = lane_body_left(cx, registers, own, method, exit);
-    own.note_lane_body_end(exit);
+    if lane_leave_counts(cx, exit) {
+        own.note_lane_body_end(exit);
+    }
     match resumed {
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
         // A construction's completion yields its returned object or the receiver.
@@ -14729,6 +14747,15 @@ fn lane_body_activate<H: Host>(
             LANE_CALL_COMPLETED
         }
     }
+}
+
+/// Whether a body's run that ended at `exit` counts toward its retirement and
+/// reoptimization: a leave into a callee that only lacked a body while warming toward one
+/// (`LaneContext::callee_warming`) does not, as the next run may find the callee's body.
+fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::LaneExit) -> bool {
+    // SAFETY: the running lane's context, read and reset by the run that ended.
+    let warming = unsafe { std::mem::take(&mut (*cx).callee_warming) };
+    !(warming && exit == super::compiled::LaneExit::Callee)
 }
 
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
@@ -20144,6 +20171,7 @@ impl<H: Host> Vm<H> {
             this: self.frame_lane_this(*frame),
             resumed_acc: Slot::of(Value::UNDEFINED),
             callee_resume: std::ptr::null(),
+            callee_warming: false,
             callee_acc: Value::UNDEFINED,
             backedges_left: self
                 .lane_credits_backedges(code, program)
