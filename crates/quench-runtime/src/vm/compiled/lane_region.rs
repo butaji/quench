@@ -1333,7 +1333,7 @@ pub(super) fn lower(
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     lowering.require_object_latches(&instructions, &leaders, &loops);
-    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry, &loops)); }
+    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry, &loops, &leaders)); }
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     lowering.hoists = invariant_reads(unit, &loops);
@@ -1826,7 +1826,7 @@ impl Lowering<'_, '_> {
 
     /// The facts every run proves once at entry, before either start (`lower`'s loop entry).
     fn entry_facts(&mut self, instructions: &[WideInstruction], start: ir::Value,
-        loop_entry: Option<usize>, _loops: &[(usize, usize)]) -> Entry {
+        loop_entry: Option<usize>, _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
@@ -1963,7 +1963,7 @@ impl Lowering<'_, '_> {
         let fields = {
             let mut fields = smallvec::SmallVec::new();
             if matches!(self.helpers, LaneHelpers::Bound(..)) {
-                let mut uses = smallvec::SmallVec::<[(u16, bool); INLINE_FIELD_BINDINGS]>::new();
+                let mut uses = smallvec::SmallVec::<[(u16, bool, Type); INLINE_FIELD_BINDINGS]>::new();
                 for (pc, instruction) in instructions.iter().enumerate() {
                     if !self.facts.reached(pc) { continue; }
                     // A field chain names sequential sites, not alternatives for
@@ -1986,16 +1986,35 @@ impl Lowering<'_, '_> {
                     }
                     let repeated = _loops.iter().any(|&(header, back)| (header..=back).contains(&pc));
                     for site in sites {
-                        if let Some((_, reused)) = uses.iter_mut().find(|(known, _)| *known == site) {
+                        let writes = if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) {
+                            self.facts.before(pc, instruction.register_a(), instructions, _leaders,
+                                &self.program.constants, &writes, self.native_calls)
+                        } else if instruction.writes_current_this()
+                            && matches!(instruction.field_lookup(), Some(FieldLookup::Site(index))
+                                if self.program.field_sites[index].sink.is_some_and(|(_, sink)| sink == site)) {
+                            Type::ANY
+                        } else { Type::NEVER };
+                        if let Some((_, reused, domain)) = uses.iter_mut().find(|(known, _, _)| *known == site) {
                             *reused |= repeated;
-                        } else { uses.push((site, repeated)); }
+                            *domain = domain.join(writes);
+                        } else { uses.push((site, repeated, writes)); }
                     }
                 }
-                for (site, repeated) in uses {
+                for (site, repeated, writes) in uses {
                     let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                     let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit, object_table);
                     let slot = binding.slot.read(&mut self.builder);
                     binding.slot = FieldSlot::Bound(slot);
+                    if writes != Type::NEVER {
+                        let domain = crate::typed_ir::SlotType::from_type(writes);
+                        let encoded = self.builder.ins().iconst(types::I64, domain as i64);
+                        let shape = self.builder.ins().uextend(types::I64, binding.receiver);
+                        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldWriteAdmission);
+                        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
+                        let admitted = self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
+                        emit_js_guard(&mut self.builder, admitted, exit);
+                        binding.writes = Some(domain.ty());
+                    }
                     // The extra entry arithmetic pays for repeated receiver loads.
                     // A one-off access keeps its cheaper storage-plus-slot form.
                     if repeated {
@@ -3865,7 +3884,7 @@ impl Lowering<'_, '_> {
     fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, ty: Type, exit: ir::Block, header: Option<ObjectHeader>) {
         let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
             .find_map(|(known, binding)| (*known == site).then_some(*binding)));
-        if let Some(binding) = bound {
+        if let Some(binding) = bound.filter(|binding| binding.writes.is_some_and(|domain| ty.is_subtype(domain))) {
             let slow = self.builder.create_block();
             let done = self.builder.create_block();
             let packed = self.builder.create_block();

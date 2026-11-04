@@ -1566,6 +1566,7 @@ struct FieldSlotBinding {
     slot: FieldSlot,
     records: ir::Value,
     arena: FieldArena,
+    writes: Option<crate::typed_ir::Type>,
 }
 
 /// A bound slot moves invariant address arithmetic off the receiver-load chain.
@@ -1656,7 +1657,7 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
     let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
-        arena: FieldArena::Unbound { values, length } }
+        arena: FieldArena::Unbound { values, length }, writes: None }
 }
 
 // `packed_slot`, when requested, receives a proved own-slot address holding a narrow
@@ -1687,7 +1688,7 @@ fn emit_js_cached_field_slot(
     let record_id = builder.ins().uextend(types::I64, record_id);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
-    let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena } = binding;
+    let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
     let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
@@ -2206,9 +2207,9 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
 /// apply: the VM's own field-cache read and its logged own-field store, each the rule the
 /// lane's handlers run (`Vm::cached_field_hit`, `Vm::primary_own_field_store_hit`).
 macro_rules! lane_helper_inventory {
-    ($host:ident; $($name:ident => $address:expr),+ $(,)?) => {
+    ($host:ident; $($(#[$attr:meta])* $name:ident => $address:expr),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum LaneHelper { $($name),+ }
+        pub(super) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
             const COUNT: usize = [$(stringify!($name)),+].len();
             fn addresses<$host: Host>() -> &'static [*const (); Self::COUNT] {
@@ -2228,6 +2229,8 @@ lane_helper_inventory! { H;
     MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
     GlobalGet => lane_global_get::<H>,
+    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
+    FieldWriteAdmission => lane_field_write_admission::<H>,
 }
 
 unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
@@ -2287,6 +2290,7 @@ const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
 
 #[cfg(test)]
 thread_local! {
+    static FIELD_WRITE_ADMISSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -7496,6 +7500,15 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         _ => Value::DELETED.to_bits(),
     }
+}
+
+/// Admit a bound slot's write domain before any guest effect or raw store.
+unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
+    #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
+    let Some(domain) = crate::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
+    // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    u64::from(vm.heap.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
 }
 
 /// A logged own-field store that preserves every native storage projection.
@@ -19150,11 +19163,14 @@ mod tests {
             assert!(LOOP_INT32_READ_SITE.with(|site| site.replace(None).unwrap().1) > 0,
                 "forward the control field through the inline parameter copy and branch join");
             FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
+            FIELD_WRITE_ADMISSIONS.with(|count| count.set(0));
             FUNCTION_BINDING_CALLS.with(|count| count.set(0));
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.execute_native_program(&native, true).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+            assert!(FIELD_WRITE_ADMISSIONS.with(std::cell::Cell::get) > 0,
+                "optimized native bound stores must admit their write domains");
             let [reads, writes] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
             assert!(reads <= 2, "only entry misses may call the read helper: {reads}");
             assert_eq!(writes, 0, "packed integer stores must stay native");
@@ -19912,6 +19928,7 @@ mod tests {
             slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
             records: parameters[0],
             arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
+            writes: None,
         };
         let slot = binding.slot.read(&mut builder);
         binding.arena = binding.arena.bind(&mut builder, slot);

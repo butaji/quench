@@ -731,6 +731,13 @@ impl Heap {
         }
     }
 
+    /// Admit a generated writer's domain for a registered own slot before execution.
+    pub(crate) fn admit_slot_writes(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type) -> bool {
+        if slot >= self.properties.shape_length(shape) { return false; }
+        self.properties.note_slot_type(shape, slot, writes);
+        true
+    }
+
     /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.
     /// Native raw writes can bypass recording. Readers must check observations;
     /// this is not a write-maintained contract.
