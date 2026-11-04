@@ -5861,11 +5861,22 @@ fn nested_own_field_hit<H: Host>(
     site: &crate::bytecode::FieldSite,
     base: Value,
 ) -> Option<Value> {
+    #[cfg(feature = "profile-field-primitives")]
+    let pair = site.second.is_some_and(|(atom, _)| atom != vm.length_atom);
+    #[cfg(feature = "profile-field-primitives")]
+    if pair { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairAttempt); }
     let first = vm.primary_own_field_hit(code, base, site.first.1)?;
+    #[cfg(feature = "profile-field-primitives")]
+    if pair { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairFirstHit); }
     match site.second {
         None => Some(first),
         Some((atom, _)) if atom == vm.length_atom => own_length(vm, first),
-        Some((_, cache)) => vm.primary_own_field_hit(code, first, cache),
+        Some((_, cache)) => {
+            let value = vm.primary_own_field_hit(code, first, cache);
+            #[cfg(feature = "profile-field-primitives")]
+            if value.is_some() { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairHit); }
+            value
+        }
     }
 }
 
@@ -16579,8 +16590,15 @@ impl MemoLeaf {
                 vm.array_length_field(array, vm.length_atom)
             }
             Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
+                #[cfg(feature = "profile-field-primitives")]
+                vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairAttempt);
                 let object = vm.record_field_entry_hit(field, base(field_base)?)?;
-                vm.record_field_entry_hit(second, object)
+                #[cfg(feature = "profile-field-primitives")]
+                vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairFirstHit);
+                let value = vm.record_field_entry_hit(second, object);
+                #[cfg(feature = "profile-field-primitives")]
+                if value.is_some() { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairHit); }
+                value
             }
             _ => None,
         }
@@ -20768,5 +20786,59 @@ mod numeric_pair_tests {
         let specialized = crate::Engine::specialize(source, "constant-numeric-pairs.js").unwrap();
         let general = crate::Engine::specialize_unspecialized(source, "constant-numeric-pairs.js").unwrap();
         assert_eq!(run(specialized), run(general));
+    }
+}
+
+#[cfg(all(test, feature = "profile-field-primitives"))]
+mod field_pair_census_tests {
+    use super::*;
+    use crate::{bytecode::{FieldBase, FieldLookup, FieldSite}, profile::field_primitives::Path, test_host::TestHost};
+
+    #[test]
+    fn pair_census_distinguishes_first_and_second_rejection() {
+        let program = crate::Engine::specialize(
+            "var first={next:null}, second={next:first}; first.next=second;
+             function read(o){return o.next;} read(first);", "pair-census.js").unwrap();
+        program.compile_released();
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+        vm.execute(&program).unwrap();
+        let read_name = vm.lookup_atom("read").unwrap();
+        let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
+        let instruction = function.instructions().find(|i| i.op() == Op::GetField).unwrap();
+        let (atom, cache) = match instruction.field_lookup().unwrap() {
+            FieldLookup::Atom { atom, cache_site, .. } => (atom, cache_site),
+            FieldLookup::Site(index) => program.field_sites.get(index).unwrap().first,
+        };
+        let global = |name| vm.own_property(vm.realm.globals, vm.lookup_atom(name).unwrap()).unwrap();
+        let (first, second) = (global("first"), global("second"));
+        assert_eq!(vm.get_field_cached(&program, first, atom, cache).unwrap(), second);
+        let field = vm.field_cache_entry(cache);
+        let mut site = FieldSite { base: FieldBase::THIS, first: (atom, cache), second: Some((atom, cache)),
+            sink: None, sources: std::array::from_fn(|_| None) };
+        let memo = MemoLeaf::Nested { base: FieldBase::THIS.0, field, second: field };
+        for (receiver, intermediate, expected, counts) in [
+            (first, second, Some(first), [1, 1, 1]),
+            (Value::integer(0), second, None, [1, 0, 0]),
+            (first, Value::integer(0), None, [1, 1, 0]),
+        ] {
+            vm.heap.property_set(first, field.slot as usize, intermediate);
+            vm.profile.field_primitives = Default::default();
+            assert_eq!(nested_own_field_hit(&mut vm, &program, &site, receiver), expected);
+            assert_eq!(memo.run(MEMO_NESTED, &vm, ReadArguments::NONE, receiver), expected);
+            for paths in [[Path::NestedOwnPairAttempt, Path::NestedOwnPairFirstHit, Path::NestedOwnPairHit],
+                [Path::MemoPairAttempt, Path::MemoPairFirstHit, Path::MemoPairHit]] {
+                assert_eq!(paths.map(|path| vm.profile.field_primitives.count(path)), counts);
+            }
+        }
+        // Single reads and special length reads are not two ordinary field probes.
+        for second_step in [None, Some((vm.length_atom, cache))] {
+            site.second = second_step;
+            vm.profile.field_primitives = Default::default();
+            let _ = nested_own_field_hit(&mut vm, &program, &site, first);
+            assert_eq!(vm.profile.field_primitives.count(Path::NestedOwnPairAttempt), 0);
+            assert_eq!(vm.profile.field_primitives.count(Path::NestedOwnPairFirstHit), 0);
+            assert_eq!(vm.profile.field_primitives.count(Path::NestedOwnPairHit), 0);
+        }
     }
 }

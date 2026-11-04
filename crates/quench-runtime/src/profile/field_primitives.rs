@@ -1,4 +1,4 @@
-//! Successful shared field operations, not attempts or exclusive instruction costs.
+//! Shared field operations and named pair-probe transitions, not exclusive instruction costs.
 
 use std::cell::Cell;
 
@@ -15,10 +15,16 @@ pub(crate) enum Path {
     PolymorphicStore,
     CachedStore,
     GeneralStore,
+    NestedOwnPairAttempt,
+    NestedOwnPairFirstHit,
+    NestedOwnPairHit,
+    MemoPairAttempt,
+    MemoPairFirstHit,
+    MemoPairHit,
 }
 
 impl Path {
-    const COUNT: usize = Self::GeneralStore as usize + 1;
+    const COUNT: usize = Self::MemoPairHit as usize + 1;
     const NAMES: [&'static str; Self::COUNT] = [
         "hint_own_read",
         "hint_holder_read",
@@ -30,6 +36,12 @@ impl Path {
         "polymorphic_store",
         "cached_store",
         "general_store",
+        "nested_own_pair_attempt",
+        "nested_own_pair_first_hit",
+        "nested_own_pair_hit",
+        "memo_pair_attempt",
+        "memo_pair_first_hit",
+        "memo_pair_hit",
     ];
 }
 
