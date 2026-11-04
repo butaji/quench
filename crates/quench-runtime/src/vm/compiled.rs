@@ -1365,14 +1365,9 @@ fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base
     );
     emit_js_guard(builder, is_array, fallback);
 
+    // A direct array's index names a live record of the reservation.
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
-    let record_in_bounds = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThan,
-        record_id,
-        i64::try_from(ARRAY.record_capacity).expect("array record capacity fits i64"),
-    );
-    emit_js_guard(builder, record_in_bounds, fallback);
 
     let record_base_address = builder.ins().iadd_imm_s(
         payload,
@@ -1434,31 +1429,18 @@ pub(super) fn emit_array_length_read(
     length
 }
 
-/// The present element `key` of the dense own-array `base`, both tagged: the record and
-/// its current backing reloaded per access, so receiver changes and copy-on-write writes are
-/// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
+/// The present element `index` (an int32) of the dense own-array `base` (tagged): the
+/// record and its current backing reloaded per access, so receiver changes and copy-on-write
+/// writes are visible. Any other base, an index past the elements (a negative one among them,
+/// compared unsigned) or a hole leaves through `fallback`, with nothing read.
 pub(super) fn emit_dense_element_read(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     base: ir::Value,
-    key: ir::Value,
+    index: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    use crate::value::ValueLayout;
-
-    let index = builder.ins().ireduce(types::I32, key);
-    let key_tag = builder
-        .ins()
-        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
-    let is_integer = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
-    emit_js_guard(builder, is_integer, fallback);
-    let nonnegative = builder
-        .ins()
-        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
-    emit_js_guard(builder, nonnegative, fallback);
 
     let record = emit_array_record(builder, payload, base, fallback);
     let elements = builder.ins().iadd_imm_s(
@@ -1471,11 +1453,6 @@ pub(super) fn emit_dense_element_read(
         elements,
         i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
     );
-    let header_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, header, 0);
-    emit_js_guard(builder, header_is_present, fallback);
-
     let length = builder.ins().load(
         types::I32,
         MemFlagsData::trusted(),
@@ -1538,7 +1515,11 @@ fn emit_js_dense_array_get(
         arguments,
         base_offset,
     );
-    let value = emit_dense_element_read(builder, payload, base, key, fallback);
+    let key_tag = builder.ins().band_imm_u(key, crate::value::ValueLayout::TAG_MASK as i64);
+    let is_integer = builder.ins().icmp_imm_u(IntCC::Equal, key_tag, crate::value::ValueLayout::INT_TAG as i64);
+    emit_js_guard(builder, is_integer, fallback);
+    let index = builder.ins().ireduce(types::I32, key);
+    let value = emit_dense_element_read(builder, payload, base, index, fallback);
     builder.ins().store(
         MemFlagsData::trusted(),
         value,

@@ -21683,6 +21683,37 @@ fn lane_array_length_reads_dense_length_only() {
 }
 
 #[test]
+fn lane_hoisted_length_survives_inlined_calls() {
+    // A loop's `length` read made once on its entry edge (`invariant_reads`) holds through a
+    // body that reads elements and runs an inlined call, as the interpreter's reads do.
+    let source = r#"
+      function Task(id) { this.id = id; }
+      Task.prototype.run = function (x) { return (x + this.id) | 0; };
+      function kernel(tasks, n) {
+        let s = 0;
+        for (let r = 0; r < n; r++) for (let i = 0; i < tasks.length; i++) { const k = tasks[i]; s = (s + k.run(1)) | 0; }
+        return s;
+      }
+      const tasks = []; for (let i = 0; i < 10; i++) tasks.push(new Task(i));
+      let total = 0; for (let c = 0; c < 300; c++) total = (total + kernel(tasks, 100)) | 0;
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-hoisted-length.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1650000.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object

@@ -271,9 +271,12 @@ impl LoopRegion {
         !self.field_store_sites.is_empty() || !self.dynamic_field_stores.is_empty()
     }
 
-    /// An entry-pinned own Number field whose writes update its SSA cell.
+    /// An entry-pinned own Number field whose writes update its SSA cell. A field every read
+    /// of which loads from the heap (`dynamic_field_reads`) needs none: its reads see its stores
+    /// there, under the representation its slots have held (`NativeFieldLoad::representation`).
     fn is_field_cell(&self, index: usize) -> bool {
         self.field_store_sites.iter().any(|store| store.matches(&self.fields[index]))
+            && self.field_reads.iter().any(|(offset, field)| *field == index && !self.dynamic_field_reads.contains_key(offset))
     }
 
     pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
@@ -6955,8 +6958,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let index = *self.region.field_stores.get(&(pc - self.region.header))?;
                 let pointer = self.field_store_pointer(index);
                 let value = self.register(instruction.register_a());
-                if let Some(field) = self.region.fields.iter().position(|field|
-                    self.region.field_store_sites[index].matches(field))
+                if let Some(field) = (0..self.region.fields.len()).find(|field|
+                    self.region.field_store_sites[index].matches(&self.region.fields[*field]) && self.region.is_field_cell(*field))
                 {
                     let FieldValue::NumberCell(variable) = self.fields[field] else {
                         unreachable!("an admitted mutable field has an SSA cell")

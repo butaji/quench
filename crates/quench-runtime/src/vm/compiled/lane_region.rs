@@ -539,6 +539,8 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         Op::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Op::IncDec => instruction.numeric_local_target().is_none(),
         Op::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+        // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
+        Op::GetIndex => !instruction.returns_from_frame(),
         op => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
@@ -554,7 +556,7 @@ fn stores_own(instruction: WideInstruction) -> bool {
 /// entered by one edge from before it and no other, of instructions that only read
 /// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
 /// writes, by one cached atom it stores to no object, see the same object and value every
-/// iteration. Entries (`starts`) enter no such loop.
+/// iteration. No entry (`starts`) lies in such a loop.
 fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
     -> BTreeMap<usize, Vec<usize>> {
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
@@ -563,7 +565,9 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
         ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
     let mut hoists = BTreeMap::new();
     for (back, instruction) in instructions.iter().enumerate() {
-        let Some(header) = target(instruction).filter(|header| *header <= back && !starts.contains(header)) else { continue };
+        // An entry anywhere in the loop would run its body without the entry edge's reads.
+        let Some(header) = target(instruction)
+            .filter(|header| *header <= back && !starts.iter().any(|start| (*header..=back).contains(start))) else { continue };
         let body = &instructions[header..=back];
         let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
@@ -1239,12 +1243,14 @@ impl Lowering<'_, '_> {
             }
             Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
-                // A present dense element, the lane's own fast read (`Vm::direct_dense_element`).
+                // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
+                // of an int32 key, proved once.
                 let exit = self.guard_exit(state, pc32);
-                let operands = (self.operand_tagged(state, instruction.operand_b()), self.operand_tagged(state, instruction.operand_c()));
-                operands.0.zip(operands.1).map(|(base, key)| {
+                let base = self.operand_tagged(state, instruction.operand_b());
+                let index = self.operand_int(state, instruction.operand_c(), exit);
+                base.zip(index).map(|(base, index)| {
                     let payload = self.payload;
-                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, key, exit);
+                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, index, exit);
                     self.set_tagged(state, instruction.result_register(), value);
                     true
                 })
@@ -1890,6 +1896,14 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, header as u32);
             let receiver = !self.native_calls
                 && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.receivers.contains(&register)));
+            if let Some(register) = register.filter(|_| atom == self.length) {
+                let length = self.array_length(state, register, (atom, cache_site), exit);
+                let value = int_tagged(&mut self.builder, length);
+                let variable = self.builder.declare_var(types::I64);
+                self.builder.def_var(variable, value);
+                self.hoisted.insert(pc, (variable, true));
+                continue;
+            }
             let value = self.base_field_read(state, register, receiver, (atom, cache_site), exit);
             let int32 = int32_read(self.program, self.fields, instruction);
             if int32 {
@@ -2031,7 +2045,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = shapes.iter().any(|field| field.holder.is_some());
+        let probed = NativeFieldLoad::probes_misses(&shapes);
         self.probed_read(state, owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -2055,7 +2069,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(object_bits, read, exit));
         }
-        let probed = shapes.iter().any(|field| field.holder.is_some());
+        let probed = NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
             let header = ObjectHeader::prove(&mut lowering.builder, object_bits, records, generic);

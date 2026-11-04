@@ -63,6 +63,16 @@ pub(crate) struct InheritedConstant {
 }
 
 impl NativeFieldLoad {
+    /// Whether a miss of a site's `loads` asks the VM's caches before it leaves: a slot held
+    /// by the immediate prototype proves only that prototype, where a deeper holder's read
+    /// may answer, and a polymorphic site's other receivers may be cached. A monomorphic
+    /// site's inherited constant proves its value exactly; its miss leaves.
+    pub(super) fn probes_misses(loads: &[Self]) -> bool {
+        match loads {
+            [load] => load.holder.is_some() && load.inherited.is_none(),
+            loads => loads.iter().any(|load| load.holder.is_some()),
+        }
+    }
     pub(super) fn valid(self) -> bool {
         usize::from(self.slot) < self.storage_len
             && (self.storage != Some(PlainPropertyStorage::PackedInline)
