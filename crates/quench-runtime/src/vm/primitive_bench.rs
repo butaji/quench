@@ -21,6 +21,7 @@ mod number_inputs;
 use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 mod fields;
 mod field_reads;
+mod captures;
 mod strings;
 #[cfg(feature = "bench-alloc-routes")]
 mod growth;
