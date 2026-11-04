@@ -12,6 +12,11 @@ const PAIR_NON_OBJECT: u8 = 5;
 const PAIR_SECOND_MISS: u8 = 6;
 
 fn entry_reads<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIMARY: bool>(b: &mut Bencher) {
+    entry_reads_at::<HOLDER, ARENA, CASE, PRIMARY, 0, false>(b);
+}
+
+fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIMARY: bool, const SLOT: usize, const FIXED: bool>(b: &mut Bencher) {
+    let prefix = (0..SLOT).map(|index| format!("leading{index}: 0, ")).collect::<String>();
     let padding = if ARENA {
         (0..crate::value_vec::INLINE_PROPERTY_COUNT)
             .map(|index| format!(", pad{index}: 0"))
@@ -27,7 +32,7 @@ fn entry_reads<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIM
     let read_body = if PRIMARY { "this.next.next" } else { "o.next" };
     let call = if PRIMARY { "read.call(first)" } else { "read(first)" };
     let source = format!(
-        "var firstOwner = {{ next: null{padding} }}, secondOwner = {{ next: null{padding} }};
+        "var firstOwner = {{ {prefix}next: null{padding} }}, secondOwner = {{ {prefix}next: null{padding} }};
          {bases}
          firstOwner.next = second; secondOwner.next = first;
          var differentOwner = {{ different: 0, next: first{padding} }};
@@ -72,6 +77,7 @@ fn entry_reads<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIM
         assert_eq!(vm.get_field_cached(&program, second, second_atom, second_site).unwrap(), first);
     }
     let entry = vm.field_cache_entry(site);
+    assert_eq!(usize::from(entry.slot), SLOT);
     assert_eq!(entry.holder != super::super::NO_FIELD_HOLDER, HOLDER);
     assert_eq!(vm.record_field_entry_hit(entry, first), Some(second));
     assert_eq!(vm.record_field_entry_hit(entry, second), Some(first));
@@ -110,7 +116,7 @@ fn entry_reads<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIM
     let hint = || super::super::FieldCache {
         receiver: black_box(entry.receiver),
         holder: if HOLDER { black_box(entry.holder) } else { super::super::NO_FIELD_HOLDER },
-        slot: black_box(entry.slot),
+        slot: if FIXED { SLOT as u16 } else { black_box(entry.slot) },
     };
     let mut cursor = first;
     b.iter(|| {
@@ -182,3 +188,28 @@ fn primitive_field_entry_primary_pair_first_shape_miss(b: &mut Bencher) { entry_
 fn primitive_field_entry_primary_pair_non_object(b: &mut Bencher) { entry_reads::<false, false, PAIR_NON_OBJECT, true>(b); }
 #[bench]
 fn primitive_field_entry_primary_pair_second_shape_miss(b: &mut Bencher) { entry_reads::<false, false, PAIR_SECOND_MISS, true>(b); }
+
+#[bench]
+fn primitive_field_slot_inline_first_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 0, false>(b); }
+#[bench]
+fn primitive_field_slot_inline_first_fixed(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 0, true>(b); }
+#[bench]
+fn primitive_field_slot_inline_second_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 1, false>(b); }
+#[bench]
+fn primitive_field_slot_inline_second_fixed(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 1, true>(b); }
+#[bench]
+fn primitive_field_slot_arena_first_dynamic(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 0, false>(b); }
+#[bench]
+fn primitive_field_slot_arena_first_fixed(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 0, true>(b); }
+#[bench]
+fn primitive_field_slot_arena_second_dynamic(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 1, false>(b); }
+#[bench]
+fn primitive_field_slot_arena_second_fixed(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 1, true>(b); }
+#[bench]
+fn primitive_field_slot_dependent_first_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 0, false>(b); }
+#[bench]
+fn primitive_field_slot_dependent_first_fixed(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 0, true>(b); }
+#[bench]
+fn primitive_field_slot_dependent_second_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 1, false>(b); }
+#[bench]
+fn primitive_field_slot_dependent_second_fixed(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 1, true>(b); }

@@ -941,6 +941,11 @@ fn shape_compaction_clears_own_field_hints() {
           var sites = [{calls}], sum = 0;
           function T(a, b) {{ this.a = a; this.b = b; }}
           function drive(read, o, n, v) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o, v); return s; }}
+          function resume() {{
+            var result = 0;
+            for (var k = 0; k < sites.length; k++) result += drive(sites[k], {{ before: -1, a: k }}, 50, k);
+            return result;
+          }}
           for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50, k);
           // Layouts no object keeps, so the next full collection compacts the table.
           for (var k = 0; k < 20000; k++) {{ var o = {{}}; o['junk' + k] = k; }}
@@ -966,6 +971,14 @@ fn shape_compaction_clears_own_field_hints() {
         vm.collect_now(&program);
         assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
         assert_eq!(held(&vm), 0);
+        // Re-enter the same read sites with `a` in the second slot. A derived slot reader
+        // must not keep using its pre-compaction first-slot position.
+        let resume = vm.lookup_atom("resume").unwrap();
+        let resume = vm.own_property(vm.realm.globals, resume).unwrap();
+        assert_eq!(
+            vm.call_value(&program, resume, Value::UNDEFINED, &[]).unwrap(),
+            Value::integer((50 * (0..SITES).sum::<usize>()) as i32),
+        );
     }
 }
 
