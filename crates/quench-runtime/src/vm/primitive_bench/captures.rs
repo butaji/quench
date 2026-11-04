@@ -168,3 +168,61 @@ fn primitive_capture_dense_dependent(b: &mut Bencher) { dependent_read::<OWNER>(
 fn primitive_capture_view_dependent(b: &mut Bencher) { dependent_read::<SLICE>(b); }
 #[bench]
 fn primitive_capture_thin_dependent(b: &mut Bencher) { dependent_read::<THIN>(b); }
+
+/// Batch-level opacity control. Descriptor and cursor barriers are outside the read loop;
+/// the returned cursor and sum retain every read without per-probe barrier spills.
+fn batch_read<const STORAGE: u8, const DEPENDENT: bool>(b: &mut Bencher) {
+    let slots = EnvironmentSlots::from((0..BATCH_VALUES)
+        .map(|index| Value::integer(((index + 1) % BATCH_VALUES) as i32))
+        .collect::<Vec<_>>());
+    let slots = slots.dense().unwrap();
+    let (pointer, length) = slots.native_dense_view().unwrap();
+    // SAFETY: the owner is live and immutable for the whole benchmark; no safepoints run.
+    let view = unsafe { std::slice::from_raw_parts(pointer, length) };
+    fn run<const DEPENDENT: bool>(mut cursor: usize, mut read: impl FnMut(usize) -> Option<Value>) -> (usize, usize) {
+        let mut sum = 0;
+        for index in 0..BATCH_VALUES {
+            cursor = read(if DEPENDENT { cursor } else { index }).unwrap().as_int().unwrap() as usize;
+            sum += cursor;
+        }
+        (cursor, sum)
+    }
+    let expected = (0, BATCH_VALUES * (BATCH_VALUES - 1) / 2);
+    assert_eq!(run::<DEPENDENT>(0, |index| slots.dense_plain(index)), expected);
+    assert_eq!(run::<DEPENDENT>(0, |index| view_read(view, index)), expected);
+    assert_eq!(run::<DEPENDENT>(0, |index| BorrowedSlots::new(slots).slots.dense_plain(index)), expected);
+    let mut result = expected;
+    b.iter(|| {
+        let cursor = black_box(result.0);
+        result = match STORAGE {
+            OWNER => {
+                let slots = black_box(slots);
+                run::<DEPENDENT>(cursor, |index| slots.dense_plain(index))
+            }
+            SLICE => {
+                let view = black_box(view);
+                run::<DEPENDENT>(cursor, |index| view_read(view, index))
+            }
+            THIN => {
+                let thin = black_box(BorrowedSlots::new(slots));
+                run::<DEPENDENT>(cursor, |index| thin.slots.dense_plain(index))
+            }
+            _ => unreachable!(),
+        };
+        black_box(result);
+    });
+    assert_eq!(result, expected);
+}
+
+#[bench]
+fn primitive_capture_batch_dense_independent(b: &mut Bencher) { batch_read::<OWNER, false>(b); }
+#[bench]
+fn primitive_capture_batch_view_independent(b: &mut Bencher) { batch_read::<SLICE, false>(b); }
+#[bench]
+fn primitive_capture_batch_thin_independent(b: &mut Bencher) { batch_read::<THIN, false>(b); }
+#[bench]
+fn primitive_capture_batch_dense_dependent(b: &mut Bencher) { batch_read::<OWNER, true>(b); }
+#[bench]
+fn primitive_capture_batch_view_dependent(b: &mut Bencher) { batch_read::<SLICE, true>(b); }
+#[bench]
+fn primitive_capture_batch_thin_dependent(b: &mut Bencher) { batch_read::<THIN, true>(b); }
