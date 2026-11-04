@@ -27,7 +27,7 @@ impl SlotType {
 
     pub(crate) fn of(value: Value) -> Self { Self::from_type(Type::immediate(value)) }
 
-    fn from_type(ty: Type) -> Self {
+    pub(crate) fn from_type(ty: Type) -> Self {
         match ty.0 {
             TypeKind::Int32 => Self::Int32,
             TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape(_) => Self::DirectObject,

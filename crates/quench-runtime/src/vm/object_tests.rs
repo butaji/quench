@@ -171,10 +171,18 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
         receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16,
     });
+    vm.heap.track_slot_representations(&vm.shape_layouts());
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
     // SAFETY: the receiver remains rooted by its global binding; no allocation
     // or collection happens between obtaining this slot and the Number write.
-    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site) }.unwrap();
-    unsafe { pointer.write(Value::integer(7)); }
+    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
+    // Admission widens before the raw write, including an int-to-double transition.
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
+    for value in [Value::number(0.5), Value::number(-0.0), Value::number(f64::NAN), Value::integer(7)] {
+        unsafe { pointer.write(value); }
+        assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
+    }
+    assert_eq!(vm.heap.unrepresented_slots(), 0);
     let child = vm.object();
     let record = receiver.direct_object_index().unwrap();
     // SAFETY: the same exact own-data shape still proves this initialized slot.

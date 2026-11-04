@@ -414,19 +414,23 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
         if !self.tracking { return false; }
-        self.join_slot_value(shape, slot, value)
+        self.join_slot_type(shape, slot, SlotType::of(value))
     }
 
-    /// `note_slot_value` where representations are kept, out of line: the interpreter's
-    /// store handlers keep only the tracking test, so their own code does not change.
+    /// Admits the possible writes of a no-reentry raw slot capability before exposing it.
+    pub(crate) fn note_slot_type(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type) -> bool {
+        if !self.tracking { return false; }
+        self.join_slot_type(shape, slot, SlotType::from_type(ty))
+    }
+
     #[cold]
     #[inline(never)]
-    fn join_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+    fn join_slot_type(&mut self, shape: u32, slot: usize, incoming: SlotType) -> bool {
         let owner = self.slot_owner(shape, slot) as usize;
         let held = self.owner_types[owner];
         // A slot that has held any value holds every value: the common case pays one compare.
         if held == SlotType::Tagged { return false; }
-        let class = held.join(SlotType::of(value));
+        let class = held.join(incoming);
         let widened = class != held;
         if widened { self.owner_types[owner] = class; }
         widened

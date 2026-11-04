@@ -3478,18 +3478,23 @@ impl Heap {
     ///
     /// # Safety
     /// The object's exact shape and slot were guarded by the caller. The caller must keep the
-    /// object rooted and prevent allocation, collection, and other heap access while using
-    /// the pointer. Direct stores must not install a heap reference without the write barrier.
+    /// object rooted and prevent allocation, collection, reentry, storage changes, or type
+    /// re-admission while using the pointer. Every stored value must fit `writes`. Direct stores must not install
+    /// a heap reference without the write barrier.
     #[inline(always)]
     pub(crate) unsafe fn flat_property_mut_ptr_unchecked(
         &mut self,
         object: Value,
         slot: usize,
+        writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
-        let vector = self.object(object)?.properties();
+        let data = self.object(object)?;
+        let vector = data.properties();
+        let shape = data.shape();
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
+        self.properties.note_slot_type(shape, slot, writes);
         // SAFETY: shape/slot and storage lifetime are the caller's obligations above.
         Some(unsafe { self.properties.flat_mut_ptr_unchecked(vector, slot) })
     }

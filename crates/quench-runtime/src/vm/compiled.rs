@@ -14877,7 +14877,7 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: receiver and capture remain rooted by the active call. This
         // proof may log the owner but cannot collect or invoke guest code.
-        let pointer = unsafe { self.cached_field_store_pointer(program, receiver, atom, site) }?;
+        let pointer = unsafe { self.cached_field_store_pointer(program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }?;
         let value = if let Some((operation, right)) = update {
             // The writable own-data proof identifies the same named slot the
             // source Get reads. No getter, proxy or second cache is involved.

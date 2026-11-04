@@ -8031,8 +8031,7 @@ fn lane_loop_entry<H: Host>(
         }
     }
     // A raw field slot stays valid for this native run because OSR regions make no calls or
-    // allocations, the receiver is unchanged and rooted in its register, and these stores
-    // write only Number values (which need no collector barrier). Every miss exits before the
+    // allocations, and the receiver is unchanged and rooted in its register. Every miss exits before the
     // store through the interpreter's exact SetField PC.
     // SAFETY: the runtime cache probe proves a primary own-data slot. `osr_loop::admit_region`
     // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
@@ -8044,7 +8043,7 @@ fn lane_loop_entry<H: Host>(
             super::compiled::FieldReceiver::Field(_) => return None,
         };
         let pointer = unsafe {
-            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site)
+            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, crate::typed_ir::Type::ANY)
         }?;
         // A store may write a heap value: the receiver is logged in the generational
         // barrier now, and nothing collects before the run ends.

@@ -1551,3 +1551,25 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     assert_eq!(heap.slot_type(3, 1), Type::NUMBER);
     assert_eq!(heap.unrepresented_slots(), 0);
 }
+
+#[test]
+fn raw_slot_admission_records_write_domain_before_exposing_storage() {
+    use crate::typed_ir::Type;
+    let mut heap = Heap::new();
+    let layouts = [(0, None), (1, None), (3, None)];
+    heap.register_shape_layouts(&layouts);
+    let packed = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::integer(1)]);
+    let object = heap.alloc_object_with_properties(Value::NULL, 2,
+        &[Value::NULL, Value::integer(1), Value::integer(2)]);
+    let child = heap.alloc_object(plain_object());
+    heap.track_slot_representations(&layouts);
+    // Declined storage does not admit a write capability.
+    assert!(unsafe { heap.flat_property_mut_ptr_unchecked(packed, 0, Type::ANY) }.is_none());
+    assert_eq!(heap.slot_type(1, 0), Type::INT32);
+    let pointer = unsafe { heap.flat_property_mut_ptr_unchecked(object, 0, Type::ANY) }.unwrap();
+    assert_eq!(heap.slot_type(2, 0), Type::ANY);
+    // A reference-capable region logs its owner before its no-GC raw writes.
+    heap.object_store_mut(object, object).unwrap();
+    unsafe { pointer.write(child); }
+    assert_eq!(heap.unrepresented_slots(), 0);
+}

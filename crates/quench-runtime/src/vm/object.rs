@@ -3647,13 +3647,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// The raw address for a warmed, own-data store site whose exact receiver shape still
-    /// matches. Shared native execution uses this only for Numbers, without allocation,
+    /// matches. Shared native execution admits `writes` once, without allocation,
     /// collection, or guest calls; misses stay on the ordinary path before the store.
     ///
     /// # Safety
     /// The caller must keep `object` rooted and must use the returned pointer only during the
-    /// current no-allocation native operation. It may write only non-reference values;
-    /// heap references require the collector's write barrier.
+    /// current no-allocation native operation, without reentry or type re-admission.
+    /// Every stored value must fit `writes`; references require the collector's write barrier.
     #[inline(always)]
     pub(super) unsafe fn cached_field_store_pointer(
         &mut self,
@@ -3661,6 +3661,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
         site: u16,
+        writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
         if !(self.specialized && p.specialized)
             || self.is_private_name(atom)
@@ -3690,9 +3691,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
-        // pointer does not outlive the no-allocation native operation and writes only
-        // non-reference Numbers, which cannot add a collector edge to this owner.
-        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }
+        // pointer does not outlive the no-allocation native operation, every write
+        // fits its admitted type, and reference writes have a collector barrier.
+        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
     }
 
     /// Increment or decrement a cached own writable Number field without
