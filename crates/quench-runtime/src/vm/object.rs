@@ -1667,15 +1667,9 @@ impl<H: Host> Vm<H> {
             // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
             return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
-        let receiver = self.heap.object_record_by_id(record_id);
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
-        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
-            return false;
-        }
-        // SAFETY: a matching exact shape proves the cached slot layout outside dictionary
-        // storage (`Object::exact_shape`).
-        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value, layout) } {
+        if !self.store_record_field_entry::<LOGS>(record_id, cache, value, layout) {
             return false;
         }
         #[cfg(feature = "profile-field-primitives")]
@@ -1684,6 +1678,40 @@ impl<H: Host> Vm<H> {
         } else {
             crate::profile::field_primitives::Path::PrimaryStoreNoLog
         });
+        self.profile.field_cache_hit(0, 0);
+        true
+    }
+
+    /// Store through an own-data entry's exact shape/slot proof. Both table entries and
+    /// instruction hints use this operation; the caller has excluded method-observable writes.
+    #[inline(always)]
+    fn store_record_field_entry<const LOGS: bool>(
+        &mut self, record_id: u32, cache: FieldCache, value: Value,
+        layout: crate::heap::PropertyStoreLayout,
+    ) -> bool {
+        let receiver = self.heap.object_record_by_id(record_id);
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
+        unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
+    }
+
+    /// A monomorphic store's copied entry, with the same no-log/preserve-layout admission
+    /// as `primary_own_field_store_hit::<false>`. Refusal leaves the logged path to the caller.
+    #[inline(always)]
+    pub(super) fn hinted_primary_field_store_hit(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
+        if self.method_caches_may_name(atom) {
+            return false;
+        }
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        if !self.store_record_field_entry::<false>(record_id, hint, value, crate::heap::PropertyStoreLayout::Preserve) {
+            return false;
+        }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintedPrimaryStore);
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -1747,12 +1775,7 @@ impl<H: Host> Vm<H> {
         let Some(record_id) = object.direct_object_index() else {
             return false;
         };
-        let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.exact_shape() != hint.receiver {
-            return false;
-        }
-        // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
+        if !self.store_record_field_entry::<true>(record_id, hint, value, crate::heap::PropertyStoreLayout::MayWiden) {
             return false;
         }
         #[cfg(feature = "profile-field-primitives")]

@@ -192,6 +192,9 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreNoLog), 1);
     assert!(vm.primary_own_field_store_hit::<true>(&program, receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
     assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreLogged), 1);
+    assert!(vm.hinted_primary_field_store_hit(hint, receiver, atom, Value::integer(2)));
+    assert!(!vm.hinted_primary_field_store_hit(hint, other, atom, Value::integer(2)));
+    assert_eq!(vm.profile.field_primitives.count(Path::HintedPrimaryStore), 1);
     assert!(vm.hinted_own_field_store_hit(hint, receiver, atom, Value::integer(3)));
     assert!(!vm.hinted_own_field_store_hit(hint, other, atom, Value::integer(3)));
     assert_eq!(vm.profile.field_primitives.count(Path::HintedStore), 1);
@@ -229,6 +232,37 @@ fn field_primitive_census_keeps_warmed_lane_reads() {
 }
 
 #[test]
+fn warmed_field_stores_follow_descriptor_transitions() {
+    let source = r#"
+      function write(o, v) { o.value = v; }
+      function strictWrite(o, v) { 'use strict'; o.value = v; }
+      function warm(o) { for (var i = 0; i < 200; i++) { write(o, i); strictWrite(o, i); } }
+      var frozen = {value: 0}; warm(frozen); Object.freeze(frozen);
+      write(frozen, 900); print(frozen.value);
+      try { strictWrite(frozen, 901); } catch (e) { print(e.name); }
+      var readonly = {value: 0}; warm(readonly);
+      Object.defineProperty(readonly, 'value', {writable: false});
+      write(readonly, 900); print(readonly.value);
+      try { strictWrite(readonly, 901); } catch (e) { print(e.name); }
+      var accessor = {value: 0}, seen = 0; warm(accessor);
+      Object.defineProperty(accessor, 'value', {set: function(v) { seen += v; }, get: function() { return seen; }});
+      write(accessor, 3); strictWrite(accessor, 5); print(accessor.value);
+      var sealed = {value: 0}; warm(sealed); Object.seal(sealed);
+      write(sealed, 7); strictWrite(sealed, 8); print(sealed.value);
+      var changed = {value: 0}; warm(changed); delete changed.value;
+      changed.padding = 1; changed.value = 2; write(changed, 9); print(changed.value);
+    "#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+        let program = compile(source, "store-descriptor-transitions.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["199", "TypeError", "199", "TypeError", "8", "8", "9"]);
+    }
+}
+
+#[test]
 fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let program = Engine::specialize(
         "var receiver = { value: 0, a: 1, b: 2 }; function write(value) { receiver.value = value; } write(1);",
@@ -254,7 +288,10 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     // or collection happens between obtaining this slot and the Number write.
     let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site) }.unwrap();
     unsafe { pointer.write(Value::integer(7)); }
+    let hint = vm.field_cache_entry(site);
     let child = vm.object();
+    assert!(!vm.hinted_primary_field_store_hit(hint, receiver, atom, child),
+        "the hinted no-log store must defer a reference barrier");
     let record = receiver.direct_object_index().unwrap();
     // SAFETY: the same exact own-data shape still proves this initialized slot.
     assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child, crate::heap::PropertyStoreLayout::Preserve) },

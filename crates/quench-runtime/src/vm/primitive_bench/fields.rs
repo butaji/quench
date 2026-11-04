@@ -3,7 +3,12 @@
 use super::{BATCH_VALUES, Bencher, Value, black_box};
 use crate::{Engine, ExecutionMode, bytecode::Op, test_host::TestHost};
 
-fn cached_own<const STORE: bool, const ARENA: bool, const MISS: bool, const PRIMARY: bool>(
+const READ: u8 = 0;
+const CACHED_STORE: u8 = 1;
+const PRIMARY_STORE: u8 = 2;
+const HINTED_STORE: u8 = 3;
+
+fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
     b: &mut Bencher,
 ) {
     let padding = if ARENA {
@@ -58,8 +63,14 @@ fn cached_own<const STORE: bool, const ARENA: bool, const MISS: bool, const PRIM
     );
     assert_eq!(vm.primary_own_field_hit(&program, other, site), None);
     let object = if MISS { other } else { receiver };
+    let hint = vm.field_cache_entry(site);
     let store = |vm: &mut super::super::Vm<TestHost>, value| {
-        if PRIMARY {
+        if OP == HINTED_STORE {
+            vm.hinted_primary_field_store_hit(
+                super::super::FieldCache::own(black_box(hint.receiver), black_box(hint.slot)),
+                black_box(object), black_box(atom), black_box(value),
+            )
+        } else if OP == PRIMARY_STORE {
             vm.primary_own_field_store_hit::<false>(
                 black_box(&program),
                 black_box(object),
@@ -82,7 +93,7 @@ fn cached_own<const STORE: bool, const ARENA: bool, const MISS: bool, const PRIM
     b.iter(|| {
         for index in 0..BATCH_VALUES {
             let vm = black_box(&mut vm);
-            if STORE {
+            if OP != READ {
                 black_box(store(vm, Value::integer(index as i32)));
             } else {
                 black_box(vm.primary_own_field_hit(
@@ -93,7 +104,7 @@ fn cached_own<const STORE: bool, const ARENA: bool, const MISS: bool, const PRIM
             }
         }
     });
-    let expected = if STORE && !MISS {
+    let expected = if OP != READ && !MISS {
         BATCH_VALUES as i32 - 1
     } else {
         0
@@ -116,35 +127,48 @@ fn cached_own<const STORE: bool, const ARENA: bool, const MISS: bool, const PRIM
 
 #[bench]
 fn primitive_cached_own_read_inline(b: &mut Bencher) {
-    cached_own::<false, false, false, false>(b);
+    cached_own::<READ, false, false>(b);
 }
 #[bench]
 fn primitive_cached_own_read_arena(b: &mut Bencher) {
-    cached_own::<false, true, false, false>(b);
+    cached_own::<READ, true, false>(b);
 }
 #[bench]
 fn primitive_cached_own_store_inline(b: &mut Bencher) {
-    cached_own::<true, false, false, false>(b);
+    cached_own::<CACHED_STORE, false, false>(b);
 }
 #[bench]
 fn primitive_cached_own_store_arena(b: &mut Bencher) {
-    cached_own::<true, true, false, false>(b);
+    cached_own::<CACHED_STORE, true, false>(b);
 }
 #[bench]
 fn primitive_cached_own_read_shape_miss(b: &mut Bencher) {
-    cached_own::<false, false, true, false>(b);
+    cached_own::<READ, false, true>(b);
 }
 #[bench]
 fn primitive_cached_own_store_shape_miss(b: &mut Bencher) {
-    cached_own::<true, false, true, false>(b);
+    cached_own::<CACHED_STORE, false, true>(b);
 }
 
 // Same no-log, preserve-layout primary store used by the specialized hot path.
 #[bench]
 fn primitive_cached_own_primary_store_inline(b: &mut Bencher) {
-    cached_own::<true, false, false, true>(b);
+    cached_own::<PRIMARY_STORE, false, false>(b);
 }
 #[bench]
 fn primitive_cached_own_primary_store_arena(b: &mut Bencher) {
-    cached_own::<true, true, false, true>(b);
+    cached_own::<PRIMARY_STORE, true, false>(b);
+}
+
+#[bench]
+fn primitive_cached_own_hinted_store_inline(b: &mut Bencher) {
+    cached_own::<HINTED_STORE, false, false>(b);
+}
+#[bench]
+fn primitive_cached_own_hinted_store_arena(b: &mut Bencher) {
+    cached_own::<HINTED_STORE, true, false>(b);
+}
+#[bench]
+fn primitive_cached_own_hinted_store_shape_miss(b: &mut Bencher) {
+    cached_own::<HINTED_STORE, false, true>(b);
 }

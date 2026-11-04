@@ -5319,13 +5319,13 @@ script_handler! {
     }
 }
 
-/// Makes the own field entry `entry` the hint of the `GetField` record at `ip`
+/// Makes the own field entry `entry` the hint of the field read/store record at `ip`
 /// (`LaneInstruction::field_hint`). A held loop header's `call_link` names its site
 /// (`lane_header_site`), and such a record keeps no hint: an empty hint's link is
 /// `NO_CALL_LINK`, a held one's shape a recorded one.
 #[inline(always)]
 fn set_field_hint(ip: Ip, entry: super::FieldCache) {
-    // SAFETY: `ip` is a `GetField` record of a live view.
+    // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
     let header = unsafe { i.operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
     if !header {
@@ -6640,12 +6640,10 @@ script_handler! {
 
 script_handler! {
     /// `SetField` or `SetFieldStrict` at a site whose primary entry names an own data field
-    /// (`Vm::primary_own_field_store_hit`): that store inline where the write barrier logs
+    /// (`Vm::hinted_primary_field_store_hit`): that store inline where the write barrier logs
     /// nothing; any other takes `lane_set_field_logged`.
     fn lane_set_object_field_own<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        if !unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, r.get(i.b), i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::Preserve) {
+        if !unsafe { vm(cx) }.hinted_primary_field_store_hit(i.field_hint(), r.get(i.b), i.imm(), r.get(i.a)) {
             sibling!(lane_set_field_logged::<H, false>, r, ip, Carried::script(cx))
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -6662,7 +6660,12 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
         let stored = object.is_some_and(|object| {
-            unsafe { vm(cx) }.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::MayWiden)
+            let vm = unsafe { vm(cx) };
+            let stored = vm.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::MayWiden);
+            if stored {
+                set_field_hint(ip, vm.field_cache_entry(i.c));
+            }
+            stored
         });
         if !stored {
             sibling!(lane_set_field_miss::<H, THIS>, r, ip, Carried::script(cx))
@@ -6674,10 +6677,8 @@ script_handler! {
 script_handler! {
     /// `lane_set_object_field_own` for `SetThisField` and `SetThisFieldStrict`.
     fn lane_set_this_field_own<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let this = unsafe { lane_held_this(cx) };
-        let stored = unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, this, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::Preserve);
+        let stored = unsafe { vm(cx) }.hinted_primary_field_store_hit(i.field_hint(), this, i.imm(), r.get(i.a));
         if !stored {
             sibling!(lane_set_field_logged::<H, true>, r, ip, Carried::script(cx))
         }
@@ -6701,15 +6702,7 @@ script_handler! {
             // The record's hint first, the own entry its last store named, then the entries.
             vm.hinted_own_field_store_hit(i.field_hint(), object, i.imm(), r.get(i.a))
                 || vm.polymorphic_own_field_store_hit(code, object, i.imm(), r.get(i.a), i.c).is_some_and(|own| {
-                    // A held loop header's `call_link` names its site (`lane_header_site`) and keeps no hint.
-                    let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER
-                        && i.call_link.get() != NO_CALL_LINK;
-                    if !header {
-                        // SAFETY: as `requicken`; the store proved the entry an own one of the
-                        // receiver's shape.
-                        unsafe { (*ip.cast_mut()).operand.field.shape = own.receiver };
-                        i.call_link.set(own.slot);
-                    }
+                    set_field_hint(ip, own);
                     true
                 })
         });
