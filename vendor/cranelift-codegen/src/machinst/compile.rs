@@ -48,7 +48,7 @@ pub fn compile<B: LowerBackend + TargetIsa>(
     trace!("vcode from lowering: \n{:?}", vcode);
 
     // Perform register allocation.
-    let regalloc_result = {
+    let mut regalloc_result = {
         let _tt = timing::regalloc();
         let mut options = RegallocOptions::default();
         options.verbose_log = b.flags().regalloc_verbose_logs();
@@ -72,8 +72,11 @@ pub fn compile<B: LowerBackend + TargetIsa>(
             .expect("register allocation")
     };
 
+    super::spill_copies::eliminate(&vcode, vcode.abi.machine_env(), &mut regalloc_result,
+        |inst| vcode.is_safepoint(inst));
+
     // Run the regalloc checker, if requested.
-    if b.flags().regalloc_checker() {
+    if cfg!(debug_assertions) || b.flags().regalloc_checker() {
         let _tt = timing::regalloc_checker();
         let mut checker = regalloc2::checker::Checker::new(&vcode, &vcode.abi.machine_env());
         checker.prepare(&regalloc_result);

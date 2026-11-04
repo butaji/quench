@@ -719,6 +719,10 @@ impl<I: VCodeInst> VCode<I> {
         self.insts.len()
     }
 
+    pub(super) fn is_safepoint(&self, inst: InsnIndex) -> bool {
+        self.insts[inst.index()].is_safepoint()
+    }
+
     fn compute_clobbers_and_function_calls(
         &self,
         regalloc: &regalloc2::Output,
