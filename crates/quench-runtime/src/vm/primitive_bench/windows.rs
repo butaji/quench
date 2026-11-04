@@ -63,7 +63,7 @@ windows! {
 
 #[test]
 fn primitive_window_fill_bounds_and_argument_prefix() {
-    fn check<const BLOCK: usize>() {
+    fn check<const BLOCK: usize>(initial: Value) {
         let maximum = usize::from(u16::MAX);
         for width in (0..=LARGE_BLOCK * LARGE_BLOCK).chain([maximum - 1, maximum]) {
             let room = fill_room::<BLOCK>(width);
@@ -73,16 +73,39 @@ fn primitive_window_fill_bounds_and_argument_prefix() {
                 // either side; the argument source is separate and long enough.
                 unsafe {
                     let target = storage.as_mut_ptr().add(1);
-                    fill_window::<BLOCK>(target, width, Value::UNDEFINED);
+                    fill_window::<BLOCK>(target, width, initial);
                     copy_arguments(target, ARGUMENTS.as_ptr(), argc as u16);
                 }
                 assert_eq!(storage[0], CANARY);
                 assert_eq!(storage[room + 1], CANARY);
                 assert_eq!(&storage[1..1 + argc], &ARGUMENTS[..argc]);
-                assert!(storage[1 + argc..1 + room].iter().all(|v| *v == Value::UNDEFINED));
+                assert!(storage[1 + argc..1 + room].iter().all(|v| *v == initial));
             }
         }
     }
-    check::<SMALL_BLOCK>();
-    check::<LARGE_BLOCK>();
+    for initial in [Value::UNDEFINED, Value::TRUE, Value::integer(17)] {
+        check::<SMALL_BLOCK>(initial);
+        check::<LARGE_BLOCK>(initial);
+    }
+}
+
+#[test]
+fn primitive_window_fill_preserves_unaligned_storage_contract() {
+    const BYTE_CANARY: u8 = 0xa5;
+    for width in [0, SMALL_BLOCK, SMALL_BLOCK + 1, LARGE_BLOCK + 1] {
+        let room = fill_room::<LARGE_BLOCK>(width);
+        let bytes = room * size_of::<Value>();
+        let mut storage = vec![BYTE_CANARY; bytes + align_of::<Value>() + 1];
+        let offset = if storage.as_ptr().addr().is_multiple_of(align_of::<Value>()) { 1 } else { 0 };
+        let initial = Value::integer(17);
+        // SAFETY: the byte allocation holds the complete rounded extent at this deliberately
+        // unaligned address. Values are only written/read through unaligned raw operations.
+        unsafe {
+            let target = storage.as_mut_ptr().add(offset).cast::<Value>();
+            fill_window::<LARGE_BLOCK>(target, width, initial);
+            for index in 0..room { assert_eq!(target.add(index).read_unaligned(), initial); }
+        }
+        assert!(storage[..offset].iter().all(|byte| *byte == BYTE_CANARY));
+        assert!(storage[offset + bytes..].iter().all(|byte| *byte == BYTE_CANARY));
+    }
 }
