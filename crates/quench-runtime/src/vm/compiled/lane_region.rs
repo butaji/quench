@@ -114,6 +114,9 @@ struct Lowering<'a, 'f> {
     global_reads: &'a BTreeSet<usize>,
     /// The VM's `length` name, whose read of a direct array is its record's (`array_length`).
     length: Atom,
+    /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
+    /// runs by the call protocol (`Lowering::construct`).
+    generic: &'a [usize],
     /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
     direct: &'a BTreeMap<usize, *const DirectCallee>,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
@@ -623,12 +626,13 @@ pub(super) fn compile(
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     global_reads: &BTreeSet<usize>,
     length: Atom,
+    generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
 ) -> Result<LaneRegion, LaneDecline> {
     let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, global_reads, length, direct, frame_captures, loop_entry, &*isa)
+    let (native, count) = lower(program, function_id, unit, helpers, fields, global_reads, length, generic, direct, frame_captures, loop_entry, &*isa)
         .ok_or(LaneDecline::Unlowered)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
@@ -645,6 +649,7 @@ fn lower(
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     global_reads: &BTreeSet<usize>,
     length: Atom,
+    generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
@@ -702,6 +707,7 @@ fn lower(
         fields,
         global_reads,
         length,
+        generic,
         direct,
         frame_captures,
         context,
@@ -1274,6 +1280,24 @@ impl Lowering<'_, '_> {
                 self.binary(state, pc, instruction)
             }
             Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some() => self.typeof_test(state, pc, instruction),
+            // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
+            // collection leaves first.
+            Op::MakeObject | Op::MakeArray if plain => {
+                let exit = self.guard_exit(state, pc32);
+                let payload = self.payload;
+                let value = if instruction.op() == Op::MakeObject {
+                    emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_object, &[payload])
+                } else {
+                    let length = self.ins().iconst(types::I64, instruction.array_length() as i64);
+                    emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_array, &[payload, length])
+                };
+                let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, made, exit);
+                self.reload_property_arena();
+                state.layouts.clear();
+                self.set_tagged(state, instruction.result_register(), value);
+                Some(true)
+            }
             Op::Construct if !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Op::IncDec if plain && instruction.numeric_local_target().is_none() => {
@@ -1413,9 +1437,10 @@ impl Lowering<'_, '_> {
 
     fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        // The body's own construction runs as a call does (`dispatch_fast::lane_body_construct`):
-        // the callee's plan, else its activation.
-        if matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
+        // A construction a previous body left at runs as a call does
+        // (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
+        if self.generic.contains(&pc)
+            && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
             && window.base + window.count <= self.unit.caller_registers
             && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
             return Some(self.call(state, pc, instruction, self.helpers.construct_call));
@@ -2685,7 +2710,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), Atom::MAX, &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), Atom::MAX, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -2708,7 +2733,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), Atom::MAX, &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), Atom::MAX, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

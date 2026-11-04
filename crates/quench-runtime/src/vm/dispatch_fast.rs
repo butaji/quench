@@ -2343,7 +2343,7 @@ fn below_floor() -> bool {
 
 /// After a lane allocation, a due collection raises the floor.
 #[inline(always)]
-fn note_allocation<H: Host>(vm: &Vm<H>) {
+pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
     if vm.heap.should_collect() {
         lane_floor().store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
         vm.lane_stack.activation_limit.set(0);

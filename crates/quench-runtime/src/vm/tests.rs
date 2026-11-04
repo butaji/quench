@@ -21824,6 +21824,35 @@ fn lane_bodies_construct_by_activation() {
 }
 
 #[test]
+fn lane_bodies_allocate_literals() {
+    // A lane body allocates `{}` and `[]` (`compiled::lane_new_object`, `lane_new_array`)
+    // across many collections, and the objects it fills read as the interpreter's.
+    let source = r#"
+     (function () {
+      function OC() { this.elms = []; }
+      OC.prototype.add = function (e) { this.elms.push(e); };
+      function pair(a) { var o = {}; o.a = a; o.list = []; o.list.push(a); return o; }
+      function f(i) { var c = new OC(); c.add(i); c.add(pair(i)); return c.elms.length + c.elms[1].a + c.elms[1].list.length; }
+      let t = 0; for (let i = 0; i < 200000; i++) t = (t + f(i)) | 0;
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-literals.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(-1474336480.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object

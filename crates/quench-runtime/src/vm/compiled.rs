@@ -2097,6 +2097,9 @@ pub(super) struct LaneHelpers {
     construct_call: usize,
     /// A capture's store (`dispatch_fast::lane_body_capture_store`).
     capture_set: usize,
+    /// An object literal's and an array literal's allocation (`lane_new_object`, `lane_new_array`).
+    new_object: usize,
+    new_array: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -7024,6 +7027,32 @@ unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u
     built.unwrap_or(Value::DELETED).to_bits()
 }
 
+/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
+/// `DELETED` where a collection is due, which the body leaves for. The allocation may move
+/// the property arena, whose base and length the dispatch reads again.
+unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
+    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let object = vm.object();
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_allocation_bases(vm);
+    object.to_bits()
+}
+
+/// A lane body's array literal of `length` holes, as the lane's own
+/// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
+/// `lane_new_object`.
+unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64) -> u64 {
+    // SAFETY: as `lane_new_object`.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let array = vm.hole_array(length as usize);
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_allocation_bases(vm);
+    array.to_bits()
+}
+
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
@@ -7132,6 +7161,8 @@ impl<H: Host> Vm<H> {
             typeof_is: lane_typeof_is::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             construct: lane_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             construct_call: super::dispatch_fast::lane_body_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            new_object: lane_new_object::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
+            new_array: lane_new_array::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
@@ -7177,7 +7208,7 @@ impl<H: Host> Vm<H> {
                 .filter_map(|(pc, origin)| direct[*origin].as_deref().map(|callee| (*pc, callee as *const DirectCallee)))
                 .collect();
             let frame_captures: Vec<(usize, usize)> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
-            match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.length_atom, &direct_sites, &frame_captures, loop_entry) {
+            match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.length_atom, &generic, &direct_sites, &frame_captures, loop_entry) {
                 Ok(region) => break (unit, region, fields, sites),
                 Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
                     if !unit.frames.is_empty() => budget /= 2,
