@@ -727,13 +727,13 @@ impl Heap {
         }
     }
 
-    /// The representation every value `slot` of `shape`'s objects has held; `Tagged` where
-    /// representations are not kept or the shape does not register the slot.
-    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> crate::value_vec::SlotRepresentation {
+    /// The type every value `slot` of `shape`'s objects has held; any value where types are
+    /// not kept or the shape does not register the slot.
+    pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> crate::typed_ir::Type {
         if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
-            return crate::value_vec::SlotRepresentation::Tagged;
+            return crate::typed_ir::Type::ANY;
         }
-        self.properties.slot_representation(shape, slot)
+        self.properties.slot_type(shape, slot)
     }
 
     /// The slots of live object records whose value its owner's type does not hold

@@ -22068,6 +22068,47 @@ fn lane_equality_and_relations_of_int32_fields_and_parameters() {
 }
 
 #[test]
+fn lane_typed_field_reads_follow_slot_widening() {
+    // A field that has held only objects and null is read as such (`Lowering::typed_read`),
+    // its truthiness a nullish test; a write of another kind from outside widens it and
+    // advances the slot-type epoch, which the read leaves at, and a lane body's own store of
+    // another kind joins it first (`Lowering::represented`). Every value reads as the
+    // interpreter's.
+    let source = r#"
+     (function () {
+     function Node(v) { this.v = v; this.link = null; }
+     function walk(head) { let s = 0, n = head; while (n) { s += n.v; n = n.link; } return s; }
+     function relink(a, b, k) { a.link = (k % 5 === 0) ? null : b; return a.link ? 1 : 0; }
+     const nodes = []; for (let i = 0; i < 10; i++) nodes.push(new Node(i));
+     for (let i = 0; i < 9; i++) nodes[i].link = nodes[i + 1];
+     let t = 0;
+     for (let r = 0; r < 20000; r++) { t += walk(nodes[0]); t += relink(nodes[9], nodes[0], r); nodes[9].link = null; }
+     nodes[5].link = 0;
+     for (let r = 0; r < 2000; r++) t += walk(nodes[0]);
+     nodes[5].link = nodes[6];
+     function poke(n, k) { n.link = (k & 1) ? n : 7; return n.link === 7 ? 3 : 4; }
+     const loose = new Node(99);
+     for (let r = 0; r < 5000; r++) t += poke(loose, r) + walk(nodes[0]) + (loose.link ? 1 : 0);
+     globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-typed-fields.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        assert_eq!(vm.heap.unrepresented_slots(), 0, "every live slot holds a value of its type");
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1193500.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object
