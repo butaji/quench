@@ -14701,12 +14701,12 @@ fn lane_body_activate<H: Host>(
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
-    // A target without a body specializes at once, past the warm-up: a body's call is hot
-    // by the body's own warm-up, and each of its runs that the target leaves instead counts
-    // against the caller's body (`LaneView::note_lane_body_end`). A constructor only body
-    // code constructs is entered by nothing else.
-    if own.respecializes() || own.lane_body().is_none() {
+    // A target without a body warms toward one by these entries too, as by the lane's own
+    // (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
+    if own.respecializes() {
         lane_specialize(cx, own, target.function, None, true);
+    } else if own.lane_body().is_none() {
+        lane_specialize(cx, own, target.function, None, false);
     }
     let Some(method) = own.lane_body().filter(|_| lane_body_admits(cx, own)) else {
         return leave(start, Value::UNDEFINED);
