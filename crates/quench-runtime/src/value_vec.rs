@@ -1,5 +1,4 @@
 use crate::Value;
-use crate::typed_ir::Type;
 use rustc_hash::FxHashMap;
 
 mod buffer;
@@ -200,22 +199,10 @@ pub(crate) enum SlotRepresentation {
 }
 
 impl SlotRepresentation {
-    /// The representation a slot of type `ty` has: none before any value, int32 where every
-    /// value was one, else any value.
-    pub(crate) fn of_type(ty: Type) -> Self {
-        if ty == Type::NEVER { Self::None } else if ty.is_subtype(Type::INT32) { Self::Int32 } else { Self::Tagged }
+    #[inline(always)]
+    pub(crate) fn of(value: Value) -> Self {
+        if value.as_int().is_some() { Self::Int32 } else { Self::Tagged }
     }
-}
-
-/// The type a slot has held once `ty` joins it: `ty` itself where it is a fact a native read
-/// uses (an int32, a Number, a Boolean, an object or nullish), else any value, which no later
-/// write widens (`ValueArena::saturated`).
-fn slot_type(ty: Type) -> Type {
-    let object_or_nullish = Type::language(crate::ValueType::Object)
-        .join(Type::language(crate::ValueType::Null))
-        .join(Type::language(crate::ValueType::Undefined));
-    let useful = [Type::NUMBER, Type::language(crate::ValueType::Boolean), object_or_nullish];
-    if useful.iter().any(|fact| ty.is_subtype(*fact)) { ty } else { Type::ANY }
 }
 
 pub(crate) struct ValueArena {
@@ -230,8 +217,8 @@ pub(crate) struct ValueArena {
     shape_chains: Vec<u32>,
     chain_owners: Vec<u32>,
     /// Per owner shape, the representation every value its slot has held fits
-    /// (`slot_type`), joined on each write; `SlotRepresentation` is its projection.
-    owner_reps: Vec<Type>,
+    /// (`SlotRepresentation`), joined on each write.
+    owner_reps: Vec<SlotRepresentation>,
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
@@ -253,7 +240,7 @@ impl Default for ValueArena {
             shape_lengths: vec![0],
             shape_chains: vec![0],
             chain_owners: Vec::new(),
-            owner_reps: vec![Type::NEVER],
+            owner_reps: vec![SlotRepresentation::None],
             tracking: false,
             saturated: Vec::new(),
             dictionaries: FxHashMap::default(),
@@ -359,7 +346,7 @@ impl ValueArena {
         self.shape_chains.push(0);
         self.chain_owners.clear();
         self.owner_reps.clear();
-        self.owner_reps.push(Type::NEVER);
+        self.owner_reps.push(SlotRepresentation::None);
     }
 
     /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
@@ -372,9 +359,9 @@ impl ValueArena {
         let index = shape as usize;
         if self.shape_chains.len() <= index {
             self.shape_chains.resize(index + 1, 0);
-            self.owner_reps.resize(index + 1, Type::NEVER);
+            self.owner_reps.resize(index + 1, SlotRepresentation::None);
         }
-        self.owner_reps[index] = Type::NEVER;
+        self.owner_reps[index] = SlotRepresentation::None;
         // A parent's chain covers its length once registered; one that does not (a parent the
         // heap never registered at that length) lends no owners, and the child owns its slots.
         let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
@@ -412,7 +399,7 @@ impl ValueArena {
     }
 
     /// `note_shape_value` of an object's initial `values`, slot by slot; a shape these leave
-    /// with every slot of any value is saturated from then on.
+    /// with every slot `Tagged` is saturated from then on.
     pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
         if !self.tracking || self.is_saturated(shape) { return; }
         let length = self.shape_length(shape);
@@ -420,11 +407,14 @@ impl ValueArena {
         for (slot, value) in values.iter().copied().enumerate().take(length) {
             let owner = self.slot_owner(shape, slot) as usize;
             let mut held = self.owner_reps[owner];
-            if held != Type::ANY && !value.is_deleted() {
-                held = slot_type(held.join(Type::immediate(value)));
-                self.owner_reps[owner] = held;
+            if held != SlotRepresentation::Tagged && !value.is_deleted() {
+                let class = SlotRepresentation::of(value);
+                if class > held {
+                    self.owner_reps[owner] = class;
+                    held = class;
+                }
             }
-            saturated &= held == Type::ANY;
+            saturated &= held == SlotRepresentation::Tagged;
         }
         if saturated {
             let (word, bit) = (shape as usize / u64::BITS as usize, shape % u64::BITS);
@@ -433,7 +423,7 @@ impl ValueArena {
         }
     }
 
-    /// Whether every slot of `shape` holds any value (`ValueArena::saturated`).
+    /// Whether every slot of `shape` is `Tagged` (`ValueArena::saturated`).
     #[inline(always)]
     fn is_saturated(&self, shape: u32) -> bool {
         self.saturated.get(shape as usize / u64::BITS as usize).is_some_and(|word| word & (1 << (shape % u64::BITS)) != 0)
@@ -443,7 +433,7 @@ impl ValueArena {
     pub(crate) fn track(&mut self) {
         self.tracking = true;
         self.saturated.clear();
-        self.owner_reps.fill(Type::NEVER);
+        self.owner_reps.fill(SlotRepresentation::None);
     }
 
     /// Whether writes join their values' classes.
@@ -462,16 +452,10 @@ impl ValueArena {
         self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
     }
 
-    /// The type every value `slot` of `shape` has held (`slot_type`).
-    #[inline(always)]
-    pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> Type {
-        self.owner_reps[self.slot_owner(shape, slot) as usize]
-    }
-
-    /// The representation `slot` of `shape` has held, `slot_type`'s projection.
+    /// The representation `slot` of `shape` has held.
     #[inline(always)]
     pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> SlotRepresentation {
-        SlotRepresentation::of_type(self.slot_type(shape, slot))
+        self.owner_reps[self.slot_owner(shape, slot) as usize]
     }
 
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
@@ -489,10 +473,10 @@ impl ValueArena {
         let owner = self.slot_owner(shape, slot) as usize;
         let held = self.owner_reps[owner];
         // A slot that has held any value holds every value: the common case pays one compare.
-        if held == Type::ANY { return false; }
-        let joined = slot_type(held.join(Type::immediate(value)));
-        let widened = joined != held;
-        if widened { self.owner_reps[owner] = joined; }
+        if held == SlotRepresentation::Tagged { return false; }
+        let class = SlotRepresentation::of(value);
+        let widened = class > held;
+        if widened { self.owner_reps[owner] = class; }
         widened
     }
 

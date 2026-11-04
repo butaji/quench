@@ -736,8 +736,8 @@ impl Heap {
         self.properties.slot_representation(shape, slot)
     }
 
-    /// The slots of live object records whose value its owner's type does not hold
-    /// (`ValueArena::slot_type`): zero while every write joins its value's type;
+    /// The slots of live object records whose value its owner's representation does not hold
+    /// (`ValueArena::slot_representation`): zero while every write joins its value's class;
     /// zero too where representations are not kept.
     pub(crate) fn unrepresented_slots(&self) -> usize {
         if !self.properties.tracks() { return 0; }
@@ -749,7 +749,7 @@ impl Heap {
                 // SAFETY: an exact, non-dictionary shape holds its registered slots.
                 let value = unsafe { self.property_get_flat(object, slot) };
                 if !value.is_deleted()
-                    && !crate::typed_ir::Type::immediate(value).is_subtype(self.properties.slot_type(shape, slot)) {
+                    && crate::value_vec::SlotRepresentation::of(value) > self.properties.slot_representation(shape, slot) {
                     unrepresented += 1;
                 }
             }
