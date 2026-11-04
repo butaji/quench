@@ -2005,16 +2005,7 @@ impl Lowering<'_, '_> {
                     let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit, object_table);
                     let slot = binding.slot.read(&mut self.builder);
                     binding.slot = FieldSlot::Bound(slot);
-                    if writes != Type::NEVER {
-                        let domain = crate::typed_ir::SlotType::from_type(writes);
-                        let encoded = self.builder.ins().iconst(types::I64, domain as i64);
-                        let shape = self.builder.ins().uextend(types::I64, binding.receiver);
-                        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldWriteAdmission);
-                        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
-                        let admitted = self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
-                        emit_js_guard(&mut self.builder, admitted, exit);
-                        binding.writes = Some(domain.ty());
-                    }
+                    if writes != Type::NEVER { self.admit_field_writes(&mut binding, writes, exit); }
                     // The extra entry arithmetic pays for repeated receiver loads.
                     // A one-off access keeps its cheaper storage-plus-slot form.
                     if repeated {
@@ -2116,6 +2107,20 @@ impl Lowering<'_, '_> {
             });
         }
         admitted
+    }
+
+    /// Admit once at the edge; later raw stores consume the compile-time domain proof.
+    fn admit_field_writes(&mut self, binding: &mut FieldSlotBinding, writes: Type, exit: ir::Block) {
+        if binding.writes.is_some_and(|domain| writes.is_subtype(domain)) { return; }
+        let domain = crate::typed_ir::SlotType::from_type(writes);
+        let encoded = self.builder.ins().iconst(types::I64, domain as i64);
+        let shape = self.builder.ins().uextend(types::I64, binding.receiver);
+        let slot = binding.slot.read(&mut self.builder);
+        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldWriteAdmission);
+        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
+        let admitted = self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
+        emit_js_guard(&mut self.builder, admitted, exit);
+        binding.writes = Some(binding.writes.map_or(domain.ty(), |held| held.join(domain.ty())));
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
@@ -3260,6 +3265,9 @@ impl Lowering<'_, '_> {
                 for (store, binding) in stores {
                     let instruction = self.unit.instructions[store];
                     let site = instruction.cache_site_index();
+                    let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
+                        &mut self.builder, self.payload, site, exit, None));
+                    self.admit_field_writes(&mut binding, Type::INT32, exit);
                     let allowed = self.store_atom_admitted(instruction.atom_index());
                     emit_js_guard(&mut self.builder, allowed, exit);
                     let packed = self.builder.create_block();
@@ -3268,7 +3276,7 @@ impl Lowering<'_, '_> {
                     let address = self.builder.append_block_param(done, types::I64);
                     let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder,
                         self.registers_base, self.payload, JsFieldReceiver::Value(object), site,
-                        false, exit, binding, Some(object_header), Some(packed));
+                        false, exit, Some(binding), Some(object_header), Some(packed));
                     self.ins().jump(done, &[ir::BlockArg::Value(arena_address)]);
                     self.builder.switch_to_block(packed);
                     self.ins().jump(done, &[ir::BlockArg::Value(packed_address)]);

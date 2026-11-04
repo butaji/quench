@@ -2229,7 +2229,6 @@ lane_helper_inventory! { H;
     MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
     GlobalGet => lane_global_get::<H>,
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     FieldWriteAdmission => lane_field_write_admission::<H>,
 }
 
