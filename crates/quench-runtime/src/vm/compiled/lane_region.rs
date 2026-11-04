@@ -2800,19 +2800,21 @@ impl Lowering<'_, '_> {
                     _ => None,
                 }
             } else { None };
-            let object_header = if carried && int32 {
+            let stores: smallvec::SmallVec<[(usize, FieldSlotBinding); INLINE_FIELD_BINDINGS]> =
+                self.carried_stores.iter().filter_map(|(store, read)| {
+                    if *read != pc || !int32 { return None; }
+                    let site = self.unit.instructions[*store].cache_site_index();
+                    self.entry.as_ref()?.fields.iter().find_map(|(known, binding)|
+                        (*known == site).then_some((*store, *binding)))
+                }).collect();
+            let object_header = if !stores.is_empty() {
                 receiver.map(|(owner, _)| self.object_header(state, Some(owner), exit))
             } else { None };
             if let (Some((owner, _)), Some(object_header)) = (receiver, object_header) {
                 let object = self.tagged(state, owner);
-                let stores: Vec<_> = self.carried_stores.iter()
-                    .filter_map(|(store, read)| (*read == pc).then_some(*store)).collect();
-                for store in stores {
+                for (store, binding) in stores {
                     let instruction = self.unit.instructions[store];
                     let site = instruction.cache_site_index();
-                    let binding = self.entry.as_ref().and_then(|entry| entry.fields.iter()
-                        .find_map(|(known, binding)| (*known == site).then_some(*binding)));
-                    let Some(binding) = binding else { continue };
                     let allowed = self.store_atom_admitted(instruction.atom_index());
                     emit_js_guard(&mut self.builder, allowed, exit);
                     let packed = self.builder.create_block();
