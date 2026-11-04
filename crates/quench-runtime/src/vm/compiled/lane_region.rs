@@ -32,6 +32,8 @@ pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 const INLINE_FIELD_BINDINGS: usize = 4;
 /// Common small effect frontiers stay inline; larger control-flow graphs spill normally.
 const INLINE_EFFECT_EDGES: usize = 4;
+/// Most blocks project only a few numbers; larger blocks spill without a limit.
+const INLINE_NUMBER_PROJECTIONS: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The executable memory a lane body may take: what a unit at its instruction bound
@@ -46,12 +48,22 @@ const LANE_BODY_MAX_CODE_BYTES: usize =
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegisterFact {
     value: VerifiedFact,
-    tagged_current: bool,
+    tagged: TaggedView,
+}
+
+/// A current tagged view is either an entry/join variable or a dominating SSA value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaggedView { Unavailable, Variable, Value(ir::Value) }
+
+impl TaggedView {
+    fn current(self) -> bool { self != Self::Unavailable }
 }
 
 impl RegisterFact {
     fn admit(value: Fact) -> Option<Self> {
-        Some(Self { value: value.verified()?, tagged_current: value.representation == Representation::Tagged })
+        Some(Self { value: value.verified()?, tagged: if value.representation == Representation::Tagged {
+            TaggedView::Variable
+        } else { TaggedView::Unavailable } })
     }
 
     fn definition(ty: Type, representation: Representation) -> Self {
@@ -83,6 +95,8 @@ struct State {
     /// Effect-free reads in this memory version. Results are immutable SSA values;
     /// receiver homes expire on definition, and writes/reentry retire all reads.
     fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
+    /// Pure ToInt32 results of admitted numeric SSA values, not changes to source types.
+    int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,7 +125,7 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], objects: ObjectProofs {
             headers: vec![None; registers + 1], layouts: BTreeMap::new(), receivers: BTreeSet::new() },
-            fields: smallvec::SmallVec::new() }
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new() }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -123,14 +137,15 @@ impl State {
     /// object records and language families stay.
     fn call_effect(&mut self) {
         self.fields.clear();
+        self.int32_projections.clear();
         self.objects.headers.fill(None);
         self.objects.layouts.clear();
         for fact in &mut self.values {
             if fact.value.ty.object_shape().is_some() {
-                *fact = RegisterFact { tagged_current: fact.tagged_current,
+                *fact = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(Type::language(crate::ValueType::Object), fact.value.representation) };
             } else if fact.value.ty.body_index().is_some() {
-                *fact = RegisterFact { tagged_current: fact.tagged_current,
+                *fact = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(Type::language(crate::ValueType::Function), fact.value.representation) };
             }
         }
@@ -368,7 +383,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn tagged(&mut self, state: &mut State, register: Register) -> ir::Value {
         let index = usize::from(register);
         let fact = state.values[index];
-        if !fact.tagged_current {
+        if let TaggedView::Value(value) = fact.tagged { return value; }
+        if !fact.tagged.current() {
             let bits = match fact.value.representation {
                 Representation::Int32 => {
                     let int = { let variable = self.int_var(index); self.builder.use_var(variable) };
@@ -381,12 +397,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 Representation::Tagged => unreachable!("tagged view is current"),
             };
             self.builder.def_var(self.registers.tagged[index], bits);
-            state.values[index].tagged_current = true;
+            state.values[index].tagged = TaggedView::Value(bits);
+            return bits;
         }
-        self.builder.use_var(self.registers.tagged[index])
+        let bits = self.builder.use_var(self.registers.tagged[index]);
+        state.values[index].tagged = TaggedView::Value(bits);
+        bits
     }
 
-    fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
+    fn define(&mut self, state: &mut State, register: Register, value: ir::Value, mut fact: RegisterFact) {
         let index = usize::from(register);
         // Residual definitions include synthetic destinations, such as the
         // canonical Return home of a fused returning arithmetic operation.
@@ -397,6 +416,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Representation::Float64 => self.float_var(index),
         };
         self.builder.def_var(variable, value);
+        if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
         state.values[index] = fact;
         state.objects.headers[index] = None;
         state.objects.layouts.retain(|(owner, _), _| *owner != Some(register));
@@ -426,7 +446,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 let variable = self.int_var(index);
                 return self.builder.use_var(variable);
             }
-            Representation::Float64 if !fact.tagged_current => {
+            Representation::Float64 if !fact.tagged.current() => {
                 let variable = self.float_var(index);
                 let number = self.builder.use_var(variable);
                 let (int, exact) = emit_js_exact_int32(&mut self.builder, number);
@@ -446,7 +466,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         };
         let variable = self.int_var(index);
         self.builder.def_var(variable, int);
-        state.values[index] = RegisterFact { tagged_current: fact.tagged_current,
+        state.values[index] = RegisterFact { tagged: state.values[index].tagged,
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         int
     }
@@ -469,7 +489,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
                     emit_js_tagged_number(&mut self.builder, bits, otherwise)
                 };
                 { let variable = self.float_var(index); self.builder.def_var(variable, number); }
-                state.values[index] = RegisterFact { tagged_current: true,
+                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                     ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
                 number
             }
@@ -478,7 +498,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn canonicalize(&mut self, state: &mut State, pc: usize) {
         for register in 0..state.values.len() {
-            if self.is_live(pc, register as Register) && !state.values[register].tagged_current {
+            if self.is_live(pc, register as Register) && !state.values[register].tagged.current() {
                 self.tagged(state, register as Register);
             }
         }
@@ -1356,6 +1376,10 @@ impl Lowering<'_, '_> {
             return Some(self.number_to_int32(number, exit));
         }
         let bits = self.operand_tagged(state, operand)?;
+        if let Some((_, int32)) = state.int32_projections.iter().find(|(source, _)| *source == bits) {
+            #[cfg(test)] INT32_PROJECTION_REUSES.with(|count| count.set(count.get() + 1));
+            return Some(*int32);
+        }
         let integer = is_int_tagged(&mut self.builder, bits);
         let (int_block, number_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let int32 = self.builder.append_block_param(join, types::I32);
@@ -1368,6 +1392,7 @@ impl Lowering<'_, '_> {
         let truncated = self.number_to_int32(number, exit);
         self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
         self.builder.switch_to_block(join);
+        state.int32_projections.push((bits, int32));
         Some(int32)
     }
 
@@ -1437,13 +1462,14 @@ impl Lowering<'_, '_> {
     fn join_states(&mut self, state: &mut State, incoming: &State) {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.fields.retain(|field| incoming.fields.contains(field));
+        state.int32_projections.retain(|projection| incoming.int32_projections.contains(projection));
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
                 let representation = if current.value.representation == incoming.value.representation {
                     current.value.representation
                 } else {
-                    self.valid &= current.tagged_current && incoming.tagged_current;
+                    self.valid &= current.tagged.current() && incoming.tagged.current();
                     Representation::Tagged
                 };
                 let Some(mut fact) = RegisterFact::admit(Fact {
@@ -1451,7 +1477,9 @@ impl Lowering<'_, '_> {
                     binding: BindingTime::Dynamic, proof: Proof::Definition,
                     projection: Projection::Exact,
                 }) else { self.valid = false; return; };
-                fact.tagged_current = current.tagged_current && incoming.tagged_current;
+                fact.tagged = if current.tagged == incoming.tagged { current.tagged }
+                    else if current.tagged.current() && incoming.tagged.current() { TaggedView::Variable }
+                    else { TaggedView::Unavailable };
                 state.values[index] = fact;
             }
         }
@@ -1832,7 +1860,7 @@ impl Lowering<'_, '_> {
                 let int = self.ins().ireduce(types::I32, value);
                 let variable = self.int_var(usize::from(destination));
                 self.builder.def_var(variable, int);
-                state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
+                state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
                     ..RegisterFact::definition(Type::INT32, Representation::Int32) };
             }
             self.native += 1;
@@ -2226,15 +2254,19 @@ impl Lowering<'_, '_> {
             Representation::Int32 => self.int_var(usize::from(source)),
             Representation::Float64 => self.float_var(usize::from(source)),
         };
-        let value = self.builder.use_var(variable);
-        let tagged = (fact.tagged_current && fact.value.representation != Representation::Tagged)
-            .then(|| self.builder.use_var(self.registers.tagged[usize::from(source)]));
+        let value = if fact.value.representation == Representation::Tagged { self.tagged(state, source) }
+            else { self.builder.use_var(variable) };
+        let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
+            .then(|| self.tagged(state, source));
         let header = state.objects.headers[usize::from(source)];
         let receiver = state.objects.receivers.contains(&source);
         let layouts: Vec<_> = state.objects.layouts.iter().filter_map(|((owner, shape), projection)|
             (*owner == Some(source)).then_some((*shape, *projection))).collect();
         self.define(state, destination, value, fact);
-        if let Some(bits) = tagged { self.builder.def_var(self.registers.tagged[usize::from(destination)], bits); }
+        if let Some(bits) = tagged {
+            self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
+            state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
+        }
         state.objects.headers[usize::from(destination)] = header;
         for (shape, projection) in layouts { state.objects.layouts.insert((Some(destination), shape), projection); }
         if receiver { state.objects.receivers.insert(destination); }
@@ -2572,7 +2604,7 @@ impl Lowering<'_, '_> {
                 fact.value.representation == Representation::Int32
             } else if ty == Type::NUMBER {
                 fact.value.representation == Representation::Float64
-            } else { fact.tagged_current }
+            } else { fact.tagged.current() }
         }) { return false; }
         let latch = match self.poll_latches[block] {
             Some(latch) => latch,
@@ -2749,7 +2781,7 @@ impl Lowering<'_, '_> {
         let int = self.ins().ireduce(types::I32, value);
         let variable = self.int_var(usize::from(destination));
         self.builder.def_var(variable, int);
-        state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
+        state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         Some(true)
     }

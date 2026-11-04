@@ -2224,6 +2224,7 @@ thread_local! {
     static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }
@@ -18542,6 +18543,7 @@ mod tests {
     fn forwarded_fields_preserve_effects_aliases_and_immutable_values() {
         let source = r#"
             function pair(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const a=owner.value|0; const b=owner.value|0; result=a+b;} return result;}
+            function projected(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const value=owner.value; const a=value|0; const b=owner.value>>1; result=1/value+(a^b);} return result;}
             function overwritten(owner) {let first=owner.value; first=100; return (owner.value|0)+first;}
             function changed(a,b) {const first=a.value|0; b.value=9; return first+(a.value|0);}
             function replaced(a,b) {const first=a.value|0; a=b; return first+(a.value|0);}
@@ -18563,6 +18565,12 @@ mod tests {
             calls=0;
             const coercion={value:{valueOf(){calls++;coercion.value=9;return 3;}}};
             if(pair(coercion,1,false)!==12 || calls!==1) throw 'coercion mutation';
+            for(const [value,expected] of [[7.75,1/7.75+4],[-3.25,1/-3.25+3],
+                [4294967303.5,1/4294967303.5+4],[-0,-Infinity],[NaN,NaN],[Infinity,0],[-Infinity,0]]) {
+                if(!Object.is(projected({value},1,false),expected)) throw 'projection changed source';
+            }
+            calls=0;
+            if(projected({value:{valueOf(){return ++calls;}}},1,false)!==1/3 || calls!==3) throw 'projection skipped coercion';
             owner.value=7;
             if(callback(owner,()=>{owner.value=19;})!==26) throw 'callback mutation';
             let proto={value:7}, child=Object.create(proto);
@@ -18627,8 +18635,10 @@ mod tests {
             let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-fields.cts") }
                 else { crate::Engine::specialize(&source, "packed-fields.cjs") }.unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
+            INT32_PROJECTION_REUSES.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
+            assert!(INT32_PROJECTION_REUSES.with(std::cell::Cell::get) > 0, "reuse the control value's numeric projection");
             FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
             FUNCTION_BINDING_CALLS.with(|count| count.set(0));
             let mut vm = Vm::new(crate::test_host::TestHost::default());
