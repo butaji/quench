@@ -109,9 +109,9 @@ impl<H: Host> Vm<H> {
             active_constants: &[],
             active_field_entries: std::ptr::null(),
             active_program: ProgramId::MAIN,
-            #[cfg(feature = "profile-aggregate")]
+            #[cfg(any(feature = "profile-aggregate", feature = "profile-field-primitives"))]
             profile: Profile::default(),
-            #[cfg(not(feature = "profile-aggregate"))]
+            #[cfg(not(any(feature = "profile-aggregate", feature = "profile-field-primitives")))]
             profile: Profile,
             shape_slot_memo: Default::default(),
             plain_copy_shapes: Default::default(),

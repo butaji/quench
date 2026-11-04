@@ -1527,6 +1527,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let value = self.own_field_entry_hit(cache, receiver)?;
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
         Some(value)
     }
@@ -1627,12 +1629,19 @@ impl<H: Host> Vm<H> {
     pub(super) fn record_field_entry_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         if cache.holder == NO_FIELD_HOLDER {
-            return self.own_field_entry_hit(cache, receiver);
+            let value = self.own_field_entry_hit(cache, receiver);
+            #[cfg(feature = "profile-field-primitives")]
+            if value.is_some() {
+                self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintOwnRead);
+            }
+            return value;
         }
         let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
         if cache.receiver != receiver.exact_shape() || !cached_holder_matches(holder, cache.holder) {
             return None;
         }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintHolderRead);
         // SAFETY: as `cached_ordinary_holder_field_value`.
         Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
     }
@@ -1669,6 +1678,12 @@ impl<H: Host> Vm<H> {
         if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value, layout) } {
             return false;
         }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(if LOGS {
+            crate::profile::field_primitives::Path::PrimaryStoreLogged
+        } else {
+            crate::profile::field_primitives::Path::PrimaryStoreNoLog
+        });
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -1716,6 +1731,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.profile.field_cache_hit(2, 0);
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PolymorphicStore);
         Some(FieldCache::own(shape, slot))
     }
 
@@ -1738,6 +1755,8 @@ impl<H: Host> Vm<H> {
         if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
             return false;
         }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintedStore);
         self.profile.field_cache_hit(2, 0);
         true
     }
@@ -3642,6 +3661,8 @@ impl<H: Host> Vm<H> {
             self.heap
                 .property_set_unchecked(object, slot as usize, value)
         };
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::CachedStore);
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -4313,6 +4334,8 @@ impl<H: Host> Vm<H> {
         if invalidates_method {
             self.invalidate_method_caches_for_atom(atom);
         }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::GeneralStore);
         self.profile.field_cache_hit(kind, 0);
         true
     }

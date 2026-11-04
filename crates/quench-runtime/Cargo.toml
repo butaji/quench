@@ -26,6 +26,8 @@ native-execution = []
 # Build-time native object publication; not needed by the execution-only host.
 aot = ["native-execution", "dep:cranelift-native", "cranelift-codegen/host-arch", "dep:cranelift-object", "dep:cranelift-module", "dep:object", "dep:serde_json"]
 profile-aggregate = []
+# Successful field helper counts without changing lane admission or array proofs.
+profile-field-primitives = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
 profile-native-ops = ["native-execution"]

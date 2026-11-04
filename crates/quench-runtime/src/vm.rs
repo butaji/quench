@@ -2548,6 +2548,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.report();
         #[cfg(feature = "profile-memory")]
         self.name_atom_memo.report_queries();
         #[cfg(feature = "profile-allocator")]
