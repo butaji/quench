@@ -30,6 +30,7 @@ enum TypeKind {
     Int32,
     DirectObjectShape(u32),
     FunctionIdentity(Value),
+    FunctionBody(u32),
 }
 
 /// A set of language types, with an optional semantic refinement.
@@ -54,7 +55,7 @@ impl Type {
             TypeKind::Language(kinds) => kinds,
             TypeKind::Int32 => 1 << ValueType::Number as u16,
             TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
-            TypeKind::FunctionIdentity(_) => 1 << ValueType::Function as u16,
+            TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => 1 << ValueType::Function as u16,
         }
     }
 
@@ -82,6 +83,17 @@ impl Type {
 
     pub(crate) fn function_identity(self) -> Option<Value> {
         match self.0 { TypeKind::FunctionIdentity(identity) => Some(identity), _ => None }
+    }
+
+    /// A closure admitted against this region's program, function index and realm.
+    /// Unlike identity, this admits distinct environments of the same body. It is
+    /// local to the active program/realm and cannot cross a safepoint or reentry.
+    pub(crate) const fn function_body(function: u32) -> Self {
+        Self(TypeKind::FunctionBody(function))
+    }
+
+    pub(crate) fn body_index(self) -> Option<u32> {
+        match self.0 { TypeKind::FunctionBody(function) => Some(function), _ => None }
     }
 
     /// Facts available from a canonical value alone. Heap language types need
@@ -195,7 +207,7 @@ impl Fact {
         })
             && match self.binding {
                 BindingTime::Static => self.proof == Proof::Static && self.ty.object_shape().is_none()
-                    && self.ty.function_identity().is_none(),
+                    && self.ty.function_identity().is_none() && self.ty.body_index().is_none(),
                 BindingTime::Location | BindingTime::Site => {
                     self.proof == Proof::EntryGuard
                         || (self.proof == Proof::CanonicalValue
@@ -240,6 +252,25 @@ impl Fact {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_body_admission_is_not_identity_or_static_knowledge() {
+        let body = Type::function_body(7);
+        let other = Type::function_body(9);
+        let function = Type::language(ValueType::Function);
+        assert_eq!(body.body_index(), Some(7));
+        assert_eq!(body.join(body), body);
+        assert_eq!(body.join(other), function);
+        assert_eq!(body.join(Type::function(Value::direct_function(7)).unwrap()), function);
+        assert!(body.is_subtype(function));
+        assert!(!function.is_subtype(body));
+        assert!(!body.is_subtype(other));
+        let fact = Fact { ty: body, representation: Representation::Tagged,
+            binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact };
+        assert!(fact.verify());
+        assert!(!Fact { proof: Proof::CanonicalValue, ..fact }.verify());
+        assert!(!Fact { binding: BindingTime::Static, proof: Proof::Static, ..fact }.verify());
+    }
 
     #[test]
     fn function_identities_join_without_conflating_closures_or_static_proofs() {

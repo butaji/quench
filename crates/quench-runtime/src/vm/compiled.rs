@@ -2222,6 +2222,7 @@ const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
 #[cfg(test)]
 thread_local! {
     static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+    static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }
@@ -7426,6 +7427,7 @@ unsafe extern "C" fn lane_guarded_call<H: Host>(vm: u64, residual: u64, program:
 
 /// Admit the actual closure for a statically selected body without entering it.
 unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64) -> u64 {
+    #[cfg(test)] FUNCTION_BINDING_CALLS.with(|count| count.set(count.get() + 1));
     // SAFETY: the linked unit owns this VM/program throughout the no-GC operation.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     let matches = !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
@@ -18537,6 +18539,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn bound_packed_integer_fields_avoid_per_iteration_helpers() {
+        const WARMUP_RUNS: usize = 64;
         for (count, typescript) in [1000, 10000].into_iter()
             .flat_map(|count| [false, true].map(move |typescript| (count, typescript))) {
             let expected = (0..count).fold(123456789_i32, |value, _|
@@ -18551,7 +18554,7 @@ mod tests {
                     while(state.count > 0) advance(state);
                     return state.control | 0;
                 }}
-                for(let i=0;i<64;i++) run(1,i);
+                for(let i=0;i<{WARMUP_RUNS};i++) run(1,i);
                 if(run({count},123456789)!=={expected}) throw 'incorrect update';
                 throw 42;
             }})();"#);
@@ -18559,6 +18562,7 @@ mod tests {
                 else { crate::Engine::specialize(&source, "packed-fields.cjs") }.unwrap();
             let native = linked_optimized_test_program(program);
             FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
+            FUNCTION_BINDING_CALLS.with(|count| count.set(0));
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.execute_native_program(&native, true).unwrap_err();
@@ -18566,6 +18570,8 @@ mod tests {
             let [reads, writes] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
             assert!(reads <= 2, "only entry misses may call the read helper: {reads}");
             assert_eq!(writes, 0, "packed integer stores must stay native");
+            let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
+            assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
         }
     }
 

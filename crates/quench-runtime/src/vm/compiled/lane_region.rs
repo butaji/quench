@@ -106,8 +106,8 @@ impl State {
         owner.map_or(self.values.len(), usize::from)
     }
 
-    /// A native call may change any object's shape and storage: the proofs of them retire,
-    /// records and families stay.
+    /// Native reentry retires shape/storage and function-body admission proofs;
+    /// object records and language families stay.
     fn call_effect(&mut self) {
         self.objects.headers.fill(None);
         self.objects.layouts.clear();
@@ -115,6 +115,9 @@ impl State {
             if fact.value.ty.object_shape().is_some() {
                 *fact = RegisterFact { tagged_current: fact.tagged_current,
                     ..RegisterFact::definition(Type::language(crate::ValueType::Object), fact.value.representation) };
+            } else if fact.value.ty.body_index().is_some() {
+                *fact = RegisterFact { tagged_current: fact.tagged_current,
+                    ..RegisterFact::definition(Type::language(crate::ValueType::Function), fact.value.representation) };
             }
         }
     }
@@ -225,7 +228,7 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<usize>>,
-    hoisted: BTreeMap<usize, (Variable, bool)>,
+    hoisted: BTreeMap<usize, (Variable, Type)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -743,13 +746,16 @@ fn invariant_reads(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::
         ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
     let mut hoists = BTreeMap::new();
     for (back, instruction) in instructions.iter().enumerate() {
-        let Some(header) = target(instruction).filter(|header| *header <= back && !starts.contains(header)) else { continue };
+        let Some(header) = target(instruction).filter(|header| *header <= back
+            && (!starts.contains(header) || starts == [*header])) else { continue };
+        let entry_header = starts == [header];
         let body = &instructions[header..=back];
         let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
-        if entries != 1 || side
+        if (entries != 1 && !entry_header) || side
+            || starts.iter().any(|start| (header + 1..=back).contains(start))
             || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)) { continue }
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
@@ -1119,6 +1125,10 @@ pub(super) fn lower(
             emit_js_guard(&mut lowering.builder, available, miss);
         }
         lowering.conform(&mut state, pc);
+        // A region whose sole entry is this loop header has no earlier source
+        // edge on which to hoist its invariant reads. Admit them on the native
+        // entry edge, before the header and every possible loop effect.
+        lowering.hoist_reads(&mut state, pc);
         lowering.builder.ins().jump(target, &[]);
     }
     let mut state = State::canonical(count);
@@ -1797,11 +1807,11 @@ impl Lowering<'_, '_> {
         if self.consumed.contains(pc) {
             return true;
         }
-        if let Some((variable, int32)) = self.hoisted.get(&pc).copied() {
+        if let Some((variable, ty)) = self.hoisted.get(&pc).copied() {
             let value = self.builder.use_var(variable);
             let destination = instruction.result_register();
-            self.set_tagged(state, destination, value);
-            if int32 {
+            self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
+            if ty == Type::INT32 {
                 let int = self.ins().ireduce(types::I32, value);
                 let variable = self.int_var(usize::from(destination));
                 self.builder.def_var(variable, int);
@@ -2233,9 +2243,10 @@ impl Lowering<'_, '_> {
                 Some(Type::function(identity).expect("admitted callee locator")),
             ),
             CalleeBinding::Function => (
-                if self.entry.as_ref().expect("entry facts").calls.contains(frame) { None }
+                if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
+                    || self.entry.as_ref().expect("entry facts").calls.contains(frame) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
-                Some(Type::language(crate::ValueType::Function)),
+                Some(Type::function_body(inlined.target.function)),
             ),
         };
         if let Some(same) = same {
@@ -2580,7 +2591,8 @@ impl Lowering<'_, '_> {
             let (value, int32) = if instruction.op() == Op::LoadCapture {
                 let value = self.load_capture(state, pc, instruction, exit);
                 let int32 = self.unit.instructions.get(pc + 1).is_some_and(|next|
-                    super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator()).is_some()
+                    next.op() == Op::Binary
+                        && super::operations::NumberBitwise::from_operator(next.binary_operator()).is_some()
                         && [next.operand_b(), next.operand_c()].iter().any(|operand|
                             operand.register_index() == Some(instruction.result_register())));
                 (value, int32)
@@ -2595,9 +2607,29 @@ impl Lowering<'_, '_> {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
             }
+            let mut ty = if int32 { Type::INT32 } else { Type::ANY };
+            if instruction.op() == Op::LoadCapture && !int32 {
+                // This is a candidate, never a proof from source syntax. Admit the
+                // loaded closure on the same entry edge that already hoists its
+                // immutable read. A failed admission exits before loop effects.
+                let destination = instruction.result_register();
+                let target = self.unit.markers.iter().enumerate().find_map(|(frame, marker)| {
+                    let call = self.unit.frames[frame];
+                    (*marker > pc && call.callee_register == destination
+                        && call.target.callee == CalleeBinding::Function
+                        && !self.unit.instructions[pc + 1..*marker].iter()
+                            .any(|instruction| writes(*instruction).contains(&destination)))
+                        .then_some(call.target.function)
+                });
+                if let Some(function) = target {
+                    let matched = self.function_binding(value, function);
+                    emit_js_guard(&mut self.builder, matched, exit);
+                    ty = Type::function_body(function);
+                }
+            }
             let variable = self.builder.declare_var(types::I64);
             self.builder.def_var(variable, value);
-            self.hoisted.insert(pc, (variable, int32));
+            self.hoisted.insert(pc, (variable, ty));
         }
     }
 
