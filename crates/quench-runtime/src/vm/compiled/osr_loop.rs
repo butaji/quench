@@ -270,6 +270,12 @@ impl LoopRegion {
         !self.field_store_sites.is_empty() || !self.dynamic_field_stores.is_empty()
     }
 
+    /// The write contract checked by typed verification and admitted before pointer exposure.
+    pub(crate) fn field_store_type(&self, store: &FieldStore) -> Type {
+        if self.fields.iter().any(|field| store.matches(field)) { Type::NUMBER }
+        else { Type::ANY }
+    }
+
     /// An entry-pinned own Number field whose writes update its SSA cell.
     fn is_field_cell(&self, index: usize) -> bool {
         self.field_store_sites.iter().any(|store| store.matches(&self.fields[index]))
@@ -2805,9 +2811,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     }
     if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField) {
         let store = region.field_stores.get(&(offset as u32)).map(|index| &region.field_store_sites[*index]);
-        let expected = if store.is_some_and(|store| region.fields.iter().any(|field| store.matches(field))) {
-            Type::NUMBER
-        } else { Type::ANY };
+        let expected = store.map_or(Type::ANY, |store| region.field_store_type(store));
         reads.push((instruction.register_a(), expected));
     }
     reads
@@ -7239,6 +7243,38 @@ mod tests {
                         && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32
                 }).count();
             assert_eq!(shape_loads, 1, "two fields of one receiver must share the layout proof:\n{native}");
+        }
+    }
+
+    #[test]
+    fn field_pointer_domains_follow_verified_mutable_cell_contracts() {
+        for (source, expected) in [
+            ("function subject(box,n,value) { for(let i=0;i<n;i++) box.value += value; }", Type::NUMBER),
+            ("function subject(box,n,value) { for(let i=0;i<n;i++) box.value = value; }", Type::ANY),
+        ] {
+            let program = crate::Engine::specialize(source, "field-write-domain.js").unwrap();
+            let function = program.function(1);
+            let instructions: Vec<_> = function.instructions().collect();
+            let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
+                (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
+                    .then(|| (pc as u32, instruction.jump_target()))).unwrap();
+            let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
+                crate::bytecode::Constant::Number(value) => Value::number(*value),
+                _ => Value::UNDEFINED,
+            }).collect();
+            let region = region(function, &instructions, &constants, &program.field_sites,
+                program.shared_register_root_masks(1), header, backedge).unwrap();
+            let verified = verify_unprofiled(&region).unwrap();
+            assert_eq!(region.field_store_sites.len(), 1);
+            assert_eq!(region.field_store_type(&region.field_store_sites[0]), expected);
+            for (&offset, &index) in &region.field_stores {
+                let instruction = region.instructions[offset as usize];
+                let definition = verified.webs.checked_read(&region, header + offset, instruction.register_a()).unwrap();
+                let fact = verified.values[definition].unwrap();
+                assert!(fact.ty.is_subtype(region.field_store_type(&region.field_store_sites[index])));
+                if expected == Type::NUMBER { assert_ne!(fact.representation, Representation::Tagged); }
+                else { assert_eq!(fact.ty, Type::ANY); }
+            }
         }
     }
 

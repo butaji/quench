@@ -8042,12 +8042,15 @@ fn lane_loop_entry<H: Host>(
             super::compiled::FieldReceiver::Register(register) => r.get(register),
             super::compiled::FieldReceiver::Field(_) => return None,
         };
+        let writes = region.field_store_type(field);
         let pointer = unsafe {
-            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, crate::typed_ir::Type::ANY)
+            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, writes)
         }?;
-        // A store may write a heap value: the receiver is logged in the generational
-        // barrier now, and nothing collects before the run ends.
-        vm.heap.object_store_mut(object, object)?;
+        // Numeric cells cannot create heap edges. Reference-capable stores log their
+        // owner once at admission; nothing collects before the run ends.
+        if !writes.is_subtype(crate::typed_ir::Type::NUMBER) {
+            vm.heap.object_store_mut(object, object)?;
+        }
         entry.push_field_store(pointer);
     }
     if region.reads_heap_natively() {
