@@ -3852,9 +3852,10 @@ impl Lowering<'_, '_> {
     /// Continue where a slot of type `slot` (`NativeFieldLoad::ty`) holds `value`, by its int
     /// tag, else at `otherwise`.
     fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) {
-        // An int is held by any slot type but `Type::NEVER`, a slot no value reached yet.
-        let held = if slot == Type::NEVER { self.ins().iconst(types::I8, 0) }
-            else { is_int_tagged(&mut self.builder, value) };
+        // Only the type algebra may establish that an int fits. In particular,
+        // nullable object contracts must not inherit the old numeric-chain rule.
+        let held = if Type::INT32.is_subtype(slot) { is_int_tagged(&mut self.builder, value) }
+            else { self.ins().iconst(types::I8, 0) };
         emit_js_guard(&mut self.builder, held, otherwise);
     }
 

@@ -32,6 +32,7 @@ enum TypeKind {
     Language(u16),
     Int32,
     DirectObjectFamily,
+    NullableDirectObjectFamily(u16),
     DirectObjectShape(u32),
     FunctionIdentity(Value),
     FunctionBody(u32),
@@ -45,6 +46,8 @@ pub(crate) struct Type(TypeKind);
 impl Type {
     pub(crate) const NEVER: Self = Self(TypeKind::Language(0));
     pub(crate) const ANY: Self = Self(TypeKind::Language(u16::MAX));
+    pub(crate) const NULLISH: Self = Self(TypeKind::Language(
+        (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     pub(crate) const INT32: Self = Self(TypeKind::Int32);
     /// The canonical direct-object tag only: no object-table range, base,
@@ -62,6 +65,7 @@ impl Type {
             TypeKind::Language(kinds) => kinds,
             TypeKind::Int32 => 1 << ValueType::Number as u16,
             TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
+            TypeKind::NullableDirectObjectFamily(nullish) => (1 << ValueType::Object as u16) | nullish,
             TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => 1 << ValueType::Function as u16,
         }
     }
@@ -76,6 +80,16 @@ impl Type {
 
     pub(crate) const fn is_direct_object_family(self) -> bool {
         matches!(self.0, TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape(_))
+    }
+
+    /// Nullish alternatives of a refined direct-object union. This never
+    /// implies record range, heap ownership, shape or physical storage.
+    fn direct_family_nullish(self) -> Option<u16> {
+        match self.0 {
+            TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape(_) => Some(0),
+            TypeKind::NullableDirectObjectFamily(nullish) => Some(nullish),
+            _ => None,
+        }
     }
 
     pub(crate) fn object_shape(self) -> Option<u32> {
@@ -120,6 +134,8 @@ impl Type {
             Self::language(ValueType::Null)
         } else if value.is_undefined() {
             Self::language(ValueType::Undefined)
+        } else if value.direct_object_index().is_some() {
+            Self::DIRECT_OBJECT_FAMILY
         } else if value.is_record() {
             Self::language(ValueType::Object)
         } else {
@@ -134,8 +150,13 @@ impl Type {
         if self == Self::NEVER {
             return other;
         }
-        if self.is_direct_object_family() && other.is_direct_object_family() {
-            return Self::DIRECT_OBJECT_FAMILY;
+        let nullish = |ty: Self| ty.direct_family_nullish()
+            .or_else(|| ty.is_subtype(Self::NULLISH).then(|| ty.kinds()));
+        if (self.direct_family_nullish().is_some() || other.direct_family_nullish().is_some())
+            && let (Some(left), Some(right)) = (nullish(self), nullish(other)) {
+            let kinds = left | right;
+            return if kinds == 0 { Self::DIRECT_OBJECT_FAMILY }
+                else { Self(TypeKind::NullableDirectObjectFamily(kinds)) };
         }
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
@@ -143,6 +164,9 @@ impl Type {
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         self == Self::NEVER || self == expected
             || (expected == Self::DIRECT_OBJECT_FAMILY && self.is_direct_object_family())
+            || matches!(expected.0, TypeKind::NullableDirectObjectFamily(nullish)
+                if self.direct_family_nullish().is_some_and(|actual| actual & !nullish == 0)
+                    || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
             || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
     }
 }
@@ -429,9 +453,36 @@ mod tests {
     }
 
     #[test]
+    fn nullable_direct_object_observations_do_not_authorize_record_access() {
+        let family = Type::DIRECT_OBJECT_FAMILY;
+        let null = Type::language(ValueType::Null);
+        let undefined = Type::language(ValueType::Undefined);
+        let nullable = family.join(null);
+        let nullish = family.join(Type::NULLISH);
+        assert_eq!(Type::immediate(Value::direct_object(7)), family);
+        assert_eq!(nullable.join(undefined), nullish);
+        assert_ne!(nullable, Type::language(ValueType::Object).join(null));
+        assert!(!nullable.is_direct_object_family());
+        assert!(nullable.object_shape().is_none());
+        assert!(!undefined.is_subtype(nullable));
+        for ty in [family, null, undefined] { assert!(ty.is_subtype(nullish)); }
+        for value in [Value::direct_array(7), Value::direct_function(7), Value::integer(7), Value::DELETED] {
+            assert!(!Type::immediate(value).is_subtype(nullish));
+        }
+        let observed = Fact { ty: nullish, representation: Representation::Tagged,
+            binding: BindingTime::Site, proof: Proof::CanonicalValue, projection: Projection::Exact };
+        assert!(observed.verified().is_none());
+        assert!(Fact { proof: Proof::EntryGuard, ..observed }.verified().is_some());
+        assert!(Fact { representation: Representation::Int32, proof: Proof::EntryGuard, ..observed }.verified().is_none());
+    }
+
+    #[test]
     fn joins_preserve_each_semantic_input_and_never_invent_a_numeric_proof() {
         let types = [Type::NEVER, Type::INT32, Type::NUMBER, Type::ANY, Type::TYPEOF_INDEX,
             Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3), Type::direct_object(4),
+            Type::NULLISH, Type::DIRECT_OBJECT_FAMILY.join(Type::language(ValueType::Null)),
+            Type::DIRECT_OBJECT_FAMILY.join(Type::language(ValueType::Undefined)),
+            Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH),
             Type::language(ValueType::Undefined), Type::language(ValueType::Null),
             Type::language(ValueType::Boolean), Type::language(ValueType::String),
             Type::language(ValueType::Symbol), Type::language(ValueType::BigInt),
@@ -440,9 +491,14 @@ mod tests {
             for right in types {
                 let joined = left.join(right);
                 assert_eq!(joined, right.join(left));
+                for third in types {
+                    assert_eq!(joined.join(third), left.join(right.join(third)),
+                        "join associativity: {left:?}, {right:?}, {third:?}");
+                }
                 assert!(left.is_subtype(joined) && right.is_subtype(joined));
                 for expected in [Type::INT32, Type::NUMBER, Type::language(ValueType::Object),
-                    Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3)] {
+                    Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3), Type::NULLISH,
+                    Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH)] {
                     assert_eq!(joined.is_subtype(expected),
                         left.is_subtype(expected) && right.is_subtype(expected));
                 }
