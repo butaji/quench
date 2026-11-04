@@ -21,9 +21,11 @@ pub(crate) type Install = fn(&mut NativeContext<'_, TestHost>) -> Result<(), Roo
 /// A test host's dynamic-import resolution (`Host::resolve_dynamic_import`), by specifier.
 pub(crate) type Resolve = Rc<dyn Fn(&str) -> Result<Option<ModuleSource>, ModuleLoadError>>;
 
-/// The `$262` global the Test262 harness creates realms through.
-const TEST262_GLOBALS: &[HostGlobal] =
-    &[HostGlobal { name: "$262", capability: CapabilityId::CreateRealm }];
+/// The `$262` global as the Test262 host provides it: realms and the IsHTMLDDA object.
+const TEST262_GLOBALS: &[HostGlobal] = &[
+    HostGlobal { name: "$262", capability: CapabilityId::CreateRealm },
+    HostGlobal { name: "$262", capability: CapabilityId::IsHTMLDDA },
+];
 
 /// A unit test's host. Clones share what it wrote and its state, so a test keeps a clone
 /// to read them after the runtime takes the host.

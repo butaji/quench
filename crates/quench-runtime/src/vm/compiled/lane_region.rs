@@ -115,8 +115,9 @@ struct Lowering<'a, 'f> {
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
     global_reads: &'a BTreeSet<usize>,
-    /// The VM's `length` name, whose read of a direct array is its record's (`array_length`).
-    length: Atom,
+    /// The VM's facts: its `length` name, whose read of a direct array is its record's
+    /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
+    vm: VmFacts,
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
     /// runs by the call protocol (`Lowering::construct`).
     generic: &'a [usize],
@@ -629,14 +630,14 @@ pub(super) fn compile(
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     global_reads: &BTreeSet<usize>,
-    length: Atom,
+    vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
 ) -> Result<LaneRegion, LaneDecline> {
     let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, global_reads, length, generic, direct, frame_captures, loop_entry, &*isa)
+    let (native, count) = lower(program, function_id, unit, helpers, fields, global_reads, vm, generic, direct, frame_captures, loop_entry, &*isa)
         .ok_or(LaneDecline::Unlowered)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
@@ -652,7 +653,7 @@ fn lower(
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     global_reads: &BTreeSet<usize>,
-    length: Atom,
+    vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
@@ -710,7 +711,7 @@ fn lower(
         helpers,
         fields,
         global_reads,
-        length,
+        vm,
         generic,
         direct,
         frame_captures,
@@ -1369,7 +1370,7 @@ impl Lowering<'_, '_> {
                     } else {
                         let exit = self.guard_exit(state, pc32);
                         let value = self.tagged(state, comparison.source);
-                        emit_nullish_branch(&mut self.builder, value, comparison, exit)
+                        emit_nullish_branch(&mut self.builder, value, comparison, self.vm.html_dda, exit)
                     };
                     let target = instruction.jump_target() as usize;
                     if target <= pc { self.interrupt_check(state, pc32); }
@@ -1984,7 +1985,7 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, header as u32);
             let receiver = !self.native_calls
                 && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.receivers.contains(&register)));
-            let (value, int32) = match register.filter(|_| atom == self.length) {
+            let (value, int32) = match register.filter(|_| atom == self.vm.length) {
                 Some(register) => {
                     let length = self.array_length(state, register, (atom, cache_site), exit);
                     (int_tagged(&mut self.builder, length), true)
@@ -2069,7 +2070,7 @@ impl Lowering<'_, '_> {
                 || register.is_some_and(|register| state.receivers.contains(&register)));
         let (first, rest) = parts.split_first()?;
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
-            && first.0 == self.length
+            && first.0 == self.vm.length
         {
             let length = self.array_length(state, register, *first, exit);
             self.set_int(state, destination, length);
@@ -2787,7 +2788,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), Atom::MAX, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -2812,7 +2813,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), Atom::MAX, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

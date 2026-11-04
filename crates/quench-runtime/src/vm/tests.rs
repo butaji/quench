@@ -22949,3 +22949,35 @@ fn native_chain_append_completes_without_a_store_handoff() {
         assert_eq!(vm.own_property(item, left), Some(Value::NULL));
     }
 }
+
+#[test]
+fn lane_loose_nullish_tests_follow_the_host_html_dda_capability() {
+    // Node oracle: without IsHTMLDDA, loosely only `null` and `undefined` equal `null`.
+    let source = r#"(function () {
+      function Link(next) { this.next = next; }
+      Link.prototype.count = function () { let n = 0, c = this; while (c != null) { n++; c = c.next; } return n; };
+      Link.prototype.kinds = function (xs) {
+        let s = 0;
+        for (let i = 0; i < xs.length; i++) { if (xs[i] == null) s++; if (xs[i] != undefined) s += 10; }
+        return s;
+      };
+      let list = null;
+      for (let i = 0; i < 50; i++) list = new Link(list);
+      const xs = [null, undefined, 0, false, '', {}, [], function () {}, 1.5, 'a', Symbol(), 10n, NaN];
+      const dda = typeof $262 === 'object' ? [$262.IsHTMLDDA] : [];
+      const values = xs.concat(dda);
+      let total = 0;
+      for (let r = 0; r < 3000; r++) total += list.count() + list.kinds(values);
+      // Per round: 50 links, 2 + dda.length nullish values, 11 others.
+      if (total !== 3000 * (50 + 2 + dda.length + 110)) throw Error('loose nullish ' + total);
+    })();"#;
+    let program = Engine::specialize(source, "lane-nullish.js").unwrap();
+    for host in [TestHost::default(), TestHost::default().with_test262()] {
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut vm = Vm::new(host.clone());
+            vm.programs.enable_js_lane_methods();
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+        }
+    }
+}

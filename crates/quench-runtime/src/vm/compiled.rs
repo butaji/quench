@@ -2145,21 +2145,41 @@ fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: Wide
     Some(NullishComparison { source, expected, strict, negated })
 }
 
-/// Whether JumpBinaryFalse takes its target, preserving IsHTMLDDA fallback.
+/// The facts of the VM a lowering specializes to, fixed when the VM is built.
+#[derive(Clone, Copy)]
+pub(super) struct VmFacts {
+    /// The VM's `length` name.
+    pub(super) length: Atom,
+    /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
+    /// it, loosely only `null` and `undefined` equal `null`.
+    pub(super) html_dda: bool,
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn vm_facts(&self) -> VmFacts {
+        let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
+        VmFacts { length: self.length_atom, html_dda }
+    }
+}
+
+/// Whether JumpBinaryFalse takes its target. Where the IsHTMLDDA object may exist
+/// (`html_dda`), a loose test leaves at `fallback` for any heap value but an object record.
 fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, fallback: ir::Block) -> ir::Value {
+    comparison: NullishComparison, html_dda: bool, fallback: ir::Block) -> ir::Value {
     use crate::value::ValueLayout;
     let equal = if comparison.strict {
         builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
     } else {
-        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-        let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-        let record = builder.ins().bor(object, array);
-        let safe = builder.ins().bor(immediate, record);
-        emit_js_guard(builder, safe, fallback);
+        if html_dda {
+            let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+            let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+            let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+            let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+            let record = builder.ins().bor(object, array);
+            let safe = builder.ins().bor(immediate, record);
+            emit_js_guard(builder, safe, fallback);
+        }
         let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
         let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
         builder.ins().bor(null, undefined)
@@ -3008,7 +3028,7 @@ pub(super) fn lower_js_general_dispatch(
                 JsGeneralBranch::NullishFalse(comparison) => {
                     let source = register_offset(comparison.source).expect("prevalidated branch register");
                     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
-                    emit_nullish_branch(&mut builder, value, comparison, fallback)
+                    emit_nullish_branch(&mut builder, value, comparison, true, fallback)
                 }
             };
             if target <= pc {
@@ -7245,7 +7265,7 @@ impl<H: Host> Vm<H> {
                 .filter_map(|(pc, origin)| direct[*origin].as_deref().map(|callee| (*pc, callee as *const DirectCallee)))
                 .collect();
             let frame_captures: Vec<(usize, usize)> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
-            match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.length_atom, &generic, &direct_sites, &frame_captures, loop_entry) {
+            match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.vm_facts(), &generic, &direct_sites, &frame_captures, loop_entry) {
                 Ok(region) => break (unit, region, fields, sites),
                 Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
                     if !unit.frames.is_empty() => budget /= 2,
