@@ -456,6 +456,10 @@ const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 #[path = "primitive_bench/windows.rs"]
 mod window_primitives;
 
+#[cfg(test)]
+#[path = "primitive_bench/activations.rs"]
+mod activation_primitives;
+
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
 /// least one. Only the logical range is initialized and made live.
 const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
@@ -1169,8 +1173,6 @@ struct Activation {
     caller_registers: Registers,
     /// The lane-stack index of this activation's first register.
     window: usize,
-    /// Requested Wasm register payload held by this activation, or zero for scripts.
-    frame_storage_bytes: usize,
     /// The program its caller runs, which its return makes the lane's again
     /// (`lane_enter_program`); its own is the next activation's caller program, or the
     /// lane's for the innermost.
@@ -1181,8 +1183,9 @@ struct Activation {
 /// What an activation keeps beyond its registers, by the kind of function it runs.
 enum ActivationKind {
     Script(ScriptActivation),
-    /// A Wasm activation keeps its caller's memory for the return.
-    Wasm(MemoryView),
+    /// A Wasm activation keeps its caller's memory for the return and its requested
+    /// register payload for guest-stack accounting, excluding admission padding.
+    Wasm { memory: MemoryView, frame_storage_bytes: usize },
 }
 
 impl Activation {
@@ -1190,7 +1193,7 @@ impl Activation {
     fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
-            ActivationKind::Wasm(_) => None,
+            ActivationKind::Wasm { .. } => None,
         }
     }
 
@@ -1199,7 +1202,14 @@ impl Activation {
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
         match self.kind {
             ActivationKind::Script(_) => MemoryView::script(cx),
-            ActivationKind::Wasm(memory) => memory,
+            ActivationKind::Wasm { memory, .. } => memory,
+        }
+    }
+
+    fn frame_storage_bytes(&self) -> usize {
+        match self.kind {
+            ActivationKind::Script(_) => 0,
+            ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
         }
     }
 }
@@ -2046,7 +2056,7 @@ impl LaneStack {
     #[inline(always)]
     unsafe fn push_activation(&mut self, activation: Activation) {
         let len = self.activations.len();
-        let frame_storage_bytes = activation.frame_storage_bytes;
+        let frame_storage_bytes = activation.frame_storage_bytes();
         debug_assert!(len < self.activations.capacity(), "lane activations stay within capacity");
         // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
         // covers it only once written.
@@ -2060,7 +2070,7 @@ impl LaneStack {
     #[inline(always)]
     fn pop_activation(&mut self) -> Option<Activation> {
         let activation = self.activations.pop()?;
-        self.wasm_storage_bytes -= activation.frame_storage_bytes;
+        self.wasm_storage_bytes -= activation.frame_storage_bytes();
         self.drop_iterators_from(self.activations.len());
         Some(activation)
     }
@@ -10850,7 +10860,7 @@ impl<H: Host> Vm<H> {
             lane_wasm_storage_bytes,
             activations
                 .iter()
-                .map(|activation| activation.frame_storage_bytes)
+                .map(Activation::frame_storage_bytes)
                 .sum::<usize>()
         );
         let mut caller = unsafe { (*cx).frame };
@@ -11023,7 +11033,7 @@ impl<H: Host> Vm<H> {
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
                 }
-                ActivationKind::Wasm(_) => {
+                ActivationKind::Wasm { .. } => {
                     // The lane reserved this payload while it was frameless; its materialized
                     // frame holds the same weighted guard until the call returns.
                     Some(self.push_wasm_frame_with_registers(
@@ -15051,7 +15061,6 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         window,
-        frame_storage_bytes: 0,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
@@ -15222,7 +15231,6 @@ fn lane_activate_environment<H: Host>(
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         window,
-        frame_storage_bytes: 0,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
@@ -15623,7 +15631,6 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         window,
-        frame_storage_bytes: 0,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
@@ -15797,19 +15804,15 @@ lane_handler! {
             };
             // SAFETY: capacity holds the activation.
             unsafe {
-                let length = stack.activations.len();
-                stack.activations.as_mut_ptr().add(length).write(Activation {
+                stack.push_activation(Activation {
                     function: u32::from(i.b),
                     call: ip,
                     caller_base: (*cx).base,
                     caller_registers: r,
                     window,
-                    frame_storage_bytes,
                     caller_program: (*cx).program,
-                    kind: ActivationKind::Wasm(view.memory),
+                    kind: ActivationKind::Wasm { memory: view.memory, frame_storage_bytes },
                 });
-                stack.activations.set_len(length + 1);
-                stack.wasm_storage_bytes += frame_storage_bytes;
             }
             // A fresh activation's memory register holds no memory until
             // the function's instance binding loads it.
@@ -16077,7 +16080,7 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     };
     // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
     // ones go without its accounting.
-    debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes == 0));
+    debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
     vm.lane_stack.drop_iterators_from(outermost + 1);
     lane_complete_plain_activation(cx, value)
