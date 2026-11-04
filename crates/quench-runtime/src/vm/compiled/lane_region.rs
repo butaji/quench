@@ -2371,16 +2371,25 @@ impl Lowering<'_, '_> {
                 if let Some(comparison) = nullish_comparison(&self.program.constants, instruction,
                     |register| state.values[usize::from(register)].value.ty) {
                     let ty = state.values[usize::from(comparison.source)].value.ty;
-                    let taken = if let Some(taken) = comparison.known_outcome(ty) {
-                        self.ins().iconst(types::I8, i64::from(taken))
+                    let target = instruction.jump_target() as usize;
+                    if let Some(taken) = comparison.known_outcome(ty) {
+                        let taken = self.ins().iconst(types::I8, i64::from(taken));
+                        if target <= pc { self.interrupt_check(state, pc32); }
+                        self.branch(state, pc, target, taken);
+                    } else if target > pc {
+                        let exit = self.guard_exit(state, pc32);
+                        let value = self.tagged(state, comparison.source);
+                        let taken = self.builder.create_block();
+                        let fall = self.builder.create_block();
+                        emit_nullish_edges(&mut self.builder, value, comparison, exit, taken, fall);
+                        self.continue_branch(state, pc, target, taken, fall);
                     } else {
                         let exit = self.guard_exit(state, pc32);
                         let value = self.tagged(state, comparison.source);
-                        emit_nullish_branch(&mut self.builder, value, comparison, exit)
-                    };
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc { self.interrupt_check(state, pc32); }
-                    self.branch(state, pc, target, taken);
+                        let taken = emit_nullish_branch(&mut self.builder, value, comparison, exit);
+                        self.interrupt_check(state, pc32);
+                        self.branch(state, pc, target, taken);
+                    }
                     return false;
                 }
                 if let Some(operation) = super::operations::NumberBitwise::from_operator(operator)
@@ -2916,10 +2925,15 @@ impl Lowering<'_, '_> {
     }
 
     fn branch(&mut self, state: &mut State, pc: usize, target: usize, taken: ir::Value) {
-        self.backedge |= target <= pc && target == self.coverage.entry();
         let taken_block = self.builder.create_block();
         let fall_block = self.builder.create_block();
         self.ins().brif(taken, taken_block, &[], fall_block, &[]);
+        self.continue_branch(state, pc, target, taken_block, fall_block);
+    }
+
+    fn continue_branch(&mut self, state: &mut State, pc: usize, target: usize,
+        taken_block: ir::Block, fall_block: ir::Block) {
+        self.backedge |= target <= pc && target == self.coverage.entry();
         self.builder.switch_to_block(taken_block);
         let mut taken_state = state.clone();
         self.continue_at(&mut taken_state, target);
