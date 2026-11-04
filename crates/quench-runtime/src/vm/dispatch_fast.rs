@@ -571,7 +571,7 @@ enum LaneBody {
 
 /// The most distinct places a body's leaves may go for them to be its specialization's
 /// feedback; past them they are scattered.
-const LANE_LEAVE_SITES: usize = 8;
+const LANE_LEAVE_SITES: usize = 4;
 
 /// Where a specialized body's leaves went: at few exits, each once named, or scattered.
 #[derive(Clone, Copy, PartialEq)]
