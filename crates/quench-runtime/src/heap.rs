@@ -1086,6 +1086,15 @@ impl Heap {
     }
 
     #[inline(always)]
+    /// A registered prototype, a direct object, of exact shape `shape`; `None` where the
+    /// registry does not know every prototype or none has it.
+    pub(crate) fn prototype_of_shape(&self, shape: u32) -> Option<Value> {
+        let PrototypeRegistry::Known(prototypes) = &self.prototypes else { return None };
+        prototypes.iter().map(|(prototype, _)| *prototype).find(|prototype| {
+            prototype.direct_object_index().is_some() && self.object(*prototype).is_some_and(|object| object.exact_shape() == shape)
+        })
+    }
+
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
@@ -3348,6 +3357,9 @@ impl Heap {
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         self.note_prototype_elements(array);
         self.write_barrier(array);
+        if let Some(object) = self.object_mut(array) {
+            object.mark_sparse_elements();
+        }
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
@@ -3379,6 +3391,9 @@ impl Heap {
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || length <= dense_length {
             self.materialize_sparse_array(array, length);
             return;
+        }
+        if let Some(object) = self.object_mut(array) {
+            object.mark_sparse_elements();
         }
         let arrays = self
             .sparse_arrays
@@ -3548,6 +3563,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
+            data.note_prototype_value_write();
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3561,6 +3577,22 @@ impl Heap {
             Some(vector) => self.properties.set(vector, slot, value),
             None => self.widen_inline_property(object, slot, value),
         }
+    }
+
+    /// Moves `object`'s inline property values, unchanged, to a flat arena run: a native
+    /// region that stores through a slot's address needs one (`Vm::cached_field_store_pointer`).
+    /// The owner is logged as if written, its edges now held by the run.
+    pub(crate) fn flatten_inline_properties(&mut self, object: Value) -> Option<()> {
+        let (data, properties) = self.object_and_arena_mut(object)?;
+        if data.properties().has_inline_property_storage() {
+            let length = properties.len(data.properties());
+            let values = data.inline_properties()?;
+            let moved = properties.with_values(data.shape(), &values[..length]);
+            let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+            properties.release(previous);
+            self.write_barrier(object);
+        }
+        Some(())
     }
 
     /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
@@ -3585,6 +3617,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
+            data.note_prototype_value_write();
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -4409,6 +4442,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 /// Preserve declines before changing storage or values.
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+    data.note_prototype_value_write();
     // The caller matched the exact shape, which holds the slot.
     properties.note_slot_value(data.shape(), slot, value);
     if let Some(start) = data.plain_storage_start() {

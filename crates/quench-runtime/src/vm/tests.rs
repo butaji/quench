@@ -21595,6 +21595,126 @@ fn lane_capture_stores_write_like_the_interpreter() {
 }
 
 #[test]
+fn lane_inherited_constants_follow_prototype_writes() {
+    // A lane body takes an inherited method or value as the constant its prototype held when
+    // it compiled, only while that prototype is unchanged: a value write (callable or not), a
+    // swapped prototype and a change up the chain each read what the interpreter reads.
+    let source = r#"
+      function Task(id) { this.id = id; this.link = null; }
+      Task.prototype.run = function (x) { return x + this.id; };
+      Task.prototype.weight = 3;
+      function Other(id) { this.id = id; this.link = null; }
+      Other.prototype.run = function (x) { return x * 2 + this.id; };
+      Other.prototype.weight = 5;
+      function loop(tasks, rounds) {
+        let t = 0;
+        for (let r = 0; r < rounds; r++) {
+          for (let i = 0; i < tasks.length; i++) { const k = tasks[i]; t = (t + k.run(r) + k.weight) % 1000003; }
+        }
+        return t;
+      }
+      const tasks = []; for (let i = 0; i < 20; i++) tasks.push(i % 5 === 0 ? new Other(i) : new Task(i));
+      let total = loop(tasks, 3000);
+      Task.prototype.weight = 11;                       // value write, non-callable
+      total += loop(tasks, 500);
+      Task.prototype.run = function (x) { return x - this.id; };   // method replaced
+      total += loop(tasks, 500);
+      Object.setPrototypeOf(tasks[3], Other.prototype); // prototype swapped
+      total += loop(tasks, 500);
+      Object.prototype.weightless = 1; Task.prototype.weight = 7;  // chain change and value write
+      total += loop(tasks, 500);
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-inherited-constants.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1225140.0); 2]);
+}
+
+#[test]
+fn lane_array_length_reads_dense_length_only() {
+    // A lane body reads a direct array's `length` from its record only while the array's
+    // dense elements give it: a grown or truncated array, one that has held sparse elements,
+    // an arguments object, a plain object and a string each read what the interpreter reads.
+    let source = r#"
+      function count(xs, rounds) {
+        let t = 0;
+        for (let r = 0; r < rounds; r++) {
+          for (let i = 0; i < xs.length; i++) { t = (t + i + xs.length) % 1000003; }
+        }
+        return t;
+      }
+      function args() { return count(arguments, 50); }
+      const dense = []; for (let i = 0; i < 20; i++) dense.push(i);
+      let total = count(dense, 2000);
+      dense.push(7); dense.length = 15;
+      total += count(dense, 500);
+      const sparse = [1, 2, 3]; sparse[60000] = 4;
+      total += count(sparse, 1);
+      sparse.length = 5;
+      total += count(sparse, 500);
+      total += args(1, 2, 3, 4);
+      total += count({ length: 6 }, 500);
+      total += count("hello", 500);
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-array-length.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(540398.0); 2]);
+}
+
+#[test]
+fn loop_stores_to_packed_objects_flatten_them() {
+    // A loop region that stores through a field's address first moves a packed object's
+    // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object
+    // values written there read back as the interpreter's.
+    let source = r#"
+      function Counter() { this.count = 0; this.step = 1; }
+      function Pair(a, b) { this.car = a; this.cdr = b; }
+      function bump(c, n) { for (var i = 0; i < n; i++) c.count = (c.count + c.step) | 0; return c.count; }
+      function mix(p, n) { for (var i = 0; i < n; i++) { p.car = p.car + 0.5; p.cdr = (p.cdr + 1) | 0; } return p.car * 3 + p.cdr; }
+      let total = 0;
+      for (let r = 0; r < 400; r++) {
+        const c = new Counter(); total = (total + bump(c, 100) + c.step) | 0;
+        const p = new Pair(r, r * 2); total += mix(p, 50); p.car = { k: r }; total += p.car.k + p.cdr;
+      }
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "loop-flattened-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(748800.0); 2]);
+}
+
+#[test]
 fn lane_instanceof_decides_like_the_interpreter() {
     // A lane body decides `instanceof` by the prototype chain: primitives, derived classes,
     // `Object`, a constructor with its own `@@hasInstance` and a reassigned `prototype`

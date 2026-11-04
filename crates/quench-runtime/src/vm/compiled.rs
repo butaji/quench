@@ -58,7 +58,7 @@ mod lane_region;
 mod lane_unit;
 pub(super) use lane_unit::{CallTarget, Frame as InlinedCall};
 mod object_slots;
-pub(super) use object_slots::NativeFieldLoad;
+pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
 #[cfg(feature = "aot")]
 mod scalar_region;
 #[cfg(feature = "aot")]
@@ -1350,16 +1350,8 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
     builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
 }
 
-/// The present element `key` of the dense own-array `base`, both tagged: the record and
-/// its current backing reloaded per access, so receiver changes and copy-on-write writes are
-/// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
-pub(super) fn emit_dense_element_read(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    base: ir::Value,
-    key: ir::Value,
-    fallback: ir::Block,
-) -> ir::Value {
+/// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
+fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     use crate::value::ValueLayout;
 
@@ -1372,19 +1364,6 @@ pub(super) fn emit_dense_element_read(
         ValueLayout::DIRECT_ARRAY_TAG as i64,
     );
     emit_js_guard(builder, is_array, fallback);
-
-    let index = builder.ins().ireduce(types::I32, key);
-    let key_tag = builder
-        .ins()
-        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
-    let is_integer = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
-    emit_js_guard(builder, is_integer, fallback);
-    let nonnegative = builder
-        .ins()
-        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
-    emit_js_guard(builder, nonnegative, fallback);
 
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
@@ -1413,7 +1392,75 @@ pub(super) fn emit_dense_element_read(
 
     let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
     let record_offset = builder.ins().imul_imm_u(record_id, record_size);
-    let record = builder.ins().iadd(record_base, record_offset);
+    builder.ins().iadd(record_base, record_offset)
+}
+
+/// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
+/// which an array without extras has as its length (no arguments object, no sparse elements,
+/// `Object::mark_sparse_elements`). Any other base, or a length past int32, leaves through
+/// `fallback`.
+pub(super) fn emit_array_length_read(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    base: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+
+    let record = emit_array_record(builder, payload, base, fallback);
+    let object_payload = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record,
+        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
+    );
+    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
+    let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+    emit_js_guard(builder, ordinary, fallback);
+    let header = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record,
+        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
+    );
+    let length = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        header,
+        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
+    );
+    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
+    emit_js_guard(builder, int32, fallback);
+    length
+}
+
+/// The present element `key` of the dense own-array `base`, both tagged: the record and
+/// its current backing reloaded per access, so receiver changes and copy-on-write writes are
+/// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
+pub(super) fn emit_dense_element_read(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    base: ir::Value,
+    key: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    use crate::value::ValueLayout;
+
+    let index = builder.ins().ireduce(types::I32, key);
+    let key_tag = builder
+        .ins()
+        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
+    let is_integer = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
+    emit_js_guard(builder, is_integer, fallback);
+    let nonnegative = builder
+        .ins()
+        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
+    emit_js_guard(builder, nonnegative, fallback);
+
+    let record = emit_array_record(builder, payload, base, fallback);
     let elements = builder.ins().iadd_imm_s(
         record,
         i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
@@ -6907,16 +6954,24 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
 /// A lane body's field read where its own-slot path does not apply: the VM's cache probe
 /// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
 /// leaves native code for the lane's full read.
-unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, site: u64) -> u64 {
+unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+    // The read's atom above its cache site (`Lowering::field_probe`).
+    let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    // An array's `length`, an own data property no shape holds, answers first: a loop's
+    // condition reads it every iteration (`Vm::array_length_field`).
+    if let Some(length) = vm.array_length_field(Value::from_bits(receiver), atom) {
+        return length.to_bits();
+    }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
-    if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site as u16) {
+    if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
         return value.to_bits();
     }
-    match vm.cached_field_hit(residual, Value::from_bits(receiver), site as u16) {
+    let receiver = Value::from_bits(receiver);
+    match vm.cached_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         _ => Value::DELETED.to_bits(),
     }
@@ -7114,7 +7169,7 @@ impl<H: Host> Vm<H> {
                 .filter_map(|(pc, origin)| direct[*origin].as_deref().map(|callee| (*pc, callee as *const DirectCallee)))
                 .collect();
             let frame_captures: Vec<(usize, usize)> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
-            match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, &direct_sites, &frame_captures, loop_entry) {
+            match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.length_atom, &direct_sites, &frame_captures, loop_entry) {
                 Ok(region) => break (unit, region, fields, sites),
                 Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
                     if !unit.frames.is_empty() => budget /= 2,

@@ -7195,7 +7195,7 @@ mod tests {
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
             let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
-                storage, representation: crate::value_vec::SlotRepresentation::Tagged,
+                storage, representation: crate::value_vec::SlotRepresentation::Tagged, inherited: None,
             }]).collect();
             let widened = Default::default();
             let observation = Observation {

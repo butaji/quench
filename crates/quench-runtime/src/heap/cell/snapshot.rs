@@ -178,6 +178,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         indexed_descriptors,
         length_descriptor,
         side_descriptors,
+        sparse_elements,
         // A restored heap's prototypes watch nothing (`Heap::forget_prototypes`).
         watch: _,
     } = extras;
@@ -191,7 +192,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     if let Some(map) = arguments_map {
         writer.u16s(map);
     }
-    for flag in [*arguments_object, *raw_json, *error_data, *module_namespace, *structured_transfer_forbidden, *indexed_descriptors, *length_descriptor, *side_descriptors] {
+    for flag in [*arguments_object, *raw_json, *error_data, *module_namespace, *structured_transfer_forbidden, *indexed_descriptors, *length_descriptor, *side_descriptors, *sparse_elements] {
         writer.bool(flag);
     }
     writer.option_value(*boxed_primitive);
@@ -227,8 +228,8 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     );
     let arena_start = reader.u32()?;
     let arguments_map = if reader.bool()? { Some(reader.u16s()?) } else { None };
-    let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor, side_descriptors] =
-        [reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?];
+    let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor, side_descriptors, sparse_elements] =
+        [reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?];
     let boxed_primitive = reader.option_value()?;
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
@@ -260,6 +261,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         indexed_descriptors,
         length_descriptor,
         side_descriptors,
+        sparse_elements,
         watch: Default::default(),
     })
 }

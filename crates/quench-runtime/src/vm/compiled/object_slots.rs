@@ -47,6 +47,19 @@ pub(crate) struct NativeFieldLoad {
     /// The representation of every value the slot has held when the code was compiled
     /// (`Heap::slot_representation`): a read speculates on it and leaves where it fails.
     pub(crate) representation: SlotRepresentation,
+    /// For a holder read, the value its proved immediate prototype holds when the code was
+    /// compiled (`Vm::inherited_constant`): a read takes it while the receiver's prototype is
+    /// that one and no prototype has changed since (`heap::prototype_value_epoch`).
+    pub(crate) inherited: Option<InheritedConstant>,
+}
+
+/// An inherited read's value, fixed by its receiver's prototype link and the prototype value
+/// epoch it was read under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InheritedConstant {
+    pub(crate) prototype: u32,
+    pub(crate) value: Value,
+    pub(crate) epoch: u64,
 }
 
 impl NativeFieldLoad {
