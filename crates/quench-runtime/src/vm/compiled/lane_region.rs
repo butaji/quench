@@ -556,7 +556,7 @@ fn stores_own(instruction: WideInstruction) -> bool {
 /// entered by one edge from before it and no other, of instructions that only read
 /// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
 /// writes, by one cached atom it stores to no object, see the same object and value every
-/// iteration. No entry (`starts`) lies in such a loop.
+/// iteration. No entry (`starts`) lies in such a loop past its header.
 fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
     -> BTreeMap<usize, Vec<usize>> {
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
@@ -565,9 +565,10 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
         ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
     let mut hoists = BTreeMap::new();
     for (back, instruction) in instructions.iter().enumerate() {
-        // An entry anywhere in the loop would run its body without the entry edge's reads.
+        // An entry inside the loop would run its body without the entering edges' reads; an
+        // entry at its header makes them (`Lowering::hoist_reads`).
         let Some(header) = target(instruction)
-            .filter(|header| *header <= back && !starts.iter().any(|start| (*header..=back).contains(start))) else { continue };
+            .filter(|header| *header <= back && !starts.iter().any(|start| (*header + 1..=back).contains(start))) else { continue };
         let body = &instructions[header..=back];
         let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
@@ -803,6 +804,7 @@ fn lower(
         }
         let Some(target) = lowering.blocks.get(pc).copied().flatten() else { return None };
         let mut state = State::canonical(count);
+        lowering.hoist_reads(&mut state, pc);
         lowering.conform(&mut state, pc);
         lowering.builder.ins().jump(target, &[]);
     }
@@ -1885,8 +1887,10 @@ impl Lowering<'_, '_> {
         self.continue_at(&mut fall_state, pc + 1);
     }
 
-    /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
-    /// guard that fails there leaves at the header, before the loop runs.
+    /// The reads `header`'s loop repeats unchanged, made on an edge entering it from `state`:
+    /// its one edge from before it, and the body's entry where the body starts at `header`.
+    /// Each read's value is one variable every entering edge defines; a guard that fails
+    /// leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         for pc in reads {
@@ -1896,21 +1900,25 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, header as u32);
             let receiver = !self.native_calls
                 && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.receivers.contains(&register)));
-            if let Some(register) = register.filter(|_| atom == self.length) {
-                let length = self.array_length(state, register, (atom, cache_site), exit);
-                let value = int_tagged(&mut self.builder, length);
-                let variable = self.builder.declare_var(types::I64);
-                self.builder.def_var(variable, value);
-                self.hoisted.insert(pc, (variable, true));
-                continue;
-            }
-            let value = self.base_field_read(state, register, receiver, (atom, cache_site), exit);
-            let int32 = int32_read(self.program, self.fields, instruction);
-            if int32 {
-                let integer = is_int_tagged(&mut self.builder, value);
-                emit_js_guard(&mut self.builder, integer, exit);
-            }
-            let variable = self.builder.declare_var(types::I64);
+            let (value, int32) = match register.filter(|_| atom == self.length) {
+                Some(register) => {
+                    let length = self.array_length(state, register, (atom, cache_site), exit);
+                    (int_tagged(&mut self.builder, length), true)
+                }
+                None => {
+                    let value = self.base_field_read(state, register, receiver, (atom, cache_site), exit);
+                    let int32 = int32_read(self.program, self.fields, instruction);
+                    if int32 {
+                        let integer = is_int_tagged(&mut self.builder, value);
+                        emit_js_guard(&mut self.builder, integer, exit);
+                    }
+                    (value, int32)
+                }
+            };
+            let variable = match self.hoisted.get(&pc) {
+                Some((variable, _)) => *variable,
+                None => self.builder.declare_var(types::I64),
+            };
             self.builder.def_var(variable, value);
             self.hoisted.insert(pc, (variable, int32));
         }
@@ -2128,13 +2136,18 @@ impl Lowering<'_, '_> {
         let entry = self.entry.as_ref().expect("entry facts");
         let properties = self.builder.use_var(entry.receiver.properties);
         let properties_len = self.builder.use_var(entry.receiver.properties_len);
-        if let [field] = shapes && field.holder.is_none() {
+        // One shape: its test is a guard, and the shape it proves is the owner's from then on
+        // (`prove_shape`), so a later read of the owner tests nothing.
+        if let [field] = shapes && let Some(holder) = field.holder {
+            self.prove_shape(state, owner, shape, field.shape, exit);
+            return self.holder_read(object, holder, *field, exit);
+        }
+        if let [field] = shapes {
             let known = owner.and_then(|owner| state.layouts.get(&(owner, field.shape)).copied());
             let projection = match known {
                 Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
                 _ => {
-                    let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-                    emit_js_guard(&mut self.builder, same, exit);
+                    self.prove_shape(state, owner, shape, field.shape, exit);
                     let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
                         properties_len, *field, PackedAccess::Reload, exit)?;
                     if let Some(owner) = owner {
@@ -2179,6 +2192,17 @@ impl Lowering<'_, '_> {
         self.ins().jump(exit, &[]);
         self.builder.switch_to_block(join);
         Some(value)
+    }
+
+    /// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's
+    /// proof then holds the shape as that constant, which folds every later test of it.
+    fn prove_shape(&mut self, state: &mut State, owner: Option<Option<Register>>, shape: ir::Value, expected: u32, exit: ir::Block) {
+        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
+        emit_js_guard(&mut self.builder, same, exit);
+        let constant = self.ins().iconst(types::I32, i64::from(expected));
+        if let Some(proof) = owner.and_then(|owner| state.shapes.get_mut(&owner)) {
+            proof.1 = constant;
+        }
     }
 
     /// The slot `field` names in the prototype of the object record `record`: an object
