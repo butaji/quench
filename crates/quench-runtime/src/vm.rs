@@ -2165,7 +2165,7 @@ impl<H: Host> Vm<H> {
             .filter(|row| row.1 > crate::compile::liveness::ROOT_MAP_REGISTERS)
             .map(|row| row.0)
             .sum();
-        rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.0));
         eprintln!("register-width: dispatches {all}, in functions over the root mask {wide}");
         for (total, registers, locals, program, function) in rows.iter().take(15) {
             eprintln!("  {total:>12} registers={registers} locals={locals} program={program} function={function}");
