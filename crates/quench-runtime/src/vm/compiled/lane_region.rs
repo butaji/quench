@@ -3509,6 +3509,7 @@ impl Lowering<'_, '_> {
                 FieldOwner::Temporary => None,
             };
             let slow = self.builder.create_block();
+            self.builder.set_cold_block(slow);
             let done = self.builder.create_block();
             let packed = self.builder.create_block();
             let packed_address = self.builder.append_block_param(packed, types::I64);
