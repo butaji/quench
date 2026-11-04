@@ -91,12 +91,7 @@ struct Registers {
 #[derive(Clone)]
 struct State {
     values: Vec<RegisterFact>,
-    objects: ObjectProofs,
-    /// Effect-free reads in this memory version. Results are immutable SSA values;
-    /// receiver homes expire on definition, and writes/reentry retire all reads.
-    fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
-    /// Pure ToInt32 results of admitted numeric SSA values, not changes to source types.
-    int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
+    proofs: LocalProofs,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -108,10 +103,10 @@ struct FieldValue {
     ty: Type,
 }
 
-/// Object facts saved at control-flow edges; numeric facts already belong to the
-/// shared dataflow analysis and need no duplicate edge snapshots.
+/// Available object and value proofs saved at control-flow edges. Register types
+/// belong to the shared dataflow analysis and need no duplicate snapshots.
 #[derive(Clone)]
-struct ObjectProofs {
+struct LocalProofs {
     /// Direct-object proofs by owner, until an effect that may change the object retires
     /// them: a register's, and in the final entry fixed `this`'s.
     headers: Vec<Option<ObjectHeader>>,
@@ -119,13 +114,17 @@ struct ObjectProofs {
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
+    /// Immutable reads; receiver definitions and memory effects retire these facts.
+    fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
+    /// Pure ToInt32 results, separate from each source value's semantic type.
+    int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
 }
 
 impl State {
     fn canonical(registers: usize) -> Self {
-        Self { values: vec![RegisterFact::canonical(); registers], objects: ObjectProofs {
-            headers: vec![None; registers + 1], layouts: BTreeMap::new(), receivers: BTreeSet::new() },
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new() }
+        Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
+            headers: vec![None; registers + 1], layouts: BTreeMap::new(), receivers: BTreeSet::new(),
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new() } }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -136,10 +135,10 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
-        self.fields.clear();
-        self.int32_projections.clear();
-        self.objects.headers.fill(None);
-        self.objects.layouts.clear();
+        self.proofs.fields.clear();
+        self.proofs.int32_projections.clear();
+        self.proofs.headers.fill(None);
+        self.proofs.layouts.clear();
         for fact in &mut self.values {
             if fact.value.ty.object_shape().is_some() {
                 *fact = RegisterFact { tagged: fact.tagged,
@@ -261,9 +260,9 @@ struct Lowering<'a, 'f> {
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
-    /// ones arrived with: a block they all reach keeps the object proofs they share.
+    /// ones arrived with: a block they all reach keeps the local proofs they share.
     forward: Vec<Option<usize>>,
-    arrived: BTreeMap<usize, Vec<ObjectProofs>>,
+    arrived: BTreeMap<usize, Vec<LocalProofs>>,
     /// The block leaders an entry or a lowered edge enters: a block none does is not
     /// lowered, its code reached only past a leave.
     entered: CompoundBitSet,
@@ -418,10 +417,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.builder.def_var(variable, value);
         if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
         state.values[index] = fact;
-        state.objects.headers[index] = None;
-        state.objects.layouts.retain(|(owner, _), _| *owner != Some(register));
-        state.objects.receivers.remove(&register);
-        state.fields.retain(|field| field.owner != Some(register));
+        state.proofs.headers[index] = None;
+        state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
+        state.proofs.receivers.remove(&register);
+        state.proofs.fields.retain(|field| field.owner != Some(register));
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -558,24 +557,28 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// Record `state` arriving at block leader `pc` by one of its forward edges.
     fn arrive(&mut self, state: &State, pc: usize) {
         if self.forward.get(pc).copied().flatten().is_some() {
-            self.arrived.entry(pc).or_default().push(state.objects.clone());
+            self.arrived.entry(pc).or_default().push(state.proofs.clone());
         }
     }
 
-    /// The object proofs every forward edge into `pc` arrived with, as the same values, for
+    /// The local proofs every forward edge into `pc` arrived with, as the same values, for
     /// a block no other edge enters: each was made in a block over all of them, so over this.
     fn keep_shared_proofs(&mut self, state: &mut State, pc: usize) {
         let Some(edges) = self.forward.get(pc).copied().flatten() else { return };
         let Some(arrived) = self.arrived.remove(&pc) else { return };
         let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
-        for (index, header) in state.objects.headers.iter_mut().enumerate() {
+        for (index, header) in state.proofs.headers.iter_mut().enumerate() {
             *header = first.headers[index].filter(|proof| rest.iter()
                 .all(|other| other.headers[index] == Some(*proof)));
         }
-        state.objects.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
+        state.proofs.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
-        state.objects.receivers = first.receivers.iter().filter(|register| rest.iter()
+        state.proofs.receivers = first.receivers.iter().filter(|register| rest.iter()
             .all(|other| other.receivers.contains(register))).copied().collect();
+        state.proofs.fields = first.fields.iter().copied().filter(|field| rest.iter()
+            .all(|other| other.fields.contains(field))).collect();
+        state.proofs.int32_projections = first.int32_projections.iter().copied().filter(|projection| rest.iter()
+            .all(|other| other.int32_projections.contains(projection))).collect();
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -1376,7 +1379,7 @@ impl Lowering<'_, '_> {
             return Some(self.number_to_int32(number, exit));
         }
         let bits = self.operand_tagged(state, operand)?;
-        if let Some((_, int32)) = state.int32_projections.iter().find(|(source, _)| *source == bits) {
+        if let Some((_, int32)) = state.proofs.int32_projections.iter().find(|(source, _)| *source == bits) {
             #[cfg(test)] INT32_PROJECTION_REUSES.with(|count| count.set(count.get() + 1));
             return Some(*int32);
         }
@@ -1392,7 +1395,7 @@ impl Lowering<'_, '_> {
         let truncated = self.number_to_int32(number, exit);
         self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
         self.builder.switch_to_block(join);
-        state.int32_projections.push((bits, int32));
+        state.proofs.int32_projections.push((bits, int32));
         Some(int32)
     }
 
@@ -1461,8 +1464,8 @@ impl Lowering<'_, '_> {
     /// A join no verified fact describes invalidates the region.
     fn join_states(&mut self, state: &mut State, incoming: &State) {
         // Only the same pre-branch SSA definition can survive both numeric arms.
-        state.fields.retain(|field| incoming.fields.contains(field));
-        state.int32_projections.retain(|projection| incoming.int32_projections.contains(projection));
+        state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
+        state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
@@ -1969,8 +1972,8 @@ impl Lowering<'_, '_> {
                 let bound = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, bound, exit);
                 self.set_tagged(state, instruction.result_register(), this);
-                state.objects.headers[usize::from(instruction.result_register())] = state.objects.headers[state.values.len()];
-                state.objects.receivers.insert(instruction.result_register());
+                state.proofs.headers[usize::from(instruction.result_register())] = state.proofs.headers[state.values.len()];
+                state.proofs.receivers.insert(instruction.result_register());
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
@@ -1993,7 +1996,7 @@ impl Lowering<'_, '_> {
             }
             Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
                 .iter().all(|register| *register < self.unit.registers) => {
-                state.fields.clear();
+                state.proofs.fields.clear();
                 // The lane's in-place element replacement; a miss leaves at the store.
                 let exit = self.guard_exit(state, pc32);
                 let value = self.tagged(state, instruction.register_a());
@@ -2258,18 +2261,22 @@ impl Lowering<'_, '_> {
             else { self.builder.use_var(variable) };
         let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
             .then(|| self.tagged(state, source));
-        let header = state.objects.headers[usize::from(source)];
-        let receiver = state.objects.receivers.contains(&source);
-        let layouts: Vec<_> = state.objects.layouts.iter().filter_map(|((owner, shape), projection)|
+        let header = state.proofs.headers[usize::from(source)];
+        let receiver = state.proofs.receivers.contains(&source);
+        let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
             (*owner == Some(source)).then_some((*shape, *projection))).collect();
+        let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
+            .filter(|field| field.owner == Some(source))
+            .map(|field| FieldValue { owner: Some(destination), ..*field }).collect();
         self.define(state, destination, value, fact);
         if let Some(bits) = tagged {
             self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
             state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
         }
-        state.objects.headers[usize::from(destination)] = header;
-        for (shape, projection) in layouts { state.objects.layouts.insert((Some(destination), shape), projection); }
-        if receiver { state.objects.receivers.insert(destination); }
+        state.proofs.headers[usize::from(destination)] = header;
+        for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
+        if receiver { state.proofs.receivers.insert(destination); }
+        state.proofs.fields.extend(fields);
     }
 
     /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
@@ -2321,9 +2328,9 @@ impl Lowering<'_, '_> {
         }
         let receiver = self.tagged(state, inlined.receiver);
         let entry = self.entry.as_ref().expect("entry facts");
-        let admitted = state.objects.headers[usize::from(inlined.receiver)].is_some()
+        let admitted = state.proofs.headers[usize::from(inlined.receiver)].is_some()
             || entry.records[usize::from(inlined.receiver)].is_some()
-            || (state.objects.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
+            || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
         let callee = self.program.function(inlined.target.function as usize);
         let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
             && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
@@ -2651,7 +2658,7 @@ impl Lowering<'_, '_> {
                 let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
                 let register = base.register_index();
                 let receiver = !self.native_calls
-                    && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.objects.receivers.contains(&register)));
+                    && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 (self.base_field_read(state, register, receiver, cache_site, exit), int32_read(self.program, self.fields, instruction))
             };
             if int32 {
@@ -2729,7 +2736,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let receiver = !self.native_calls
             && (base == crate::bytecode::FieldBase::THIS
-                || register.is_some_and(|register| state.objects.receivers.contains(&register)));
+                || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
         let (first, rest) = parts.split_first()?;
         let field = match instruction.field_lookup() {
             Some(FieldLookup::Atom { atom, .. }) if sink.is_none() && completes.is_none() => {
@@ -2737,11 +2744,16 @@ impl Lowering<'_, '_> {
             }
             _ => None,
         };
-        let known = field.and_then(|(owner, atom)| state.fields.iter().copied()
+        let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
             .find(|field| field.owner == owner && field.atom == atom));
         let mut value = match known {
             Some(field) => {
                 #[cfg(test)] FIELD_VALUE_FORWARDS.with(|count| count.set(count.get() + 1));
+                #[cfg(test)] FIELD_FORWARD_SITE.with(|site| {
+                    if let Some((expected, count)) = site.get() && expected == *first {
+                        site.set(Some((expected, count + 1)));
+                    }
+                });
                 field.value
             }
             None => self.base_field_read(state, register, receiver, *first, exit),
@@ -2768,9 +2780,9 @@ impl Lowering<'_, '_> {
         } else { Type::ANY };
         if let Some((owner, atom)) = field {
             let read = FieldValue { owner, atom, value, ty };
-            match state.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
+            match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
                 Some(field) => *field = read,
-                None => state.fields.push(read),
+                None => state.proofs.fields.push(read),
             }
         }
         if ty != Type::INT32 {
@@ -2871,10 +2883,10 @@ impl Lowering<'_, '_> {
         let probed = self.field_probe(&mut before.clone(), probe_owner, object_bits, site, exit);
         self.ins().jump(join, &[ir::BlockArg::Value(probed)]);
         self.builder.switch_to_block(join);
-        for (header, known) in state.objects.headers.iter_mut().zip(&before.objects.headers) {
+        for (header, known) in state.proofs.headers.iter_mut().zip(&before.proofs.headers) {
             if known.is_none() { *header = None; }
         }
-        state.objects.layouts.retain(|key, _| before.objects.layouts.contains_key(key));
+        state.proofs.layouts.retain(|key, _| before.proofs.layouts.contains_key(key));
         if let Some(register) = owner {
             state.values[usize::from(register)] = before.values[usize::from(register)];
         }
@@ -2899,7 +2911,7 @@ impl Lowering<'_, '_> {
         let properties = self.builder.use_var(entry.receiver.properties);
         let properties_len = self.builder.use_var(entry.receiver.properties_len);
         if let [field] = shapes && field.holder.is_none() {
-            let known = owner.and_then(|owner| state.objects.layouts.get(&(owner, field.shape)).copied());
+            let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
             let projection = match known {
                 Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
                 _ => {
@@ -2908,7 +2920,7 @@ impl Lowering<'_, '_> {
                     let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
                         properties_len, *field, PackedAccess::Reload, exit)?;
                     if let Some(owner) = owner {
-                        state.objects.layouts.insert((owner, field.shape), projection);
+                        state.proofs.layouts.insert((owner, field.shape), projection);
                     }
                     projection
                 }
@@ -3000,7 +3012,7 @@ impl Lowering<'_, '_> {
     /// derived from the entry's record certificate where it has one, otherwise proved here.
     fn object_header(&mut self, state: &mut State, owner: Option<Register>, exit: ir::Block) -> ObjectHeader {
         let index = state.header_index(owner);
-        if let Some(header) = state.objects.headers[index] { return header; }
+        if let Some(header) = state.proofs.headers[index] { return header; }
         let fact = owner.map(|register| state.values[usize::from(register)].value);
         let header = if let Some(record) = self.entry.as_ref().expect("entry facts").records[index] {
             record.header(&mut self.builder, fact)
@@ -3012,7 +3024,7 @@ impl Lowering<'_, '_> {
             let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
             ObjectHeader::prove(&mut self.builder, bits, records, fact, exit)
         };
-        state.objects.headers[index] = Some(header);
+        state.proofs.headers[index] = Some(header);
         if let Some(fact) = fact {
             let ty = fact.ty;
             state.values[index] = RegisterFact::definition(
@@ -3095,9 +3107,9 @@ impl Lowering<'_, '_> {
         value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
         // Different receiver values can alias; without a disjointness proof any
         // write retires this memory version, including writes through inlinees.
-        state.fields.clear();
+        state.proofs.fields.clear();
         let receiver = !self.native_calls
-            && (register.is_none() || register.is_some_and(|register| state.objects.receivers.contains(&register)));
+            && (register.is_none() || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
         let owner = if receiver { None } else { register };
         let object_bits = match register {
             None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
@@ -3117,7 +3129,7 @@ impl Lowering<'_, '_> {
         });
         let admitted = self.store_atom_admitted(atom);
         let entry = self.entry.as_ref().expect("entry facts");
-        let projection = state.objects.layouts.get(&(owner, field.shape)).copied();
+        let projection = state.proofs.layouts.get(&(owner, field.shape)).copied();
         let (object, shape, inline) = header.unwrap_or_else(|| (
             self.builder.use_var(entry.receiver.object),
             self.builder.use_var(entry.receiver.shape),

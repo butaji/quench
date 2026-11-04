@@ -2224,6 +2224,7 @@ thread_local! {
     static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FIELD_FORWARD_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
@@ -18544,6 +18545,9 @@ mod tests {
         let source = r#"
             function pair(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const a=owner.value|0; const b=owner.value|0; result=a+b;} return result;}
             function projected(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const value=owner.value; const a=value|0; const b=owner.value>>1; result=1/value+(a^b);} return result;}
+            function diamond(owner,other,n,write) {let result=0; for(let i=0;i<n;i++) {const first=owner.value|0; if(write)other.value=11; result=first+(owner.value|0);} return result;}
+            function pure(owner,n,choose,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const first=owner.value|0; if(choose)result=first+1;else result=first-1; result+=owner.value|0;} return result;}
+            function moved(owner,other,n,choose) {let result=0; for(let i=0;i<n;i++) {const first=owner.value|0; if(choose)owner=other; result=first+(owner.value|0);} return result;}
             function overwritten(owner) {let first=owner.value; first=100; return (owner.value|0)+first;}
             function changed(a,b) {const first=a.value|0; b.value=9; return first+(a.value|0);}
             function replaced(a,b) {const first=a.value|0; a=b; return first+(a.value|0);}
@@ -18557,6 +18561,11 @@ mod tests {
                 if(changed({value:7},{value:1})!==14) throw 'different owners';
                 if(replaced({value:7},{value:19})!==26) throw 'replacement';
                 if(guarded({value:1,mark})!==5) throw 'guarded store';
+                const joined={value:7};
+                if(diamond(joined,joined,1,false)!==14 || diamond(joined,joined,1,true)!==18) throw 'join alias';
+                if(diamond({value:7},{value:1},1,true)!==14) throw 'join different owner';
+                if(pure(owner,1,true,false)!==15 || pure(owner,1,false,false)!==13) throw 'pure join';
+                if(moved({value:7},{value:19},1,true)!==26 || moved({value:7},{value:19},1,false)!==14) throw 'join receiver replacement';
             }
             if(changed(owner,owner)!==16 || owner.value!==9) throw 'aliased write';
             let calls=0;
@@ -18602,6 +18611,20 @@ mod tests {
             assert_eq!(regions.len(), 1, "guarded call must have a native region");
             assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 1,
                 "forward the pre-call read, but reload after the captured store");
+            for (name, forwards) in [("pure", true), ("diamond", false), ("moved", false)] {
+                let id = program.functions.iter().position(|function|
+                    function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+                let site = program.function_get(id).unwrap().instructions().filter(|instruction| instruction.op() == Op::GetField).filter_map(|instruction|
+                    match instruction.field_lookup() {
+                        Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site),
+                        _ => None,
+                    }).last().unwrap();
+                FIELD_FORWARD_SITE.with(|counter| counter.set(Some((site, 0))));
+                let regions = lower_static_typed_regions(&program, id as u32, &[], &*isa, 0);
+                assert!(!regions.is_empty(), "native join regression: {name}");
+                assert_eq!(FIELD_FORWARD_SITE.with(|counter| counter.replace(None).unwrap().1) > 0,
+                    forwards, "only identical field values may cross {name}'s join");
+            }
             let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
@@ -18634,10 +18657,20 @@ mod tests {
             }})();"#);
             let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-fields.cts") }
                 else { crate::Engine::specialize(&source, "packed-fields.cjs") }.unwrap();
+            let advance = program.functions.iter().position(|function|
+                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "advance"))
+                .unwrap();
+            let count_read = program.function_get(advance).unwrap().instructions().filter(|instruction| instruction.op() == Op::GetField).find_map(|instruction| match instruction.field_lookup() {
+                    Some(FieldLookup::Atom { atom, cache_site, .. }) if &program.atoms[atom as usize] == "count" => Some(cache_site),
+                    _ => None,
+                }).unwrap();
+            FIELD_FORWARD_SITE.with(|site| site.set(Some((count_read, 0))));
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             INT32_PROJECTION_REUSES.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
+            assert!(FIELD_FORWARD_SITE.with(|site| site.replace(None).unwrap().1) > 0,
+                "forward the loop-header count through the inline parameter copy");
             assert!(INT32_PROJECTION_REUSES.with(std::cell::Cell::get) > 0, "reuse the control value's numeric projection");
             FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
             FUNCTION_BINDING_CALLS.with(|count| count.set(0));
