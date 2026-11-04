@@ -14584,8 +14584,16 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let target = unsafe { &*target };
     let argc = ImmediateLayout::argument_count(i.imm());
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return LANE_CALL_MISSED };
-    if target.entry != CallEntry::Activates
-        || argc > target.params
+    // A target whose body is a read completes with the read's hit, as the lane's own call
+    // does (`lane_script_call`), its value in the call's register, which the body reads.
+    if target.entry != CallEntry::Activates {
+        let passed = ReadArguments { registers: r, base: ImmediateLayout::call_window_base(i.imm()), passed: argc };
+        // SAFETY: as `lane_call_read`.
+        let Some(value) = (unsafe { lane_answered_read(cx, ip, target, passed, this) }) else { return LANE_CALL_MISSED };
+        r.set(i.a & crate::bytecode::REGISTER_MASK, value);
+        return LANE_CALL_COMPLETED;
+    }
+    if argc > target.params
         || argc > FIXED_ARGUMENT_COPIES
         || !lane_activation_room(vm, target)
         || lane_crosses::<H, false>(cx, target)
