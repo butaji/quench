@@ -356,7 +356,7 @@ impl NumberBitwise {
     /// bitwise operations already return signed Word32 values.
     pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
-            crate::value::number_to_u32(right) & (u32::BITS - 1) != 0)
+            crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
     }
 }
 
@@ -379,15 +379,15 @@ impl NumberBitwiseStage<i32> for I32BitwiseStage {
     }
     #[inline(always)]
     fn shift_left(&mut self, left: i32, right: i32) -> Self::Output {
-        ((left as u32).wrapping_shl((right as u32) & 31)) as i32
+        ((left as u32).wrapping_shl((right as u32) & crate::value::WORD32_SHIFT_MASK)) as i32
     }
     #[inline(always)]
     fn shift_right(&mut self, left: i32, right: i32) -> Self::Output {
-        left >> ((right as u32) & 31)
+        left >> ((right as u32) & crate::value::WORD32_SHIFT_MASK)
     }
     #[inline(always)]
     fn shift_right_unsigned(&mut self, left: i32, right: i32) -> Self::Output {
-        ((left as u32) >> ((right as u32) & 31)) as i32
+        ((left as u32) >> ((right as u32) & crate::value::WORD32_SHIFT_MASK)) as i32
     }
 }
 

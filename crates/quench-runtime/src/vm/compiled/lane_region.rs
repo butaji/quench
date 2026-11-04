@@ -3342,6 +3342,11 @@ impl Lowering<'_, '_> {
             let done = self.builder.create_block();
             self.ins().brif(slot.header.inline, packed, &[], arena, &[]);
             self.builder.switch_to_block(packed);
+            #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|site| {
+                if let Some((expected, count)) = site.get() && expected == instruction.cache_site_index() {
+                    site.set(Some((expected, count + 1)));
+                }
+            }); }
             let narrow = emit_narrow_integer_write(&mut self.builder, value, exit, slot.packed_range);
             self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
             self.ins().jump(done, &[]);

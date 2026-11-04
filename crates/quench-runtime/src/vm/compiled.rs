@@ -2235,6 +2235,7 @@ thread_local! {
     static LOOP_INT32_PHIS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LOOP_SLOT_STORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PACKED_RANGE_PROOFS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PACKED_RANGE_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
@@ -18795,6 +18796,10 @@ mod tests {
                     _ => None,
                 }).unwrap();
             LOOP_INT32_READ_SITE.with(|site| site.set(Some((control_read, 0))));
+            let control_store = program.function_get(advance).unwrap().instructions().find_map(|instruction|
+                (instruction.op() == Op::SetField && &program.atoms[instruction.atom_index() as usize] == "control")
+                    .then(|| instruction.cache_site_index())).unwrap();
+            PACKED_RANGE_SITE.with(|site| site.set(Some((control_store, 0))));
             LOOP_INT32_PHIS.with(|count| count.set(0));
             LOOP_SLOT_STORES.with(|count| count.set(0));
             PACKED_RANGE_PROOFS.with(|count| count.set(0));
@@ -18803,6 +18808,8 @@ mod tests {
             assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "reuse an entry-proved writable slot");
             assert!(PACKED_RANGE_PROOFS.with(std::cell::Cell::get) > 0,
                 "the admitted positive count closes its packed decrement without a store range check");
+            assert!(PACKED_RANGE_SITE.with(|site| site.replace(None).unwrap().1) > 0,
+                "control's shift/xor recurrence must independently close the packed interval");
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
             assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) >= 2, "carry both count and control unboxed across the loop backedge");
             assert!(LOOP_INT32_READ_SITE.with(|site| site.replace(None).unwrap().1) > 0,

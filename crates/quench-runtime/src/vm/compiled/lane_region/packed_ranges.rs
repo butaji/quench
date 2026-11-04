@@ -106,6 +106,9 @@ fn result(state: &State, program: &ResidualProgram, instruction: WideInstruction
         return match operation {
             NumberBitwise::Or if right == Some(IntRange::singleton(0)) => Some(left.unwrap_or(IntRange::FULL)),
             NumberBitwise::Or if left == Some(IntRange::singleton(0)) => Some(right.unwrap_or(IntRange::FULL)),
+            NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor =>
+                Some(left.unwrap_or(IntRange::FULL).bitwise_hull(right.unwrap_or(IntRange::FULL))),
+            NumberBitwise::ShiftRight => left.unwrap_or(IntRange::FULL).shift_right(right?),
             _ => None,
         };
     }

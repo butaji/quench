@@ -14,6 +14,8 @@ const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 const FIRST_TAG: u64 = TAG_UNDEFINED;
 /// The tag field's position: above the payload.
 const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
+/// ECMAScript Word32 shifts use the low log2(Word32::BITS) count bits.
+pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 const LAST_TAG: u64 = TAG_DELETED;
 const _: () = {
     let tags = [
