@@ -22981,3 +22981,35 @@ fn lane_loose_nullish_tests_follow_the_host_html_dda_capability() {
         }
     }
 }
+
+#[test]
+fn lane_bodies_keep_the_callees_they_inline_across_collections() {
+    // Node oracle: each round's closure reads and writes its own round's binding. A body
+    // that inlined an earlier round's closure must not take a later closure that reuses its
+    // dead record for it, nor that closure's freed environment.
+    let source = r#"(function () {
+      function Runner(step) { this.step = step; }
+      Runner.prototype.run = function (n) { let total = 0; for (let i = 0; i < n; i++) total += this.step(i); return total; };
+      let sum = 0;
+      for (let round = 0; round < 40; round++) {
+        let seen = round;
+        const runner = new Runner(function (i) { seen = seen + 1; return (i & 3) + round; });
+        const got = runner.run(200);
+        if (got !== 200 * round + 300 || seen !== round + 200) throw Error('round ' + round + ': ' + got + ' ' + seen);
+        sum += got;
+        // Garbage enough for collections between rounds, as the benchmark's runs make.
+        let garbage = [];
+        for (let i = 0; i < 4000; i++) garbage.push({ i, next: garbage[i - 1] });
+      }
+      globalThis.answer = sum;
+    })();"#;
+    let program = Engine::specialize(source, "lane-callee-roots.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        if let Err(error) = vm.execute(&program) { panic!("{mode:?}: {error:?}"); }
+        let atom = vm.intern_atom("answer");
+        assert_eq!(vm.own_property(vm.realm.globals, atom).and_then(Value::as_number), Some((0..40).map(|round| f64::from(200 * round + 300)).sum()));
+    }
+}
