@@ -9,6 +9,9 @@
 
 use super::{Atom, Value};
 
+#[cfg(all(test, feature = "bench-primitives"))]
+mod primitive_bench;
+
 /// Direct-mapped entries: a power of two that holds the distinct names the Node host glue
 /// passes on a request path.
 const NAME_ATOM_MEMO_ENTRIES: usize = 1 << 9;
