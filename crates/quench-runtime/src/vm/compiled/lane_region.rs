@@ -2218,9 +2218,18 @@ impl Lowering<'_, '_> {
             let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             let unchanged = self.ins().icmp_imm_u(IntCC::Equal, epoch, constant.epoch as i64);
             emit_js_guard(&mut self.builder, unchanged, exit);
-            let same = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(constant.prototype));
-            emit_js_guard(&mut self.builder, same, exit);
-            return Some(self.ins().iconst(types::I64, constant.value.to_bits() as i64));
+            // The receiver's link selects its prototype's value; one prototype's is a constant.
+            let ((first, value), rest) = constant.values().split_first()?;
+            let mut matched = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*first));
+            let mut read = self.ins().iconst(types::I64, value.to_bits() as i64);
+            for (prototype, value) in rest {
+                let same = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*prototype));
+                let candidate = self.ins().iconst(types::I64, value.to_bits() as i64);
+                read = self.ins().select(same, candidate, read);
+                matched = self.ins().bor(matched, same);
+            }
+            emit_js_guard(&mut self.builder, matched, exit);
+            return Some(read);
         }
         let from = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base));
         let below = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end));

@@ -1514,7 +1514,7 @@ impl<H: Host> Vm<H> {
                 storage_len: usize::from(slot) + 1,
                 storage: None,
                 representation: crate::value_vec::SlotRepresentation::Tagged,
-                inherited: Some(super::compiled::InheritedConstant { prototype: cache.proved_prototype.bits(), value, epoch }),
+                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)], epoch),
             });
         }
         loads
@@ -1543,17 +1543,19 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
-    /// The value a prototype of exact shape `holder` holds at `slot` now, with the link that
-    /// names it and the epoch it is read under: what a holder read may take while both hold
-    /// (`NativeFieldLoad::inherited`).
+    /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the
+    /// link that names it, and the epoch they are read under: what a holder read may take
+    /// while the receiver's link names one of them and the epoch holds
+    /// (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
+    /// prototypes holding the same names share it.
     fn inherited_constant(&self, holder: u32, slot: u16) -> Option<super::compiled::InheritedConstant> {
-        let prototype = self.heap.prototype_of_shape(holder)?;
-        let value = self.heap.property_get(self.heap.object(prototype)?, usize::from(slot))?;
-        (!value.is_deleted()).then(|| super::compiled::InheritedConstant {
-            prototype: crate::heap::ProtoLink::of(prototype).bits(),
-            value,
-            epoch: crate::heap::prototype_value_epoch(),
-        })
+        let mut holders = Vec::new();
+        for prototype in self.heap.prototypes_of_shape(holder) {
+            let value = self.heap.property_get(self.heap.object(prototype)?, usize::from(slot))?;
+            if value.is_deleted() { return None; }
+            holders.push((crate::heap::ProtoLink::of(prototype).bits(), value));
+        }
+        super::compiled::InheritedConstant::of(holders, crate::heap::prototype_value_epoch())
     }
 
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names

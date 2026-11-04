@@ -7072,23 +7072,34 @@ impl<H: Host> Vm<H> {
     /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
     /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
     /// per read of its chain, and its sink's store.
-    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit) -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+    /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
+    fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
+        match instruction.op() {
+            Op::GetField => match instruction.field_lookup() {
+                Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
+                Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
+                    let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
+                    reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
+                }),
+                None => Vec::new(),
+            },
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The proved shapes and slots of `unit`'s field sites, but those of the instructions at
+    /// `generic`, where a previous body left on its runs: their proofs did not hold for the
+    /// values they met (a function's own field, read through a plain object's proof), so
+    /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
+    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
+        -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        let generic: Vec<u16> = generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
+            .map(|(site, _)| site).collect();
         unit.instructions
             .iter()
-            .flat_map(|instruction| -> Vec<(u16, bool)> {
-                match instruction.op() {
-                    Op::GetField => match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
-                        Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
-                            let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
-                            reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
-                        }),
-                        None => Vec::new(),
-                    },
-                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
-                    _ => Vec::new(),
-                }
-            })
+            .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
+            .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
@@ -7104,6 +7115,7 @@ impl<H: Host> Vm<H> {
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
+        generic: &[LaneExit],
     ) -> Option<Box<LaneMethod>> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers {
@@ -7137,7 +7149,12 @@ impl<H: Host> Vm<H> {
             for callee in direct.iter_mut().flatten().filter(|callee| callee.method.is_null()) {
                 callee.reserve = room;
             }
-            let fields = self.lane_unit_fields(program, &unit);
+            let generic: Vec<usize> = generic.iter().filter_map(|exit| unit.origins.iter().position(|origin| match *exit {
+                LaneExit::At(pc) => *origin == lane_unit::Origin::Caller(pc as u32),
+                LaneExit::Inlined { frame, pc } => *origin == lane_unit::Origin::Inlined { frame, pc },
+                LaneExit::Callee | LaneExit::Returned { .. } => false,
+            })).collect();
+            let fields = self.lane_unit_fields(program, &unit, &generic);
         let global_reads = self.lane_global_reads(program, function, &unit);
             let sites: std::collections::BTreeMap<usize, usize> = unit.instructions.iter().enumerate()
                 .filter(|(_, instruction)| instruction.op() == Op::Call)

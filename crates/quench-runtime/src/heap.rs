@@ -1085,12 +1085,11 @@ impl Heap {
         )
     }
 
-    #[inline(always)]
-    /// A registered prototype, a direct object, of exact shape `shape`; `None` where the
-    /// registry does not know every prototype or none has it.
-    pub(crate) fn prototype_of_shape(&self, shape: u32) -> Option<Value> {
-        let PrototypeRegistry::Known(prototypes) = &self.prototypes else { return None };
-        prototypes.iter().map(|(prototype, _)| *prototype).find(|prototype| {
+    /// The registered prototypes, direct objects, of exact shape `shape`; none where the
+    /// registry does not know every prototype.
+    pub(crate) fn prototypes_of_shape(&self, shape: u32) -> impl Iterator<Item = Value> + '_ {
+        let known = match &self.prototypes { PrototypeRegistry::Known(prototypes) => &prototypes[..], _ => &[] };
+        known.iter().map(|(prototype, _)| *prototype).filter(move |prototype| {
             prototype.direct_object_index().is_some() && self.object(*prototype).is_some_and(|object| object.exact_shape() == shape)
         })
     }

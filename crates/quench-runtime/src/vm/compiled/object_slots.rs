@@ -53,13 +53,34 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) inherited: Option<InheritedConstant>,
 }
 
-/// An inherited read's value, fixed by its receiver's prototype link and the prototype value
-/// epoch it was read under.
+/// The most prototypes of one holder shape an inherited read folds: sibling classes whose
+/// prototypes hold the same names share a shape, and each holds its own values.
+pub(crate) const INHERITED_PROTOTYPES: usize = 4;
+
+/// An inherited read's values, each fixed by the receiver's prototype link that names its
+/// holder, under the prototype value epoch they were read at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct InheritedConstant {
-    pub(crate) prototype: u32,
-    pub(crate) value: Value,
+    values: [(u32, Value); INHERITED_PROTOTYPES],
+    count: u8,
     pub(crate) epoch: u64,
+}
+
+impl InheritedConstant {
+    /// The values `holders` (prototype link and value) give, read under `epoch`; `None`
+    /// where there are none or more than the read folds.
+    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value)>, epoch: u64) -> Option<Self> {
+        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], count: 0, epoch };
+        for holder in holders {
+            *constant.values.get_mut(usize::from(constant.count))? = holder;
+            constant.count += 1;
+        }
+        (constant.count > 0).then_some(constant)
+    }
+
+    pub(crate) fn values(&self) -> &[(u32, Value)] {
+        &self.values[..usize::from(self.count)]
+    }
 }
 
 impl NativeFieldLoad {
