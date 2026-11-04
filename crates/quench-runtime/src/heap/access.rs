@@ -731,17 +731,18 @@ impl Heap {
         }
     }
 
-    /// The type every value `slot` of `shape`'s objects has held; `Type::ANY` where
-    /// representations are not kept or the shape does not register the slot.
+    /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.
+    /// Native raw writes can bypass recording. Readers must check observations;
+    /// this is not a write-maintained contract.
     pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> crate::typed_ir::Type {
         if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
             return crate::typed_ir::Type::ANY;
         }
-        self.properties.slot_representation(shape, slot).ty()
+        self.properties.slot_observation(shape, slot).ty()
     }
 
     /// The slots of live object records whose value its owner's representation does not hold
-    /// (`ValueArena::slot_representation`): zero while every write joins its value's class;
+    /// (`ValueArena::slot_observation`): zero while every write joins its value's class;
     /// zero too where representations are not kept.
     pub(crate) fn unrepresented_slots(&self) -> usize {
         if !self.properties.tracks() { return 0; }
@@ -753,7 +754,7 @@ impl Heap {
                 // SAFETY: an exact, non-dictionary shape holds its registered slots.
                 let value = unsafe { self.property_get_flat(object, slot) };
                 if !value.is_deleted()
-                    && crate::value_vec::SlotRepresentation::of(value) > self.properties.slot_representation(shape, slot) {
+                    && !crate::typed_ir::Type::immediate(value).is_subtype(self.properties.slot_observation(shape, slot).ty()) {
                     unrepresented += 1;
                 }
             }

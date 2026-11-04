@@ -9,6 +9,8 @@
 use crate::{Value, ValueType};
 
 mod int_range;
+mod slot_type;
+pub(crate) use slot_type::SlotType;
 pub(crate) use int_range::IntRange;
 
 /// Whether residual execution can export ownership or enter another guest activation.

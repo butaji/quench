@@ -129,8 +129,8 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
-    /// The type of every value the slot has held when the code was compiled
-    /// (`Heap::slot_type`): a read speculates on it and leaves where it fails.
+    /// The observed slot type (`Heap::slot_type`), not a write-maintained
+    /// invariant: a read speculates on it and leaves where its check fails.
     pub(crate) ty: crate::typed_ir::Type,
 }
 

@@ -19855,6 +19855,24 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn nullable_slot_observations_keep_checks_across_execution_tiers() {
+        let source = include_str!("../../tests/fixtures/nullable-slot-writes.js");
+        let program = crate::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
+        let native = crate::NativeJsProgram::<crate::test_host::TestHost>::compile_eager(program.clone()).unwrap();
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.programs.enable_js_lane_methods();
+            vm.set_execution_mode(mode);
+            if mode == ExecutionMode::NativeOnly { vm.execute_native_program(&native, true).unwrap(); }
+            else { vm.execute(&program).unwrap(); }
+            let atom = vm.lookup_atom("answer").unwrap();
+            // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_holder_read_does_not_require_receiver_arena_storage() {
         let source = "function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);";
         let program = crate::Engine::specialize(source, "packed-holder.js").unwrap();

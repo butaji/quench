@@ -4707,9 +4707,9 @@ impl<H> Vm<H> {
             }
         }
         // The representation each own field a cache entry names holds across the live objects
-        // of its shape, the join of their values' classes (`SlotRepresentation`).
-        use crate::value_vec::SlotRepresentation;
-        let mut classes: std::collections::HashMap<(u32, u16), SlotRepresentation> = std::collections::HashMap::new();
+        // of its shape, the join of their values' classes (`SlotType`).
+        use crate::typed_ir::SlotType;
+        let mut classes: std::collections::HashMap<(u32, u16), SlotType> = std::collections::HashMap::new();
         self.heap.for_each_live_object_record(|object| {
             let shape = object.exact_shape();
             if shape != object.shape() { return; }
@@ -4718,22 +4718,20 @@ impl<H> Vm<H> {
                 // SAFETY: an exact, non-dictionary shape holds `len` slots.
                 let value = unsafe { self.heap.property_get_flat(object, slot) };
                 if value.is_deleted() { continue; }
-                let class = SlotRepresentation::of(value);
+                let class = SlotType::of(value);
                 let joined = classes.entry((shape, slot as u16)).or_insert(class);
-                *joined = (*joined).max(class);
+                *joined = joined.join(class);
             }
         });
-        let mut reps = [0_usize; 4];
+        let mut reps = [0_usize; SlotType::ALL.len()];
         let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
             .filter(|cache| cache.receiver != NO_FIELD_RECEIVER && cache.holder == NO_FIELD_HOLDER);
         for cache in own_entries {
-            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotRepresentation::None) as usize] += 1;
+            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotType::None) as usize] += 1;
         }
-        let reps = format!(
-            "QUENCH_FIELD_REPS {{\"no_live_object\":{},\"int32\":{},\"number\":{},\"tagged\":{},\"unrepresented_slots\":{}}}",
-            reps[SlotRepresentation::None as usize], reps[SlotRepresentation::Int32 as usize],
-            reps[SlotRepresentation::Number as usize], reps[SlotRepresentation::Tagged as usize], self.heap.unrepresented_slots(),
-        );
+        let classes = SlotType::ALL.iter().map(|class|
+            format!("\"{}\":{}", class.label(), reps[*class as usize])).collect::<Vec<_>>().join(",");
+        let reps = format!("QUENCH_FIELD_REPS {{{classes},\"unrepresented_slots\":{}}}", self.heap.unrepresented_slots());
         reps + "\n" + &format!(
             "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],

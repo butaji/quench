@@ -1,5 +1,5 @@
 use crate::Value;
-use crate::typed_ir::Type;
+use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
 
 mod buffer;
@@ -188,36 +188,6 @@ impl Default for ValueVec {
     }
 }
 
-/// The type every value a slot has held has, as the heap keeps it per slot owner: a byte code
-/// of the chain `Type::NEVER` ⊑ `Type::INT32` ⊑ `Type::NUMBER` ⊑ `Type::ANY` of the typed IR,
-/// the one authority on types, joined by `max`. Integral numbers are stored in int form
-/// (`Value::number`), so each class keeps the same encoding and a slot widens in place.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum SlotRepresentation {
-    None,
-    Int32,
-    Number,
-    Tagged,
-}
-
-impl SlotRepresentation {
-    /// The least class whose type holds `value`'s (`Type::immediate`).
-    pub(crate) fn of(value: Value) -> Self {
-        let ty = Type::immediate(value);
-        if ty.is_subtype(Type::INT32) { Self::Int32 } else if ty.is_subtype(Type::NUMBER) { Self::Number } else { Self::Tagged }
-    }
-
-    /// The typed IR type this class codes.
-    pub(crate) fn ty(self) -> Type {
-        match self {
-            Self::None => Type::NEVER,
-            Self::Int32 => Type::INT32,
-            Self::Number => Type::NUMBER,
-            Self::Tagged => Type::ANY,
-        }
-    }
-}
-
 pub(crate) struct ValueArena {
     values: PropertyBuffer,
     free: [Vec<u32>; BUCKETS],
@@ -229,9 +199,9 @@ pub(crate) struct ValueArena {
     /// it. A child that appends a slot at its parent's chain end shares that chain.
     shape_chains: Vec<u32>,
     chain_owners: Vec<u32>,
-    /// Per owner shape, the representation every value its slot has held fits
-    /// (`SlotRepresentation`), joined on each write.
-    owner_reps: Vec<SlotRepresentation>,
+    /// Per owner shape, compact observed content types. Recording writes joins
+    /// them; native raw writes can bypass recording, so this is not a proof.
+    owner_types: Vec<SlotType>,
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
@@ -249,7 +219,7 @@ impl Default for ValueArena {
             shape_lengths: vec![0],
             shape_chains: Vec::new(),
             chain_owners: Vec::new(),
-            owner_reps: Vec::new(),
+            owner_types: Vec::new(),
             tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -273,7 +243,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_reps: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -352,7 +322,7 @@ impl ValueArena {
         self.shape_lengths.push(0);
         self.shape_chains.clear();
         self.chain_owners.clear();
-        self.owner_reps.clear();
+        self.owner_types.clear();
     }
 
     /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
@@ -365,9 +335,9 @@ impl ValueArena {
         let index = shape as usize;
         if self.shape_chains.len() <= index {
             self.shape_chains.resize(index + 1, 0);
-            self.owner_reps.resize(index + 1, SlotRepresentation::None);
+            self.owner_types.resize(index + 1, SlotType::None);
         }
-        self.owner_reps[index] = SlotRepresentation::None;
+        self.owner_types[index] = SlotType::None;
         // A parent's chain covers its length once registered; one that does not (a parent the
         // heap never registered at that length) lends no owners, and the child owns its slots.
         let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
@@ -415,7 +385,7 @@ impl ValueArena {
     /// Starts joining writes' classes from none: the caller joins what live objects hold.
     pub(crate) fn track(&mut self) {
         self.tracking = true;
-        self.owner_reps.fill(SlotRepresentation::None);
+        self.owner_types.fill(SlotType::None);
     }
 
     /// Whether writes join their values' classes.
@@ -434,10 +404,10 @@ impl ValueArena {
         self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
     }
 
-    /// The representation `slot` of `shape` has held.
+    /// The recorded type of `slot` of `shape`, not a write-maintained invariant.
     #[inline(always)]
-    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> SlotRepresentation {
-        self.owner_reps[self.slot_owner(shape, slot) as usize]
+    pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
+        self.owner_types[self.slot_owner(shape, slot) as usize]
     }
 
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
@@ -453,12 +423,12 @@ impl ValueArena {
     #[inline(never)]
     fn join_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
         let owner = self.slot_owner(shape, slot) as usize;
-        let held = self.owner_reps[owner];
+        let held = self.owner_types[owner];
         // A slot that has held any value holds every value: the common case pays one compare.
-        if held == SlotRepresentation::Tagged { return false; }
-        let class = SlotRepresentation::of(value);
-        let widened = class > held;
-        if widened { self.owner_reps[owner] = class; }
+        if held == SlotType::Tagged { return false; }
+        let class = held.join(SlotType::of(value));
+        let widened = class != held;
+        if widened { self.owner_types[owner] = class; }
         widened
     }
 
@@ -955,6 +925,30 @@ impl ValueArena {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn slot_observations_share_owners_and_widen_semantically() {
+        let mut arena = ValueArena::default();
+        assert!(!arena.note_slot_value(u32::MAX, usize::MAX, Value::NULL));
+        arena.track();
+        arena.register_derived_shape(1, 1, None);
+        arena.register_derived_shape(2, 2, Some((1, 1)));
+        assert_eq!(arena.slot_owner(1, 0), arena.slot_owner(2, 0));
+        assert!(arena.note_slot_value(1, 0, Value::NULL));
+        assert!(arena.note_slot_value(2, 0, Value::direct_object(7)));
+        assert_eq!(arena.slot_observation(1, 0), SlotType::DirectObjectOrNull);
+        assert!(!arena.note_slot_value(2, 0, Value::direct_object(8)));
+        assert!(arena.note_slot_value(2, 1, Value::number(0.5)));
+        assert_eq!(arena.slot_observation(2, 1), SlotType::Number);
+        assert!(arena.note_slot_value(1, 0, Value::UNDEFINED));
+        assert_eq!(arena.slot_observation(2, 0), SlotType::DirectObjectOrNullish);
+        assert!(arena.note_slot_value(2, 0, Value::integer(1)));
+        assert_eq!(arena.slot_observation(1, 0), SlotType::Tagged);
+        assert_eq!(arena.slot_observation(2, 1), SlotType::Number);
+        arena.track();
+        assert_eq!(arena.slot_observation(2, 0), SlotType::None);
+        assert_eq!(arena.slot_observation(2, 1), SlotType::None);
+    }
     use super::*;
 
     #[test]
