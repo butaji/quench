@@ -1935,12 +1935,9 @@ fn emit_lane_helper_call(
     emit_lane_call(builder, helper, &values)
 }
 
-/// Lower an own data-field store as the lane's store hit makes it
-/// (`Vm::primary_own_field_store_hit`, `Vm::cached_field_store_hit`): in specialized
-/// execution, of a name no method cache names (whose store would invalidate it), to the slot
-/// `emit_js_cached_field_slot` finds. A heap reference is stored only when the owner's mark
-/// proves the write barrier would not log it. Every failed proof resumes `Vm::step` at the
-/// original store PC with nothing written.
+/// Untyped native stores use the shared recording mutation. Only a typed region
+/// with an admitted write domain may bypass it. A miss precedes the write and
+/// resumes the exact source instruction; a hit preserves storage and cannot reenter.
 #[allow(clippy::too_many_arguments)]
 fn emit_js_own_field_set(
     builder: &mut FunctionBuilder<'_>,
@@ -1955,34 +1952,17 @@ fn emit_js_own_field_set(
     fallback: ir::Block,
     exact: &JsExactFallback,
 ) {
-    let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
-    let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-    emit_js_guard(builder, specialized, fallback);
-    // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
-    let word_index = atom / u64::BITS;
-    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
-    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
-    let word_present = builder.create_block();
-    let name_free = builder.create_block();
-    let covered = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
-    builder.ins().brif(covered, word_present, &[], name_free, &[]);
-    builder.switch_to_block(word_present);
-    builder.seal_block(word_present);
-    let word = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        words,
-        i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
-    );
-    let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
-    let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
-    builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
-    builder.switch_to_block(name_free);
-    builder.seal_block(name_free);
-    let (address, record_id) =
-        emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback, None, None, None);
-    emit_unlogged_property_store_guard(builder, payload, record_id, value, typed_ir::Type::ANY, fallback);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    let receiver = match receiver {
+        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
+        JsFieldReceiver::Value(value) => value,
+    };
+    let atom = builder.ins().iconst(types::I64, i64::from(atom));
+    let site = builder.ins().iconst(types::I64, i64::from(site));
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_store));
+    let stored = emit_lane_helper_call(builder, payload, helper, &[receiver, atom, site, value]);
+    let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    emit_js_guard(builder, stored, fallback);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     }
@@ -7281,6 +7261,8 @@ struct JsStepDispatch {
     /// through callouts; growth/compaction update its base/length in place.
     property_buffer: usize,
     field_entries: usize,
+    /// Host-bound recording store operation; no JIT/compiler capability is required.
+    field_store: usize,
     /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
     /// length in words; and whether the VM and program run specialized, which a cached store
     /// requires (`Vm::cached_field_store_hit`).
@@ -7814,7 +7796,7 @@ impl<H: Host> Vm<H> {
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
             let vm = self as *mut Self;
             (*dispatch).vm = vm.addr();
-            (*dispatch).bind_property_buffer(vm);
+            (*dispatch).bind_native_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
             // the stack's values.
             let (top, end, activations) = self.lane_stack_spare();
@@ -8056,6 +8038,7 @@ impl LaneFrame {
                 object_mark_block_count: 0,
                 property_buffer: 0,
                 field_entries: 0,
+                field_store: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
@@ -8134,7 +8117,7 @@ fn run_js_native_entry<H: Host>(
         let dispatch = &mut *payload.cast::<JsStepDispatch>();
         dispatch.native_pcs = native_pcs.as_ptr();
         dispatch.native_pc_count = native_pcs.len();
-        dispatch.bind_property_buffer(vm);
+        dispatch.bind_native_storage(vm);
         (dispatch.native_registers, dispatch.native_locals, dispatch.local_count)
     };
     // Frame registers and locals are the canonical tagged homes and remain
@@ -8200,7 +8183,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8229,9 +8212,10 @@ impl JsStepDispatch {
     /// from the same full-VM pointer as semantic callouts, without creating a
     /// shared borrow that later mutable callouts would invalidate. Rebind on
     /// every entry, including reuse of the thread-local lane frame by another VM.
-    fn bind_property_buffer<H: Host>(&mut self, vm: *mut Vm<H>) {
+    fn bind_native_storage<H: Host>(&mut self, vm: *mut Vm<H>) {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
+        self.field_store = lane_field_set::<H> as *const () as usize;
     }
 
     /// Object loads, stores and barriers share these bases in lane and general code.
@@ -19172,7 +19156,7 @@ mod tests {
                 "optimized native bound stores must admit their write domains");
             let [reads, writes] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
             assert!(reads <= 2, "only entry misses may call the read helper: {reads}");
-            assert_eq!(writes, 0, "packed integer stores must stay native");
+            assert_eq!(writes, 2, "only the two initial cold stores may use the recording mutation; hot packed stores stay native");
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
             assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
         }
@@ -19870,6 +19854,47 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn untyped_native_store_records_widening_before_mutation() {
+        let program = crate::Engine::specialize(
+            "var receiver={value:0,a:1,b:2}; function write(x){receiver.value=x;} for(let i=0;i<200;i++)write(i); write(0.5);",
+            "untyped-native-write.js").unwrap();
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut owners = Vec::new();
+        let mut entries = Vec::new();
+        for id in 0..program.function_count() {
+            let (memory, entry, operands) = if id == 0 {
+                live_native_function(&program, id as u32, None)
+            } else {
+                let (native, _) = lower_js_general_dispatch(&program, id as u32, false, &*isa,
+                    JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[], &[]).unwrap();
+                let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX).unwrap();
+                (memory, entry, Vec::new())
+            };
+            // SAFETY: the entries use this program and TestHost; owners retain code and operands.
+            entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
+            owners.push((memory, operands));
+        }
+        let native = unsafe { crate::NativeJsProgram::<crate::test_host::TestHost>::from_entries(
+            program, entries, Rc::new(owners)) }.unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
+        vm.execute_native_program(&native, true).unwrap();
+        let atom = vm.lookup_atom("receiver").unwrap();
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let atom = vm.lookup_atom("value").unwrap();
+        let shape = vm.heap.object(receiver).unwrap().shape();
+        let slot = vm.shape_slot(shape, atom).unwrap();
+        assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
+        assert_eq!(vm.heap.unrepresented_slots(), 0);
+        assert!(FIELD_HELPER_CALLS.with(|counts| counts.get()[1]) > 0,
+            "ordinary native stores must use the recording mutation");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
         let source = include_str!("../../tests/fixtures/nullable-slot-writes.js");
         let program = crate::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
@@ -20388,7 +20413,7 @@ mod tests {
             );
             let vm = vm as *mut Vm<crate::test_host::TestHost>;
             context.vm = vm.cast();
-            dispatch.bind_property_buffer(vm);
+            dispatch.bind_native_storage(vm);
             context.program = ProgramId::MAIN;
             let mut result = 0;
             let status = run(&mut context, &mut result);

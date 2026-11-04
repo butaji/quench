@@ -4417,7 +4417,7 @@ mod tests {
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
-        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.dispatch.bind_native_storage(&mut vm);
         frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
         frame.context.interrupt = vm.execution_interrupt.atomic_flag() as *const _;
         frame.context.interrupt_owner = &vm.execution_interrupt;
@@ -4626,7 +4626,7 @@ mod tests {
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
-        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.dispatch.bind_native_storage(&mut vm);
         frame.dispatch.receiver = Value::UNDEFINED.to_bits();
         frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
         for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
@@ -4672,7 +4672,7 @@ mod tests {
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
-        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.dispatch.bind_native_storage(&mut vm);
         frame.dispatch.receiver = Value::UNDEFINED.to_bits();
         frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
         frame.context.interrupt = vm.execution_interrupt.atomic_flag() as *const _;
@@ -4759,7 +4759,7 @@ mod tests {
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
-        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.dispatch.bind_native_storage(&mut vm);
         frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
         assert_eq!(frame.context.poll_start, 0);
         let before = vec![Value::number(7.0); usize::from(unit.caller_registers)];
