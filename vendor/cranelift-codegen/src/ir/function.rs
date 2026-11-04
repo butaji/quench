@@ -233,6 +233,11 @@ pub struct FunctionStencil {
     #[cfg_attr(feature = "enable-serde", serde(default))]
     /// Frontend-proved effects to specialize, or retain when loop versioning is inapplicable.
     pub effect_specializations: alloc::vec::Vec<EffectSpecialization>,
+    /// Stores into thread-private language state. The frontend guarantees that
+    /// observation requires an explicit IR effect (including an interrupt poll).
+    /// Unlike `notrap`, this permits deferring writes across pure computation.
+    #[cfg_attr(feature = "enable-serde", serde(default))]
+    pub private_stores: alloc::vec::Vec<Inst>,
 }
 
 impl FunctionStencil {
@@ -247,6 +252,7 @@ impl FunctionStencil {
         self.debug_tags.clear();
         self.stack_limit = None;
         self.effect_specializations.clear();
+        self.private_stores.clear();
     }
 
     /// Create a `ReplaceBuilder` that will replace `inst` with a new
@@ -448,6 +454,7 @@ impl Function {
                 stack_limit: None,
                 debug_tags: DebugTags::default(),
                 effect_specializations: alloc::vec::Vec::new(),
+                private_stores: alloc::vec::Vec::new(),
             },
             params: FunctionParameters::new(),
         }

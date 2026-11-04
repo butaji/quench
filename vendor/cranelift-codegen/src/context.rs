@@ -413,6 +413,11 @@ impl Context {
             }
         }
 
+        if crate::poll_unswitch::sink_stores(&mut self.func) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.compute_loop_analysis();
+        }
         self.verify_if(fisa)?;
 
         Ok(())

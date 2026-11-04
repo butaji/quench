@@ -184,7 +184,7 @@ impl FrameFlow {
             }
             if !changed { break; }
         }
-        let mut replacements = (!native.effect_specializations.is_empty())
+        let mut replacements = (!native.effect_specializations.is_empty() || !native.private_stores.is_empty())
             .then(|| SecondaryMap::<ir::Inst, Option<ir::Inst>>::with_capacity(native.dfg.num_insts()));
         let parameters: Vec<_> = records.iter().map(|(block, _)| native.dfg.block_params(*block).to_vec()).collect();
         for (block, _) in &records { native.layout.remove_block_and_insts(*block); }
@@ -287,6 +287,8 @@ impl FrameFlow {
             }
         }
         if let Some(replacements) = replacements {
+            builder.func.private_stores = std::mem::take(&mut builder.func.private_stores)
+                .into_iter().filter_map(|inst| replacements[inst]).collect();
             builder.func.effect_specializations = std::mem::take(&mut builder.func.effect_specializations)
                 .into_iter().filter_map(|effect| effect.remap_instructions(|inst| replacements[inst])).collect();
         }

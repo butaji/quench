@@ -17659,13 +17659,62 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn private_store_commits_preserve_overlapping_bytes_and_zero_trips() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 2]);
+        let mut function = ir::Function::with_name_signature(UserFuncName::testcase("private_store_commit"), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block(); let body = builder.create_block(); let exit = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        let count = builder.append_block_param(body, types::I64);
+        builder.switch_to_block(entry);
+        let args = builder.block_params(entry).to_vec();
+        builder.ins().brif(args[1], body, &[args[1].into()], exit, &[]);
+        builder.switch_to_block(body);
+        let word = builder.ins().ireduce(types::I32, count);
+        let first = builder.ins().store(MemFlagsData::trusted(), word, args[0], 0);
+        const BYTE_XOR: u8 = 7;
+        const BYTE_OFFSET: usize = 1;
+        let byte = builder.ins().ireduce(types::I8, count);
+        let byte = builder.ins().bxor_imm_u(byte, i64::from(BYTE_XOR));
+        let second = builder.ins().store(MemFlagsData::trusted(), byte, args[0], BYTE_OFFSET as i32);
+        builder.func.private_stores.extend([first, second]);
+        let next = builder.ins().iadd_imm_s(count, -1);
+        builder.ins().brif(next, body, &[next.into()], exit, &[]);
+        builder.switch_to_block(exit); builder.ins().return_(&[]);
+        builder.seal_all_blocks(); builder.finalize(isa.frontend_config());
+        let mut compiler = cranelift_codegen::Context::for_function(function);
+        let code = compiler.compile(&*isa, &mut Default::default()).unwrap();
+        let memory = CodeMemory::new(code.buffer.data()).unwrap();
+        compiler.compute_cfg(); compiler.compute_domtree(); compiler.compute_loop_analysis();
+        assert!(!compiler.func.layout.blocks().filter(|block| compiler.loop_analysis.innermost_loop(*block).is_some())
+            .flat_map(|block| compiler.func.layout.block_insts(block))
+            .any(|inst| compiler.func.dfg.insts[inst].opcode().can_store()), "{}", compiler.func);
+        // SAFETY: the verified signature receives an aligned, live word and a count.
+        let run: unsafe extern "C" fn(*mut u64, u64) = unsafe { std::mem::transmute(memory.pointer()) };
+        const SENTINEL: u64 = 0x9182_7364_5546_3728;
+        for count in [0, 1, 2, 17, 257] {
+            let mut actual = SENTINEL; let mut expected = SENTINEL.to_ne_bytes();
+            if count != 0 {
+                expected[..size_of::<u32>()].copy_from_slice(&1_u32.to_ne_bytes());
+                expected[BYTE_OFFSET] = 1 ^ BYTE_XOR;
+            }
+            unsafe { run(&mut actual, count); }
+            assert_eq!(actual.to_ne_bytes(), expected, "count={count}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn conditional_xor_masks_preserve_integer_words_and_bit_positions() {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word = u64::MAX >> (u64::BITS - ty.bits());
             let sign = 1_u64 << (ty.bits() - 1);
             for tested in (0..ty.bits()).map(|bit| 1_u64 << bit).chain([0, word]) { for invert in [false, true] {
-              for comparison in [None, Some(IntCC::Equal), Some(IntCC::NotEqual)] {
+              for comparison in [None, Some(IntCC::Equal), Some(IntCC::NotEqual)] { for factored in [false, true] {
                 let mut signature = Signature::new(isa.default_call_conv());
                 signature.params.extend([AbiParam::new(types::I64); 3]);
                 signature.returns.push(AbiParam::new(types::I64));
@@ -17680,9 +17729,16 @@ mod tests {
                     else { builder.ins().ireduce(ty, value) }).collect();
                 let condition = builder.ins().band_imm_u(values[0], tested as i64);
                 let condition = comparison.map_or(condition, |cc| builder.ins().icmp_imm_u(cc, condition, 0));
-                let changed = builder.ins().bxor(values[1], values[2]);
-                let result = if invert { builder.ins().select(condition, values[1], changed) }
-                    else { builder.ins().select(condition, changed, values[1]) };
+                let result = if factored {
+                    let zero = builder.ins().iconst(ty, 0);
+                    let selected = if invert { builder.ins().select(condition, zero, values[2]) }
+                        else { builder.ins().select(condition, values[2], zero) };
+                    builder.ins().bxor(values[1], selected)
+                } else {
+                    let changed = builder.ins().bxor(values[1], values[2]);
+                    if invert { builder.ins().select(condition, values[1], changed) }
+                    else { builder.ins().select(condition, changed, values[1]) }
+                };
                 let result = if ty == types::I64 { result } else { builder.ins().uextend(types::I64, result) };
                 builder.ins().return_(&[result]);
                 builder.seal_all_blocks(); builder.finalize(isa.frontend_config());
@@ -17701,9 +17757,9 @@ mod tests {
                     else { vec![0, 1, sign, word, tested, word ^ tested] };
                 for source in sources { for base in [0, 1, sign, word] { for &delta in &deltas {
                     let expected = base ^ if (source & tested != 0) ^ invert ^ (comparison == Some(IntCC::Equal)) { delta } else { 0 };
-                    assert_eq!(unsafe { run(source, base, delta) }, expected, "{ty} mask{tested} invert{invert} source{source} base{base} delta{delta}");
+                    assert_eq!(unsafe { run(source, base, delta) }, expected, "{ty} mask{tested} invert{invert} factored{factored} source{source} base{base} delta{delta}");
                 }}}
-            }}}
+            }}}}
         }
     }
 
@@ -17736,19 +17792,59 @@ mod tests {
                 let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
                     .flat_map(|block| native.layout.block_insts(block)).collect();
                 hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
+                    && hot.iter().filter(|&&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Brif).count() == 1
                     && !hot.iter().any(|&inst| (FAULT_POLL_SUPPORTED && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
                         || matches!(native.dfg.insts[inst], ir::InstructionData::IntCompare {
                             cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual
                                 | IntCC::SignedGreaterThan | IntCC::SignedLessThanOrEqual, .. }))
             }).count())
         }).unwrap();
-        assert!(counters > 0, "conditional update must retain a countdown without polls after loop splitting");
+        assert!(counters > 0, "conditional update must retain a countdown without polls after loop splitting: {body}");
         let native = linked_optimized_test_program(program);
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         vm.set_execution_mode(ExecutionMode::NativeOnly);
         let error = vm.execute_native_program(&native, true).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
         }
+    }
+
+    #[test]
+    #[cfg(feature = "aot")]
+    fn invariant_fields_and_receiver_admission_leave_the_private_loop() {
+        let source = r#"
+            function fold(n,x){const state={count:n|0,control:x|0};while(state.count>0)advance(state);return state.control|0;}
+            function advance(state){state.count=(state.count-1)|0;state.control=(state.control>>1)^((state.control&1)?7:0);}
+            if(fold(0,-1)!==-1||fold(-1,17)!==17||fold(1,-1)!==-8||fold(3,3)!==6)throw 'inline receiver';
+            throw 42;
+        "#;
+        let program = crate::Engine::specialize(source, "inline-receiver.cjs").unwrap();
+        let module = crate::lower_native_js_module(&program, "inline_receiver").unwrap();
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let function = module.functions.into_iter().find_map(|function| match function {
+            super::super::native_object::NativeFunction::Definition { name, function }
+                if name == "inline_receiver_function_1" => Some(function), _ => None,
+        }).unwrap();
+        super::super::jit_backend::compile_function(function, &*isa, None, |_, native| {
+            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+            loops.compute(native, &cfg, &dom);
+            let admitted = loops.loops().any(|lp| {
+                let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
+                    .flat_map(|block| native.layout.block_insts(block)).collect();
+                !hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Store)
+                    && hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
+                    && hot.iter().filter(|&&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Brif).count() == 1
+                    && !hot.iter().any(|&inst| FAULT_POLL_SUPPORTED && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
+            });
+            assert!(admitted, "private field stores and receiver admission must leave the loop: {native}");
+            Ok(())
+        }).unwrap();
+        let native = linked_optimized_test_program(program);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
     }
 
     #[test]

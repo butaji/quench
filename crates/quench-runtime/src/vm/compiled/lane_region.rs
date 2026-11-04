@@ -159,6 +159,20 @@ impl State {
 #[derive(Clone, Copy)]
 enum FieldOwner { This, Register(Register), Temporary }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReceiverRecovery { Object, ObjectOrNullish }
+
+impl ReceiverRecovery {
+    fn for_body(body: &crate::bytecode::Function) -> Self {
+        if body.instructions().all(|instruction| {
+            !instruction.writes_current_this()
+                && !matches!(instruction.op(), Op::LoadThis | Op::SetThisField | Op::SetThisFieldStrict)
+                && (instruction.op() != Op::GetField || matches!(instruction.field_lookup(),
+                    Some(FieldLookup::Atom { base, .. }) if base != crate::bytecode::FieldBase::THIS))
+        }) { Self::ObjectOrNullish } else { Self::Object }
+    }
+}
+
 /// Region-wide facts proved at entry.
 struct Entry {
     receiver: LaneReceiver,
@@ -178,6 +192,8 @@ struct Entry {
     fields: smallvec::SmallVec<[(u16, FieldSlotBinding); INLINE_FIELD_BINDINGS]>,
     /// Function-bound numeric calls whose invariant closure was admitted here.
     calls: CompoundBitSet,
+    /// Inlined frames whose invariant receiver needs no boxing on recovery.
+    call_receivers: CompoundBitSet,
 }
 
 pub(super) struct LaneRegion {
@@ -1807,6 +1823,7 @@ impl Lowering<'_, '_> {
         self.builder.def_var(capture_len, len);
         let mut miss = None;
         let mut calls = CompoundBitSet::with_capacity(self.unit.frames.len());
+        let mut call_receivers = CompoundBitSet::with_capacity(self.unit.frames.len());
         if self.completion != Completion::Number {
             // Roots name canonical caller homes never written by this unit.
             // Local Move aliases are valid only within their basic block.
@@ -1815,14 +1832,24 @@ impl Lowering<'_, '_> {
                     .then_some(register)).collect();
             let mut aliases = roots.clone();
             let mut admitted = smallvec::SmallVec::<[(Register, super::lane_unit::CallTarget); 2]>::new();
+            let mut receivers = smallvec::SmallVec::<[(Register, ReceiverRecovery); 2]>::new();
             for (pc, instruction) in instructions.iter().copied().enumerate() {
                 if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
                 if !self.facts.reached(pc) { continue; }
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
+                    let numeric = restartable_numeric_function(self.program, body, &body.instructions().collect::<Vec<_>>());
+                    if !(call.recovery == super::lane_unit::CallRecovery::RestartCall && numeric)
+                        && let Some(root) = aliases[usize::from(call.receiver)] {
+                        let recovery = ReceiverRecovery::for_body(body);
+                        if let Some((_, required)) = receivers.iter_mut().find(|(owner, _)| *owner == root) {
+                            if recovery == ReceiverRecovery::Object { *required = recovery; }
+                        } else { receivers.push((root, recovery)); }
+                        call_receivers.insert(frame);
+                    }
                     if call.alternative.is_none()
-                        && restartable_numeric_function(self.program, body, &body.instructions().collect::<Vec<_>>())
+                        && numeric
                         && let Some(root) = aliases[usize::from(call.callee_register)] {
                         let binding = (root, call.target);
                         if !admitted.contains(&binding) {
@@ -1842,6 +1869,13 @@ impl Lowering<'_, '_> {
                 let root = (instruction.op() == Op::Move)
                     .then(|| aliases[usize::from(instruction.register_b())]).flatten();
                 for register in writes(instruction) { aliases[usize::from(register)] = root; }
+            }
+            for (root, recovery) in receivers {
+                let receiver = self.builder.ins().load(types::I64, MemFlagsData::trusted(),
+                    self.registers_base, register_offset(root));
+                let matched = self.receiver_recovery(receiver, recovery);
+                let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+                emit_js_guard(&mut self.builder, matched, exit);
             }
         }
         #[cfg(feature = "aot")]
@@ -1909,7 +1943,7 @@ impl Lowering<'_, '_> {
             }
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls }
+        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
     }
 
     /// Bind physical receiver facts once. The expanded unit's write set owns
@@ -2500,30 +2534,15 @@ impl Lowering<'_, '_> {
         }
         let receiver = self.tagged(state, inlined.receiver);
         let entry = self.entry.as_ref().expect("entry facts");
-        let admitted = state.proofs.headers[usize::from(inlined.receiver)].is_some()
+        let admitted = entry.call_receivers.contains(frame)
+            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
             || entry.records[usize::from(inlined.receiver)].is_some()
             || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
         let callee = self.program.function(inlined.target.function as usize);
         let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
             && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
         if !admitted && !numeric {
-            let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-            let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-            // A nullish receiver needs no boxing on recovery (lane_call_this). Its
-            // sloppy global substitution is irrelevant only when the body never reads
-            // this. Keep primitive receivers guarded: materialization may need boxing.
-            let unused = callee.instructions().all(|instruction| {
-                !instruction.writes_current_this()
-                    && !matches!(instruction.op(), Op::LoadThis | Op::SetThisField | Op::SetThisFieldStrict)
-                    && (instruction.op() != Op::GetField || matches!(instruction.field_lookup(),
-                        Some(FieldLookup::Atom { base, .. }) if base != crate::bytecode::FieldBase::THIS))
-            });
-            let admitted = if unused {
-                let undefined = self.ins().icmp_imm_u(IntCC::Equal, receiver, Value::UNDEFINED.to_bits() as i64);
-                let null = self.ins().icmp_imm_u(IntCC::Equal, receiver, Value::NULL.to_bits() as i64);
-                let nullish = self.ins().bor(undefined, null);
-                self.ins().bor(object, nullish)
-            } else { object };
+            let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
             emit_js_guard(&mut self.builder, admitted, exit);
         }
         for register in 0..inlined.registers {
@@ -2535,6 +2554,22 @@ impl Lowering<'_, '_> {
             self.copy(state, destination, source);
         }
         true
+    }
+
+    /// Nullish receivers need no boxing only when the body ignores `this`.
+    /// All other primitives retain interpreter recovery's boxing semantics.
+    fn receiver_recovery(&mut self, receiver: ir::Value, recovery: ReceiverRecovery) -> ir::Value {
+        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        match recovery {
+            ReceiverRecovery::Object => object,
+            ReceiverRecovery::ObjectOrNullish => {
+                let undefined = self.ins().icmp_imm_u(IntCC::Equal, receiver, Value::UNDEFINED.to_bits() as i64);
+                let null = self.ins().icmp_imm_u(IntCC::Equal, receiver, Value::NULL.to_bits() as i64);
+                let nullish = self.ins().bor(undefined, null);
+                self.ins().bor(object, nullish)
+            }
+        }
     }
 
     fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {
@@ -3350,11 +3385,16 @@ impl Lowering<'_, '_> {
                 }
             }); }
             let narrow = emit_narrow_integer_write(&mut self.builder, value, exit, slot.packed_range);
-            self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
+            // Ordinary JS own fields are not shared memory. Observation requires
+            // a guest/host effect or poll; the backend must prove their absence
+            // before deferring this numeric, barrier-free write to an exit.
+            let store = self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
+            self.builder.func.private_stores.push(store);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(arena);
             // Verified integers neither widen an arena slot nor create a heap edge.
-            self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
+            let store = self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
+            self.builder.func.private_stores.push(store);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(done);
         } else {

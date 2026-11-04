@@ -380,7 +380,7 @@ fn inline_one(
     // cannot have tags).
     let call_debug_tags = func.debug_tags.get(call_inst).to_vec();
     func.debug_tags.set(call_inst, []);
-    let mut effect_instructions = (!callee.effect_specializations.is_empty())
+    let mut effect_instructions = (!callee.effect_specializations.is_empty() || !callee.private_stores.is_empty())
         .then(|| cranelift_entity::SecondaryMap::<ir::Inst, Option<ir::Inst>>::with_capacity(callee.dfg.num_insts()));
 
     // Translate each instruction from the callee into the caller,
@@ -523,6 +523,7 @@ fn inline_one(
     }
 
     if let Some(instructions) = effect_instructions {
+        func.private_stores.extend(callee.private_stores.iter().filter_map(|&inst| instructions[inst]));
         for effect in &callee.effect_specializations {
             if let Some(effect) = effect.remap_instructions(|inst| instructions[inst]) {
                 func.effect_specializations.push(effect);

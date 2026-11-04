@@ -1,4 +1,4 @@
-//! Factor a conditional integer XOR through a mask derived from one tested bit.
+//! Lower conditional integer updates through a mask derived from one tested bit.
 
 use crate::{cursor::{Cursor, FuncCursor}, ir::{self, InstBuilder, InstructionData, Opcode, ValueDef}};
 use cranelift_entity::EntityRef;
@@ -52,17 +52,24 @@ pub(crate) fn run(f: &mut ir::Function) {
         if !ty.is_int() || ty.bits() > u64::BITS || uses[condition.index()] != 1 { continue; }
         let Some((source, bit, condition_inverted)) = tested_bit(f, condition, ty) else { continue };
         for (changed, base, invert) in [(yes, no, false), (no, yes, true)] {
-            if uses[changed.index()] != 1 { continue; }
-            let Some(args) = binary(f, changed, Opcode::Bxor) else { continue };
-            let other = if args[0] == base { args[1] } else if args[1] == base { args[0] } else { continue };
+            let zero_base = constant(f, base) == Some(0);
+            let other = if zero_base { changed } else {
+                if uses[changed.index()] != 1 { continue; }
+                let Some(args) = binary(f, changed, Opcode::Bxor) else { continue };
+                if args[0] == base { args[1] } else if args[1] == base { args[0] } else { continue }
+            };
             let mut cursor = FuncCursor::new(f);
             cursor.goto_inst(inst);
             let sign = i64::from(ty.bits() - 1);
             let high = cursor.ins().ishl_imm_u(source, sign - i64::from(bit));
             let mask = cursor.ins().sshr_imm_u(high, sign);
             let mask = if invert ^ condition_inverted { cursor.ins().bnot(mask) } else { mask };
-            let selected = cursor.ins().band(mask, other);
-            cursor.func.dfg.insts[inst] = InstructionData::Binary { opcode: Opcode::Bxor, args: [base, selected] };
+            cursor.func.dfg.insts[inst] = if zero_base {
+                InstructionData::Binary { opcode: Opcode::Band, args: [mask, other] }
+            } else {
+                let selected = cursor.ins().band(mask, other);
+                InstructionData::Binary { opcode: Opcode::Bxor, args: [base, selected] }
+            };
             break;
         }
     }

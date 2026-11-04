@@ -1,6 +1,6 @@
-//! Unswitch an invariant conditional polling effect. Only the loop is copied;
+//! Unswitch invariant polling effects and repeated representation choices. Only the loop is copied;
 //! escaping SSA values join at their existing exits, leaving cold recovery shared.
-//! One uniform effect choice per loop keeps code growth linear.
+//! Each stage selects one choice per input loop to keep code growth linear.
 
 use crate::{bitset::CompoundBitSet, cursor::{Cursor, FuncCursor}, dominator_tree::DominatorTree,
     flowgraph::ControlFlowGraph, ir::{self, Block, Function, Inst, InstBuilder, InstructionData, Opcode, Value, ValueDef},
@@ -10,6 +10,12 @@ use cranelift_entity::{EntityRef, SecondaryMap};
 
 #[derive(Clone, Copy)]
 struct Gate { branch: Inst, fast: Block, slow: Block, fast_truth: bool }
+
+#[derive(Clone, Copy)]
+enum Choice<'a> { Poll(&'a CompoundBitSet), Repeated }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Predicate { Value(Value), BitAnd(Value, Value) }
 
 fn gate(f: &Function, cfg: &ControlFlowGraph, used: &CompoundBitSet, inst: Inst) -> Option<(Value, Gate)> {
     let InstructionData::Brif { arg, blocks, .. } = f.dfg.insts[inst] else { return None; };
@@ -36,10 +42,10 @@ fn gate(f: &Function, cfg: &ControlFlowGraph, used: &CompoundBitSet, inst: Inst)
 struct Exit { block: Block, escapes: Vec<Value> }
 
 struct Plan { header: Block, blocks: Vec<Block>, inside: CompoundBitSet, exits: Vec<Exit>,
-    condition: Value, gates: Vec<Gate> }
+    condition: Predicate, gates: Vec<Gate> }
 
 impl Plan {
-    fn find(f: &Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis, used: &CompoundBitSet, lp: Loop) -> Option<Self> {
+    fn find(f: &Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis, lp: Loop, choice: Choice<'_>) -> Option<Self> {
         if f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty()) { return None; }
         let header = loops.loop_header(lp);
         let blocks: Vec<_> = f.layout.blocks().filter(|&block| loops.is_in_loop(block, lp)).collect();
@@ -47,12 +53,47 @@ impl Plan {
         let mut inside = CompoundBitSet::with_capacity(f.dfg.num_blocks());
         for block in &blocks { inside.insert(block.index()); }
         if header == f.layout.entry_block()? || cfg.pred_iter(header).all(|edge| inside.contains(edge.block.index())) { return None; }
-        let (condition, first) = blocks.iter().filter_map(|&block| gate(f, cfg, used, f.layout.last_inst(block)?)).find(|(value, _)| {
-            let definition = match f.dfg.value_def(*value) { ValueDef::Param(block, _) => Some(block),
+        let invariant = |value: Value| {
+            let definition = match f.dfg.value_def(value) { ValueDef::Param(block, _) => Some(block),
                 ValueDef::Result(inst, _) => f.layout.inst_block(inst), _ => None };
             definition.is_some_and(|block| !inside.contains(block.index()) && dom.block_dominates(block, header))
-        })?;
-        let gates: Vec<_> = blocks.iter().filter_map(|&block| gate(f, cfg, used, f.layout.last_inst(block)?)).collect();
+        };
+        let mut gates: Vec<_> = blocks.iter().filter_map(|&block| {
+            let branch = f.layout.last_inst(block)?;
+            if let Choice::Poll(used) = choice {
+                return gate(f, cfg, used, branch).map(|(value, gate)| (Predicate::Value(value), gate));
+            }
+            let InstructionData::Brif { arg, blocks, .. } = f.dfg.insts[branch] else { return None; };
+            if blocks.iter().any(|block| block.len(&f.dfg.value_lists) != 0
+                || !inside.contains(block.block(&f.dfg.value_lists).index())) { return None; }
+            let value = f.dfg.resolve_aliases(arg);
+            let predicate = if invariant(value) { Predicate::Value(value) } else {
+                // Egraph extraction rematerializes cheap bit tests at each use.
+                // A bitwise AND of dominating operands is total and effect-free;
+                // evaluate it once at entry without moving a load or a proof.
+                let ValueDef::Result(inst, _) = f.dfg.value_def(value) else { return None; };
+                let InstructionData::Binary { opcode: Opcode::Band, args } = f.dfg.insts[inst] else { return None; };
+                let [mut a, mut b] = args.map(|value| f.dfg.resolve_aliases(value));
+                if !invariant(a) || !invariant(b) { return None; }
+                if a.index() > b.index() { core::mem::swap(&mut a, &mut b); }
+                Predicate::BitAnd(a, b)
+            };
+            Some((predicate, Gate { branch, fast: blocks[0].block(&f.dfg.value_lists),
+                slow: blocks[1].block(&f.dfg.value_lists), fast_truth: true }))
+        }).collect();
+        let (condition, first) = if matches!(choice, Choice::Repeated) {
+            let mut counts = Vec::new();
+            for &(predicate, _) in &gates {
+                if let Some((_, count)) = counts.iter_mut().find(|(key, _)| *key == predicate) { *count += 1; }
+                else { counts.push((predicate, 1)); }
+            }
+            let &(value, count) = counts.iter().max_by_key(|(_, count)| *count)?;
+            // Copy a loop only when one entry choice replaces repeated tests.
+            if count <= 1 { return None; }
+            gates.retain(|(condition, _)| *condition == value);
+            let gate = gates[0].1;
+            (value, gate)
+        } else { *gates.iter().find(|(value, _)| matches!(*value, Predicate::Value(value) if invariant(value)))? };
         if gates.iter().any(|(value, gate)| *value != condition || gate.fast_truth != first.fast_truth
             || !inside.contains(gate.fast.index()) || !inside.contains(gate.slow.index())) { return None; }
         let gates = gates.into_iter().map(|(_, gate)| gate).collect();
@@ -131,6 +172,7 @@ impl Plan {
             }
             for inst in f.layout.block_insts(block).collect::<Vec<_>>() {
                 let copy_inst = f.dfg.clone_inst(inst); f.layout.append_inst(copy_inst, copy);
+                if f.private_stores.contains(&inst) { f.private_stores.push(copy_inst); }
                 f.debug_tags.clone_tags(inst, copy_inst);
                 let location = f.srcloc(inst); f.set_srcloc(copy_inst, location); instructions[inst] = Some(copy_inst);
                 for (&old, &new) in f.dfg.inst_results(inst).iter().zip(f.dfg.inst_results(copy_inst)) { values[old] = Some(new); }
@@ -155,7 +197,11 @@ impl Plan {
         let mut cursor = FuncCursor::new(f); cursor.goto_bottom(gateway);
         let original = self.header; let copy = blocks[self.header].unwrap();
         let (yes, no) = if self.gates[0].fast_truth { (original, copy) } else { (copy, original) };
-        cursor.ins().brif(self.condition, yes, &args, no, &args);
+        let condition = match self.condition {
+            Predicate::Value(value) => value,
+            Predicate::BitAnd(a, b) => cursor.ins().band(a, b),
+        };
+        cursor.ins().brif(condition, yes, &args, no, &args);
         for gate in self.gates {
             cursor.func.replace(gate.branch).jump(gate.fast, &[]);
             cursor.func.replace(instructions[gate.branch].unwrap()).jump(blocks[gate.slow].unwrap(), &[]);
@@ -173,7 +219,7 @@ pub(crate) fn run(f: &mut Function) -> bool {
         for block in f.layout.blocks() { for inst in f.layout.block_insts(block) {
             for value in f.dfg.inst_values(inst) { used.insert(f.dfg.resolve_aliases(value).index()); }
         }}
-        let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, &cfg, &dom, &loops, &used, lp)) else { break; };
+        let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, &cfg, &dom, &loops, lp, Choice::Poll(&used))) else { break; };
         plan.apply(f, &cfg, &dom); changed = true;
     }
     for specialization in core::mem::take(&mut f.effect_specializations) {
@@ -194,6 +240,115 @@ pub(crate) fn run(f: &mut Function) -> bool {
             if !used { f.layout.remove_inst(proof); changed = true; }
         }
     }
+    // Visit only the input headers: recursively specializing copies would form
+    // a Cartesian product of independent choices. One choice per input loop
+    // bounds this stage's growth to one additional copy of each loop.
+    let cfg = ControlFlowGraph::with_function(f);
+    let dom = DominatorTree::with_function(f, &cfg);
+    let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+    let headers: Vec<_> = loops.loops().map(|lp| loops.loop_header(lp)).collect();
+    for header in headers {
+        let cfg = ControlFlowGraph::with_function(f);
+        let dom = DominatorTree::with_function(f, &cfg);
+        let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+        let Some(lp) = loops.loops().find(|lp| loops.loop_header(*lp) == header) else { continue; };
+        if let Some(plan) = Plan::find(f, &cfg, &dom, &loops, lp, Choice::Repeated) {
+            plan.apply(f, &cfg, &dom); changed = true;
+        }
+    }
+    changed
+}
+
+/// Commit loop-carried memory mirrors at the sole exit when the loop has no
+/// observer, trap, or poll. Polling versions deliberately remain write-through:
+/// their fault landing can bypass generated exit blocks.
+pub(crate) fn sink_stores(f: &mut Function) -> bool {
+    if f.private_stores.is_empty() || f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty()) { return false; }
+    let cfg = ControlFlowGraph::with_function(f);
+    let dom = DominatorTree::with_function(f, &cfg);
+    let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+    let mut changed = false;
+    let mut private_stores = CompoundBitSet::<usize>::with_capacity(f.dfg.num_insts());
+    for &inst in &f.private_stores { private_stores.insert(inst.index()); }
+    for lp in loops.loops() {
+        let header = loops.loop_header(lp);
+        let blocks: Vec<_> = f.layout.blocks().filter(|&block| loops.is_in_loop(block, lp)).collect();
+        if blocks.iter().any(|&block| loops.innermost_loop(block) != Some(lp)) { continue; }
+        let mut stores = Vec::new();
+        let mut exits = Vec::new();
+        let mut latches = Vec::new();
+        let mut eligible = true;
+        for &block in &blocks { for inst in f.layout.block_insts(block) {
+            let data = &f.dfg.insts[inst]; let op = data.opcode();
+            if f.dfg.user_stack_map_entries(inst).is_some() || !f.debug_tags.get(inst).is_empty() {
+                eligible = false; break;
+            }
+            if let InstructionData::Store { args, flags, .. } = *data {
+                let address = f.dfg.resolve_aliases(args[1]);
+                let owner = match f.dfg.value_def(address) {
+                    ValueDef::Param(block, _) => Some(block),
+                    ValueDef::Result(inst, _) => f.layout.inst_block(inst), _ => None,
+                };
+                if !private_stores.contains(inst.index()) || !f.dfg.mem_flags[flags].notrap() || !owner.is_some_and(|owner|
+                    !loops.is_in_loop(owner, lp) && dom.block_dominates(owner, header)) {
+                    eligible = false; break;
+                }
+                stores.push(inst);
+            } else if matches!(op, Opcode::Jump | Opcode::Brif) {
+                for (index, edge) in data.branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables).iter().enumerate() {
+                    let target = edge.block(&f.dfg.value_lists);
+                    if !loops.is_in_loop(target, lp) { exits.push((inst, index)); }
+                    else if target == header { latches.push(inst); }
+                }
+            } else if op.can_load() || op.can_store() || op.can_trap() || op.is_call()
+                || op.other_side_effects() || op.is_terminator() {
+                eligible = false; break;
+            }
+        }}
+        if !eligible || stores.is_empty() || exits.len() != 1 || latches.is_empty() { continue; }
+        let (exit, edge_index) = exits[0];
+        if stores.iter().any(|&store| !dom.dominates(store, exit, &f.layout)
+            || latches.iter().any(|&latch| !dom.dominates(store, latch, &f.layout))) { continue; }
+        // Sink pure encoding trees used only by the committed stores as well.
+        // Loop-carried values and values used by recovery retain their homes.
+        let mut uses = alloc::vec![0_usize; f.dfg.num_values()];
+        for block in f.layout.blocks() { for inst in f.layout.block_insts(block) {
+            for value in f.dfg.inst_values(inst) { uses[f.dfg.resolve_aliases(value).index()] += 1; }
+        }}
+        let mut selected = CompoundBitSet::<usize>::with_capacity(f.dfg.num_insts());
+        for &store in &stores { selected.insert(store.index()); }
+        let mut next = 0;
+        while next < stores.len() {
+            let inst = stores[next]; next += 1;
+            for value in f.dfg.inst_values(inst) {
+                let value = f.dfg.resolve_aliases(value);
+                uses[value.index()] -= 1;
+                let ValueDef::Result(definition, _) = f.dfg.value_def(value) else { continue; };
+                if selected.contains(definition.index()) || !f.layout.inst_block(definition)
+                    .is_some_and(|block| loops.is_in_loop(block, lp)) { continue; }
+                let op = f.dfg.insts[definition].opcode();
+                if op.is_branch() || op.is_terminator() || op.can_store()
+                    || !f.dfg.inst_results(definition).iter().all(|value| uses[value.index()] == 0) { continue; }
+                selected.insert(definition.index()); stores.push(definition);
+            }
+        }
+        // All stores dominate the same exit, so dominance totally orders them.
+        // Keep that order even when their invariant addresses may alias.
+        stores.sort_by(|&a, &b| if a == b { core::cmp::Ordering::Equal }
+            else if dom.dominates(a, b, &f.layout) { core::cmp::Ordering::Less }
+            else { core::cmp::Ordering::Greater });
+        let destination = f.dfg.insts[exit].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables)[edge_index];
+        let target = destination.block(&f.dfg.value_lists);
+        let args: Vec<_> = destination.args(&f.dfg.value_lists).collect();
+        let commit = f.dfg.make_block(); f.layout.append_block(commit);
+        let mut cursor = FuncCursor::new(f); cursor.goto_bottom(commit);
+        let jump = cursor.ins().jump(target, &args);
+        for store in stores { cursor.func.layout.remove_inst(store); cursor.func.layout.insert_inst(store, jump); }
+        let dfg = &mut cursor.func.dfg;
+        dfg.insts[exit].branch_destination_mut(&mut dfg.jump_tables,
+            &mut dfg.exception_tables)[edge_index] = ir::BlockCall::new(commit, [], &mut dfg.value_lists);
+        changed = true;
+    }
     changed
 }
 
@@ -201,6 +356,50 @@ pub(crate) fn run(f: &mut Function) -> bool {
 mod tests {
     use super::*;
     use crate::ir::{AbiParam, MemFlagsData, Signature, UserFuncName, types, condcodes::IntCC};
+
+    #[test]
+    fn store_commit_requires_an_unobserved_complete_iteration() {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Barrier { None, Poll, Read, EarlyExit, UnprovedStore }
+        for barrier in [Barrier::None, Barrier::Poll, Barrier::Read, Barrier::EarlyExit, Barrier::UnprovedStore] {
+            let mut f = fixture(false, false, false);
+            let pointer = f.dfg.block_params(f.layout.entry_block().unwrap())[1];
+            let poll = f.layout.blocks().flat_map(|block| f.layout.block_insts(block))
+                .find(|&inst| f.dfg.insts[inst].opcode() == Opcode::AtomicLoad).unwrap();
+            if barrier != Barrier::Poll { f.layout.remove_inst(poll); }
+            let body = f.layout.blocks().find(|&block| f.layout.first_inst(block)
+                .is_some_and(|inst| f.dfg.insts[inst].opcode() == Opcode::Iadd)).unwrap();
+            let exit = f.layout.last_inst(body).unwrap();
+            let value = f.dfg.first_result(f.layout.first_inst(body).unwrap());
+            let mut cursor = FuncCursor::new(&mut f); cursor.goto_inst(exit);
+            let first = cursor.ins().store(MemFlagsData::trusted(), value, pointer, 0);
+            if barrier == Barrier::Read { cursor.ins().load(types::I32, MemFlagsData::trusted(), pointer, 0); }
+            let second = cursor.ins().store(MemFlagsData::trusted(), value, pointer, 0);
+            if barrier != Barrier::UnprovedStore { cursor.func.private_stores.extend([first, second]); }
+            if barrier == Barrier::EarlyExit {
+                // An alternate exit before the stores must not commit them.
+                let header = f.layout.blocks().find(|&block| f.dfg.block_params(block).len() == 2).unwrap();
+                let branch = f.layout.last_inst(header).unwrap();
+                let early = f.dfg.make_block(); f.layout.append_block(early);
+                let count = f.dfg.block_params(header)[0];
+                let mut cursor = FuncCursor::new(&mut f); cursor.goto_bottom(early); cursor.ins().return_(&[count]);
+                let dfg = &mut f.dfg;
+                dfg.insts[branch].branch_destination_mut(&mut dfg.jump_tables,
+                    &mut dfg.exception_tables)[0] = ir::BlockCall::new(early, [], &mut dfg.value_lists);
+            }
+            let flags = crate::settings::Flags::new(crate::settings::builder());
+            crate::verifier::verify_function(&f, &flags).unwrap();
+            let original = f.clone();
+            assert_eq!(sink_stores(&mut f), barrier == Barrier::None);
+            crate::verifier::verify_function(&f, &flags).unwrap_or_else(|error| panic!("{error}\n{f}"));
+            if barrier == Barrier::None {
+                let commit = f.layout.inst_block(first).unwrap();
+                assert_ne!(commit, body);
+                assert_eq!(f.layout.inst_block(second), Some(commit));
+                assert_eq!(f.layout.next_inst(first), Some(second));
+            } else { assert_eq!(f, original); }
+        }
+    }
 
     fn fixture(invariant: bool, observed: bool, reverse: bool) -> Function {
         let mut signature = Signature::new(crate::isa::CallConv::SystemV);
@@ -231,6 +430,75 @@ mod tests {
         cursor.ins().brif(more, header, &[next.into(), added.into()], exit, &[]);
         cursor.insert_block(exit); let result = cursor.ins().bxor(next, added); cursor.ins().return_(&[result]);
         f
+    }
+
+    #[test]
+    fn repeated_invariant_stores_share_one_entry_choice() {
+        for rematerialized in [false, true] { for independent in [false, true] { for varying in [false, true] {
+        let mut f = fixture(false, false, false);
+        let entry = f.layout.entry_block().unwrap();
+        let private = f.dfg.block_params(entry)[0];
+        let pointer = f.dfg.block_params(entry)[1];
+        let bound = f.dfg.block_params(entry)[2];
+        let terminator = f.layout.last_inst(entry).unwrap();
+        let mut cursor = FuncCursor::new(&mut f); cursor.goto_inst(terminator);
+        let condition = cursor.ins().uextend(types::I32, private);
+        let mask = cursor.ins().iconst(types::I32, 1);
+        let header = f.layout.blocks().find(|block| f.dfg.block_params(*block).len() == 2).unwrap();
+        let count = f.dfg.block_params(header)[0];
+        let sum = f.dfg.block_params(header)[1];
+        let body = f.layout.blocks().find(|block| f.layout.first_inst(*block)
+            .is_some_and(|inst| f.dfg.insts[inst].opcode() == Opcode::Iadd)).unwrap();
+        let first = f.layout.first_inst(body).unwrap();
+        let rest = f.dfg.make_block(); f.layout.split_block(rest, first);
+        let mut current = body;
+        let fields = [(count, sum, 0), (sum, count, 4)];
+        let stores = fields.len() * if independent { 2 } else { 1 };
+        for (index, (yes_value, no_value, offset)) in fields.into_iter().cycle().take(stores).enumerate() {
+            let yes = f.dfg.make_block(); f.layout.append_block(yes);
+            let no = f.dfg.make_block(); f.layout.append_block(no);
+            let join = f.dfg.make_block(); f.layout.append_block(join);
+            let mut cursor = FuncCursor::new(&mut f); cursor.goto_bottom(current);
+            let selected = match (varying, index < fields.len()) {
+                (false, true) => condition, (false, false) => bound,
+                (true, true) => count, (true, false) => sum,
+            };
+            let selected = if !rematerialized { selected }
+                else if index % 2 == 0 { cursor.ins().band(selected, mask) }
+                else { cursor.ins().band(mask, selected) };
+            cursor.ins().brif(selected, yes, &[], no, &[]);
+            for (block, value) in [(yes, yes_value), (no, no_value)] {
+                cursor.goto_bottom(block);
+                cursor.ins().store(MemFlagsData::trusted(), value, pointer, offset);
+                cursor.ins().jump(join, &[]);
+            }
+            current = join;
+        }
+        let mut cursor = FuncCursor::new(&mut f); cursor.goto_bottom(current); cursor.ins().jump(rest, &[]);
+        let flags = crate::settings::Flags::new(crate::settings::builder());
+        crate::verifier::verify_function(&f, &flags).unwrap();
+        if varying {
+            let original = f.clone(); assert!(!run(&mut f)); assert_eq!(f, original); continue;
+        }
+        assert!(run(&mut f));
+        crate::verifier::verify_function(&f, &flags).unwrap_or_else(|error| panic!("{error}\n{f}"));
+        let mut cfg = ControlFlowGraph::with_function(&f); let dom = DominatorTree::with_function(&f, &cfg);
+        crate::unreachable_code::eliminate_unreachable_code(&mut f, &mut cfg, |block| dom.is_reachable(block));
+        let cfg = ControlFlowGraph::with_function(&f); let dom = DominatorTree::with_function(&f, &cfg);
+        let mut loops = LoopAnalysis::new(); loops.compute(&f, &cfg, &dom);
+        assert_eq!(loops.loops().count(), 2);
+        for lp in loops.loops() {
+            let insts: Vec<_> = f.layout.blocks().filter(|&block| loops.is_in_loop(block, lp))
+                .flat_map(|block| f.layout.block_insts(block)).collect();
+            // The other family, when present, retains both arms and tests.
+            let remaining_stores = fields.len() * if independent { 3 } else { 1 };
+            assert_eq!(insts.iter().filter(|&&inst| f.dfg.insts[inst].opcode() == Opcode::Store).count(), remaining_stores);
+            let dynamic_tests = 2; // Poll condition and loop bound in the fixture.
+            let remaining_tests = dynamic_tests + if independent { fields.len() } else { 0 };
+            assert_eq!(insts.iter().filter(|&&inst| f.dfg.insts[inst].opcode() == Opcode::Brif).count(), remaining_tests);
+        }
+        if !independent { assert!(!run(&mut f)); }
+        }}}
     }
 
     #[test]
