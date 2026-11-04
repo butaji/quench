@@ -2227,6 +2227,7 @@ thread_local! {
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_FORWARD_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
+    static LOOP_INT32_READ_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static LOOP_INT32_PHIS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LOOP_SLOT_STORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -18671,22 +18672,20 @@ mod tests {
             let advance = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "advance"))
                 .unwrap();
-            let count_read = program.function_get(advance).unwrap().instructions().filter(|instruction| instruction.op() == Op::GetField).find_map(|instruction| match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, cache_site, .. }) if &program.atoms[atom as usize] == "count" => Some(cache_site),
+            let control_read = program.function_get(advance).unwrap().instructions().filter(|instruction| instruction.op() == Op::GetField).find_map(|instruction| match instruction.field_lookup() {
+                    Some(FieldLookup::Atom { atom, cache_site, .. }) if &program.atoms[atom as usize] == "control" => Some(cache_site),
                     _ => None,
                 }).unwrap();
-            FIELD_FORWARD_SITE.with(|site| site.set(Some((count_read, 0))));
+            LOOP_INT32_READ_SITE.with(|site| site.set(Some((control_read, 0))));
             LOOP_INT32_PHIS.with(|count| count.set(0));
             LOOP_SLOT_STORES.with(|count| count.set(0));
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            INT32_PROJECTION_REUSES.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
             assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "reuse an entry-proved writable slot");
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
-            assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) > 0, "carry the updated count unboxed across the loop backedge");
-            assert!(FIELD_FORWARD_SITE.with(|site| site.replace(None).unwrap().1) > 0,
-                "forward the loop-header count through the inline parameter copy");
-            assert!(INT32_PROJECTION_REUSES.with(std::cell::Cell::get) > 0, "reuse the control value's numeric projection");
+            assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) >= 2, "carry both count and control unboxed across the loop backedge");
+            assert!(LOOP_INT32_READ_SITE.with(|site| site.replace(None).unwrap().1) > 0,
+                "forward the control field through the inline parameter copy and branch join");
             FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
             FUNCTION_BINDING_CALLS.with(|count| count.set(0));
             let mut vm = Vm::new(crate::test_host::TestHost::default());
@@ -18758,7 +18757,33 @@ mod tests {
                 while(s.count>0) { s=other; s.count--; iterations++; }
                 return iterations;
             }
+            function branchStep(s, other, choose) {
+                if(choose) s=other;
+                s.value=(s.value+1)|0;
+            }
+            function branchRun(s, other, choose) {
+                while(s.count>0) {
+                    s.count=(s.count-1)|0;
+                    branchStep(s,other,choose);
+                }
+                return s.value;
+            }
+            function writeBeforeRead(s) {
+                while(s.count>0) {
+                    s.count=(s.count-1)|0;
+                    s.value=7;
+                    s.value=(s.value+s.count)|0;
+                }
+                return s.value;
+            }
             for(let i=0;i<64;i++) {
+                let left={count:3,value:10},right={count:0,value:20};
+                if(branchRun(left,right,false)!==13 || right.value!==20)throw 'branch original';
+                left={count:3,value:10};
+                if(branchRun(left,right,true)!==10 || right.value!==23)throw 'branch reassignment';
+                left={count:3,value:10};
+                if(branchRun(left,left,true)!==13)throw 'branch same alias';
+                if(writeBeforeRead({count:3,value:99})!==7)throw 'write before read';
                 if(run({count:3})!==3)throw 'integer';
                 let s={count:3};
                 if(alias(s,s)!==3 || s.count!==0)throw 'same alias';

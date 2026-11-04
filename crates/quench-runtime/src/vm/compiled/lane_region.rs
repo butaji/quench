@@ -277,7 +277,7 @@ struct Lowering<'a, 'f> {
     hoists: BTreeMap<usize, Vec<usize>>,
     hoisted: BTreeMap<usize, LoopRead>,
     /// Successful write-through stores defining a loop-header field's SSA variable.
-    carried_stores: BTreeMap<usize, usize>,
+    loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
@@ -842,37 +842,75 @@ fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> B
     hoists
 }
 
-/// A header's first own-field read may become a loop phi if every write to that
-/// atom targets its stable receiver. Alias proofs are local to a basic block;
-/// unknown aliases decline promotion, never turn into an equality assumption.
-fn carried_field_stores(program: &ResidualProgram, unit: &super::lane_unit::Unit,
-    loops: &[(usize, usize)], leaders: &CompoundBitSet) -> BTreeMap<usize, usize> {
-    let mut stores = BTreeMap::new();
+#[cfg(test)]
+fn record_field_forward(cache_site: u16) {
+    FIELD_VALUE_FORWARDS.with(|count| count.set(count.get() + 1));
+    FIELD_FORWARD_SITE.with(|site| {
+        if let Some((expected, count)) = site.get() && expected == cache_site {
+            site.set(Some((expected, count + 1)));
+        }
+    });
+}
+
+/// One authoritative alias plan; lowering derives entry probes and typed SSA
+/// homes from it. Different stable roots are not proofs of disjoint objects.
+struct LoopField {
+    header: usize,
+    owner: Register,
+    atom: Atom,
+    reads: smallvec::SmallVec<[usize; INLINE_FIELD_BINDINGS]>,
+    stores: smallvec::SmallVec<[usize; INLINE_FIELD_BINDINGS]>,
+}
+
+fn successors(pc: usize, instruction: WideInstruction) -> [Option<usize>; 2] {
+    let layout = instruction.op().control_flow_layout();
+    let falls = !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
+    let jumps = matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        .then(|| instruction.jump_target() as usize);
+    [falls.then_some(pc + 1), jumps]
+}
+
+/// Forward must-alias analysis through inline argument copies and branch joins.
+/// Only a single backedge is admitted, so every incoming state is complete when
+/// visited. Unknown writes decline promotion; no runtime alias cache is needed.
+fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
+    loops: &[(usize, usize)]) -> Vec<LoopField> {
+    let mut fields: Vec<LoopField> = Vec::new();
     for &(header, back) in loops {
-        // A nested lifetime or an implicit polymorphic edge needs its own alias
-        // merge. Decline until that merge is represented, rather than sharing a
-        // variable whose writes another lifetime could hide.
-        if loops.iter().any(|&(other, end)| other != header && other <= back && header <= end)
+        if loops.iter().any(|&(other, end)| (other, end) != (header, back) && other <= back && header <= end)
+            || (header..=back).any(|pc| successors(pc, unit.instructions[pc]).into_iter().flatten()
+                .any(|target| target <= pc && (pc, target) != (back, header)))
             || unit.markers.iter().zip(&unit.frames).any(|(marker, frame)|
                 (header..=back).contains(marker) && frame.alternative.is_some()) { continue; }
-        let read = unit.instructions[header];
-        if read.op() != Op::GetField || read.result_flags() != 0 { continue; }
-        let Some(FieldLookup::Atom { atom, base, .. }) = read.field_lookup() else { continue };
-        let Some(owner) = base.register_index().filter(|owner| *owner < unit.caller_registers) else { continue };
-        if unit.instructions[header..=back].iter().any(|instruction| writes(*instruction).contains(&owner)) { continue; }
-        let mut aliases: CompoundBitSet = CompoundBitSet::with_capacity(usize::from(unit.registers));
-        let mut writes_to_field = Vec::new();
-        let mut valid = true;
+        let mut written: CompoundBitSet = CompoundBitSet::with_capacity(usize::from(unit.registers));
+        for instruction in &unit.instructions[header..=back] {
+            for register in writes(*instruction) { written.insert(usize::from(register)); }
+        }
+        let roots: Vec<Option<Register>> = (0..unit.registers)
+            .map(|register| (register < unit.caller_registers && !written.contains(usize::from(register))).then_some(register)).collect();
+        let mut incoming = vec![None; back - header + 1];
+        incoming[0] = Some(roots);
+        let first_field = fields.len();
+        let mut stores = Vec::new();
         for pc in header..=back {
-            if leaders.contains(pc) { aliases.clear(); aliases.insert(usize::from(owner)); }
+            let Some(mut aliases) = incoming[pc - header].take() else { continue };
             if let Some(frame) = unit.markers.iter().position(|marker| *marker == pc).map(|index| unit.frames[index]) {
-                for register in frame.base..frame.base + frame.registers { aliases.remove(usize::from(register)); }
+                for register in frame.base..frame.base + frame.registers { aliases[usize::from(register)] = None; }
                 for (destination, source) in frame.passed_registers(program.function(frame.target.function as usize)) {
-                    if aliases.contains(usize::from(source)) { aliases.insert(usize::from(destination)); }
+                    aliases[usize::from(destination)] = aliases[usize::from(source)];
                 }
             }
             let instruction = unit.instructions[pc];
-            if stores_own(instruction) && instruction.atom_index() == atom {
+            if instruction.op() == Op::GetField && instruction.result_flags() == 0
+                && let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
+                && let Some(owner) = base.register_index().and_then(|register| aliases[usize::from(register)]) {
+                if let Some(field) = fields[first_field..].iter_mut().find(|field| field.owner == owner && field.atom == atom) {
+                    field.reads.push(pc);
+                } else {
+                    fields.push(LoopField { header, owner, atom, reads: smallvec::smallvec![pc], stores: smallvec::SmallVec::new() });
+                }
+            }
+            if stores_own(instruction) {
                 let receiver = match instruction.op() {
                     Op::SetField | Op::SetFieldStrict => Some(instruction.register_b()),
                     _ => match unit.origins[pc] {
@@ -880,16 +918,32 @@ fn carried_field_stores(program: &ResidualProgram, unit: &super::lane_unit::Unit
                         _ => None,
                     },
                 };
-                if !receiver.is_some_and(|register| aliases.contains(usize::from(register))) { valid = false; break; }
-                writes_to_field.push(pc);
+                stores.push((receiver.and_then(|register| aliases[usize::from(register)]), instruction.atom_index(), pc));
             }
-            let copied = instruction.op() == Op::Move && aliases.contains(usize::from(instruction.register_b()));
-            for register in writes(instruction) { aliases.remove(usize::from(register)); }
-            if copied { aliases.insert(usize::from(instruction.result_register())); }
+            let copied = (instruction.op() == Op::Move).then(|| aliases[usize::from(instruction.register_b())]).flatten();
+            for register in writes(instruction) { aliases[usize::from(register)] = None; }
+            if instruction.op() == Op::Move { aliases[usize::from(instruction.result_register())] = copied; }
+            let targets = successors(pc, instruction).map(|target| target.filter(|target| *target > pc && *target <= back));
+            let mut targets = targets.into_iter().flatten().peekable();
+            while let Some(target) = targets.next() {
+                // Linear control transfers ownership of its flat state; only a
+                // branch needs a second copy for the second successor.
+                let incoming_roots = if targets.peek().is_some() { aliases.clone() } else { std::mem::take(&mut aliases) };
+                let slot = &mut incoming[target - header];
+                if let Some(known) = slot {
+                    for (known, root) in known.iter_mut().zip(incoming_roots) {
+                        if *known != root { *known = None; }
+                    }
+                } else { *slot = Some(incoming_roots); }
+            }
         }
-        if valid { for pc in writes_to_field { stores.insert(pc, header); } }
+        for field in &mut fields[first_field..] {
+            if stores.iter().any(|(owner, atom, _)| *atom == field.atom && *owner != Some(field.owner)) { continue; }
+            field.stores.extend(stores.iter().filter_map(|(_, atom, pc)| (*atom == field.atom).then_some(*pc)));
+        }
+        fields.retain(|field| !field.stores.is_empty());
     }
-    stores
+    fields
 }
 
 /// Per block leader, the edges into it, all from before it; `None` for one an entry
@@ -898,11 +952,7 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, sta
     let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
     for start in starts { if let Some(slot) = edges.get_mut(*start) { *slot = None; } }
     for (pc, instruction) in instructions.iter().enumerate() {
-        let layout = instruction.op().control_flow_layout();
-        let falls = !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
-        let jumps = matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
-            .then(|| instruction.jump_target() as usize);
-        for target in [falls.then_some(pc + 1), jumps].into_iter().flatten() {
+        for target in successors(pc, *instruction).into_iter().flatten() {
             let Some(slot) = edges.get_mut(target) else { continue };
             *slot = if target > pc { slot.map(|count| count + 1) } else { None };
         }
@@ -1082,7 +1132,7 @@ pub(super) fn lower(
         number_returns: smallvec::SmallVec::new(),
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
-        carried_stores: BTreeMap::new(),
+        loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         at: 0,
         forward: Vec::new(),
@@ -1198,9 +1248,9 @@ pub(super) fn lower(
     let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
     let loops = local_loops(unit, &program.constants, &starts);
     lowering.hoists = invariant_reads(unit, &loops);
-    lowering.carried_stores = carried_field_stores(program, unit, &loops, &leaders);
-    for header in lowering.carried_stores.values().copied().collect::<BTreeSet<_>>() {
-        lowering.hoists.entry(header).or_default().push(header);
+    lowering.loop_fields = loop_fields(program, unit, &loops);
+    for field in &lowering.loop_fields {
+        lowering.hoists.entry(field.header).or_default().push(field.reads[0]);
     }
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
     for start in &starts { lowering.entered.insert(*start); }
@@ -1942,6 +1992,10 @@ impl Lowering<'_, '_> {
         }
         if let Some(LoopRead { value: variable, ty, representation, receiver, header }) = self.hoisted.get(&pc).copied() {
             if let Some((owner, ty)) = receiver {
+                let owner = match instruction.field_lookup() {
+                    Some(FieldLookup::Atom { base, .. }) => base.register_index().unwrap_or(owner),
+                    _ => owner,
+                };
                 let fact = &mut state.values[usize::from(owner)];
                 *fact = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(ty, Representation::Tagged) };
@@ -1950,13 +2004,24 @@ impl Lowering<'_, '_> {
             let raw = self.builder.use_var(variable);
             let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
             let destination = instruction.result_register();
-            self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
             if instruction.op() == Op::GetField
-                && let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() {
+                && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() {
+                #[cfg(test)] {
+                    record_field_forward(cache_site);
+                    if representation == Representation::Int32 {
+                        LOOP_INT32_READ_SITE.with(|site| {
+                            if let Some((expected, count)) = site.get() && expected == cache_site {
+                                site.set(Some((expected, count + 1)));
+                            }
+                        });
+                    }
+                }
+                #[cfg(not(test))] let _ = cache_site;
                 state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
             }
+            self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
             if ty == Type::INT32 {
-                let int = self.ins().ireduce(types::I32, value);
+                let int = if representation == Representation::Int32 { raw } else { self.ins().ireduce(types::I32, value) };
                 let variable = self.int_var(usize::from(destination));
                 self.builder.def_var(variable, int);
                 state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
@@ -2741,6 +2806,7 @@ impl Lowering<'_, '_> {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         for pc in reads {
             let instruction = self.unit.instructions[pc];
+            let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
             let (value, int32) = if instruction.op() == Op::LoadCapture {
                 let value = self.load_capture(state, pc, instruction, exit);
@@ -2752,15 +2818,15 @@ impl Lowering<'_, '_> {
                 (value, int32)
             } else {
                 let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
-                let register = base.register_index();
+                let register = field.map(|index| self.loop_fields[index].owner).or_else(|| base.register_index());
                 let receiver = !self.native_calls
                     && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 (self.base_field_read(state, register, receiver, cache_site, exit), int32_read(self.program, self.fields, instruction))
             };
-            let carried = self.carried_stores.values().any(|header| *header == pc);
+            let carried = field.is_some();
             let int32 = if carried {
                 let leaders = leaders(&self.unit.instructions);
-                self.carried_stores.iter().filter(|(_, header)| **header == pc).all(|(store, _)| {
+                self.loop_fields[field.unwrap()].stores.iter().all(|store| {
                     self.facts.before(*store, self.unit.instructions[*store].register_a(),
                         &self.unit.instructions, &leaders, &self.program.constants, &writes, self.native_calls) == Type::INT32
                 })
@@ -2803,14 +2869,14 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variable, raw);
             let receiver = if instruction.op() == Op::GetField {
                 match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { base, .. }) => base.register_index()
-                        .map(|owner| (owner, state.values[usize::from(owner)].value.ty)),
+                    Some(FieldLookup::Atom { base, .. }) => field.map(|index| self.loop_fields[index].owner)
+                        .or_else(|| base.register_index()).map(|owner| (owner, state.values[usize::from(owner)].value.ty)),
                     _ => None,
                 }
             } else { None };
             let stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> =
-                self.carried_stores.iter().filter_map(|(store, read)| {
-                    if *read != pc || !int32 { return None; }
+                field.into_iter().flat_map(|index| self.loop_fields[index].stores.iter()).filter_map(|store| {
+                    if !int32 { return None; }
                     let site = self.unit.instructions[*store].cache_site_index();
                     let binding = self.entry.as_ref()?.fields.iter().find_map(|(known, binding)|
                         (*known == site).then_some(*binding));
@@ -2840,7 +2906,10 @@ impl Lowering<'_, '_> {
                     self.loop_stores.insert(store, LoopStore { header: object_header, address });
                 }
             }
-            self.hoisted.insert(pc, LoopRead { value: variable, ty, representation, receiver, header: object_header });
+            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header };
+            if let Some(index) = field {
+                for pc in &self.loop_fields[index].reads { self.hoisted.insert(*pc, read); }
+            } else { self.hoisted.insert(pc, read); }
         }
     }
 
@@ -2901,12 +2970,7 @@ impl Lowering<'_, '_> {
             .find(|field| field.owner == owner && field.atom == atom));
         let mut value = match known {
             Some(field) => {
-                #[cfg(test)] FIELD_VALUE_FORWARDS.with(|count| count.set(count.get() + 1));
-                #[cfg(test)] FIELD_FORWARD_SITE.with(|site| {
-                    if let Some((expected, count)) = site.get() && expected == *first {
-                        site.set(Some((expected, count + 1)));
-                    }
-                });
+                #[cfg(test)] record_field_forward(*first);
                 field.value
             }
             None => self.base_field_read(state, register, receiver, *first, exit),
@@ -3243,8 +3307,8 @@ impl Lowering<'_, '_> {
             Some(self.unit.frames[*frame].receiver)
         } else { None };
         if register.is_some_and(|register| register >= self.unit.registers) { return None; }
-        let carried = match self.carried_stores.get(&pc) {
-            Some(header) => Some(*self.hoisted.get(header)?),
+        let carried = match self.loop_fields.iter().find(|field| field.stores.contains(&pc)) {
+            Some(field) => Some(*self.hoisted.get(&field.reads[0])?),
             None => None,
         };
         let exit = self.guard_exit(state, pc as u32);
