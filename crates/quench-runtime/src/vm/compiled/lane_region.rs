@@ -1567,6 +1567,14 @@ impl Lowering<'_, '_> {
         let ordered = self.ins().icmp_imm_u(IntCC::NotEqual, left, ValueLayout::CANONICAL_NAN as i64);
         self.ins().jump(join, &[ir::BlockArg::Value(ordered)]);
         self.builder.switch_to_block(distinct);
+        // Distinct int-tagged bits are distinct int32 values: an int32 has one tagged form,
+        // so the pair is unequal without a Number decode, which only other Numbers take.
+        let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
+        let ints = self.ins().band(left_int, right_int);
+        let (decoded, unequal_ints) = (self.builder.create_block(), self.ins().iconst(types::I8, 0));
+        self.ins().brif(ints, join, &[ir::BlockArg::Value(unequal_ints)], decoded, &[]);
+        self.builder.switch_to_block(decoded);
+        self.builder.set_cold_block(numbers);
         let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
             let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
             let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));

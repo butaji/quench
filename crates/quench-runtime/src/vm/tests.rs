@@ -22031,6 +22031,43 @@ fn lane_feedback_stores_take_polymorphic_own_slots() {
 }
 
 #[test]
+fn lane_equality_and_relations_of_int32_fields_and_parameters() {
+    // Equalities and relations of an int32 field read and a parameter: two distinct int32
+    // values are unequal without a Number decode (`Lowering::equality`), and doubles, NaN, -0
+    // and large values decide every operator as the interpreter does.
+    let source = r#"
+     (function () {
+      function V(m) { this.mark = m; }
+      function score(v, mark) {
+        let s = 0;
+        if (v.mark == mark) s += 1; if (v.mark != mark) s += 2; if (v.mark < mark) s += 4;
+        if (v.mark <= mark) s += 8; if (v.mark > mark) s += 16; if (v.mark >= mark) s += 32;
+        if (mark === v.mark) s += 64; if (mark < v.mark) s += 128;
+        return s;
+      }
+      const vs = [new V(0), new V(3), new V(-7), new V(100)];
+      const marks = [0, 3, -7, 2.5, NaN, -0, 1e10, 100];
+      let t = 0;
+      for (let r = 0; r < 4000; r++) for (const v of vs) for (const m of marks) t += score(v, m);
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-int32-equality.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(9980000.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object
