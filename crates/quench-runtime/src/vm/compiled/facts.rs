@@ -91,6 +91,15 @@ fn set(types: &mut [Type], register: Register, ty: Type) {
     }
 }
 
+/// Whether a binary `operator` yields a Boolean however it completes: an equality, a
+/// relation, `instanceof` or `in`.
+pub(super) fn boolean_binary(operator: u32) -> bool {
+    use oxc_ast::ast::BinaryOperator;
+    super::super::operations::equality_operator(operator).is_some()
+        || super::super::operations::NumberRelation::from_operator(operator).is_some()
+        || [BinaryOperator::Instanceof, BinaryOperator::In].iter().any(|relation| *relation as u32 == operator)
+}
+
 /// Applies `instruction` to `types`; returns where control goes next.
 fn transfer(
     types: &mut [Type],
@@ -140,6 +149,9 @@ fn transfer(
                 None => {
                     for register in written(instruction) {
                         set(types, register, Type::ANY);
+                    }
+                    if boolean_binary(operator) && !instruction.returns_from_frame() {
+                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
                     }
                 }
             }

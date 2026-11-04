@@ -251,6 +251,16 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.define(state, register, bits, RegisterFact::definition(Type::ANY, Representation::Tagged));
     }
 
+    /// The tagged Boolean a predicate `holds` selects.
+    fn boolean(&mut self, holds: ir::Value) -> ir::Value {
+        let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+        self.ins().select(holds, yes, no)
+    }
+
+    fn set_boolean(&mut self, state: &mut State, register: Register, boolean: ir::Value) {
+        self.define(state, register, boolean, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged));
+    }
+
     fn set_int(&mut self, state: &mut State, register: Register, int: ir::Value) {
         self.define(state, register, int, RegisterFact::definition(Type::INT32, Representation::Int32));
     }
@@ -1528,13 +1538,12 @@ impl Lowering<'_, '_> {
         self.ins().jump(join, &[ir::BlockArg::Value(is)]);
         self.builder.switch_to_block(join);
         let holds = if negated { self.ins().bxor_imm_u(holds, 1) } else { holds };
-        let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
-        let boolean = self.ins().select(holds, yes, no);
+        let boolean = self.boolean(holds);
         if let Some(record) = completes {
             self.return_value(record, boolean);
             return Some(false);
         }
-        self.set_tagged(state, instruction.result_register(), boolean);
+        self.set_boolean(state, instruction.result_register(), boolean);
         Some(true)
     }
 
@@ -2730,9 +2739,8 @@ impl Lowering<'_, '_> {
             // A relation's Boolean, from the predicate a branch on it would test.
             _ => {
                 let holds = self.relation(state, pc as u32, operator, left, right)?;
-                let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
-                let boolean = self.ins().select(holds, yes, no);
-                self.set_tagged(state, destination, boolean);
+                let boolean = self.boolean(holds);
+                self.set_boolean(state, destination, boolean);
             }
         }
         if returns {
