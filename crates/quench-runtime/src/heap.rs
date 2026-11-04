@@ -75,6 +75,20 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) frozen_mask: u32,
 }
 
+/// The native reader's view of a function record: its own properties are the `Object` at
+/// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. Generated code reads them only;
+/// a store's barrier tests object record marks (`emit_unlogged_property_store_guard`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeFunctionLayout {
+    pub(crate) record_size: usize,
+    pub(crate) object_offset: usize,
+}
+
+pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+    record_size: cell::NATIVE_FUNCTION_RECORD_SIZE,
+    object_offset: cell::NATIVE_FUNCTION_OBJECT_OFFSET,
+};
+
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: RECORD_SPACE_CAPACITY,

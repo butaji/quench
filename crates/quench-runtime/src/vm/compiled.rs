@@ -6752,6 +6752,9 @@ struct JsStepDispatch {
     /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
     /// of them, so each is read again after one (`refresh_heap_bases`).
     object_record_base: usize,
+    /// The function record reservation, whose records' own fields reads take
+    /// (`ObjectHeader::prove_readable`); zero where absent.
+    function_record_base: usize,
     object_mark_blocks: usize,
     object_mark_block_count: usize,
     property_values: usize,
@@ -7545,6 +7548,7 @@ impl LaneFrame {
                 capture_len: 0,
                 array_record_base: 0,
                 object_record_base: 0,
+                function_record_base: 0,
                 object_mark_blocks: 0,
                 object_mark_block_count: 0,
                 property_values: 0,
@@ -7675,7 +7679,7 @@ impl JsStepDispatch {
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, object_record_base: 0, object_mark_blocks: 0,
+            array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
@@ -7722,6 +7726,7 @@ impl JsStepDispatch {
     /// mark blocks and the property arena.
     fn refresh_allocation_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (values, len) = vm.heap.native_property_values();

@@ -33,6 +33,41 @@ impl ObjectHeader {
         let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
         Self { record, shape, inline }
     }
+
+    /// `prove` for a read, which a function's own fields answer too: a direct function's
+    /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
+    /// A store must not take this proof: its barrier reads object record marks.
+    pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+        records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
+        use crate::value::ValueLayout;
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
+        let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
+        let record = builder.append_block_param(join, types::I64);
+        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let id = builder.ins().ireduce(types::I32, bits);
+        let id = builder.ins().uextend(types::I64, id);
+        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        builder.ins().brif(object, object_block, &[], function_block, &[]);
+        builder.switch_to_block(object_block);
+        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
+        let object_record = builder.ins().iadd(records, offset);
+        builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
+        builder.switch_to_block(function_block);
+        let is_function = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_FUNCTION_TAG as i64);
+        let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
+        let readable = builder.ins().band(is_function, reserved);
+        emit_js_guard(builder, readable, miss);
+        let offset = builder.ins().imul_imm_u(id, function.record_size as i64);
+        let function_record = builder.ins().iadd(functions, offset);
+        let function_object = builder.ins().iadd_imm_u(function_record, function.object_offset as i64);
+        builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
+        builder.switch_to_block(join);
+        let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
+        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        Self { record, shape, inline }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

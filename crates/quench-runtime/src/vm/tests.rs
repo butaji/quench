@@ -21918,6 +21918,46 @@ fn lane_bodies_add_properties_at_feedback_stores() {
 }
 
 #[test]
+fn lane_bodies_read_function_fields_natively() {
+    // A lane body reads a function's own fields (static methods and data) through the
+    // function's record (`ObjectHeader::prove_readable`); a replaced static method, a written
+    // static field and a holder that names an object instead read as the interpreter reads.
+    let source = r#"
+     (function () {
+      function Strength(v) { this.v = v; }
+      Strength.stronger = function (a, b) { return a.v < b.v; };
+      Strength.weakestOf = function (a, b) { return this.stronger(a, b) ? b : a; };
+      Strength.LIMIT = 3;
+      var holder = { S: Strength };
+      function pick(a, b) { return Strength.weakestOf(a, b).v + Strength.LIMIT + holder.S.LIMIT; }
+      var a = new Strength(1), b = new Strength(5);
+      let t = 0;
+      for (let i = 0; i < 20000; i++) t += pick(a, b);
+      Strength.LIMIT = 10;
+      for (let i = 0; i < 3000; i++) t += pick(a, b);
+      Strength.stronger = function (x, y) { return x.v > y.v; };
+      for (let i = 0; i < 3000; i++) t += pick(a, b);
+      holder.S = { LIMIT: 100 };
+      for (let i = 0; i < 3000; i++) t += pick(a, b);
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-function-fields.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(691000.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object

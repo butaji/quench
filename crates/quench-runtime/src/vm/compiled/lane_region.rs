@@ -68,6 +68,9 @@ struct State {
     /// Registers proved to hold a direct object, this block: its record address and shape.
     /// The proved records of objects by owner: a register's, or `this`'s (`None`).
     shapes: BTreeMap<Option<Register>, (ir::Value, ir::Value, ir::Value)>,
+    /// The owners of `shapes` whose proof a read made, which may name a function's record
+    /// (`ObjectHeader::prove_readable`): a store proves them again as objects.
+    readable: BTreeSet<Option<Register>>,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// Registers holding the receiver, whose facts the entry proved.
@@ -77,7 +80,7 @@ struct State {
 impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(),
-            layouts: BTreeMap::new(), receivers: BTreeSet::new() }
+            readable: BTreeSet::new(), layouts: BTreeMap::new(), receivers: BTreeSet::new() }
     }
 }
 
@@ -361,6 +364,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
         state.shapes = first.shapes.iter().filter(|(owner, proof)| rest.iter()
             .all(|other| other.shapes.get(owner) == Some(proof))).map(|(owner, proof)| (*owner, *proof)).collect();
+        state.readable = arrived.iter().flat_map(|arrived| arrived.readable.iter().copied()).collect();
         state.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
         state.receivers = first.receivers.iter().filter(|register| rest.iter()
@@ -1682,6 +1686,7 @@ impl Lowering<'_, '_> {
         self.define(state, destination, value, fact);
         if let Some(bits) = tagged { self.builder.def_var(self.registers.tagged[usize::from(destination)], bits); }
         if let Some(shape) = shape { state.shapes.insert(Some(destination), shape); }
+        if state.readable.contains(&Some(source)) { state.readable.insert(Some(destination)); }
         for (shape, projection) in layouts { state.layouts.insert((Some(destination), shape), projection); }
         if receiver { state.receivers.insert(destination); }
     }
@@ -2134,7 +2139,7 @@ impl Lowering<'_, '_> {
                     lowering.builder.use_var(entry.receiver.inline),
                 )
             } else {
-                lowering.object_record(state, register, generic)
+                lowering.object_record(state, register, true, generic)
             };
             lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)
         })
@@ -2151,7 +2156,8 @@ impl Lowering<'_, '_> {
         let probed = NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-            let header = ObjectHeader::prove(&mut lowering.builder, object_bits, records, generic);
+            let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+            let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
             lowering.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, generic)
         }))
     }
@@ -2342,14 +2348,25 @@ impl Lowering<'_, '_> {
 
     /// The record of `owner`'s object (a register's, or `this`'s), proved once until an
     /// effect that may change it retires the proof.
-    fn object_record(&mut self, state: &mut State, owner: Option<Register>, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
-        if let Some(known) = state.shapes.get(&owner).copied() { return known; }
+    /// The proved record of `owner`'s object, its shape and storage kind, proved once: for a
+    /// `read`, an object's or a function's (`ObjectHeader::prove_readable`); for a store, an
+    /// object's only, which a read's proof is not known to be.
+    fn object_record(&mut self, state: &mut State, owner: Option<Register>, read: bool, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
+        if let Some(known) = state.shapes.get(&owner).copied()
+            && (read || !state.readable.contains(&owner)) { return known; }
         let bits = match owner {
             Some(register) => self.tagged(state, register),
             None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
         };
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
+        let header = if read {
+            let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+            state.readable.insert(owner);
+            ObjectHeader::prove_readable(&mut self.builder, bits, records, functions, exit)
+        } else {
+            state.readable.remove(&owner);
+            ObjectHeader::prove(&mut self.builder, bits, records, exit)
+        };
         let projection = (header.record, header.shape, header.inline);
         state.shapes.insert(owner, projection);
         if let Some(register) = owner {
@@ -2456,7 +2473,7 @@ impl Lowering<'_, '_> {
             self.store_helper(object_bits, atom, site, value, exit);
             return Some(());
         };
-        let header = (!receiver).then(|| self.object_record(state, register, exit));
+        let header = (!receiver).then(|| self.object_record(state, register, false, exit));
         // A run that calls may meet a method cache that names the atom only after a call;
         // one that does not tests it once, at entry (`Lowering::entry_facts`).
         let admitted = if self.native_calls {
