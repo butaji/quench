@@ -23,6 +23,7 @@ mod fields;
 mod field_reads;
 mod captures;
 mod strings;
+mod updates;
 #[cfg(feature = "bench-alloc-routes")]
 mod growth;
 const PAIR_INITIAL: f64 = 17.5;

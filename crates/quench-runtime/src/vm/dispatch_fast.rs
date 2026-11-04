@@ -3492,7 +3492,7 @@ pub(super) fn proof_index(key: Value) -> Option<usize> {
 /// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
 /// integer that does not overflow; `None` for any other value.
 #[inline(always)]
-fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
+pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
     let integer = value.as_int()?;
     if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
 }
