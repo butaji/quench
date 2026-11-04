@@ -7498,14 +7498,30 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
-    u64::from(vm.primary_own_field_store_hit::<true>(
+    #[cfg(feature = "profile-native-ops")]
+    let storage = {
+        use super::native_op_profile::StoreStorage;
+        match Value::from_bits(receiver).direct_object_index() {
+            None => StoreStorage::NonRecord,
+            Some(id) => {
+                let object = vm.heap.object_record_by_id(id);
+                if object.plain_storage_start().is_some() { StoreStorage::Arena }
+                else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
+                else { StoreStorage::OtherRecord }
+            }
+        }
+    };
+    let hit = vm.primary_own_field_store_hit::<true>(
         residual,
         Value::from_bits(receiver),
         atom as Atom,
         Value::from_bits(value),
         site as u16,
         crate::heap::PropertyStoreLayout::Preserve,
-    ))
+    );
+    #[cfg(feature = "profile-native-ops")]
+    super::native_op_profile::record_store(storage, hit);
+    u64::from(hit)
 }
 
 /// The same guarded call operation used by native callouts. It never creates
