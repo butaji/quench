@@ -5823,7 +5823,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let length = self.word(heap_base + 2);
         let exit = self.exit_block(pc);
         let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-        let checked = CheckedObject::prove(&mut self.body.builder, header.record, header.inline, base, length,
+        let record = header.record.address(&mut self.body.builder);
+        let checked = CheckedObject::prove(&mut self.body.builder, record, header.inline, base, length,
             load, access, exit)?;
         let current = self.body.builder.current_block().expect("checked projection");
         self.chains.insert(current, chain);
@@ -5864,7 +5865,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(matched);
                 self.body.builder.seal_block(matched);
                 let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-                let object = CheckedObject::prove(&mut self.body.builder, header.record, header.inline,
+                let record = header.record.address(&mut self.body.builder);
+                let object = CheckedObject::prove(&mut self.body.builder, record, header.inline,
                     base, length, *load, access, exit)?;
                 let value = object.read(&mut self.body.builder, load.slot);
                 self.body.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);

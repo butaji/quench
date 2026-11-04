@@ -31,6 +31,7 @@ pub(crate) enum BindingTime {
 enum TypeKind {
     Language(u16),
     Int32,
+    DirectObjectFamily,
     DirectObjectShape(u32),
     FunctionIdentity(Value),
     FunctionBody(u32),
@@ -46,6 +47,9 @@ impl Type {
     pub(crate) const ANY: Self = Self(TypeKind::Language(u16::MAX));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     pub(crate) const INT32: Self = Self(TypeKind::Int32);
+    /// The canonical direct-object tag only: no object-table range, base,
+    /// shape or storage permission follows from this refinement.
+    pub(crate) const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
     /// Internal control discriminant emitted by the typeof-test rewrite.
     pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));
 
@@ -57,7 +61,7 @@ impl Type {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
             TypeKind::Int32 => 1 << ValueType::Number as u16,
-            TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
+            TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
             TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => 1 << ValueType::Function as u16,
         }
     }
@@ -68,6 +72,10 @@ impl Type {
     /// feedback alone and canonical tagged bits cannot establish it.
     pub(crate) const fn direct_object(shape: u32) -> Self {
         Self(TypeKind::DirectObjectShape(shape))
+    }
+
+    pub(crate) const fn is_direct_object_family(self) -> bool {
+        matches!(self.0, TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape(_))
     }
 
     pub(crate) fn object_shape(self) -> Option<u32> {
@@ -126,11 +134,15 @@ impl Type {
         if self == Self::NEVER {
             return other;
         }
+        if self.is_direct_object_family() && other.is_direct_object_family() {
+            return Self::DIRECT_OBJECT_FAMILY;
+        }
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         self == Self::NEVER || self == expected
+            || (expected == Self::DIRECT_OBJECT_FAMILY && self.is_direct_object_family())
             || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
     }
 }
@@ -311,7 +323,7 @@ mod tests {
         let shape = Type::direct_object(3);
         assert_eq!(shape.join(shape), shape);
         assert_eq!(shape.join(Type::NEVER), shape);
-        assert_eq!(shape.join(Type::direct_object(4)), object);
+        assert_eq!(shape.join(Type::direct_object(4)), Type::DIRECT_OBJECT_FAMILY);
         assert_eq!(shape.join(object), object);
         assert!(shape.is_subtype(object));
         assert!(!object.is_subtype(shape));
@@ -325,6 +337,34 @@ mod tests {
             (BindingTime::Location, Proof::CanonicalValue)] {
             assert!(Fact { binding, proof, ..fact }.verified().is_none());
         }
+    }
+
+    #[test]
+    fn direct_object_family_is_weaker_than_shape_and_stronger_than_generic_object() {
+        let family = Type::DIRECT_OBJECT_FAMILY;
+        let object = Type::language(ValueType::Object);
+        let shape = Type::direct_object(3);
+        for direct in [family, shape] {
+            assert!(direct.is_direct_object_family());
+            assert!(direct.is_subtype(family));
+            assert!(direct.is_subtype(object));
+            assert_eq!(direct.join(family), family);
+            assert_eq!(family.join(direct), family);
+            assert_eq!(direct.join(object), object);
+        }
+        assert_eq!(family.object_shape(), None);
+        assert!(!family.is_subtype(shape));
+        for wider in [object, Type::ANY, object.join(Type::language(ValueType::Null))] {
+            assert!(!wider.is_direct_object_family());
+            assert!(!wider.is_subtype(family));
+            assert_eq!(family.join(wider), wider);
+        }
+        let fact = Fact { ty: family, representation: Representation::Tagged,
+            binding: BindingTime::Dynamic, proof: Proof::Definition, projection: Projection::Exact };
+        assert!(fact.verified().is_some());
+        assert!(Fact { binding: BindingTime::Location, proof: Proof::EntryGuard, ..fact }.verified().is_some());
+        assert!(Fact { binding: BindingTime::Location, proof: Proof::CanonicalValue, ..fact }.verified().is_none());
+        assert!(Fact { representation: Representation::Int32, ..fact }.verified().is_none());
     }
 
     #[test]
@@ -391,7 +431,7 @@ mod tests {
     #[test]
     fn joins_preserve_each_semantic_input_and_never_invent_a_numeric_proof() {
         let types = [Type::NEVER, Type::INT32, Type::NUMBER, Type::ANY, Type::TYPEOF_INDEX,
-            Type::direct_object(3), Type::direct_object(4),
+            Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3), Type::direct_object(4),
             Type::language(ValueType::Undefined), Type::language(ValueType::Null),
             Type::language(ValueType::Boolean), Type::language(ValueType::String),
             Type::language(ValueType::Symbol), Type::language(ValueType::BigInt),
@@ -401,7 +441,8 @@ mod tests {
                 let joined = left.join(right);
                 assert_eq!(joined, right.join(left));
                 assert!(left.is_subtype(joined) && right.is_subtype(joined));
-                for expected in [Type::INT32, Type::NUMBER, Type::language(ValueType::Object), Type::direct_object(3)] {
+                for expected in [Type::INT32, Type::NUMBER, Type::language(ValueType::Object),
+                    Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3)] {
                     assert_eq!(joined.is_subtype(expected),
                         left.is_subtype(expected) && right.is_subtype(expected));
                 }

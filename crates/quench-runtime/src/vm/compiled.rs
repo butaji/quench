@@ -1565,8 +1565,48 @@ struct FieldSlotBinding {
     holder: ir::Value,
     slot: FieldSlot,
     records: ir::Value,
-    values: ir::Value,
-    length: ir::Value,
+    arena: FieldArena,
+}
+
+/// A bound slot moves invariant address arithmetic off the receiver-load chain.
+/// The remaining length is zero when the slot lies outside the arena; forming
+/// an integer base grants no permission to dereference it.
+#[derive(Clone, Copy)]
+enum FieldArena {
+    Unbound { values: ir::Value, length: ir::Value },
+    #[cfg(feature = "aot")]
+    BoundSlot { base: ir::Value, remaining: ir::Value },
+}
+
+impl FieldArena {
+    #[cfg(feature = "aot")]
+    fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
+        let Self::Unbound { values, length } = self else { return self; };
+        let fits = builder.ins().icmp(IntCC::UnsignedLessThan, slot, length);
+        let difference = builder.ins().isub(length, slot);
+        let zero = builder.ins().iconst(types::I64, 0);
+        let remaining = builder.ins().select(fits, difference, zero);
+        let offset = builder.ins().imul_imm_u(slot, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
+        let base = builder.ins().iadd(values, offset);
+        Self::BoundSlot { base, remaining }
+    }
+
+    fn address(self, builder: &mut FunctionBuilder<'_>, storage: ir::Value,
+        slot: FieldSlot, fallback: ir::Block) -> ir::Value
+    {
+        let (base, position, length) = match self {
+            Self::Unbound { values, length } => {
+                let slot = slot.read(builder);
+                (values, builder.ins().iadd(storage, slot), length)
+            }
+            #[cfg(feature = "aot")]
+            Self::BoundSlot { base, remaining } => (base, storage, remaining),
+        };
+        let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, length);
+        emit_js_guard(builder, in_arena, fallback);
+        let offset = builder.ins().imul_imm_u(position, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
+        builder.ins().iadd(base, offset)
+    }
 }
 
 /// A region binds its slot once; a single operation decodes it only after
@@ -1595,11 +1635,12 @@ impl FieldSlot {
 }
 
 fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
-    site: u16, miss: ir::Block) -> FieldSlotBinding
+    site: u16, miss: ir::Block, table: Option<object_slots::CheckedObjectTable>) -> FieldSlotBinding
 {
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
-    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let records = table.map(|table| table.base()).unwrap_or_else(||
+        emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
     let (values, length) = emit_js_property_values(builder, payload);
     // ObjectHeader owns record-base admission, including reused region proofs.
     for base in [entries, values] {
@@ -1614,7 +1655,8 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     };
     let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
     let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
-    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records, values, length }
+    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
+        arena: FieldArena::Unbound { values, length } }
 }
 
 // `packed_slot`, when requested, receives a proved own-slot address holding a narrow
@@ -1644,15 +1686,16 @@ fn emit_js_cached_field_slot(
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
 
-    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback));
-    let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, values, length: values_len } = binding;
+    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
+    let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena } = binding;
     let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
     }
 
-    let object_slots::ObjectHeader { record: object, shape, inline } = header
+    let object_slots::ObjectHeader { record, shape, inline } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
+    let object = record.address(builder);
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
@@ -1674,7 +1717,7 @@ fn emit_js_cached_field_slot(
                 OBJECT.inline_property_count as i64);
             emit_js_guard(builder, fits, fallback);
             let offset = builder.ins().imul_imm_u(slot, std::mem::size_of::<u32>() as i64);
-            let address = builder.ins().iadd(object, offset);
+            let address = record.offset_address(builder, offset);
             let address = builder.ins().iadd_imm_s(address, OBJECT.payload_offset as i64);
             builder.ins().jump(packed_slot, &[ir::BlockArg::Value(address)]);
             builder.seal_block(packed);
@@ -1762,15 +1805,7 @@ fn emit_js_cached_field_slot(
     } else {
         own_storage(builder)
     };
-    let slot = slot.read(builder);
-    let position = builder.ins().iadd(storage, slot);
-    let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, values_len);
-    emit_js_guard(builder, in_arena, fallback);
-    let value_offset = builder.ins().imul_imm_u(
-        position,
-        i64::try_from(OBJECT.property_value_size).expect("property value size fits i64"),
-    );
-    (builder.ins().iadd(values, value_offset), record_id)
+    (arena.address(builder, storage, slot, fallback), record_id)
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -2323,7 +2358,8 @@ impl NullishComparison {
             !self.strict || self.expected == Value::NULL
         } else if ty.is_subtype(Type::language(crate::ValueType::Undefined)) {
             !self.strict || self.expected == Value::UNDEFINED
-        } else if ty.is_subtype(Type::NUMBER.join(Type::language(crate::ValueType::Boolean))) {
+        } else if ty.is_direct_object_family()
+            || ty.is_subtype(Type::NUMBER.join(Type::language(crate::ValueType::Boolean))) {
             false
         } else {
             return None;
@@ -2356,7 +2392,7 @@ fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     let fall = builder.create_block();
     let join = builder.create_block();
     let result = builder.append_block_param(join, types::I8);
-    emit_nullish_edges(builder, value, comparison, fallback, taken, fall);
+    emit_nullish_edges(builder, value, comparison, fallback, taken, fall, None);
     for (block, bit) in [(taken, 1), (fall, 0)] {
         builder.switch_to_block(block);
         let bit = builder.ins().iconst(types::I8, bit);
@@ -2368,7 +2404,8 @@ fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
 
 /// Resolve comparison continuations without materializing a Boolean at their join.
 fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, fallback: ir::Block, taken: ir::Block, fall: ir::Block) {
+    comparison: NullishComparison, fallback: ir::Block, taken: ir::Block, fall: ir::Block,
+    direct_object: Option<ir::Block>) {
     use crate::value::ValueLayout;
     let equal = if comparison.strict {
         builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
@@ -2379,7 +2416,7 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         // before inspecting the remaining canonical encodings.
         let remaining = builder.create_block();
         let unequal = if comparison.negated { fall } else { taken };
-        builder.ins().brif(object, unequal, &[], remaining, &[]);
+        builder.ins().brif(object, direct_object.unwrap_or(unequal), &[], remaining, &[]);
         builder.switch_to_block(remaining);
         let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
         let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
@@ -19653,6 +19690,78 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn nullish_latch_carries_direct_family_to_the_next_receiver() {
+        let program = crate::Engine::specialize(
+            "function last(queue){let p=queue,n;while((n=p.link)!=null)p=n;return p;}",
+            "family-latch.js").unwrap();
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next()
+            .expect("typed traversal loop");
+        let function = &region.function;
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
+        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(function, &cfg);
+        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+        loops.compute(function, &cfg, &dom);
+        let mut families = [0, 0];
+        for block in function.layout.blocks() {
+            for inst in function.layout.block_insts(block) {
+                if matches!(function.dfg.insts[inst], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
+                    if imm.bits() as u64 == crate::value::ValueLayout::DIRECT_OBJECT_TAG) {
+                    families[usize::from(loops.innermost_loop(block).is_some())] += 1;
+                }
+            }
+        }
+        assert_eq!(families[1], 1, "one classification per loaded link, none repeated at the header: {function}");
+        assert!(families[0] > 0, "initial receiver still needs admission");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn nullish_latch_preserves_nonobjects_effects_and_changed_links() {
+        let source = r#"
+            function last(queue){let p=queue,n;while((n=p.link)!=null)p=n;return p;}
+            function diamond(p,flag){let n;while(true){n=p.link;if(flag)n=p.other;if(n==null)return p;p=n;}}
+            let effects=0;
+            let tail={link:null}, middle={link:tail}, root={link:middle};
+            let array=[], callable=function(){}, marker={};
+            for(let i=0;i<128;i++){
+                if(last(root)!==tail)throw 'chain';
+                tail.link=undefined;if(last(root)!==tail)throw 'undefined';tail.link=null;
+                if(last({link:7})!==7)throw 'number link';
+                if(last({link:'x'})!=='x'.link)throw 'string link';
+                if(last({link:array})!==array)throw 'array link';
+                if(last({link:callable})!==callable)throw 'function link';
+                let read={get link(){effects++;return root;}};
+                if(last(read)!==tail)throw 'getter';
+                let thrown={get link(){effects++;throw marker;}};
+                try{last(thrown);throw 'missing throw';}catch(error){if(error!==marker)throw error;}
+                if(diamond({link:root,other:7},false)!==tail)throw 'diamond object';
+                if(diamond({link:root,other:7},true)!==7)throw 'diamond number';
+                middle.link=null;if(last(root)!==middle)throw 'changed link';middle.link=tail;
+            }
+            if(effects!==256)throw 'duplicate effects';
+            throw 42;
+        "#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "family-latch.cts") }
+                else { crate::Engine::specialize(source, "family-latch.cjs") }.unwrap();
+            for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+                let mut vm = Vm::new(crate::test_host::TestHost::default());
+                vm.set_execution_mode(mode);
+                let error = vm.execute(&program).unwrap_err();
+                assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
+            }
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "native: {error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn typed_region_exits_before_terminal_calls_with_arguments() {
         let program = crate::Engine::specialize(
             "function pipe(object){object.seen=object.seen+1;return object.finish(3);}",
@@ -19699,6 +19808,53 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn bound_field_arena_preserves_slot_bounds() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for bound in [false, true] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 4]);
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut native, &mut context);
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            let p = builder.block_params(entry).to_vec();
+            let arena = FieldArena::Unbound { values: p[0], length: p[1] };
+            let arena = if bound { arena.bind(&mut builder, p[3]) } else { arena };
+            let miss = builder.create_block();
+            let address = arena.address(&mut builder, p[2], FieldSlot::Bound(p[3]), miss);
+            builder.ins().return_(&[address]);
+            builder.switch_to_block(miss);
+            let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+            builder.ins().return_(&[deleted]);
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: this function performs integer address arithmetic only and
+            // never dereferences the synthetic arena or returned address.
+            let run = unsafe { std::mem::transmute::<*mut u8,
+                unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
+            let width = crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
+            let base = width;
+            for (length, storage, slot) in [
+                (0, 0, 0), (1, 0, 0), (1, 0, 1), (1, 0, 2),
+                (3, 1, 1), (3, 2, 1),
+                (u64::from(u32::MAX), u64::from(u32::MAX), 0),
+                (u64::from(u32::MAX) + u64::from(u16::MAX) + 1,
+                    u64::from(u32::MAX), u64::from(u16::MAX)),
+            ] {
+                let expected = if storage + slot < length { base + (storage + slot) * width }
+                    else { Value::DELETED.to_bits() };
+                assert_eq!(unsafe { run(base, length, storage, slot) }, expected,
+                    "bound={bound}, length={length}, storage={storage}, slot={slot}");
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_holder_read_does_not_require_receiver_arena_storage() {
         let source = "function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);";
         let program = crate::Engine::specialize(source, "packed-holder.js").unwrap();
@@ -19732,12 +19888,15 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let parameters = builder.block_params(entry).to_vec();
-        let binding = FieldSlotBinding {
+        let mut binding = FieldSlotBinding {
             receiver: builder.ins().iconst(types::I32, i64::from(cache.receiver)),
             holder: builder.ins().iconst(types::I32, i64::from(cache.holder)),
             slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
-            records: parameters[0], values: parameters[1], length: parameters[2],
+            records: parameters[0],
+            arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
         };
+        let slot = binding.slot.read(&mut builder);
+        binding.arena = binding.arena.bind(&mut builder, slot);
         let miss = builder.create_block();
         let unused = builder.ins().iconst(types::I64, 0);
         let (address, _) = emit_js_cached_field_slot(&mut builder, unused, unused,
@@ -20250,6 +20409,55 @@ mod tests {
         let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_object_table_binding_tracks_heap_lifetime() {
+        let source = "globalThis.tableProbe=0; throw 7;";
+        let mut vm = semantic_vm(source);
+        let original = vm.heap.object_record_base().unwrap() as usize;
+        let probe = vm.lookup_atom("tableProbe").unwrap();
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let assert_binding = |vm: &mut Vm<crate::test_host::TestHost>, expected| {
+            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+                assert_ne!(expected, 0);
+                assert_eq!(activation.dispatch.object_record_base, expected);
+                assert_eq!(vm.heap.object_record_base().unwrap() as usize, expected);
+            }).unwrap();
+        };
+        assert_binding(&mut vm, original);
+        // A normal semantic store may allocate/widen property storage; neither
+        // it nor a full collection replaces the record-table reservation.
+        vm.set_property(vm.realm.globals, probe, Value::number(1.5)).unwrap();
+        vm.collect_now(&program);
+        assert_binding(&mut vm, original);
+        assert_eq!(vm.own_property(vm.realm.globals, probe), Some(Value::number(1.5)));
+
+        let mut other = semantic_vm(source);
+        let other_base = other.heap.object_record_base().unwrap() as usize;
+        // Reentry in another VM admits that VM's table, without changing the
+        // outer activation's admitted base or retaining it for later entries.
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+            assert_binding(&mut other, other_base);
+            assert_eq!(activation.dispatch.object_record_base, original);
+        }).unwrap();
+
+        // Realm initialization destroys the old heap reservation. Rebuild the
+        // caller frame as semantic_program does, then admit the current table;
+        // allocators may reuse the address, so pointer inequality is no proof.
+        vm.initialize_for_snapshot(&program).unwrap();
+        let current = vm.programs.get(ProgramId::MAIN).unwrap();
+        let body = current.function(0);
+        let mut frame = Box::new(Frame::empty(ProgramId::MAIN, 0));
+        frame.registers.resize(usize::from(body.registers), Value::UNDEFINED);
+        frame.locals.resize(usize::from(body.locals), Value::UNDEFINED);
+        frame.initialized_registers = frame.registers.len();
+        vm.frames.push(frame);
+        vm.active_registers = vm.frames[0].registers.as_mut_ptr();
+        let reset_base = vm.heap.object_record_base().unwrap() as usize;
+        assert_binding(&mut vm, reset_base);
+        assert_binding(&mut other, other_base);
     }
 
     #[cfg(feature = "aot")]

@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
-use super::object_slots::{CheckedObject, ObjectHeader, ObjectRecord, PackedAccess};
+use super::object_slots::{CheckedObject, CheckedObjectTable, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -37,6 +37,8 @@ const INLINE_FIELD_BINDINGS: usize = 4;
 const INLINE_EFFECT_EDGES: usize = 4;
 /// Most blocks project only a few numbers; larger blocks spill without a limit.
 const INLINE_NUMBER_PROJECTIONS: usize = 4;
+/// A header and a short latch usually need only a few guarded inputs.
+const INLINE_LOOP_INPUTS: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The executable memory a lane body may take: what a unit at its instruction bound
@@ -145,7 +147,7 @@ impl State {
         for fact in &mut self.values {
             if fact.value.ty.object_shape().is_some() {
                 *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(Type::language(crate::ValueType::Object), fact.value.representation) };
+                    ..RegisterFact::definition(Type::DIRECT_OBJECT_FAMILY, fact.value.representation) };
             } else if fact.value.ty.body_index().is_some() {
                 *fact = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(Type::language(crate::ValueType::Function), fact.value.representation) };
@@ -175,6 +177,8 @@ impl ReceiverRecovery {
 /// Region-wide facts proved at entry.
 struct Entry {
     receiver: LaneReceiver,
+    /// This heap's non-null record reservation, fixed for the native run.
+    object_table: Option<CheckedObjectTable>,
     /// Entry receiver certificates: record locators of `this` (the final entry) and of the
     /// caller registers no unit instruction writes. Records stay put in a run, which
     /// collects nothing; shapes are derived per use.
@@ -633,6 +637,14 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 { let variable = self.float_var(index); self.builder.def_var(variable, number); }
             } else if ty != Type::INT32 && ty != Type::NUMBER {
                 self.tagged(state, register);
+            }
+            if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
+                let exit = self.guard_exit(state, target as u32);
+                let bits = self.tagged(state, register);
+                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+                let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                emit_js_guard(&mut self.builder, object, exit);
+                self.refine_object_family(state, bits);
             }
             // A fact this edge does not prove and cannot guard leaves at the target, exactly:
             // the edge loses native code, never the body (AGENTS.md, check once).
@@ -1320,7 +1332,8 @@ pub(super) fn lower(
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
-    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry)); }
+    lowering.require_object_latches(&instructions, &leaders, &loops);
+    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry, &loops)); }
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     lowering.hoists = invariant_reads(unit, &loops);
@@ -1812,7 +1825,8 @@ impl Lowering<'_, '_> {
     }
 
     /// The facts every run proves once at entry, before either start (`lower`'s loop entry).
-    fn entry_facts(&mut self, instructions: &[WideInstruction], start: ir::Value, loop_entry: Option<usize>) -> Entry {
+    fn entry_facts(&mut self, instructions: &[WideInstruction], start: ir::Value,
+        loop_entry: Option<usize>, _loops: &[(usize, usize)]) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
@@ -1880,6 +1894,15 @@ impl Lowering<'_, '_> {
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
         let mut miss = None;
+        let object_table = instructions.iter().enumerate().any(|(pc, instruction)|
+            self.facts.reached(pc) && matches!(instruction.op(),
+                Op::GetField | Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict))
+            .then(|| {
+                let base = emit_js_payload_word(&mut self.builder, self.payload,
+                    std::mem::offset_of!(JsStepDispatch, object_record_base));
+                let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+                CheckedObjectTable::prove(&mut self.builder, base, exit)
+            });
         let mut calls = CompoundBitSet::with_capacity(self.unit.frames.len());
         let mut call_receivers = CompoundBitSet::with_capacity(self.unit.frames.len());
         if self.completion != Completion::Number {
@@ -1940,6 +1963,7 @@ impl Lowering<'_, '_> {
         let fields = {
             let mut fields = smallvec::SmallVec::new();
             if matches!(self.helpers, LaneHelpers::Bound(..)) {
+                let mut uses = smallvec::SmallVec::<[(u16, bool); INLINE_FIELD_BINDINGS]>::new();
                 for (pc, instruction) in instructions.iter().enumerate() {
                     if !self.facts.reached(pc) { continue; }
                     // A field chain names sequential sites, not alternatives for
@@ -1960,20 +1984,31 @@ impl Lowering<'_, '_> {
                         Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => sites.push(instruction.cache_site_index()),
                         _ => {},
                     }
+                    let repeated = _loops.iter().any(|&(header, back)| (header..=back).contains(&pc));
                     for site in sites {
-                        if fields.iter().any(|(known, _)| *known == site) { continue; }
-                        let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-                        let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit);
-                        binding.slot = FieldSlot::Bound(binding.slot.read(&mut self.builder));
-                        fields.push((site, binding));
+                        if let Some((_, reused)) = uses.iter_mut().find(|(known, _)| *known == site) {
+                            *reused |= repeated;
+                        } else { uses.push((site, repeated)); }
                     }
+                }
+                for (site, repeated) in uses {
+                    let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit, object_table);
+                    let slot = binding.slot.read(&mut self.builder);
+                    binding.slot = FieldSlot::Bound(slot);
+                    // The extra entry arithmetic pays for repeated receiver loads.
+                    // A one-off access keeps its cheaper storage-plus-slot form.
+                    if repeated {
+                        binding.arena = binding.arena.bind(&mut self.builder, slot);
+                    }
+                    fields.push((site, binding));
                 }
             }
             fields
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
-        let records = self.invariant_field_records(instructions, &receiver, &mut miss);
+        let records = self.invariant_field_records(instructions, &receiver, object_table, &mut miss);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
             self.builder.ins().jump(admitted, &[]);
@@ -2001,13 +2036,13 @@ impl Lowering<'_, '_> {
             }
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
     }
 
     /// Bind physical receiver facts once. The expanded unit's write set owns
     /// invariance, including renamed callee registers and synthesized returns.
     fn invariant_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
-        miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
+        object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
         let count = usize::from(self.unit.registers);
         let mut owners: CompoundBitSet = CompoundBitSet::with_capacity(count + 1);
         let mut reachable = false;
@@ -2048,11 +2083,13 @@ impl Lowering<'_, '_> {
                 let record = self.builder.use_var(receiver.object);
                 let present = self.ins().icmp_imm_u(IntCC::NotEqual, record, 0);
                 emit_js_guard(&mut self.builder, present, exit);
-                ObjectHeader { record, shape: self.builder.use_var(receiver.shape),
-                    inline: self.builder.use_var(receiver.inline) }.record()
+                ObjectRecord::Address(record)
             } else {
-                let records = *records.get_or_insert_with(|| emit_js_payload_word(&mut self.builder,
-                    self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
+                let records = match object_table {
+                    Some(table) => ObjectTable::Checked(table),
+                    None => ObjectTable::Unchecked(*records.get_or_insert_with(|| emit_js_payload_word(&mut self.builder,
+                        self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base)))),
+                };
                 // An unwritten register holds its entry value at either start, in the file.
                 let base = self.registers_base;
                 let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(owner as Register));
@@ -2365,8 +2402,29 @@ impl Lowering<'_, '_> {
                         let value = self.tagged(state, comparison.source);
                         let taken = self.builder.create_block();
                         let fall = self.builder.create_block();
-                        emit_nullish_edges(&mut self.builder, value, comparison, exit, taken, fall);
-                        self.continue_branch(state, pc, target, taken, fall);
+                        let unequal = if comparison.negated { pc + 1 } else { target };
+                        let identity = self.builder.func.dfg.resolve_aliases(value);
+                        let direct = (!comparison.strict && self.facts.at(unequal)
+                            .is_some_and(|types| types.iter().enumerate().any(|(index, ty)|
+                                *ty == Type::DIRECT_OBJECT_FAMILY && self.is_live(unequal, index as Register)
+                                && matches!(state.values[index].tagged, TaggedView::Value(alias)
+                                    if self.builder.func.dfg.resolve_aliases(alias) == identity))))
+                            .then(|| self.builder.create_block());
+                        emit_nullish_edges(&mut self.builder, value, comparison, exit, taken, fall, direct);
+                        if let Some(direct) = direct {
+                            self.builder.switch_to_block(direct);
+                            let mut direct_state = state.clone();
+                            self.refine_object_family(&mut direct_state, value);
+                            self.continue_at(&mut direct_state, unequal);
+                            // The other unequal arm has already excluded this family.
+                            // Resume before the latch's moves, with the original homes.
+                            self.builder.switch_to_block(if comparison.negated { fall } else { taken });
+                            self.exit(state, unequal as u32);
+                            self.builder.switch_to_block(if comparison.negated { taken } else { fall });
+                            self.continue_at(&mut state.clone(), if comparison.negated { target } else { pc + 1 });
+                        } else {
+                            self.continue_branch(state, pc, target, taken, fall);
+                        }
                     } else {
                         let exit = self.guard_exit(state, pc32);
                         let value = self.tagged(state, comparison.source);
@@ -2926,6 +2984,74 @@ impl Lowering<'_, '_> {
         self.continue_at(&mut fall_state, pc + 1);
     }
 
+    /// A family edge refines the value and existing SSA copies, not heap contents.
+    fn refine_object_family(&mut self, state: &mut State, bits: ir::Value) {
+        let bits = self.builder.func.dfg.resolve_aliases(bits);
+        for fact in &mut state.values {
+            let TaggedView::Value(value) = fact.tagged else { continue };
+            if self.builder.func.dfg.resolve_aliases(value) == bits && !fact.value.ty.is_direct_object_family() {
+                *fact = RegisterFact { tagged: fact.tagged,
+                    ..RegisterFact::definition(Type::DIRECT_OBJECT_FAMILY, Representation::Tagged) };
+            }
+        }
+    }
+
+    /// Move-only latches can carry the nullish test's direct-object proof to
+    /// the next field receiver. These are guarded input contracts, including
+    /// the first iteration, never assumptions about values stored in a field.
+    fn require_object_latches(&mut self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+        loops: &[(usize, usize)]) {
+        for &(header, back) in loops {
+            if instructions[back].op() != Op::Jump
+                || self.unit.markers.iter().any(|pc| (header..=back).contains(pc)) { continue; }
+            let first = instructions[header];
+            if first.op() != Op::GetField || first.result_flags() != 0 { continue; }
+            let Some(FieldLookup::Atom { base, .. }) = first.field_lookup() else { continue };
+            let Some(receiver) = base.register_index() else { continue };
+            let mut required = receiver;
+            let mut inputs = smallvec::SmallVec::<[(usize, Register); INLINE_LOOP_INPUTS]>::new();
+            inputs.push((header, receiver));
+            let mut predicate = None;
+            for pc in (header + 1..back).rev() {
+                let instruction = instructions[pc];
+                match instruction.op() {
+                    Op::Move if instruction.result_flags() == 0 => {
+                        if instruction.register_a() == required { required = instruction.register_b(); }
+                    }
+                    Op::Nop => {},
+                    _ => { predicate = Some(pc); break; }
+                }
+                if leaders.contains(pc) { inputs.push((pc, required)); }
+            }
+            let Some(pc) = predicate else { continue };
+            let Some(comparison) = nullish_comparison(&self.program.constants, instructions[pc], |_| Type::ANY)
+                .filter(|comparison| !comparison.strict && comparison.negated
+                    && instructions[pc].jump_target() as usize > back) else { continue };
+            // Copies before the comparison share its SSA value as well.
+            let root = |mut register| {
+                for at in (header..pc).rev() {
+                    if at + 1 < pc && leaders.contains(at + 1) { break; }
+                    let instruction = instructions[at];
+                    match instruction.op() {
+                        Op::Move if instruction.result_flags() == 0 => {
+                            if instruction.register_a() == register { register = instruction.register_b(); }
+                        }
+                        Op::Nop => {},
+                        _ => break,
+                    }
+                }
+                register
+            };
+            if root(required) != root(comparison.source) { continue; }
+            if !inputs.iter().any(|&(leader, _)| leader == pc + 1) { inputs.push((pc + 1, required)); }
+            if !inputs.iter().all(|&(pc, register)| self.facts.at(pc)
+                .and_then(|types| types.get(usize::from(register)))
+                .is_some_and(|ty| ty.is_subtype(Type::DIRECT_OBJECT_FAMILY)
+                    || Type::DIRECT_OBJECT_FAMILY.is_subtype(*ty))) { continue; }
+            for (pc, register) in inputs { self.facts.require(pc, register, Type::DIRECT_OBJECT_FAMILY); }
+        }
+    }
+
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
     /// and backedge must preserve it too; failed hypotheses are removed before
     /// reanalysis so a dependent candidate cannot keep using their assumptions.
@@ -3272,7 +3398,7 @@ impl Lowering<'_, '_> {
                 )
             } else {
                 let header = lowering.object_header(state, register, generic);
-                (header.record, header.shape, header.inline)
+                (header.record.address(&mut lowering.builder), header.shape, header.inline)
             };
             let read = lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)?;
             // A single own shape read proves the register's object has it, for the block, as
@@ -3294,9 +3420,10 @@ impl Lowering<'_, '_> {
         }
         let probed = shapes.iter().any(|field| field.holder.is_some());
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, site, exit, |lowering, state, generic| {
-            let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+            let records = lowering.object_table();
             let header = ObjectHeader::prove(&mut lowering.builder, object_bits, records, None, generic);
-            lowering.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, generic)
+            let record = header.record.address(&mut lowering.builder);
+            lowering.shape_switch_read(state, None, record, header.shape, header.inline, &shapes, generic)
         }))
     }
 
@@ -3422,7 +3549,10 @@ impl Lowering<'_, '_> {
         let id = self.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
         let id = self.ins().uextend(types::I64, id);
         let offset = self.ins().imul_imm_u(id, OBJECT.record_size as i64);
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let records = match self.object_table() {
+            ObjectTable::Checked(table) => table.base(),
+            ObjectTable::Unchecked(base) => base,
+        };
         let prototype = self.ins().iadd(records, offset);
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
@@ -3467,17 +3597,26 @@ impl Lowering<'_, '_> {
                 Some(register) => self.tagged(state, register),
                 None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
             };
-            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+            let records = self.object_table();
             ObjectHeader::prove(&mut self.builder, bits, records, fact, exit)
         };
         state.proofs.headers[index] = Some(header);
         if let Some(fact) = fact {
             let ty = fact.ty;
-            state.values[index] = RegisterFact::definition(
-                if ty.object_shape().is_some() { ty } else { Type::language(crate::ValueType::Object) },
-                Representation::Tagged);
+            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                ..RegisterFact::definition(
+                    if ty.object_shape().is_some() { ty } else { Type::DIRECT_OBJECT_FAMILY },
+                    Representation::Tagged) };
         }
         header
+    }
+
+    fn object_table(&mut self) -> ObjectTable {
+        match self.entry.as_ref().and_then(|entry| entry.object_table) {
+            Some(table) => ObjectTable::Checked(table),
+            None => ObjectTable::Unchecked(emit_js_payload_word(&mut self.builder, self.payload,
+                std::mem::offset_of!(JsStepDispatch, object_record_base))),
+        }
     }
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included,
@@ -3617,7 +3756,7 @@ impl Lowering<'_, '_> {
         };
         let header = (!receiver).then(|| {
             let header = self.object_header(state, register, exit);
-            (header.record, header.shape, header.inline)
+            (header.record.address(&mut self.builder), header.shape, header.inline)
         });
         let admitted = self.store_atom_admitted(atom);
         let entry = self.entry.as_ref().expect("entry facts");

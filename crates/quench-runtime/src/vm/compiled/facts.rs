@@ -42,6 +42,14 @@ impl Facts {
         Some(&self.types[start..start + self.registers])
     }
 
+    /// Select a guarded block input contract. Every native edge must conform
+    /// before the lowering consumes this row; this is not a source inference.
+    pub(super) fn require(&mut self, pc: usize, register: Register, required: Type) {
+        let start = self.offsets[pc].expect("reachable contract block").get() - 1;
+        let known = &mut self.types[start + usize::from(register)];
+        if !known.is_subtype(required) { *known = required; }
+    }
+
     /// Project a block's entry facts to an instruction using the same transfer
     /// semantics as the fixed point. This is a representation candidate; the
     /// lowering must still discharge entry and update requirements.
@@ -421,7 +429,7 @@ mod tests {
         assert!(facts.merge(2, &[Type::INT32, Type::direct_object(7)]));
         assert!(facts.merge(0, &[Type::NUMBER, Type::ANY]));
         assert!(facts.merge(2, &[Type::NUMBER, Type::direct_object(8)]));
-        let widened = [Type::NUMBER, Type::language(crate::ValueType::Object)];
+        let widened = [Type::NUMBER, Type::DIRECT_OBJECT_FAMILY];
         assert_eq!(facts.at(2), Some(widened.as_slice()));
         assert_eq!(facts.at(0), Some([Type::NUMBER, Type::ANY].as_slice()));
         assert!(facts.at(1).is_none());
