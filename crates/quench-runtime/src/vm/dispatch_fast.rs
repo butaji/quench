@@ -777,8 +777,9 @@ impl LaneView {
     /// `LANE_BODY_MAX_RECOMPILES` times, its code kept for the direct callers that name it. A
     /// body that left at few places specializes them generically next. One that left only
     /// where its predecessor did gained nothing from the feedback and retires, as the next
-    /// would leave there too; so does one that left from many places and no run of which
-    /// completed.
+    /// would leave there too, where no run of it completed; one whose runs complete keeps its
+    /// code and reoptimizes no more. One that left from many places and no run of which
+    /// completed retires as well.
     fn note_lane_body_end(&self, exit: super::compiled::LaneExit) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
@@ -796,6 +797,13 @@ impl LaneView {
         // (`specialize_lane_body`); one that left only where they did, or left from many
         // places and never completed, gains nothing from another compile.
         let leaves = leaves_at.get();
+        // A body whose runs complete and that left only where its predecessors did gains
+        // nothing from another compile, and loses nothing by keeping its code: it stays,
+        // and reoptimizes no more.
+        if completed.get() && leaves != LaneLeaves::NONE && leaves.within(stuck) {
+            *recompiles = LANE_BODY_MAX_RECOMPILES;
+            return;
+        }
         let unmoved = (leaves != LaneLeaves::NONE && leaves.within(stuck))
             || (leaves == LaneLeaves::Scattered && !completed.get());
         let feedback = stuck.union(leaves);
