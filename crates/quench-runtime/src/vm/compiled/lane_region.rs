@@ -222,6 +222,13 @@ struct LoopRead {
     header: Option<ObjectHeader>,
 }
 
+#[derive(Clone, Copy)]
+struct InvariantRead {
+    pc: usize,
+    /// The canonical caller home supplying a field receiver at loop entry.
+    owner: Option<Register>,
+}
+
 /// A STORE-site projection admitted on entry to a storage-preserving loop.
 /// The record is physical receiver identity, not merely an equal shape.
 #[derive(Clone, Copy)]
@@ -295,7 +302,7 @@ struct Lowering<'a, 'f> {
     /// Per loop header, the reads its loop repeats unchanged (`invariant_reads`), made once
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
-    hoists: BTreeMap<usize, Vec<usize>>,
+    hoists: BTreeMap<usize, Vec<InvariantRead>>,
     hoisted: BTreeMap<usize, LoopRead>,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
@@ -840,27 +847,84 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
     loops
 }
 
-fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<usize>> {
+fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
+    let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
         let body = &unit.instructions[header..=back];
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
-        let reads: Vec<usize> = body.iter().enumerate().filter_map(|(offset, candidate)| {
+        let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
+            let pc = header + offset;
             if candidate.op() == Op::LoadCapture
-                && matches!(unit.origins[header + offset], super::lane_unit::Origin::Caller(_)) {
-                return Some(header + offset);
+                && matches!(unit.origins[pc], super::lane_unit::Origin::Caller(_)) {
+                return Some(InvariantRead { pc, owner: None });
             }
             if candidate.op() != Op::GetField { return None; }
             match candidate.field_lookup() {
-            Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom)
-                && base.register_index().is_some_and(|register| !written.contains(&register)) => Some(header + offset),
+            Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) => {
+                let owner = invariant_field_owner(unit, header, pc, base.register_index()?, &written, &boundaries)?;
+                Some(InvariantRead { pc, owner: Some(owner) })
+            }
             _ => None,
         }}).collect();
+        // An inlined capture belongs to the actual closure admitted at its
+        // marker, not merely to a function body or an observed environment.
+        // Its invariant callee read must run first on the entry edge.
+        let captures: Vec<_> = body.iter().enumerate().filter_map(|(offset, instruction)| {
+            let pc = header + offset;
+            let super::lane_unit::Origin::Inlined { frame, .. } = unit.origins[pc] else { return None };
+            (instruction.op() == Op::LoadCapture
+                && invariant_callee_read(unit, reads.iter().map(|read| read.pc), frame, &boundaries).is_some())
+                .then_some(InvariantRead { pc, owner: None })
+        }).collect();
+        reads.extend(captures);
         if !reads.is_empty() { hoists.insert(header, reads); }
     }
     hoists
+}
+
+/// Resolve only block-local receiver copies to a caller home unchanged by the
+/// whole loop. A branch or implicit frame initialization ends this proof.
+fn invariant_field_owner(unit: &super::lane_unit::Unit, header: usize, pc: usize,
+    mut owner: Register, written: &BTreeSet<Register>, boundaries: &CompoundBitSet) -> Option<Register> {
+    for at in (header..pc).rev() {
+        if owner < unit.caller_registers && !written.contains(&owner) { return Some(owner); }
+        let instruction = unit.instructions[at];
+        if boundaries.contains(at + 1) || unit.markers.contains(&at)
+            || instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { return None; }
+        if writes(instruction).contains(&owner) {
+            if instruction.op() != Op::Move || instruction.result_register() != owner { return None; }
+            owner = instruction.register_b();
+        }
+    }
+    (owner < unit.caller_registers && !written.contains(&owner)).then_some(owner)
+}
+
+/// A monomorphic frame whose callee comes from an entry read through only
+/// block-local copies. Other markers implicitly initialize scratch homes.
+fn invariant_callee_read(unit: &super::lane_unit::Unit, reads: impl IntoIterator<Item = usize>, frame: usize,
+    boundaries: &CompoundBitSet) -> Option<usize> {
+    let call = unit.frames[frame];
+    let marker = unit.markers[frame];
+    if call.alternative.is_some() || unit.frames.iter().any(|other| other.alternative == Some(marker)) {
+        return None;
+    }
+    reads.into_iter().find(|&pc| {
+        if pc >= marker || (pc + 1..=marker).any(|at| boundaries.contains(at)) { return false; }
+        let mut source = call.callee_register;
+        for at in (pc + 1..marker).rev() {
+            let instruction = unit.instructions[at];
+            if unit.markers.contains(&at)
+                || instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { return false; }
+            if writes(instruction).contains(&source) {
+                if instruction.op() != Op::Move || instruction.result_register() != source { return false; }
+                source = instruction.register_b();
+            }
+        }
+        unit.instructions[pc].result_register() == source
+    })
 }
 
 #[cfg(test)]
@@ -1277,7 +1341,7 @@ pub(super) fn lower(
     lowering.hoists = invariant_reads(unit, &loops);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
-        lowering.hoists.entry(field.header).or_default().push(field.reads[0]);
+        lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner) });
     }
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
     for start in &starts { lowering.entered.insert(*start); }
@@ -1342,7 +1406,10 @@ pub(super) fn lower(
                 lowering.entered.insert(pc);
                 lowering.builder.ins().jump(block, &[]);
             }
-            if !lowering.entered.contains(pc) || ((numeric || coverage.selected_entry()) && lowering.facts.at(pc).is_none()) {
+            // Marker alternatives add real native edges beyond the bytecode
+            // analysis's Nop fallthrough. Missing type facts select canonical
+            // guarded lowering; they do not make an entered block unreachable.
+            if !lowering.entered.contains(pc) {
                 reachable = false;
                 continue;
             }
@@ -2184,7 +2251,7 @@ impl Lowering<'_, '_> {
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
-                let value = self.load_capture(state, pc, instruction, exit);
+                let value = self.load_capture(state, pc, instruction, exit, None);
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
@@ -2356,13 +2423,14 @@ impl Lowering<'_, '_> {
     /// the call bound (`lane_function_capture_read`), which also resolves shared and
     /// statically bound callees' slots; any other miss leaves at the read. Each read loads
     /// where it runs, after any call that may have stored to the slot.
-    fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block) -> ir::Value {
+    fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
+        admitted_callee: Option<ir::Value>) -> ir::Value {
         let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
         let frame = match self.unit.origins.get(pc).copied() {
             Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame),
             _ => None,
         };
-        let callee = frame.map(|frame| self.tagged(state, self.unit.frames[frame].callee_register));
+        let callee = admitted_callee.or_else(|| frame.map(|frame| self.tagged(state, self.unit.frames[frame].callee_register)));
         let dense = match frame {
             None => {
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -2850,12 +2918,24 @@ impl Lowering<'_, '_> {
     /// guard that fails there leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
-        for pc in reads {
+        let boundaries = leaders(&self.unit.instructions);
+        for InvariantRead { pc, owner } in reads.iter().copied() {
             let instruction = self.unit.instructions[pc];
             let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
             let (value, int32) = if instruction.op() == Op::LoadCapture {
-                let value = self.load_capture(state, pc, instruction, exit);
+                let admitted_callee = if let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] {
+                    let Some(read) = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, &boundaries)
+                        .and_then(|read| self.hoisted.get(&read).copied()) else { continue };
+                    let target = self.unit.frames[frame].target;
+                    let admitted = match target.callee {
+                        CalleeBinding::Identity(identity) => read.ty.function_identity() == Some(identity),
+                        CalleeBinding::Function => read.ty.body_index() == Some(target.function),
+                    };
+                    if !admitted { continue; }
+                    Some(self.builder.use_var(read.value))
+                } else { None };
+                let value = self.load_capture(state, pc, instruction, exit, admitted_callee);
                 let int32 = self.unit.instructions.get(pc + 1).is_some_and(|next|
                     next.op() == Op::Binary
                         && super::operations::NumberBitwise::from_operator(next.binary_operator()).is_some()
@@ -2864,7 +2944,7 @@ impl Lowering<'_, '_> {
                 (value, int32)
             } else {
                 let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
-                let register = field.map(|index| self.loop_fields[index].owner).or_else(|| base.register_index());
+                let register = owner.or_else(|| base.register_index());
                 let receiver = !self.native_calls
                     && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 (self.base_field_read(state, register, receiver, cache_site, exit), int32_read(self.program, self.fields, instruction))
@@ -2882,20 +2962,25 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, integer, exit);
             }
             let mut ty = if int32 { Type::INT32 } else { Type::ANY };
-            if instruction.op() == Op::LoadCapture && !int32 {
+            if !int32 {
                 // This is a candidate, never a proof from source syntax. Admit the
                 // loaded closure on the same entry edge that already hoists its
                 // immutable read. A failed admission exits before loop effects.
-                let destination = instruction.result_register();
                 let target = self.unit.markers.iter().enumerate().find_map(|(frame, marker)| {
                     let call = self.unit.frames[frame];
-                    (*marker > pc && call.callee_register == destination
-                        && (call.target.callee == CalleeBinding::Function
-                            || (call.alternative.is_none() && !self.unit.frames.iter()
-                                .any(|other| other.alternative == Some(*marker))))
-                        && !self.unit.instructions[pc + 1..*marker].iter()
-                            .any(|instruction| writes(*instruction).contains(&destination)))
-                        .then_some(call.target)
+                    let supplies = if instruction.op() == Op::LoadCapture {
+                        // Preserve the existing caller-capture admission, including
+                        // function-bound alternatives. Hoisting a callee's own
+                        // captures additionally requires the monomorphic proof below.
+                        let destination = instruction.result_register();
+                        *marker > pc && call.callee_register == destination
+                            && (call.target.callee == CalleeBinding::Function
+                                || (call.alternative.is_none() && !self.unit.frames.iter()
+                                    .any(|other| other.alternative == Some(*marker))))
+                            && !self.unit.instructions[pc + 1..*marker].iter()
+                                .any(|instruction| writes(*instruction).contains(&destination))
+                    } else { invariant_callee_read(self.unit, [pc], frame, &boundaries) == Some(pc) };
+                    supplies.then_some(call.target)
                 });
                 if let Some(target) = target {
                     let (matched, admitted) = match target.callee {
@@ -2915,8 +3000,8 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variable, raw);
             let receiver = if instruction.op() == Op::GetField {
                 match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { base, .. }) => field.map(|index| self.loop_fields[index].owner)
-                        .or_else(|| base.register_index()).map(|owner| (owner, state.values[usize::from(owner)].value.ty)),
+                    Some(FieldLookup::Atom { base, .. }) => owner.or_else(|| base.register_index())
+                        .map(|owner| (owner, state.values[usize::from(owner)].value.ty)),
                     _ => None,
                 }
             } else { None };
@@ -3755,7 +3840,8 @@ impl Lowering<'_, '_> {
                 let holds = self.number_relation(state, pc as u32, operator, left, right)?;
                 let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
                 let boolean = self.ins().select(holds, yes, no);
-                self.set_tagged(state, destination, boolean);
+                self.define(state, destination, boolean,
+                    RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged));
             }
         }
         if returns && self.completion == Completion::Number {
@@ -3864,6 +3950,199 @@ mod tests {
                 retain_closed_polls(&function, &[edge], &mut selected);
                 assert_eq!(selected.as_slice(), &polls[..kept]);
             }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "aot")]
+    fn inlined_capture_reads_require_an_admitted_invariant_callee() {
+        let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;if(owner.test())result=(result+1)|0;}return result;}";
+        let program = crate::Engine::specialize(source, "capture-entry.js").unwrap();
+        let named = |name: &str| program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let caller = named("run");
+        let other = named("other") as u32;
+        let targets = static_call_targets(&program);
+        let unit_for = |polymorphic| super::super::lane_unit::unit(&program, caller as u32,
+            program.function(caller), &|function, pc| {
+                let mut found: Vec<_> = targets[function as usize].get(pc as usize).copied().flatten()
+                    .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
+                    .into_iter().collect();
+                if polymorphic && !found.is_empty() {
+                    found.push(super::super::lane_unit::CallTarget { function: other, callee: CalleeBinding::Function });
+                }
+                found
+            }, &|id| program.function_get(id as usize)).unwrap();
+        for polymorphic in [false, true] {
+            let unit = unit_for(polymorphic);
+            assert_eq!(unit.frames.len(), if polymorphic { 2 } else { 1 });
+            let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
+                matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+                    .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
+            let loops = local_loops(&unit, &program.constants, &[header]);
+            let reads = invariant_reads(&unit, &loops);
+            let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
+                unit.instructions[pc].op() == Op::LoadCapture
+                    && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
+            assert_eq!(captures.len(), if polymorphic { 0 } else { 2 }, "{source}\n{}", program.disassemble());
+            if polymorphic { continue; }
+            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let addresses = (*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize);
+            let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
+                &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa,
+                Coverage::PrefixFrom(header), Completion::StatusAndPc).expect("capture loop region");
+            let function = region.function;
+            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
+            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
+            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+            loops.compute(&function, &cfg, &dom);
+            let calls: Vec<_> = function.layout.blocks().flat_map(|block|
+                function.layout.block_insts(block).map(move |inst| (block, inst))).filter(|&(_, inst)| {
+                    if function.dfg.insts[inst].opcode() != ir::Opcode::CallIndirect { return false; }
+                    let target = function.dfg.resolve_aliases(function.dfg.inst_args(inst)[0]);
+                    let ir::ValueDef::Result(target, _) = function.dfg.value_def(target) else { return false };
+                    matches!(function.dfg.insts[target], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
+                        if imm.bits() as usize == addresses[LaneHelper::FunctionCapture as usize])
+                }).collect();
+            assert_eq!(calls.len(), captures.len(), "one shared capture projection per entry read");
+            for (block, _) in calls {
+                assert!(loops.innermost_loop(block).is_none(), "capture admission must precede the loop");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "aot")]
+    fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
+        let source = r#"
+            let held=4;const prototype={};prototype.test=function(){return held|0;};
+            function fieldChoice(a,b,flag,count){const first=a,second=b;let n=count|0,result=0;
+                while(n>0){n=(n-1)|0;let selected=first;if(flag)selected=second;
+                    if(selected.test())result=(result+1)|0;}return result;}
+            function calleeChoice(a,b,flag,count){const first=a,second=b;let n=count|0,result=0;
+                while(n>0){n=(n-1)|0;let selected=first.test;if(flag)selected=second.test;
+                    if(selected())result=(result+1)|0;}return result;}
+        "#;
+        let program = crate::Engine::specialize(source, "capture-diamond.js").unwrap();
+        let targets = static_call_targets(&program);
+        for name in ["fieldChoice", "calleeChoice"] {
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
+                &|function, pc| targets[function as usize].get(pc as usize).copied().flatten()
+                    .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
+                    .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
+            assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
+            let loops = local_loops(&unit, &program.constants, &[0]);
+            assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
+            let reads = invariant_reads(&unit, &loops);
+            assert!(!reads.values().flatten().any(|read|
+                unit.instructions[read.pc].op() == Op::LoadCapture
+                    && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
+                "a skipped copy cannot prove the closure environment: {name}\n{}", program.disassemble());
+        }
+    }
+
+    #[test]
+    fn capture_entry_preserves_distinct_environments_and_mutations() {
+        let source = r#"
+            function make(held,suspended){
+                class State {constructor(state){this.state=state;}
+                    test(){return (this.state&held)!==0||this.state===suspended;}}
+                return {task:new State(5),set(a,b){held=a;suspended=b;}};
+            }
+            function run(task,count){let result=0;while(count>0){count=(count-1)|0;
+                task.state=(task.state+1)|0;if(task.test())result=(result+1)|0;}return result;}
+            function expected(state,count,held,suspended){let result=0;for(let i=0;i<count;i++){
+                state=(state+1)|0;if((state&held)!==0||state===suspended)result++;}return result;}
+            const a=make(4,2),b=make(8,3);
+            for(let warm=0;warm<96;warm++){run(a.task,17);run(b.task,17);}
+            for(let mask=0;mask<16;mask++){a.set(mask,7);a.task.state=0;b.task.state=0;
+                if(run(a.task,257)!==expected(0,257,mask,7)||run(b.task,257)!==expected(0,257,8,3))throw 'environment';}
+            let effects=0;a.set({valueOf(){effects++;return 4;}},2);a.task.state=0;
+            if(run(a.task,17)!==expected(0,17,4,2)||effects!==17)throw 'coercion';
+            function tdz(count){const task={state:0,test(){return (this.state&held)!==0;}};
+                const result=run(task,count);let held=4;return result;}
+            if(tdz(0)!==0)throw 'zero-trip';
+            let caught=false;try{tdz(1);}catch(error){caught=error instanceof ReferenceError;}
+            if(!caught)throw 'tdz';throw 42;
+        "#;
+        // CommonJS admits this source inside a function environment. Keep that
+        // capture ownership/layout rather than testing only global bindings.
+        let source = format!("(function(exports,require,module,__filename,__dirname){{{source}}})(undefined,undefined,undefined,undefined,undefined);");
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "capture-entry.cts") }
+                else { crate::Engine::specialize(&source, "capture-entry.cjs") }.unwrap();
+            #[cfg(feature = "aot")]
+            {
+                // Exercise the linked unit/inliner path too: execution through
+                // the dynamic VM alone need not select the same region entries.
+                let module = crate::lower_native_js_module(&program, "capture_entry").unwrap();
+                let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+                for function in module.functions {
+                    if let super::super::super::native_object::NativeFunction::Definition { function, .. } = function {
+                        super::super::super::jit_backend::compile_function(function, &*isa, None, |_, _| Ok(())).unwrap();
+                    }
+                }
+            }
+            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+                let mut vm = Vm::new(crate::test_host::TestHost::default());
+                vm.set_execution_mode(mode);
+                vm.programs.enable_js_jit_diagnostics();
+                vm.programs.enable_js_lane_methods();
+                let error = vm.execute(&program).unwrap_err();
+                assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
+                #[cfg(not(quench_profiled))]
+                if mode == crate::ExecutionMode::Compiled {
+                    let caller = program.functions.iter().position(|body|
+                        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "run")).unwrap();
+                    let view = vm.programs.lane_views(super::super::super::program_store::ProgramId::MAIN).unwrap()
+                        .get(caller).and_then(super::super::super::program_store::derived_lane_view).unwrap();
+                    let report = view.body_stats.report(0).expect("native predicate loop must publish");
+                    assert!(report.contains("\"frames\":2"), "exercise both closure alternatives: {report}");
+                    assert!(!report.contains("\"completed\":0,"), "predicate loop must complete natively: {report}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn comparison_boolean_proofs_survive_branch_joins() {
+        let program = crate::Engine::specialize(
+            "function predicate(x){let result;if(x<0)result=x===-1;else result=x===1;if(result)return 7;return 9;}",
+            "boolean-join.js").unwrap();
+        let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+            &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa,
+            Coverage::Full, Completion::StatusAndPc).unwrap();
+        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
+        // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let mut frame = super::super::LaneFrame::new();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        frame.dispatch.refresh_object_bases(&vm);
+        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.dispatch.receiver = Value::UNDEFINED.to_bits();
+        frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
+        for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
+            let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
+            registers[0] = Value::number(input);
+            let mut word = 0;
+            let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+            assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
+            assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
+        }
+        // This region selects an int32 entry view. Other Number representations
+        // must recover before any guest operation, preserving their exact bits.
+        for input in [-0.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+            let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
+            registers[0] = Value::number(input);
+            let before = registers.clone();
+            let mut word = u64::MAX;
+            let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+            assert_eq!((status, word), (NATIVE_JS_STOPPED, 0));
+            assert_eq!(registers, before);
         }
     }
 

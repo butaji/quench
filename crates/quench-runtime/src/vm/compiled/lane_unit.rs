@@ -193,6 +193,20 @@ impl Unit {
 /// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
 #[cfg(feature = "aot")]
 pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
+    #[derive(Clone, Copy)]
+    enum Definition { Closure(u32), Name(crate::bytecode::Atom) }
+    // Derive a flat constant-index projection once, without allocating lookup
+    // nodes or rescanning all names at each method definition.
+    let constant_names: Vec<_> = {
+        let mut names: Vec<_> = program.atoms.iter().enumerate().map(|(atom, name)|
+            (name, crate::bytecode::Atom::try_from(atom).expect("validated atom index"))).collect();
+        names.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        program.constants.iter().map(|constant| match constant {
+            crate::bytecode::Constant::String(name) => names.binary_search_by(|(candidate, _)|
+                candidate.cmp(&name.as_ref())).ok().map(|index| names[index].1),
+            _ => None,
+        }).collect()
+    };
     let mut methods = vec![None::<Option<u32>>; program.atoms.len()];
     let mut captured = Vec::new();
     let mut offsets = Vec::with_capacity(program.function_count() + 1);
@@ -206,24 +220,35 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
             offsets.push(start);
             parents.push(function.parent);
             captured.resize(start + usize::from(function.locals), None);
-            let mut closures = vec![None; usize::from(function.registers)];
+            let mut definitions = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
                 if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
-                    && let Some(id) = closures.get(usize::from(instruction.register_a())).copied().flatten() {
+                    && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
                         observe(&mut methods[instruction.atom_index() as usize], id);
                     }
+                if instruction.op() == Op::DefinePropertyRecord
+                    && matches!(instruction.property_definition_mode(),
+                        Some(crate::bytecode::PropertyDefinitionMode::Method | crate::bytecode::PropertyDefinitionMode::ReadonlyMethod))
+                    && let Some(Definition::Closure(id)) = definitions[usize::from(instruction.register_a())]
+                    && let Some(Definition::Name(atom)) = definitions[usize::from(instruction.register_c())] {
+                        // Class definitions use an explicit key register. Only
+                        // an admitted literal name contributes a body hint;
+                        // computed effects/accessor results remain dynamic.
+                        observe(&mut methods[atom as usize], id);
+                    }
                 if matches!(instruction.op(), Op::StoreLocal | Op::StoreEnvLocal)
-                    && let Some(target) = closures.get(usize::from(instruction.register_a())).copied().flatten()
+                    && let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten()
                     && let Some(slot) = captured[start..].get_mut(instruction.local_slot()) {
                         observe(slot, target);
                     }
                 let value = match instruction.op() {
-                    Op::MakeClosure => Some(instruction.closure_function_index()),
-                    Op::Move => closures.get(usize::from(instruction.register_b())).copied().flatten(),
+                    Op::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
+                    Op::LoadConst => constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
+                    Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
                     _ => None,
                 };
-                if let Some(register) = instruction.defined_register() { closures[usize::from(register)] = value; }
-                if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { closures.fill(None); }
+                if let Some(register) = instruction.defined_register() { definitions[usize::from(register)] = value; }
+                if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { definitions.fill(None); }
             }
         });
     }
@@ -660,6 +685,61 @@ pub(crate) fn with_budget<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn method_hints_follow_definition_records_and_reject_conflicting_bodies() {
+        for (definition, expected) in [
+            ("class Thing { probe(){return 1;} }", true),
+            ("class Thing { static probe(){return 1;} }", true),
+            ("let mask=4;class Thing { probe(){return (this.bits&mask)!==0||this.bits===2;} }", true),
+            // Computed keys travel through ToPropertyKey and environment
+            // homes; this literal-register proof deliberately declines them.
+            ("class Thing { ['probe'](){return 1;} }", false),
+            ("function make(mask){return class Thing { probe(){return mask|0;} };}", true),
+            ("class Thing { probe(){return 1;} probe(){return 2;} }", false),
+            ("class First { probe(){return 1;} } class Second { probe(){return 2;} }", false),
+            ("class Thing { probe(){return 1;} } Thing.prototype.probe=function replacement(){return 2;};", false),
+            ("class Thing { get probe(){return function(){return 1;};} }", false),
+            ("class Thing { set probe(value){} }", false),
+            ("class Thing { get probe(){return 1;} set probe(value){} }", false),
+            ("class Thing { [unknownName](){return 1;} }", false),
+        ] {
+            let source = format!("{definition} function caller(receiver){{let result=receiver.probe();return result;}}");
+            for typescript in [false, true] {
+                let admitted = if typescript { crate::Engine::specialize_typescript(&source, "method-hints.cts") }
+                    else { crate::Engine::specialize(&source, "method-hints.cjs") };
+                let program = match admitted {
+                    Ok(program) => program,
+                    Err(errors) if typescript && !expected => {
+                        // OXC rejects duplicate TypeScript implementations;
+                        // JavaScript's accepted duplicate still exercises the
+                        // conflicting-definition path below.
+                        assert!(errors.iter().any(|error|
+                            error.syntax_message().contains("Identifier `probe` has already been declared")), "{definition}: {errors:?}");
+                        continue;
+                    }
+                    Err(errors) => panic!("{definition}: {errors:?}"),
+                };
+                let caller = program.functions.iter().position(|body|
+                    body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "caller")).unwrap();
+                let targets = static_call_targets(&program);
+                assert_eq!(targets[caller].iter().filter(|target| target.is_some()).count(), usize::from(expected),
+                    "{definition}\n{}", program.disassemble());
+                if expected {
+                    let target = targets[caller].iter().copied().flatten().next().unwrap();
+                    assert!(program.function(target as usize).instructions().any(|instruction| instruction.op() == Op::Return
+                        || instruction.returns_from_frame()));
+                    let unit = unit(&program, caller as u32, program.function(caller), &|function, pc|
+                        targets[function as usize].get(pc as usize).copied().flatten()
+                            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                        &|id| program.function_get(id as usize)).unwrap();
+                    assert_eq!(unit.frames.len(), 1, "method hint must reach the shared guarded inliner: {definition}");
+                    assert_eq!(unit.frames[0].target, CallTarget { function: target, callee: CalleeBinding::Function });
+                }
+            }
+        }
+    }
 
     #[cfg(feature = "aot")]
     #[test]
