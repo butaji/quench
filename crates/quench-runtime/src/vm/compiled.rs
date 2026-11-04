@@ -2091,8 +2091,10 @@ pub(super) struct LaneHelpers {
     instance_of: usize,
     /// A fused `typeof` test of a heap value (`lane_typeof_is`).
     typeof_is: usize,
-    /// A planned construction (`lane_construct`).
+    /// A planned construction (`lane_construct`), inside an inlined frame.
     construct: usize,
+    /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
+    construct_call: usize,
     /// A capture's store (`dispatch_fast::lane_body_capture_store`).
     capture_set: usize,
 }
@@ -7129,6 +7131,7 @@ impl<H: Host> Vm<H> {
             instance_of: lane_instance_of::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             typeof_is: lane_typeof_is::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             construct: lane_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
+            construct_call: super::dispatch_fast::lane_body_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;

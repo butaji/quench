@@ -21784,6 +21784,46 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
 }
 
 #[test]
+fn lane_bodies_construct_by_activation() {
+    // A lane body's `new` whose constructor does more than store fields (an array literal,
+    // a nested construction and call, a returned object) runs the constructor's activation
+    // (`dispatch_fast::lane_body_construct`); a planned one and a returned one by the plan.
+    let source = r#"
+     (function () {
+      function OC() { this.elms = []; }
+      OC.prototype.add = function (e) { this.elms.push(e); };
+      OC.prototype.size = function () { return this.elms.length; };
+      function V(n) { this.n = n; this.cs = new OC(); this.cs.add(n); }
+      function R(x) { this.x = x; if (x > 5) return { x: -x }; }
+      function P(a, b) { this.a = a; this.b = b; }
+      function make(i) { return new P(i, i + 1); }
+      function f(i) {
+        var a = new OC(); a.add(i); a.add(i + 1);
+        var v = new V(i);
+        var r = new R(i % 9);
+        var p = make(i);
+        return a.size() + v.cs.size() + v.n + r.x + p.b;
+      }
+      let t = 0; for (let i = 0; i < 40000; i++) t = (t + f(i)) | 0;
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-construct-activation.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1600093342.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object

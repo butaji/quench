@@ -1119,7 +1119,7 @@ impl Lowering<'_, '_> {
             }
             Op::Call if (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
-                && !instruction.parameter_eval() => Some(self.call(state, pc, instruction)),
+                && !instruction.parameter_eval() => Some(self.call(state, pc, instruction, self.helpers.call)),
             // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
             // and an untyped one is taken for an int, tested once, which leaves where it is not.
             Op::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
@@ -1401,8 +1401,25 @@ impl Lowering<'_, '_> {
     /// construction the plan does not make leaves at the record, before any effect. The
     /// allocation may move the property arena, whose base and length the body reloads, and
     /// the slot addresses its proofs hold retire.
+    /// The property arena's base and length again, which an allocation may have moved.
+    fn reload_property_arena(&mut self) {
+        let receiver = &self.entry.as_ref().expect("entry facts").receiver;
+        let (properties, properties_len) = (receiver.properties, receiver.properties_len);
+        let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, property_values));
+        let len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, property_len));
+        self.builder.def_var(properties, values);
+        self.builder.def_var(properties_len, len);
+    }
+
     fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
+        // The body's own construction runs as a call does (`dispatch_fast::lane_body_construct`):
+        // the callee's plan, else its activation.
+        if matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
+            && window.base + window.count <= self.unit.caller_registers
+            && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
+            return Some(self.call(state, pc, instruction, self.helpers.construct_call));
+        }
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,
             (true, Some(super::lane_unit::Origin::Caller(record))) if instruction.result_flags() == crate::bytecode::RETURN_REGISTER => Some(record),
@@ -1425,12 +1442,7 @@ impl Lowering<'_, '_> {
         let this = emit_lane_helper_call(&mut self.builder, payload, self.helpers.construct, &[payload, callee, arguments, argc]);
         let built = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, built, exit);
-        let receiver = &self.entry.as_ref().expect("entry facts").receiver;
-        let (properties, properties_len) = (receiver.properties, receiver.properties_len);
-        let values = emit_js_payload_word(&mut self.builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
-        let len = emit_js_payload_word(&mut self.builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
-        self.builder.def_var(properties, values);
-        self.builder.def_var(properties_len, len);
+        self.reload_property_arena();
         state.layouts.clear();
         if let Some(record) = completes {
             self.return_value(record, this);
@@ -1697,7 +1709,12 @@ impl Lowering<'_, '_> {
     /// the caller's registers, which it writes back first: a completed call's result is in
     /// its register; a missed one leaves at the call; one that left the lane in its callee's
     /// activation leaves the body there too (`LaneExit::Callee`).
-    fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    /// A call (or a construction, by `helper`) the body does not inline, by `helper`'s
+    /// protocol: the body's registers written back, then a direct call of a `Call`'s compiled
+    /// callee or the helper; its completion continues, a leave in the callee stops the body,
+    /// and a miss leaves at `pc`. The callee may allocate, which may move the property arena,
+    /// whose base and length the body reloads.
+    fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, helper: usize) -> bool {
         let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
             self.exit(state, pc as u32);
             return false;
@@ -1712,16 +1729,16 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
         let completed = self.builder.create_block();
-        let helper = self.builder.create_block();
-        match self.direct.get(&pc).copied() {
+        let generic = self.builder.create_block();
+        match self.direct.get(&pc).copied().filter(|_| instruction.op() == Op::Call) {
             // SAFETY: the body owns the callee for as long as its code runs.
-            Some(callee) => self.direct_call(instruction, unsafe { &*callee }, helper, completed),
-            None => { self.ins().jump(helper, &[]); }
+            Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
+            None => { self.ins().jump(generic, &[]); }
         }
-        self.builder.switch_to_block(helper);
+        self.builder.switch_to_block(generic);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
         let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
-        let status = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.call, &[context, call_word]);
+        let status = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[context, call_word]);
         let other = self.builder.create_block();
         let left = self.builder.create_block();
         self.builder.set_cold_block(left);
@@ -1746,6 +1763,7 @@ impl Lowering<'_, '_> {
         // The callee may have changed any object: block-local proofs of them retire.
         state.shapes.clear();
         state.layouts.clear();
+        self.reload_property_arena();
         let destination = instruction.result_register();
         let base = self.registers_base;
         let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));

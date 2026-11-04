@@ -14564,7 +14564,7 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
 }
 
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
@@ -14602,7 +14602,87 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     }
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, false);
+    lane_body_activate(cx, r, ip, target, passed, argc, this, false)
+}
+
+/// A lane body's `new`, as the lane's own construction does (`lane_script_construct`): the
+/// callee's plan, else the receiver its target allocates and, where its body does more
+/// than store fields, its activation, whose completion yields its returned object or the
+/// receiver. A returned construction takes the plan only. Its results are `lane_body_call`'s.
+pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
+    let cx = context as usize as *mut LaneContext<H>;
+    let vm = unsafe { vm(cx) };
+    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
+    let i = unsafe { &*ip };
+    let callee = r.get(i.b);
+    if Vm::<H>::lane_shadow_active()
+        || !unsafe { (*cx).script_calls && (*cx).script_constructs }
+        || vm.construct_target.is_some()
+        || vm.with_scope_entered
+        || vm.heap.should_collect()
+    {
+        return LANE_CALL_MISSED;
+    }
+    // The callee's plan first, the common `new C(…)`, which needs no call target; a returned
+    // construction completes by it alone.
+    if let Some(this) = lane_planned_construction(vm, callee, r, i) {
+        note_allocation(vm);
+        r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+        return LANE_CALL_COMPLETED;
+    }
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        return LANE_CALL_MISSED;
+    }
+    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+    let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return LANE_CALL_MISSED };
+    let argc = ImmediateLayout::argument_count(i.imm());
+    if !target.constructs
+        || target.forwards()
+        || target.entry != CallEntry::Activates
+        || argc > target.params
+        || argc > FIXED_ARGUMENT_COPIES
+        || !lane_activation_room(vm, &target)
+        || lane_crosses::<H, false>(cx, &target)
+    {
+        return LANE_CALL_MISSED;
+    }
+    let built = if target.initializes {
+        // SAFETY: the context's program outlives the lane run.
+        lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i)
+    } else {
+        vm.inline_construct_receiver(callee).map(|this| (this, false))
+    };
+    let Some((this, initialized)) = built else { return LANE_CALL_MISSED };
+    // Allocating the receiver can make a collection due.
+    note_allocation(vm);
+    if initialized {
+        r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+        return LANE_CALL_COMPLETED;
+    }
+    // SAFETY: a construction passes its arguments from register `c` on.
+    let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
+    lane_body_activate(cx, r, ip, &target, passed, argc, this, true)
+}
+
+/// The activation of `target` a lane body's call (`constructs`: `new`) at `ip` makes, its
+/// `argc` arguments at `passed`, run by the target's own body where it has one: its
+/// completion writes the call's register (`LANE_CALL_COMPLETED`), and any other end leaves
+/// the lane in the activation (`LANE_CALL_LEFT`).
+#[allow(clippy::too_many_arguments)]
+fn lane_body_activate<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: *const Value,
+    argc: u16,
+    this: Value,
+    constructs: bool,
+) -> u64 {
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
+    let vm = unsafe { vm(cx) };
+    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
     let leave = |resume: Ip, acc: Value| {
         unsafe {
             (*cx).callee_resume = resume;
@@ -14627,6 +14707,11 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     own.note_lane_body_end(exit);
     match resumed {
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
+        // A construction's completion yields its returned object or the receiver.
+        LaneBodyLeft::Completed(_, value) if constructs => {
+            lane_complete_activation(cx, ip, value).expect("the construction made an activation");
+            LANE_CALL_COMPLETED
+        }
         LaneBodyLeft::Completed(_, value) => {
             lane_return_to_body(cx, value).expect("the call made a plain activation");
             LANE_CALL_COMPLETED
