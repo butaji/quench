@@ -464,6 +464,10 @@ mod activation_primitives;
 #[path = "primitive_bench/commutative_reads.rs"]
 mod commutative_read_primitives;
 
+#[cfg(all(test, feature = "bench-primitives"))]
+#[path = "primitive_bench/indexed_compositions.rs"]
+mod indexed_compositions;
+
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
 /// least one. Only the logical range is initialized and made live.
 const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
