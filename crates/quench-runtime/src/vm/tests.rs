@@ -21999,6 +21999,38 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
 }
 
 #[test]
+fn lane_feedback_stores_take_polymorphic_own_slots() {
+    // A store to `this` across receivers of two shapes, which a body left at, stores through
+    // the site's megamorphic own entries (`Vm::polymorphic_own_field_store_hit`), a widening
+    // double among them, and every read sees what the interpreter's does.
+    let source = r#"
+     (function () {
+      function inherits(child, parent) { function I() {} I.prototype = parent.prototype; child.prototype = new I(); }
+      function B(a) { this.a = a; this.direction = 0; }
+      B.prototype.choose = function (k) { this.direction = (k & 1) ? 1 : -1; if (k % 7 === 0) this.direction = 0.5; return this.direction; };
+      function S(a) { this.a = a; this.direction = 0; this.scale = 2; this.offset = 3; } inherits(S, B);
+      const xs = [new B(1), new S(2), new B(3), new S(4)];
+      let t = 0;
+      for (let r = 0; r < 30000; r++) for (let i = 0; i < xs.length; i++) t += xs[i].choose(r + i) + xs[i].direction;
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-polymorphic-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(17138.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object

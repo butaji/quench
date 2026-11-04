@@ -7034,7 +7034,8 @@ unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u
 
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
 /// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
-/// object has (`Vm::primary_own_field_store_hit`), else the cached add of the property
+/// object has (`Vm::primary_own_field_store_hit`, or a polymorphic site's
+/// `Vm::polymorphic_own_field_store_hit`), else the cached add of the property
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
@@ -7048,7 +7049,13 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::Preserve) {
         return 1;
     }
-    if vm.heap.should_collect() || !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+    if vm.heap.should_collect() {
+        return 0;
+    }
+    // A site past one shape stores through its megamorphic own entries, which may widen the
+    // object's storage; the body retires its proofs after this store either way.
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_none()
+        && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }
     super::dispatch_fast::note_allocation(vm);
