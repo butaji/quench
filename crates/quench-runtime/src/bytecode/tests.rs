@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn register_outputs_distinguish_local_indices_and_optional_encoding() {
+    let mut numeric = WideInstruction::new(Op::Binary, 1, 0, 0, 0);
+    assert_eq!(numeric.defined_register(), Some(1));
+    assert_eq!(numeric.written_registers().collect::<Vec<_>>(), [1]);
+    let local = 1 + numeric.result_register();
+    numeric.set_result_local_target(local);
+    assert_eq!(numeric.numeric_local_target(), Some(local));
+    assert_eq!(numeric.defined_register(), None);
+    assert_eq!(numeric.written_registers().count(), 0);
+
+    let mut store = WideInstruction::new(Op::StoreLocalPlain, 1, NO_OPTIONAL_REGISTER, 0, 0);
+    assert_eq!(store.written_registers().count(), 0);
+    store.set_optional_register_b(Some(2));
+    assert_ne!(store.b(), 2, "the operand is a biased encoding, not a register index");
+    assert_eq!(store.written_registers().collect::<Vec<_>>(), [2]);
+    let name_call = WideInstruction::new(Op::LoadNameCall, 1, 2, 0, 0);
+    assert_eq!(name_call.written_registers().collect::<Vec<_>>(), [1, 2]);
+}
+
+#[test]
 fn generated_js_denotations_cover_the_native_numeric_lowerings() {
     assert_eq!(Op::LoadConst.js_denotation(), JsDenotation::LoadConst);
     assert_eq!(Op::Move.js_denotation(), JsDenotation::Move);

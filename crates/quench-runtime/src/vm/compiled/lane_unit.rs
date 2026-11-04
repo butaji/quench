@@ -189,6 +189,12 @@ impl Unit {
     }
 }
 
+#[cfg(feature = "aot")]
+/// Every register output retires the previous hypothesis before its new value is recorded.
+fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction) {
+    for register in instruction.written_registers() { hints[usize::from(register)] = None; }
+}
+
 /// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
 /// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
 #[cfg(feature = "aot")]
@@ -247,6 +253,7 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
                     Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
                     _ => None,
                 };
+                clear_written_hints(&mut definitions, instruction);
                 if let Some(register) = instruction.defined_register() { definitions[usize::from(register)] = value; }
                 if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { definitions.fill(None); }
             }
@@ -276,6 +283,7 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
                 Op::Move => methods_by_register[usize::from(instruction.register_b())],
                 _ => None,
             };
+            clear_written_hints(&mut methods_by_register, instruction);
             if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
             // Hints survive control-flow edges, including loops around a local
             // closure. They are hypotheses only: inline admission checks the
@@ -685,6 +693,30 @@ pub(crate) fn with_budget<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_hints_keep_numeric_local_indices_out_of_register_rows() {
+        // Captured prefix bindings separate the local and register index spaces;
+        // the loop closure keeps the caught-result local in its frame slot.
+        let names: Vec<_> = (0..16).map(|index| format!("prefix{index}")).collect();
+        let bindings = names.iter().map(|name| format!("{name}=0")).collect::<Vec<_>>().join(",");
+        let source = format!("function check(marker){{let {bindings};function observe(){{return [{}];}}for(const item of [1]){{let capture=()=>item;let caught=false;try{{throw item;}}catch(error){{caught=error===marker;}}consume(caught,capture);}}return observe;}}", names.join(","));
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "local-hints.cts") }
+                else { crate::Engine::specialize(&source, "local-hints.cjs") }.unwrap();
+            program.validate().unwrap();
+            assert!(program.functions.iter().any(|function| function.instructions().any(|instruction|
+                instruction.numeric_local_target().is_some_and(|local|
+                    local >= function.registers && local < function.locals))),
+                "the regression must exercise a valid local outside the register row:\n{}", program.disassemble());
+            let targets = static_call_targets(&program);
+            assert_eq!(targets.len(), program.function_count());
+            for (function, targets) in program.functions.iter().zip(targets) {
+                assert_eq!(targets.len(), function.code.len());
+            }
+        }
+    }
 
     #[cfg(feature = "aot")]
     #[test]

@@ -18,7 +18,6 @@
 //! lane resumes there. Nothing in a run allocates, collects or calls guest code.
 
 use super::*;
-use crate::bytecode::FieldLayout;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, ObjectHeader, ObjectRecord, PackedAccess};
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
@@ -406,22 +405,7 @@ fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Valu
 
 /// The registers an instruction writes, by its operand layouts.
 pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
-    let mut written = Vec::new();
-    for field in crate::bytecode::InstructionField::ALL {
-        let layout = instruction.op().field_layout(*field);
-        let value = match field {
-            crate::bytecode::InstructionField::A => instruction.a(),
-            crate::bytecode::InstructionField::B => instruction.b(),
-            crate::bytecode::InstructionField::C => instruction.c(),
-        };
-        match layout {
-            FieldLayout::ResultRegister | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
-                written.push(value & crate::bytecode::REGISTER_MASK)
-            }
-            _ => {}
-        }
-    }
-    written
+    instruction.written_registers().collect()
 }
 
 impl<'a, 'f> Lowering<'a, 'f> {
