@@ -558,6 +558,77 @@ fn primitive_array_proved_store_batch(b: &mut Bencher) {
     });
 }
 
+#[derive(Clone, Copy)]
+enum ArrayStoreKinds {
+    Integers,
+    Fractions,
+    Alternating,
+}
+
+/// Two complete passes per iteration: 128 stores, plus 128 reads in the chain cases.
+/// Every element encodes its successor, so the dependent cases traverse the same cycle
+/// regardless of kind. Alternating passes change every element's kind in both directions;
+/// stable passes use the same traversal, payloads and proof checks without kind changes.
+fn array_proved_store_pattern<const DEPENDENT: bool>(b: &mut Bencher, kinds: ArrayStoreKinds) {
+    let successors = std::array::from_fn::<_, BATCH_VALUES, _>(|index| (index + 1) % BATCH_VALUES);
+    let integers = successors.map(|index| Value::integer(index as i32));
+    let fractions = successors.map(|index| Value::number(index as f64 + 0.5));
+    let writes = match kinds {
+        ArrayStoreKinds::Integers => [integers, integers],
+        ArrayStoreKinds::Fractions => [fractions, fractions],
+        ArrayStoreKinds::Alternating => [integers, fractions],
+    };
+    let mut heap = Heap::new();
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(Object::new(Value::NULL), writes[1]),
+    });
+    let mut proofs = Box::new(ArrayStorageProofs::new());
+    let _scope = LaneProofScope::enter();
+    assert!(heap.prove_array_storage(&mut proofs, 0, array));
+    let mut cursor = 0;
+    b.iter(|| {
+        for values in &writes {
+            for position in 0..BATCH_VALUES {
+                let index = if DEPENDENT { cursor } else { position };
+                if DEPENDENT {
+                    // Setup encodes a nonnegative successor index with an optional half.
+                    // Truncation decodes that link; this is part of the composed cost.
+                    cursor = black_box(&*proofs)
+                        .element(0, black_box(array), black_box(index))
+                        .unwrap()
+                        .as_number()
+                        .unwrap() as usize;
+                }
+                assert!(black_box(&mut *proofs).replace(
+                    0, black_box(array), black_box(index), black_box(values[index]),
+                ));
+            }
+        }
+    });
+    assert_eq!(cursor, 0);
+    let record = heap.record_array(array).unwrap();
+    assert_eq!(&**record.elements(), &writes[1]);
+    assert_eq!(record.elements().holds_only_int32(), matches!(kinds, ArrayStoreKinds::Integers));
+}
+
+macro_rules! array_store_patterns {
+    ($($name:ident: $dependent:literal, $kinds:ident;)*) => {$(
+        #[bench]
+        fn $name(b: &mut Bencher) {
+            array_proved_store_pattern::<$dependent>(b, ArrayStoreKinds::$kinds);
+        }
+    )*};
+}
+
+array_store_patterns! {
+    primitive_array_proved_store_integer_pair_batch: false, Integers;
+    primitive_array_proved_store_fraction_pair_batch: false, Fractions;
+    primitive_array_proved_store_kind_transition_pair_batch: false, Alternating;
+    primitive_array_proved_read_store_integer_chain_pair_batch: true, Integers;
+    primitive_array_proved_read_store_fraction_chain_pair_batch: true, Fractions;
+    primitive_array_proved_read_store_kind_transition_chain_pair_batch: true, Alternating;
+}
+
 #[bench]
 fn primitive_array_cow_detach_one_array(b: &mut Bencher) {
     let elements = ArrayElements::from(Inputs::Integers.values());
