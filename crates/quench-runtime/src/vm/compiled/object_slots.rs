@@ -118,6 +118,21 @@ impl InheritedConstant {
     pub(crate) fn values(&self) -> &[(u32, Value)] {
         &self.values[..usize::from(self.count)]
     }
+
+    /// These values and `other`'s, read under one epoch, each prototype once; `None` where
+    /// the epochs differ, a prototype holds two values, or there are more than the read folds.
+    pub(crate) fn joined(self, other: Self) -> Option<Self> {
+        if self.epoch != other.epoch { return None; }
+        let mut values: Vec<(u32, Value)> = self.values().to_vec();
+        for (prototype, value) in other.values() {
+            match values.iter().find(|(known, _)| known == prototype) {
+                Some((_, held)) if held != value => return None,
+                Some(_) => {}
+                None => values.push((*prototype, *value)),
+            }
+        }
+        Self::of(values, self.epoch)
+    }
 }
 
 impl NativeFieldLoad {

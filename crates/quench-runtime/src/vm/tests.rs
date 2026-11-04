@@ -21958,6 +21958,47 @@ fn lane_bodies_read_function_fields_natively() {
 }
 
 #[test]
+fn lane_inherited_reads_fold_deep_sibling_chains() {
+    // Receivers of sibling classes share one field shape and differ in prototype, whose
+    // methods sit one to three links up; their reads fold to each prototype's value
+    // (`Vm::native_field_read_descriptors`), and a replaced override reads as the interpreter's.
+    let source = r#"
+     (function () {
+      function inherits(child, parent) { function I() {} I.prototype = parent.prototype; child.prototype = new I(); }
+      function C(s) { this.s = s; }
+      C.prototype.mark = function () { return this.s + 1; };
+      C.prototype.run = function () { return this.mark() * 2 + this.kind(); };
+      function U(s) { this.s = s; } inherits(U, C);
+      U.prototype.kind = function () { return 1; };
+      function E(s) { this.s = s; } inherits(E, U);
+      function B(s) { this.s = s; } inherits(B, C);
+      B.prototype.kind = function () { return 3; };
+      function S(s) { this.s = s; } inherits(S, B);
+      S.prototype.mark = function () { return this.s + 100; };
+      const xs = [new U(1), new E(2), new B(3), new S(4)];
+      let t = 0;
+      for (let r = 0; r < 20000; r++) for (let i = 0; i < xs.length; i++) t += xs[i].run();
+      S.prototype.mark = function () { return this.s + 1000; };
+      for (let r = 0; r < 2000; r++) for (let i = 0; i < xs.length; i++) t += xs[i].run();
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-deep-inheritance.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(8748000.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object

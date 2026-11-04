@@ -1480,9 +1480,23 @@ impl<H: Host> Vm<H> {
 
     /// `native_field_load_descriptors` with the entries whose slot an immediate prototype
     /// holds (`NativeFieldLoad::holder`): what a read, not a store, may take from the site.
+    /// The site's cached reads, with its proved inherited entries (`inherited_native_loads`)
+    /// joined in: a receiver shape the cache does not name takes its proved entries' load, and
+    /// receivers of one shape whose prototypes differ (sibling classes whose instances have the
+    /// same fields) share one load, its constant selecting each prototype's value
+    /// (`InheritedConstant::joined`).
     pub(super) fn native_field_read_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
-        let own = self.native_field_descriptors(site, true);
-        if own.is_empty() { self.inherited_native_loads(site) } else { own }
+        let mut loads = self.native_field_descriptors(site, true);
+        for load in self.inherited_native_loads(site) {
+            match loads.iter_mut().find(|known| known.shape == load.shape) {
+                Some(known) => if let (Some(held), Some(more)) = (known.inherited, load.inherited)
+                    && let Some(joined) = held.joined(more) {
+                    known.inherited = Some(joined);
+                },
+                None => loads.push(load),
+            }
+        }
+        loads
     }
 
     /// The reads a site's proved inherited entries answer (`proved_inherited_field_hit`), as
