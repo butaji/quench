@@ -2225,6 +2225,7 @@ thread_local! {
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_FORWARD_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
+    static LOOP_INT32_PHIS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
@@ -18665,10 +18666,12 @@ mod tests {
                     _ => None,
                 }).unwrap();
             FIELD_FORWARD_SITE.with(|site| site.set(Some((count_read, 0))));
+            LOOP_INT32_PHIS.with(|count| count.set(0));
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             INT32_PROJECTION_REUSES.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
+            assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) > 0, "carry the updated count unboxed across the loop backedge");
             assert!(FIELD_FORWARD_SITE.with(|site| site.replace(None).unwrap().1) > 0,
                 "forward the loop-header count through the inline parameter copy");
             assert!(INT32_PROJECTION_REUSES.with(std::cell::Cell::get) > 0, "reuse the control value's numeric projection");
@@ -18683,6 +18686,63 @@ mod tests {
             assert_eq!(writes, 0, "packed integer stores must stay native");
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
             assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn loop_field_phis_preserve_aliases_widening_and_effects() {
+        let source = r#"
+            function advance(s) { s.count = s.count - 1; }
+            function run(s) {
+                let iterations=0;
+                while(s.count>0) { advance(s); iterations++; }
+                return iterations;
+            }
+            function alias(s,other) {
+                let iterations=0;
+                while(s.count>0) {
+                    other.count=other.count-1;
+                    if(++iterations===4)break;
+                }
+                return iterations;
+            }
+            function replace(s,other) {
+                let iterations=0;
+                while(s.count>0) { s=other; s.count--; iterations++; }
+                return iterations;
+            }
+            for(let i=0;i<64;i++) {
+                if(run({count:3})!==3)throw 'integer';
+                let s={count:3};
+                if(alias(s,s)!==3 || s.count!==0)throw 'same alias';
+                s={count:2};let other={count:9};
+                if(alias(s,other)!==4 || s.count!==2 || other.count!==5)throw 'other alias';
+                if(replace({count:9},{count:2})!==2)throw 'replace';
+            }
+            let s={count:2.5};
+            if(run(s)!==3 || s.count!==-0.5)throw 'fraction';
+            if(run({count:NaN})!==0 || run({count:-0})!==0)throw 'zero trip';
+            let calls=0;
+            s={count:{valueOf(){calls++;return 2;}}};
+            if(run(s)!==2 || calls!==2 || s.count!==0)throw 'coercion';
+            let gets=0,sets=0,count=3;
+            s={get count(){gets++;return count;},set count(v){sets++;count=v;}};
+            if(run(s)!==3 || gets!==7 || sets!==3 || count!==0)throw 'accessor';
+            let marker={},observed=0;
+            s={get count(){if(++observed===3)throw marker;return 2;},set count(v){}};
+            try{run(s);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
+            if(observed!==3)throw 'replayed effect';
+            throw 42;
+        "#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "loop-fields.cts") }
+                else { crate::Engine::specialize(source, "loop-fields.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
     }
 

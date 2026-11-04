@@ -191,6 +191,16 @@ struct NumberReturn {
     fact: VerifiedFact,
 }
 
+#[derive(Clone, Copy)]
+struct LoopRead {
+    value: Variable,
+    ty: Type,
+    representation: Representation,
+    /// The read's actual entry proof, valid while the qualified loop cannot
+    /// replace this receiver or change its shape. Never inferred from feedback.
+    receiver: Option<(Register, Type)>,
+}
+
 pub(super) struct LoweredRegion {
     pub(super) number_result: Option<NativeNumberResult>,
     pub(super) function: ir::Function,
@@ -256,7 +266,9 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<usize>>,
-    hoisted: BTreeMap<usize, (Variable, Type)>,
+    hoisted: BTreeMap<usize, LoopRead>,
+    /// Successful write-through stores defining a loop-header field's SSA variable.
+    carried_stores: BTreeMap<usize, usize>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -769,20 +781,17 @@ fn stores_own(instruction: WideInstruction) -> bool {
         && !instruction.returns_from_frame()
 }
 
-/// Per loop header, the reads its loop repeats unchanged: a loop `[header, back]`
-/// entered by one edge from before it and no other, of instructions that only read
-/// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
-/// writes, by one cached atom it stores to no object, see the same object and value every
-/// iteration. Caller captures also stay fixed: these native operations cannot write an
-/// environment or run guest code. Entries (`starts`) enter no such loop.
-fn invariant_reads(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], starts: &[usize])
-    -> BTreeMap<usize, Vec<usize>> {
+/// Loops with one external entry and no interior entry, whose native operations
+/// only read or replace existing own fields. Misses leave before guest effects.
+/// A sole native entry at the header can supply the same entry proofs.
+fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], starts: &[usize])
+    -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
         ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump).then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| !matches!(instruction.op().control_flow_layout(),
         ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
-    let mut hoists = BTreeMap::new();
+    let mut loops = Vec::new();
     for (back, instruction) in instructions.iter().enumerate() {
         let Some(header) = target(instruction).filter(|header| *header <= back
             && (!starts.contains(header) || starts == [*header])) else { continue };
@@ -795,6 +804,15 @@ fn invariant_reads(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::
         if (entries != 1 && !entry_header) || side
             || starts.iter().any(|start| (header + 1..=back).contains(start))
             || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)) { continue }
+        loops.push((header, back));
+    }
+    loops
+}
+
+fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<usize>> {
+    let mut hoists = BTreeMap::new();
+    for &(header, back) in loops {
+        let body = &unit.instructions[header..=back];
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
@@ -812,6 +830,56 @@ fn invariant_reads(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::
         if !reads.is_empty() { hoists.insert(header, reads); }
     }
     hoists
+}
+
+/// A header's first own-field read may become a loop phi if every write to that
+/// atom targets its stable receiver. Alias proofs are local to a basic block;
+/// unknown aliases decline promotion, never turn into an equality assumption.
+fn carried_field_stores(program: &ResidualProgram, unit: &super::lane_unit::Unit,
+    loops: &[(usize, usize)], leaders: &CompoundBitSet) -> BTreeMap<usize, usize> {
+    let mut stores = BTreeMap::new();
+    for &(header, back) in loops {
+        // A nested lifetime or an implicit polymorphic edge needs its own alias
+        // merge. Decline until that merge is represented, rather than sharing a
+        // variable whose writes another lifetime could hide.
+        if loops.iter().any(|&(other, end)| other != header && other <= back && header <= end)
+            || unit.markers.iter().zip(&unit.frames).any(|(marker, frame)|
+                (header..=back).contains(marker) && frame.alternative.is_some()) { continue; }
+        let read = unit.instructions[header];
+        if read.op() != Op::GetField || read.result_flags() != 0 { continue; }
+        let Some(FieldLookup::Atom { atom, base, .. }) = read.field_lookup() else { continue };
+        let Some(owner) = base.register_index().filter(|owner| *owner < unit.caller_registers) else { continue };
+        if unit.instructions[header..=back].iter().any(|instruction| writes(*instruction).contains(&owner)) { continue; }
+        let mut aliases: CompoundBitSet = CompoundBitSet::with_capacity(usize::from(unit.registers));
+        let mut writes_to_field = Vec::new();
+        let mut valid = true;
+        for pc in header..=back {
+            if leaders.contains(pc) { aliases.clear(); aliases.insert(usize::from(owner)); }
+            if let Some(frame) = unit.markers.iter().position(|marker| *marker == pc).map(|index| unit.frames[index]) {
+                for register in frame.base..frame.base + frame.registers { aliases.remove(usize::from(register)); }
+                for (destination, source) in frame.passed_registers(program.function(frame.target.function as usize)) {
+                    if aliases.contains(usize::from(source)) { aliases.insert(usize::from(destination)); }
+                }
+            }
+            let instruction = unit.instructions[pc];
+            if stores_own(instruction) && instruction.atom_index() == atom {
+                let receiver = match instruction.op() {
+                    Op::SetField | Op::SetFieldStrict => Some(instruction.register_b()),
+                    _ => match unit.origins[pc] {
+                        super::lane_unit::Origin::Inlined { frame, .. } => Some(unit.frames[frame].receiver),
+                        _ => None,
+                    },
+                };
+                if !receiver.is_some_and(|register| aliases.contains(usize::from(register))) { valid = false; break; }
+                writes_to_field.push(pc);
+            }
+            let copied = instruction.op() == Op::Move && aliases.contains(usize::from(instruction.register_b()));
+            for register in writes(instruction) { aliases.remove(usize::from(register)); }
+            if copied { aliases.insert(usize::from(instruction.result_register())); }
+        }
+        if valid { for pc in writes_to_field { stores.insert(pc, header); } }
+    }
+    stores
 }
 
 /// Per block leader, the edges into it, all from before it; `None` for one an entry
@@ -1004,6 +1072,7 @@ pub(super) fn lower(
         number_returns: smallvec::SmallVec::new(),
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
+        carried_stores: BTreeMap::new(),
         at: 0,
         forward: Vec::new(),
         arrived: BTreeMap::new(),
@@ -1116,7 +1185,12 @@ pub(super) fn lower(
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
-    lowering.hoists = invariant_reads(unit, &program.constants, &starts);
+    let loops = local_loops(unit, &program.constants, &starts);
+    lowering.hoists = invariant_reads(unit, &loops);
+    lowering.carried_stores = carried_field_stores(program, unit, &loops, &leaders);
+    for header in lowering.carried_stores.values().copied().collect::<BTreeSet<_>>() {
+        lowering.hoists.entry(header).or_default().push(header);
+    }
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
     for start in &starts { lowering.entered.insert(*start); }
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
@@ -1855,10 +1929,20 @@ impl Lowering<'_, '_> {
         if self.consumed.contains(pc) {
             return true;
         }
-        if let Some((variable, ty)) = self.hoisted.get(&pc).copied() {
-            let value = self.builder.use_var(variable);
+        if let Some(LoopRead { value: variable, ty, representation, receiver }) = self.hoisted.get(&pc).copied() {
+            if let Some((owner, ty)) = receiver {
+                let fact = &mut state.values[usize::from(owner)];
+                *fact = RegisterFact { tagged: fact.tagged,
+                    ..RegisterFact::definition(ty, Representation::Tagged) };
+            }
+            let raw = self.builder.use_var(variable);
+            let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
             let destination = instruction.result_register();
             self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
+            if instruction.op() == Op::GetField
+                && let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() {
+                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
+            }
             if ty == Type::INT32 {
                 let int = self.ins().ireduce(types::I32, value);
                 let variable = self.int_var(usize::from(destination));
@@ -2661,6 +2745,14 @@ impl Lowering<'_, '_> {
                     && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 (self.base_field_read(state, register, receiver, cache_site, exit), int32_read(self.program, self.fields, instruction))
             };
+            let carried = self.carried_stores.values().any(|header| *header == pc);
+            let int32 = if carried {
+                let leaders = leaders(&self.unit.instructions);
+                self.carried_stores.iter().filter(|(_, header)| **header == pc).all(|(store, _)| {
+                    self.facts.before(*store, self.unit.instructions[*store].register_a(),
+                        &self.unit.instructions, &leaders, &self.program.constants, &writes, self.native_calls) == Type::INT32
+                })
+            } else { int32 };
             if int32 {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
@@ -2685,9 +2777,18 @@ impl Lowering<'_, '_> {
                     ty = Type::function_body(function);
                 }
             }
-            let variable = self.builder.declare_var(types::I64);
-            self.builder.def_var(variable, value);
-            self.hoisted.insert(pc, (variable, ty));
+            let representation = if carried && int32 { Representation::Int32 } else { Representation::Tagged };
+            let raw = if representation == Representation::Int32 { self.ins().ireduce(types::I32, value) } else { value };
+            let variable = self.builder.declare_var(if representation == Representation::Int32 { types::I32 } else { types::I64 });
+            self.builder.def_var(variable, raw);
+            let receiver = if instruction.op() == Op::GetField {
+                match instruction.field_lookup() {
+                    Some(FieldLookup::Atom { base, .. }) => base.register_index()
+                        .map(|owner| (owner, state.values[usize::from(owner)].value.ty)),
+                    _ => None,
+                }
+            } else { None };
+            self.hoisted.insert(pc, LoopRead { value: variable, ty, representation, receiver });
         }
     }
 
@@ -3090,10 +3191,22 @@ impl Lowering<'_, '_> {
             Some(self.unit.frames[*frame].receiver)
         } else { None };
         if register.is_some_and(|register| register >= self.unit.registers) { return None; }
+        let carried = match self.carried_stores.get(&pc) {
+            Some(header) => Some(*self.hoisted.get(header)?),
+            None => None,
+        };
         let exit = self.guard_exit(state, pc as u32);
+        let carried_int = carried.filter(|read| read.representation == Representation::Int32)
+            .map(|_| self.int(state, source, exit));
         let ty = state.values[usize::from(source)].value.ty;
         let value = self.tagged(state, source);
         self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
+        if let Some(read) = carried {
+            self.builder.def_var(read.value, carried_int.unwrap_or(value));
+            #[cfg(test)] if read.representation == Representation::Int32 {
+                LOOP_INT32_PHIS.with(|count| count.set(count.get() + 1));
+            }
+        }
         Some(true)
     }
 

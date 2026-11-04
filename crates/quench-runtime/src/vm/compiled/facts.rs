@@ -42,6 +42,24 @@ impl Facts {
         Some(&self.types[start..start + self.registers])
     }
 
+    /// Project a block's entry facts to an instruction using the same transfer
+    /// semantics as the fixed point. This is a representation candidate; the
+    /// lowering must still discharge entry and update requirements.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn before(&self, pc: usize, register: Register, instructions: &[WideInstruction],
+        leaders: &CompoundBitSet, constants: &[Constant],
+        written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Type {
+        let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
+        let Some(entry) = self.at(start) else { return Type::ANY };
+        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = entry.iter().copied().collect();
+        for instruction in &instructions[start..pc] {
+            if matches!(transfer(&mut types, *instruction, constants, written, native_calls), Flow::Leaves) {
+                return Type::ANY;
+            }
+        }
+        types.get(usize::from(register)).copied().unwrap_or(Type::ANY)
+    }
+
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
         let Some(slot) = self.offsets.get_mut(pc) else { return false };
         let Some(offset) = *slot else {
