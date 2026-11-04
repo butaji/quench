@@ -2228,6 +2228,7 @@ thread_local! {
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_FORWARD_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static LOOP_INT32_PHIS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LOOP_SLOT_STORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
@@ -18669,9 +18670,11 @@ mod tests {
                 }).unwrap();
             FIELD_FORWARD_SITE.with(|site| site.set(Some((count_read, 0))));
             LOOP_INT32_PHIS.with(|count| count.set(0));
+            LOOP_SLOT_STORES.with(|count| count.set(0));
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             INT32_PROJECTION_REUSES.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
+            assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "reuse an entry-proved writable slot");
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
             assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) > 0, "carry the updated count unboxed across the loop backedge");
             assert!(FIELD_FORWARD_SITE.with(|site| site.replace(None).unwrap().1) > 0,
@@ -18688,6 +18691,23 @@ mod tests {
             assert_eq!(writes, 0, "packed integer stores must stay native");
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
             assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn loop_slot_proofs_expire_before_storage_migration() {
+        let source = concat!(include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "loop-slot-lifetime.cts") }
+                else { crate::Engine::specialize(source, "loop-slot-lifetime.cjs") }.unwrap();
+            LOOP_SLOT_STORES.with(|count| count.set(0));
+            let native = linked_optimized_test_program(program);
+            assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "exercise projected loop stores");
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
     }
 

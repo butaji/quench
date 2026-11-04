@@ -199,6 +199,15 @@ struct LoopRead {
     /// The read's actual entry proof, valid while the qualified loop cannot
     /// replace this receiver or change its shape. Never inferred from feedback.
     receiver: Option<(Register, Type)>,
+    header: Option<ObjectHeader>,
+}
+
+/// A STORE-site projection admitted on entry to a storage-preserving loop.
+/// The record is physical receiver identity, not merely an equal shape.
+#[derive(Clone, Copy)]
+struct LoopStore {
+    header: ObjectHeader,
+    address: ir::Value,
 }
 
 pub(super) struct LoweredRegion {
@@ -269,6 +278,7 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     carried_stores: BTreeMap<usize, usize>,
+    loop_stores: BTreeMap<usize, LoopStore>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -1073,6 +1083,7 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
         carried_stores: BTreeMap::new(),
+        loop_stores: BTreeMap::new(),
         at: 0,
         forward: Vec::new(),
         arrived: BTreeMap::new(),
@@ -1929,11 +1940,12 @@ impl Lowering<'_, '_> {
         if self.consumed.contains(pc) {
             return true;
         }
-        if let Some(LoopRead { value: variable, ty, representation, receiver }) = self.hoisted.get(&pc).copied() {
+        if let Some(LoopRead { value: variable, ty, representation, receiver, header }) = self.hoisted.get(&pc).copied() {
             if let Some((owner, ty)) = receiver {
                 let fact = &mut state.values[usize::from(owner)];
                 *fact = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(ty, Representation::Tagged) };
+                if let Some(header) = header { state.proofs.headers[usize::from(owner)] = Some(header); }
             }
             let raw = self.builder.use_var(variable);
             let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
@@ -2788,7 +2800,36 @@ impl Lowering<'_, '_> {
                     _ => None,
                 }
             } else { None };
-            self.hoisted.insert(pc, LoopRead { value: variable, ty, representation, receiver });
+            let object_header = if carried && int32 {
+                receiver.map(|(owner, _)| self.object_header(state, Some(owner), exit))
+            } else { None };
+            if let (Some((owner, _)), Some(object_header)) = (receiver, object_header) {
+                let object = self.tagged(state, owner);
+                let stores: Vec<_> = self.carried_stores.iter()
+                    .filter_map(|(store, read)| (*read == pc).then_some(*store)).collect();
+                for store in stores {
+                    let instruction = self.unit.instructions[store];
+                    let site = instruction.cache_site_index();
+                    let binding = self.entry.as_ref().and_then(|entry| entry.fields.iter()
+                        .find_map(|(known, binding)| (*known == site).then_some(*binding)));
+                    let Some(binding) = binding else { continue };
+                    let allowed = self.store_atom_admitted(instruction.atom_index());
+                    emit_js_guard(&mut self.builder, allowed, exit);
+                    let packed = self.builder.create_block();
+                    let packed_address = self.builder.append_block_param(packed, types::I64);
+                    let done = self.builder.create_block();
+                    let address = self.builder.append_block_param(done, types::I64);
+                    let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder,
+                        self.registers_base, self.payload, JsFieldReceiver::Value(object), site,
+                        false, exit, Some(binding), Some(object_header), Some(packed));
+                    self.ins().jump(done, &[ir::BlockArg::Value(arena_address)]);
+                    self.builder.switch_to_block(packed);
+                    self.ins().jump(done, &[ir::BlockArg::Value(packed_address)]);
+                    self.builder.switch_to_block(done);
+                    self.loop_stores.insert(store, LoopStore { header: object_header, address });
+                }
+            }
+            self.hoisted.insert(pc, LoopRead { value: variable, ty, representation, receiver, header: object_header });
         }
     }
 
@@ -3200,7 +3241,28 @@ impl Lowering<'_, '_> {
             .map(|_| self.int(state, source, exit));
         let ty = state.values[usize::from(source)].value.ty;
         let value = self.tagged(state, source);
-        self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
+        let projected = self.loop_stores.get(&pc).copied().filter(|slot|
+            ty.is_subtype(Type::INT32) && state.proofs.headers[state.header_index(register)]
+                .is_some_and(|header| header.record == slot.header.record));
+        if let Some(slot) = projected {
+            #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
+            state.proofs.fields.clear();
+            let packed = self.builder.create_block();
+            let arena = self.builder.create_block();
+            let done = self.builder.create_block();
+            self.ins().brif(slot.header.inline, packed, &[], arena, &[]);
+            self.builder.switch_to_block(packed);
+            let narrow = emit_narrow_integer_write(&mut self.builder, value, exit);
+            self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(arena);
+            // Verified integers neither widen an arena slot nor create a heap edge.
+            self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(done);
+        } else {
+            self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
+        }
         if let Some(read) = carried {
             self.builder.def_var(read.value, carried_int.unwrap_or(value));
             #[cfg(test)] if read.representation == Representation::Int32 {
