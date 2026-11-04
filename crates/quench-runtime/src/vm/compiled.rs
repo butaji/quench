@@ -2100,6 +2100,8 @@ pub(super) struct LaneHelpers {
     /// An object literal's and an array literal's allocation (`lane_new_object`, `lane_new_array`).
     new_object: usize,
     new_array: usize,
+    /// A store that may add its property (`lane_field_add`).
+    field_add: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -7027,6 +7029,30 @@ unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u
     built.unwrap_or(Value::DELETED).to_bits()
 }
 
+/// A lane body's store of `value` to the field the packed `write` names (its atom above its
+/// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
+/// object has (`Vm::primary_own_field_store_hit`), else the cached add of the property
+/// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
+/// property arena, whose base and length the dispatch reads again. Zero where neither hits,
+/// or a collection is due, which the body leaves for.
+unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running one.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
+    let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
+    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::Preserve) {
+        return 1;
+    }
+    if vm.heap.should_collect() || !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+        return 0;
+    }
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_allocation_bases(vm);
+    1
+}
+
 /// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
 /// `DELETED` where a collection is due, which the body leaves for. The allocation may move
 /// the property arena, whose base and length the dispatch reads again.
@@ -7163,6 +7189,7 @@ impl<H: Host> Vm<H> {
             construct_call: super::dispatch_fast::lane_body_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             new_object: lane_new_object::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
             new_array: lane_new_array::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            field_add: lane_field_add::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;

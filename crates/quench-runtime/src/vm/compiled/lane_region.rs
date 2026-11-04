@@ -2386,8 +2386,54 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let ty = state.values[usize::from(source)].value.ty;
         let value = self.tagged(state, source);
+        // A store a previous body left at may add its property (`compiled::lane_field_add`),
+        // which changes the object's shape: every proof of an object retires, as another
+        // register may name it, and `this`'s facts are read again.
+        if self.generic.contains(&pc) {
+            let object = match register {
+                None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+                Some(register) => self.tagged(state, register),
+            };
+            let write = self.ins().iconst(types::I64, (u64::from(instruction.atom_index()) << u16::BITS
+                | u64::from(instruction.cache_site_index())) as i64);
+            let payload = self.payload;
+            let stored = emit_lane_helper_call(&mut self.builder, payload, self.helpers.field_add, &[payload, object, write, value]);
+            let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+            emit_js_guard(&mut self.builder, hit, exit);
+            state.shapes.clear();
+            state.layouts.clear();
+            self.reload_property_arena();
+            self.reload_receiver();
+            return Some(true);
+        }
         self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
         Some(true)
+    }
+
+    /// The receiver's shape and storage kind again, and the entry's tests of its shape, after
+    /// a store that may have changed them (`emit_lane_receiver`, `Lowering::entry_facts`).
+    fn reload_receiver(&mut self) {
+        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+        let entry = self.entry.as_ref().expect("entry facts");
+        let (object_var, shape_var, inline_var) = (entry.receiver.object, entry.receiver.shape, entry.receiver.inline);
+        let tests: Vec<(u32, Variable)> = entry.receiver_shapes.iter().map(|(shape, variable)| (*shape, *variable)).collect();
+        let object = self.builder.use_var(object_var);
+        let (found, done) = (self.builder.create_block(), self.builder.create_block());
+        let present = self.ins().icmp_imm_u(IntCC::NotEqual, object, 0);
+        self.ins().brif(present, found, &[], done, &[]);
+        self.builder.switch_to_block(found);
+        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.auxiliary_offset as i32);
+        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.meta_offset as i32);
+        let inline = self.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+        self.builder.def_var(shape_var, shape);
+        self.builder.def_var(inline_var, inline);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        let shape = self.builder.use_var(shape_var);
+        for (expected, variable) in tests {
+            let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
+            self.builder.def_var(variable, same);
+        }
     }
 
     /// The store of `value` through `site` to the field `atom` of the object `register` names

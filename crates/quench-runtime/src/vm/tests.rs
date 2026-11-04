@@ -21884,6 +21884,40 @@ fn lane_bodies_construct_empty_arrays() {
 }
 
 #[test]
+fn lane_bodies_add_properties_at_feedback_stores() {
+    // A store a previous body left at adds its property (`compiled::lane_field_add`): to
+    // `this`, whose shape the body reads again, and to a fresh object, and the fields read
+    // back past the shape change as the interpreter's.
+    let source = r#"
+     (function () {
+      function V(n) { this.n = n; this.list = new Array(); this.mark = 0; }
+      V.prototype.tag = function (i) {
+        if (i % 3 === 0) this.extra = i;
+        var o = {}; o.a = this.n; o.b = i; o.c = this.mark;
+        this.mark = this.mark + 1;
+        return o.a + o.b + o.c + (this.extra === undefined ? 0 : this.extra) + this.list.length;
+      };
+      let t = 0;
+      for (let r = 0; r < 3000; r++) { const v = new V(r); for (let i = 0; i < 8; i++) t = (t + v.tag(i)) | 0; }
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-adding-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(36219000.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object
