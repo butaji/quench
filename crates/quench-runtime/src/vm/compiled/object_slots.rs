@@ -38,7 +38,7 @@ impl ObjectHeader {
     /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
     /// A store must not take this proof: its barrier reads object record marks.
     pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
+        records: ir::Value, payload: ir::Value, miss: ir::Block) -> Self {
         use crate::value::ValueLayout;
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
@@ -57,6 +57,8 @@ impl ObjectHeader {
         builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
         builder.switch_to_block(function_block);
         let is_function = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_FUNCTION_TAG as i64);
+        // The function records' base, read only on this path.
+        let functions = super::emit_js_payload_word(builder, payload, std::mem::offset_of!(super::JsStepDispatch, function_record_base));
         let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
         let readable = builder.ins().band(is_function, reserved);
         emit_js_guard(builder, readable, miss);

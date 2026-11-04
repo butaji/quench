@@ -75,12 +75,15 @@ struct State {
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
+    /// The `heap::prototype_value_epoch` this block proved current. Only a helper that may
+    /// run JavaScript or write a prototype changes it; each such helper retires the proof.
+    epoch: Option<u64>,
 }
 
 impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(),
-            readable: BTreeSet::new(), layouts: BTreeMap::new(), receivers: BTreeSet::new() }
+            readable: BTreeSet::new(), layouts: BTreeMap::new(), receivers: BTreeSet::new(), epoch: None }
     }
 }
 
@@ -380,6 +383,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
         state.receivers = first.receivers.iter().filter(|register| rest.iter()
             .all(|other| other.receivers.contains(register))).copied().collect();
+        state.epoch = first.epoch.filter(|epoch| rest.iter().all(|other| other.epoch == Some(*epoch)));
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -1286,6 +1290,7 @@ impl Lowering<'_, '_> {
                 let base = self.tagged(state, instruction.register_b());
                 let key = self.tagged(state, instruction.register_c());
                 let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.index_set, &[base, key, value]);
+                state.epoch = None;
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
                 emit_js_guard(&mut self.builder, hit, exit);
                 Some(true)
@@ -1484,6 +1489,7 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, built, exit);
         self.reload_property_arena();
         state.layouts.clear();
+        state.epoch = None;
         if let Some(record) = completes {
             self.return_value(record, this);
             return Some(false);
@@ -1811,6 +1817,7 @@ impl Lowering<'_, '_> {
         // The callee may have changed any object: block-local proofs of them retire.
         state.shapes.clear();
         state.layouts.clear();
+        state.epoch = None;
         self.reload_property_arena();
         let destination = instruction.result_register();
         let base = self.registers_base;
@@ -2174,8 +2181,7 @@ impl Lowering<'_, '_> {
         let probed = NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-            let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
-            let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
+            let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, lowering.payload, generic);
             lowering.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, generic)
         }))
     }
@@ -2234,7 +2240,7 @@ impl Lowering<'_, '_> {
         // (`prove_shape`), so a later read of the owner tests nothing.
         if let [field] = shapes && let Some(holder) = field.holder {
             self.prove_shape(state, owner, shape, field.shape, exit);
-            return self.holder_read(object, holder, *field, exit);
+            return self.holder_read(state, object, holder, *field, exit);
         }
         if let [field] = shapes {
             let known = owner.and_then(|owner| state.layouts.get(&(owner, field.shape)).copied());
@@ -2278,7 +2284,7 @@ impl Lowering<'_, '_> {
             let read = match field.holder {
                 None => CheckedObject::prove(&mut self.builder, object, inline, properties,
                     *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
-                Some(holder) => self.holder_read(object, holder, *field, exit)?,
+                Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
             };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
             self.builder.switch_to_block(next);
@@ -2301,17 +2307,20 @@ impl Lowering<'_, '_> {
 
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
-    fn holder_read(&mut self, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
+    fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
         use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
         let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
         if let Some(constant) = field.inherited {
-            let address = self.ins().iconst(types::I64, crate::heap::prototype_value_epoch_address() as i64);
-            let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-            let unchanged = self.ins().icmp_imm_u(IntCC::Equal, epoch, constant.epoch as i64);
-            emit_js_guard(&mut self.builder, unchanged, exit);
+            if state.epoch != Some(constant.epoch) {
+                let address = self.ins().iconst(types::I64, crate::heap::prototype_value_epoch_address() as i64);
+                let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+                let unchanged = self.ins().icmp_imm_u(IntCC::Equal, epoch, constant.epoch as i64);
+                emit_js_guard(&mut self.builder, unchanged, exit);
+                state.epoch = Some(constant.epoch);
+            }
             // The receiver's link selects its prototype's value; one prototype's is a constant.
             let ((first, value), rest) = constant.values().split_first()?;
             let mut matched = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*first));
@@ -2385,9 +2394,8 @@ impl Lowering<'_, '_> {
         let bits = bits(self, state);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let header = if read {
-            let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             state.readable.insert(owner);
-            ObjectHeader::prove_readable(&mut self.builder, bits, records, functions, exit)
+            ObjectHeader::prove_readable(&mut self.builder, bits, records, self.payload, exit)
         } else {
             state.readable.remove(&owner);
             ObjectHeader::prove(&mut self.builder, bits, records, exit)
@@ -2444,6 +2452,7 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, hit, exit);
             state.shapes.clear();
             state.layouts.clear();
+            state.epoch = None;
             self.reload_property_arena();
             self.reload_receiver();
             return Some(true);
@@ -2495,7 +2504,7 @@ impl Lowering<'_, '_> {
         };
         let field = self.fields.get(&site).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
         let Some(field) = field else {
-            self.store_helper(object_bits, atom, site, value, exit);
+            self.store_helper(state, object_bits, atom, site, value, exit);
             return Some(());
         };
         let header = (!receiver).then(|| self.object_record(state, register, false, exit));
@@ -2548,7 +2557,7 @@ impl Lowering<'_, '_> {
         self.ins().store(MemFlagsData::trusted(), value, address, 0);
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(general);
-        self.store_helper(object_bits, atom, site, value, exit);
+        self.store_helper(state, object_bits, atom, site, value, exit);
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(done);
         Some(())
@@ -2594,7 +2603,9 @@ impl Lowering<'_, '_> {
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
     /// included; anything else leaves through `exit`.
-    fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
+    fn store_helper(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
+        // The store may write a prototype's own field.
+        state.epoch = None;
         let atom = self.ins().iconst(types::I64, i64::from(atom));
         let site = self.ins().iconst(types::I64, i64::from(site));
         let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.field_set, &[object, atom, site, value]);
