@@ -91,6 +91,9 @@ macro_rules! windows {
 }
 
 windows! {
+    (primitive_window_fill8_width4, primitive_window_fill16_width4, primitive_window_fill_exact_width4, 4, 0),
+    (primitive_window_fill8_width6, primitive_window_fill16_width6, primitive_window_fill_exact_width6, 6, 0),
+    (primitive_window_fill8_width7, primitive_window_fill16_width7, primitive_window_fill_exact_width7, 7, 0),
     (primitive_window_fill8_width5, primitive_window_fill16_width5, primitive_window_fill_exact_width5, 5, 0),
     (primitive_window_fill8_width8, primitive_window_fill16_width8, primitive_window_fill_exact_width8, 8, 0),
     (primitive_window_fill8_width14, primitive_window_fill16_width14, primitive_window_fill_exact_width14, 14, 0),
@@ -124,7 +127,7 @@ fn primitive_window_fill_bounds_and_argument_prefix() {
             }
         }
     }
-    for initial in [Value::UNDEFINED, Value::TRUE, Value::integer(17)] {
+    for initial in [Value::UNDEFINED, Value::TRUE, Value::integer(0), Value::integer(17)] {
         check::<Exact>(initial);
         check::<Rounded<SMALL_BLOCK>>(initial);
         check::<Rounded<LARGE_BLOCK>>(initial);
@@ -134,7 +137,7 @@ fn primitive_window_fill_bounds_and_argument_prefix() {
 #[test]
 fn primitive_window_fill_preserves_unaligned_storage_contract() {
     const BYTE_CANARY: u8 = 0xa5;
-    for width in [0, SMALL_BLOCK, SMALL_BLOCK + 1, LARGE_BLOCK + 1] {
+    for width in 0..=LARGE_BLOCK * 2 {
         let bytes = width * size_of::<Value>();
         let mut storage = vec![BYTE_CANARY; bytes + align_of::<Value>() + 1];
         let offset = if storage.as_ptr().addr().is_multiple_of(align_of::<Value>()) { 1 } else { 0 };
