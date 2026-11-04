@@ -1066,14 +1066,14 @@ pub(super) fn lower(
     }
     let interrupt = super::native_interrupt_pointer(&mut builder, context, fault_poll);
     #[cfg(feature = "aot")]
-    let helpers = if let LaneHelpers::Linked(symbol) = helpers {
+    let helpers = if let LaneHelpers::Linked(symbol, narrow_table) = helpers {
         let signature = builder.import_signature(native_lane_helpers_signature(isa));
         let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
             super::native_object::NATIVE_FUNCTION_NAMESPACE, symbol));
         let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
             signature, colocated: false, patchable: false });
         let call = builder.ins().call(target, &[]);
-        LaneHelpers::Bound(builder.inst_results(call)[0])
+        LaneHelpers::Bound(builder.inst_results(call)[0], narrow_table)
     } else { helpers };
     let count = usize::from(unit.registers);
     let live = if unit.registers > crate::compile::liveness::ROOT_MAP_REGISTERS {
@@ -1471,12 +1471,12 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
     let entry = function.layout.entry_block().expect("native entry");
     let after = match helpers {
         #[cfg(feature = "aot")]
-        LaneHelpers::Bound(table) => match function.dfg.value_def(table) {
+        LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
             ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
         },
         LaneHelpers::Numeric | LaneHelpers::Process(_) => None,
         #[cfg(feature = "aot")]
-        LaneHelpers::Linked(_) => unreachable!("helpers bind before lowering"),
+        LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
     };
     let mut cursor = FuncCursor::new(function);
     if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
@@ -1743,7 +1743,7 @@ impl Lowering<'_, '_> {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
             #[cfg(feature = "aot")]
-            LaneHelpers::Bound(_) => {
+            LaneHelpers::Bound(..) => {
                 let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
                 let present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
                 let bound = self.builder.create_block();
@@ -1761,7 +1761,7 @@ impl Lowering<'_, '_> {
                 bits
             }
             #[cfg(feature = "aot")]
-            LaneHelpers::Linked(_) => unreachable!("helper table bound before entry facts"),
+            LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
         };
         let receiver = emit_lane_receiver(&mut self.builder, self.payload, this_bits);
         let this = self.builder.declare_var(types::I64);
@@ -1847,7 +1847,7 @@ impl Lowering<'_, '_> {
         #[cfg(feature = "aot")]
         let fields = {
             let mut fields = smallvec::SmallVec::new();
-            if matches!(self.helpers, LaneHelpers::Bound(_)) {
+            if matches!(self.helpers, LaneHelpers::Bound(..)) {
                 for (pc, instruction) in instructions.iter().enumerate() {
                     if !self.facts.reached(pc) { continue; }
                     // A field chain names sequential sites, not alternatives for
@@ -3289,10 +3289,12 @@ impl Lowering<'_, '_> {
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(packed);
             let narrow = self.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
-            let integer = self.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
-            emit_js_guard(&mut self.builder, integer, slow);
-            let value = emit_narrow_integer_read(&mut self.builder, narrow);
-            self.ins().jump(done, &[ir::BlockArg::Value(value)]);
+            let table = match self.helpers {
+                #[cfg(feature = "aot")]
+                LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
+                _ => NarrowTable::Process,
+            };
+            emit_narrow_read(&mut self.builder, narrow, table, done);
             self.builder.switch_to_block(slow);
             let value = self.field_probe_unbound(object, site, exit);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);

@@ -113,6 +113,12 @@ impl NarrowLayout {
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
 
+    /// Only codes selected by the decoder belong in a native image.
+    #[cfg(feature = "aot")]
+    pub(crate) fn decode_words() -> &'static [u64] {
+        &NARROW_UPPER_WORD_TABLE[..=Self::CODE_MASK as usize]
+    }
+
     /// The address of the upper words by code, which lives as long as the process.
     pub(crate) fn upper_words() -> *const u64 {
         NARROW_UPPER_WORD_TABLE.as_ptr()

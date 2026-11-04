@@ -2068,6 +2068,20 @@ fn emit_packed_object_slot_read(
     debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
     let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
     let narrow = builder.ins().ireduce(types::I32, half);
+    emit_narrow_read(builder, narrow, NarrowTable::Process, join);
+}
+
+/// Binding time changes the table address, never the packed-value semantics.
+#[derive(Clone, Copy)]
+enum NarrowTable {
+    Process,
+    #[cfg(feature = "aot")]
+    Linked(u32),
+}
+
+fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
+    table: NarrowTable, join: ir::Block)
+{
     let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
     let integer_block = builder.create_block();
     let reference_block = builder.create_block();
@@ -2082,7 +2096,18 @@ fn emit_packed_object_slot_read(
     let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
     let code = builder.ins().uextend(types::I64, code);
     let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
-    let table = builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
+    let table = match table {
+        NarrowTable::Process => builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64),
+        #[cfg(feature = "aot")]
+        NarrowTable::Linked(symbol) => {
+            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+                super::native_object::NATIVE_DATA_NAMESPACE, symbol));
+            let global = builder.create_global_value(ir::GlobalValueData::Symbol {
+                name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
+            });
+            builder.ins().symbol_value(types::I64, global)
+        }
+    };
     let address = builder.ins().iadd(table, offset);
     let upper = builder.ins().load(types::I64, invariant(), address, 0);
     let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
@@ -2246,9 +2271,9 @@ pub(super) enum LaneHelpers {
     Numeric,
     Process([usize; LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
-    Linked(u32),
+    Linked(u32, u32),
     #[cfg(feature = "aot")]
-    Bound(ir::Value),
+    Bound(ir::Value, u32),
 }
 impl LaneHelpers {
     fn address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
@@ -2259,12 +2284,12 @@ impl LaneHelpers {
             },
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
-            Self::Bound(table) => {
+            Self::Bound(table, _) => {
                 builder.load(types::I64, invariant(), table,
                     (helper as usize * std::mem::size_of::<usize>()) as i32)
             },
             #[cfg(feature = "aot")]
-            Self::Linked(_) => unreachable!("linked helpers bind at region entry"),
+            Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
         }
     }
 }
@@ -2401,7 +2426,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let lower = |coverage: lane_region::Coverage| {
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
-        lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
+        lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
             &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, isa,
             coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
             .map(|mut region| {
@@ -17404,6 +17429,44 @@ mod tests {
     use super::*;
     use crate::bytecode::Op;
 
+    #[test]
+    fn native_narrow_decoder_matches_value_bits() {
+        use crate::value::NarrowLayout as N;
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut signature = ir::Signature::new(isa.default_call_conv());
+        signature.params.push(AbiParam::new(types::I32));
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let narrow = builder.block_params(entry)[0];
+        let done = builder.create_block();
+        let result = builder.append_block_param(done, types::I64);
+        emit_narrow_read(&mut builder, narrow, NarrowTable::Process, done);
+        builder.switch_to_block(done);
+        builder.ins().return_(&[result]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
+        // SAFETY: the function above accepts one u32 and returns its decoded u64.
+        let decode: unsafe extern "C" fn(u32) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
+        let indices = [0, 1, (1 << N::INTEGER_BITS) - 1, u32::MAX];
+        for code in 0..=N::CODE_MASK {
+            for index in indices {
+                let narrow = (index << N::INDEX_SHIFT) | (code << N::CODE_SHIFT);
+                assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
+            }
+        }
+        let half = 1_i32 << (N::INTEGER_BITS - 1);
+        for integer in [i32::MIN, -half, -half + 1, -1, 0, 1, half - 1, half, i32::MAX] {
+            let narrow = ((integer as u32) << N::CODE_SHIFT) | N::INTEGER_FLAG;
+            assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
+        }
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn invariant_receiver_headers_dominate_native_loop_backedges() {
@@ -18502,6 +18565,32 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
+    fn bind_test_lane_symbols(function: &mut ir::Function, narrow_symbol: u32) {
+        let instructions: Vec<_> = function.layout.blocks()
+            .flat_map(|block| function.layout.block_insts(block)).collect();
+        for instruction in instructions {
+            if let ir::InstructionData::UnaryGlobalValue { opcode: ir::Opcode::SymbolValue, global_value } = function.dfg.insts[instruction] {
+                let ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. } = function.global_values[global_value] else { panic!("expected narrow table symbol") };
+                assert_eq!(function.params.user_named_funcs()[name], ir::UserExternalName::new(
+                    super::super::native_object::NATIVE_DATA_NAMESPACE, narrow_symbol));
+                function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
+                    opcode: ir::Opcode::Iconst,
+                    imm: ir::immediates::Imm64::new(crate::value::NarrowLayout::upper_words() as i64),
+                };
+            }
+            if let ir::InstructionData::Call { func_ref, .. } = function.dfg.insts[instruction] {
+                let ir::ExternalName::User(name) = function.dfg.ext_funcs[func_ref].name else { panic!("expected helper resolver") };
+                assert_eq!(function.params.user_named_funcs()[name], ir::UserExternalName::new(
+                    super::super::native_object::NATIVE_FUNCTION_NAMESPACE, 0));
+                function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
+                    opcode: ir::Opcode::Iconst,
+                    imm: ir::immediates::Imm64::new(native_js_lane_helpers::<crate::test_host::TestHost>() as usize as i64),
+                };
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
     fn linked_optimized_test_program(program: ResidualProgram) -> crate::NativeJsProgram<crate::test_host::TestHost> {
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
@@ -18510,17 +18599,7 @@ mod tests {
         for (id, targets) in targets.iter().enumerate().take(program.function_count()) {
             let mut regions = lower_static_typed_regions(&program, id as u32, targets, &*isa, 0);
             for region in &mut regions {
-                // Bind the pure helper-table resolver as the image linker does.
-                let instructions: Vec<_> = region.function.layout.blocks()
-                    .flat_map(|block| region.function.layout.block_insts(block)).collect();
-                for instruction in instructions {
-                    if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Call {
-                        region.function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
-                            opcode: ir::Opcode::Iconst,
-                            imm: ir::immediates::Imm64::new(native_js_lane_helpers::<crate::test_host::TestHost>() as usize as i64),
-                        };
-                    }
-                }
+                bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
             }
             let typed: Vec<_> = regions.iter().map(|region|
                 StaticTypedRegionEntry {header:region.header,function:&region.function}).collect();
@@ -19132,18 +19211,7 @@ mod tests {
             let read = program.function(consume).instructions().position(|instruction|
                 instruction.op() == Op::GetField && matches!(instruction.field_lookup(),
                     Some(FieldLookup::Atom { atom, .. }) if &program.atoms[atom as usize] == "value")).unwrap();
-            // Bind the image's pure helper-table resolver to this test host.
-            // All other lowering and recovery are the production paths.
-            let instructions: Vec<_> = region.function.layout.blocks()
-                .flat_map(|block| region.function.layout.block_insts(block)).collect();
-            for instruction in instructions {
-                if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Call {
-                    region.function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
-                        opcode: ir::Opcode::Iconst,
-                        imm: ir::immediates::Imm64::new(native_js_lane_helpers::<crate::test_host::TestHost>() as usize as i64),
-                    };
-                }
-            }
+            bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
             let mut entries = Vec::new();
             let mut owners = Vec::new();
             for id in 0..program.function_count() {
@@ -19183,7 +19251,7 @@ mod tests {
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
         let residual = lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next().expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
-        let has_field_helper = |native: &ir::Function, resolver_symbol: u32| {
+        let has_helper = |native: &ir::Function, resolver_symbol: u32, helper: LaneHelper| {
             let load_base = |value: ir::Value, expected_offset: i32| {
                 let ir::ValueDef::Result(instruction, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
                 let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return None };
@@ -19192,7 +19260,7 @@ mod tests {
             native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).any(|instruction| {
                 if native.dfg.insts[instruction].opcode() != ir::Opcode::CallIndirect { return false; }
                 let target = native.dfg.inst_args(instruction)[0];
-                let Some(table) = load_base(target, LaneHelper::FieldGet as i32 * std::mem::size_of::<usize>() as i32) else { return false };
+                let Some(table) = load_base(target, helper as i32 * std::mem::size_of::<usize>() as i32) else { return false };
                 let ir::ValueDef::Result(resolver, _) = native.dfg.value_def(native.dfg.resolve_aliases(table)) else { return false };
                 let ir::InstructionData::Call { func_ref, .. } = native.dfg.insts[resolver] else { return false };
                 let ir::ExternalName::User(name) = native.dfg.ext_funcs[func_ref].name else { return false };
@@ -19200,7 +19268,8 @@ mod tests {
                     super::super::native_object::NATIVE_FUNCTION_NAMESPACE, resolver_symbol)
             })
         };
-        assert!(has_field_helper(&residual.function, 0), "field helper must come from the linked runtime resolver");
+        assert!(has_helper(&residual.function, 0, LaneHelper::FieldGet), "field misses use the shared helper before exact recovery");
+        assert!(has_helper(&residual.function, 0, LaneHelper::InterruptOwner), "required helpers use the runtime resolver");
         let module = crate::lower_native_js_module(&program, "typed_loop_test").unwrap();
         let caller = module.functions.iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
@@ -19209,13 +19278,26 @@ mod tests {
         let resolver = module.functions.iter().position(|function| matches!(function,
             super::super::native_object::NativeFunction::Import { name, .. }
                 if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)).unwrap() as u32;
-        assert!(has_field_helper(caller, resolver), "the exact field-helper chain must be inlined into the caller");
+        assert!(has_helper(caller, resolver, LaneHelper::FieldGet), "field helper binding survives inlining");
+        assert!(has_helper(caller, resolver, LaneHelper::InterruptOwner), "required helper binding survives inlining");
+        let table = &module.data[program.function_count()];
+        assert!(!table.writable && table.function_addresses.is_empty());
+        assert_eq!(table.bytes, crate::value::NarrowLayout::decode_words().iter()
+            .flat_map(|word| word.to_ne_bytes()).collect::<Vec<_>>());
+        assert!(caller.global_values.values().any(|global| matches!(global,
+            ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. }
+                if caller.params.user_named_funcs()[*name] == ir::UserExternalName::new(
+                    super::super::native_object::NATIVE_DATA_NAMESPACE, program.function_count() as u32))),
+            "representation data relocation must survive inlining");
+
         let dynamic_pc_tables = caller.layout.blocks().flat_map(|block| caller.layout.block_insts(block))
             .filter(|instruction| caller.dfg.insts[*instruction].opcode() == ir::Opcode::BrTable).count();
         assert!(dynamic_pc_tables <= 1, "only canonical source-PC admission may retain a dynamic dispatcher");
         assert!(!module.functions.iter().any(|function| matches!(function,
             super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_region"))),
             "the inlined residual must not retain a second native body");
+        super::super::native_object::emit_native_module("typed_loop_test", module.functions, module.data)
+            .expect("representation and fallback relocations must resolve together");
         let leaf = crate::Engine::specialize("function id(x) { return x; } id(1);", "leaf.js").unwrap();
         let leaf = crate::lower_native_js_module(&leaf, "leaf_test").unwrap();
         assert!(!leaf.functions.iter().any(|function| matches!(function,

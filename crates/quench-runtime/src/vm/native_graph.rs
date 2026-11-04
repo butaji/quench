@@ -150,6 +150,11 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 signature: super::compiled::native_lane_helpers_signature(&*isa),
             });
         }
+        let has_narrow_table = typed_units.iter().flatten().any(|unit|
+            unit.function.global_values.values().any(|global| matches!(global,
+                ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. }
+                    if unit.function.params.user_named_funcs()[*name] == ir::UserExternalName::new(
+                        NATIVE_DATA_NAMESPACE, program.function_count() as u32))));
         let mut operations = vec![None; Op::COUNT];
         for sites in &bodies {
             // Fallback tables name an entry for every PC, so every op is collected.
@@ -325,7 +330,8 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                     }).collect::<Vec<_>>(), &units,
                 ) {
                     Ok((native, _)) => {
-                        let table = program.function_count().checked_add(fallback_tables.len())
+                        let table = program.function_count().checked_add(usize::from(has_narrow_table))
+                            .and_then(|index| index.checked_add(fallback_tables.len()))
                             .and_then(|index| u32::try_from(index).ok())
                             .ok_or("native fallback table count exceeds u32")?;
                         fallback_tables.push(object_fallback_table(
@@ -357,6 +363,16 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                     function: region.function,
                 });
             }
+        }
+        if has_narrow_table {
+            data.push(NativeData {
+                name: format!("{namespace}_narrow_upper_words"),
+                bytes: crate::value::NarrowLayout::decode_words().iter()
+                    .flat_map(|word| word.to_ne_bytes()).collect(),
+                alignment: std::mem::align_of::<u64>() as u64,
+                writable: false,
+                function_addresses: Vec::new(),
+            });
         }
         data.extend(fallback_tables);
         let pointer_bytes = usize::from(isa.pointer_bytes());
