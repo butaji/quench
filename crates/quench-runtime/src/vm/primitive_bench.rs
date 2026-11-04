@@ -569,7 +569,8 @@ enum ArrayStoreKinds {
 /// Every element encodes its successor, so the dependent cases traverse the same cycle
 /// regardless of kind. Alternating passes change every element's kind in both directions;
 /// stable passes use the same traversal, payloads and proof checks without kind changes.
-fn array_proved_store_pattern<const DEPENDENT: bool>(b: &mut Bencher, kinds: ArrayStoreKinds) {
+fn array_proved_store_pattern<const DEPENDENT: bool, const INTEGER_INDEX: bool>(b: &mut Bencher, kinds: ArrayStoreKinds) {
+    assert!(!INTEGER_INDEX || matches!(kinds, ArrayStoreKinds::Integers));
     let successors = std::array::from_fn::<_, BATCH_VALUES, _>(|index| (index + 1) % BATCH_VALUES);
     let integers = successors.map(|index| Value::integer(index as i32));
     let fractions = successors.map(|index| Value::number(index as f64 + 0.5));
@@ -593,11 +594,14 @@ fn array_proved_store_pattern<const DEPENDENT: bool>(b: &mut Bencher, kinds: Arr
                 if DEPENDENT {
                     // Setup encodes a nonnegative successor index with an optional half.
                     // Truncation decodes that link; this is part of the composed cost.
-                    cursor = black_box(&*proofs)
+                    let next = black_box(&*proofs)
                         .element(0, black_box(array), black_box(index))
-                        .unwrap()
-                        .as_number()
-                        .unwrap() as usize;
+                        .unwrap();
+                    cursor = if INTEGER_INDEX {
+                        super::dispatch_fast::proof_index(next).unwrap()
+                    } else {
+                        next.as_number().unwrap() as usize
+                    };
                 }
                 assert!(black_box(&mut *proofs).replace(
                     0, black_box(array), black_box(index), black_box(values[index]),
@@ -615,7 +619,7 @@ macro_rules! array_store_patterns {
     ($($name:ident: $dependent:literal, $kinds:ident;)*) => {$(
         #[bench]
         fn $name(b: &mut Bencher) {
-            array_proved_store_pattern::<$dependent>(b, ArrayStoreKinds::$kinds);
+            array_proved_store_pattern::<$dependent, false>(b, ArrayStoreKinds::$kinds);
         }
     )*};
 }
@@ -627,6 +631,11 @@ array_store_patterns! {
     primitive_array_proved_read_store_integer_chain_pair_batch: true, Integers;
     primitive_array_proved_read_store_fraction_chain_pair_batch: true, Fractions;
     primitive_array_proved_read_store_kind_transition_chain_pair_batch: true, Alternating;
+}
+
+#[bench]
+fn primitive_array_proved_read_store_exact_index_chain_pair_batch(b: &mut Bencher) {
+    array_proved_store_pattern::<true, true>(b, ArrayStoreKinds::Integers);
 }
 
 #[bench]
