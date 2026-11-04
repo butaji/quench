@@ -102,6 +102,13 @@
 (rule (simplify (select ty d a (select ty d _ y))) (select ty d a y))
 (rule (simplify (select ty d (select ty d x _) a)) (select ty d x a))
 
+;; Factor common alternatives before projecting the selected value. Conditions
+;; must have the same type; selecting a condition preserves its nonzero truth.
+(rule (simplify (select ty cond
+                       (select ty x @ (value_type cty) a b)
+                       (select ty y @ (value_type cty) a b)))
+      (select ty (select cty cond x y) a b))
+
 ;; min x y < x => false and its commutative versions
 (rule (simplify (sgt (fits_in_64 ty) (smin _ x y) x)) (iconst_u ty 0))
 (rule (simplify (sgt (fits_in_64 ty) (smin _ x y) y)) (iconst_u ty 0))
