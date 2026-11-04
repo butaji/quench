@@ -2778,15 +2778,23 @@ impl Lowering<'_, '_> {
                 let target = self.unit.markers.iter().enumerate().find_map(|(frame, marker)| {
                     let call = self.unit.frames[frame];
                     (*marker > pc && call.callee_register == destination
-                        && call.target.callee == CalleeBinding::Function
+                        && (call.target.callee == CalleeBinding::Function
+                            || (call.alternative.is_none() && !self.unit.frames.iter()
+                                .any(|other| other.alternative == Some(*marker))))
                         && !self.unit.instructions[pc + 1..*marker].iter()
                             .any(|instruction| writes(*instruction).contains(&destination)))
-                        .then_some(call.target.function)
+                        .then_some(call.target)
                 });
-                if let Some(function) = target {
-                    let matched = self.function_binding(value, function);
+                if let Some(target) = target {
+                    let (matched, admitted) = match target.callee {
+                        CalleeBinding::Function => (self.function_binding(value, target.function),
+                            Type::function_body(target.function)),
+                        CalleeBinding::Identity(identity) => (
+                            self.ins().icmp_imm_u(IntCC::Equal, value, identity.to_bits() as i64),
+                            Type::function(identity).expect("admitted callee locator")),
+                    };
                     emit_js_guard(&mut self.builder, matched, exit);
-                    ty = Type::function_body(function);
+                    ty = admitted;
                 }
             }
             let representation = if carried && int32 { Representation::Int32 } else { Representation::Tagged };
