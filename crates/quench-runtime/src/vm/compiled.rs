@@ -18124,6 +18124,119 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn loop_carried_updates_share_branch_store_and_backedge_placement() {
+        use std::sync::atomic::AtomicU8;
+        const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLSP");
+        const FEEDBACK: u64 = 0xD008;
+        const STORED_MASK: u64 = 0x55;
+        const UPDATE_LABEL: u32 = 0;
+        const STORE_SOURCE_OFFSET: u32 = 42;
+        let update_label = ir::ValueLabel::from_u32(UPDATE_LABEL);
+        let store_location = ir::SourceLoc::new(STORE_SOURCE_OFFSET);
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I32, types::I64] {
+            let mut signature = ir::Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 5]);
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(TEST_NAMESPACE, 0), signature);
+            function.collect_debug_info();
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let entry = builder.create_block();
+            let header = builder.create_block();
+            let body = builder.create_block();
+            let odd = builder.create_block();
+            let even = builder.create_block();
+            let join = builder.create_block();
+            let left = builder.create_block();
+            let right = builder.create_block();
+            let latch = builder.create_block();
+            let exit = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.append_block_param(header, ty);
+            builder.append_block_param(header, types::I64);
+            builder.append_block_param(join, ty);
+            builder.append_block_param(join, ty);
+            builder.append_block_param(exit, ty);
+            builder.switch_to_block(entry);
+            let args = builder.block_params(entry).to_vec();
+            let seed = if ty == types::I32 { builder.ins().ireduce(ty, args[0]) } else { args[0] };
+            builder.ins().brif(args[1], header, &[seed.into(), args[1].into()], exit, &[seed.into()]);
+            builder.switch_to_block(header);
+            let previous = builder.block_params(header)[0];
+            let count = builder.block_params(header)[1];
+            let stop = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), args[4]);
+            builder.ins().brif(stop, exit, &[previous.into()], body, &[]);
+            builder.switch_to_block(body);
+            let shifted = builder.ins().ushr_imm_u(previous, 1);
+            let low = builder.ins().band_imm_u(previous, 1);
+            builder.ins().brif(low, odd, &[], even, &[]);
+            builder.switch_to_block(odd);
+            let feedback = builder.ins().iconst(ty, FEEDBACK as i64);
+            builder.ins().jump(join, &[shifted.into(), feedback.into()]);
+            builder.switch_to_block(even);
+            let zero = builder.ins().iconst(ty, 0);
+            builder.ins().jump(join, &[shifted.into(), zero.into()]);
+            builder.switch_to_block(join);
+            let operands = [builder.block_params(join)[0], builder.block_params(join)[1]];
+            let next = builder.ins().bxor(operands[0], operands[1]);
+            builder.set_val_label(next, update_label);
+            let wide = if ty == types::I32 { builder.ins().uextend(types::I64, next) } else { next };
+            builder.ins().brif(args[2], left, &[], right, &[]);
+            builder.switch_to_block(left);
+            builder.set_srcloc(store_location);
+            builder.ins().store(MemFlagsData::trusted(), wide, args[3], 0);
+            builder.ins().jump(latch, &[]);
+            builder.switch_to_block(right);
+            let encoded = builder.ins().bxor_imm_u(wide, STORED_MASK as i64);
+            builder.ins().store(MemFlagsData::trusted(), encoded, args[3], core::mem::size_of::<u64>() as i32);
+            builder.ins().jump(latch, &[]);
+            builder.switch_to_block(latch);
+            builder.set_srcloc(ir::SourceLoc::new(0));
+            let remaining = builder.ins().iadd_imm_s(count, -1);
+            builder.ins().brif(remaining, header, &[next.into(), remaining.into()], exit, &[next.into()]);
+            builder.switch_to_block(exit);
+            let result = builder.block_params(exit)[0];
+            let result = if ty == types::I32 { builder.ins().uextend(types::I64, result) } else { result };
+            builder.ins().return_(&[result]);
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            let mut compiler = cranelift_codegen::Context::for_function(function);
+            let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+            let locations = compiled.value_labels_ranges.get(&update_label).expect("live update label");
+            let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
+                .filter(|source| source.loc == store_location && source.start < source.end).collect();
+            assert!(!probes.is_empty());
+            assert!(probes.iter().all(|probe| locations.iter().any(|range|
+                range.start <= probe.start && probe.end <= range.end)), "update label covers both storage arms");
+            let memory = CodeMemory::new(compiled.buffer.data()).unwrap();
+            let native = &compiler.func;
+            let shifts = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+                .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Ushr).count();
+            assert_eq!(shifts, 1, "one producer serves both stores and the next iteration: {ty}\n{native}");
+            // SAFETY: the verified ABI takes three words and live pointers to
+            // two writable words and an atomic stop byte, returning a word.
+            let run = unsafe { std::mem::transmute::<*mut u8,
+                unsafe extern "C" fn(u64, u64, u64, *mut u64, *const AtomicU8) -> u64>(memory.pointer()) };
+            let mask = u64::MAX >> (u64::BITS - ty.bits());
+            for seed in [0, 1, 123456789, u64::MAX, i64::MIN as u64] {
+                for trips in [0, 1, 2, 17, 257] { for arm in [0, 1] { for requested in [0, 1] {
+                    let seed = seed & mask;
+                    let flag = AtomicU8::new(requested);
+                    let mut cells = [0_u64; 2];
+                    let expected = (0..if requested == 0 { trips } else { 0 }).fold(seed, |value, _|
+                        (value >> 1) ^ if value & 1 != 0 { FEEDBACK } else { 0 });
+                    assert_eq!(unsafe { run(seed, trips, arm, cells.as_mut_ptr(), &flag) }, expected);
+                    let expected_cells = if requested != 0 || trips == 0 { [0, 0] }
+                        else if arm != 0 { [expected, 0] } else { [0, expected ^ STORED_MASK] };
+                    assert_eq!(cells, expected_cells, "{ty} seed{seed} trips{trips} arm{arm} stop{requested}");
+                }}}
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn scalar_loop_rotation_preserves_trip_counts_and_exact_header_recovery() {
         let source = r#"
             function count(n){n=n|0;let result=0;for(let i=0;i<n;i=(i+1)|0)result=(result+1)|0;return result;}
