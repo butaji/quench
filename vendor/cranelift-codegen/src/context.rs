@@ -418,6 +418,7 @@ impl Context {
             self.compute_domtree();
             self.compute_loop_analysis();
         }
+        crate::loop_constants::run(&mut self.func, &self.domtree, &self.loop_analysis);
         self.verify_if(fisa)?;
 
         Ok(())
