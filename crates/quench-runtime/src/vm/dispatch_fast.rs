@@ -5855,7 +5855,7 @@ unsafe fn lane_nested_polymorphic_value<H: Host>(
 /// A nested site's read of `base` where both steps hit primary own entries
 /// (`lane_nested_own_value`), which runs no guest code.
 #[inline(always)]
-fn nested_own_field_hit<H: Host>(
+pub(super) fn nested_own_field_hit<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
     site: &crate::bytecode::FieldSite,
