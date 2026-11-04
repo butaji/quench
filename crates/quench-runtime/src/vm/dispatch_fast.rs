@@ -14631,12 +14631,20 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         r.set(i.a & crate::bytecode::REGISTER_MASK, this);
         return LANE_CALL_COMPLETED;
     }
+    // `new Array()` of the realm's own `Array`: ArrayCreate(0), an empty array of
+    // `Array.prototype`, which calls nothing.
+    let argc = ImmediateLayout::argument_count(i.imm());
+    if argc == 0 && vm.realm_array_constructor(callee) {
+        let array = vm.hole_array(0);
+        note_allocation(vm);
+        r.set(i.a & crate::bytecode::REGISTER_MASK, array);
+        return LANE_CALL_COMPLETED;
+    }
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return LANE_CALL_MISSED;
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
     let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return LANE_CALL_MISSED };
-    let argc = ImmediateLayout::argument_count(i.imm());
     if !target.constructs
         || target.forwards()
         || target.entry != CallEntry::Activates
@@ -14693,8 +14701,12 @@ fn lane_body_activate<H: Host>(
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
+    // A target without a body warms toward one by these entries too, as by the lane's own
+    // (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
     if own.respecializes() {
         lane_specialize(cx, own, target.function, None, true);
+    } else if own.lane_body().is_none() {
+        lane_specialize(cx, own, target.function, None, false);
     }
     let Some(method) = own.lane_body().filter(|_| lane_body_admits(cx, own)) else {
         return leave(start, Value::UNDEFINED);

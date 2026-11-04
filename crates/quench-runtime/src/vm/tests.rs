@@ -21853,6 +21853,37 @@ fn lane_bodies_allocate_literals() {
 }
 
 #[test]
+fn lane_bodies_construct_empty_arrays() {
+    // `new Array()` of the realm's `Array` in a lane body is an empty array
+    // (`dispatch_fast::lane_body_construct`); a function named `Array` constructs as itself,
+    // and a constructor only lane bodies construct gets a body of its own.
+    let source = r#"
+     (function () {
+      function OC() { this.elms = new Array(); }
+      OC.prototype.add = function (e) { this.elms.push(e); };
+      OC.prototype.size = function () { return this.elms.length; };
+      function shadowed() { function Array() { this.mine = 7; } return new Array().mine; }
+      function f(i) { var a = new OC(); a.add(i); a.add(i); var b = new OC(); b.add(a.size()); return a.size() + b.elms[0] + shadowed() + (a.elms instanceof Array ? 1 : 0); }
+      let t = 0; for (let i = 0; i < 60000; i++) t = (t + f(i)) | 0;
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-empty-arrays.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(720000.0); 2]);
+}
+
+#[test]
 fn loop_stores_to_packed_objects_flatten_them() {
     // A loop region that stores through a field's address first moves a packed object's
     // values to the arena (`Heap::flatten_inline_properties`): Int32, double and object
