@@ -1343,6 +1343,12 @@ pub(super) fn lower(
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner) });
     }
+    // Field admissions establish the actual counterpart types used to select
+    // capture views. Callee reads/bindings must precede their inlined captures.
+    for reads in lowering.hoists.values_mut() {
+        reads.sort_by_key(|read| (instructions[read.pc].op() == Op::LoadCapture,
+            matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
+    }
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
     for start in &starts { lowering.entered.insert(*start); }
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
@@ -2114,6 +2120,13 @@ impl Lowering<'_, '_> {
                 if let Some(header) = header { state.proofs.headers[usize::from(owner)] = Some(header); }
             }
             let raw = self.builder.use_var(variable);
+            if representation == Representation::Int32 && instruction.op() == Op::LoadCapture {
+                // Captures have no tagged field-cache consumer. Preserve the
+                // admitted view; recovery or a tagged use boxes it on demand.
+                self.set_int(state, instruction.result_register(), raw);
+                self.native += 1;
+                return true;
+            }
             let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
             let destination = instruction.result_register();
             if instruction.op() == Op::GetField
@@ -2914,6 +2927,64 @@ impl Lowering<'_, '_> {
         self.continue_at(&mut fall_state, pc + 1);
     }
 
+    /// The type already proved for an operand at a use. Feedback is not enough:
+    /// an admitted field read carries its actual loop-entry contract, even when
+    /// the general analysis has no field feedback (as in linked AOT).
+    fn int32_operand_at(&self, pc: usize, operand: Operand, boundaries: &CompoundBitSet) -> bool {
+        if super::facts::operand_type(&self.program.constants, operand, |_| Type::ANY) == Type::INT32 { return true; }
+        let Some(mut register) = operand.register_index() else { return false };
+        if self.facts.before(pc, register, &self.unit.instructions, boundaries,
+            &self.program.constants, &writes, self.native_calls) == Type::INT32 { return true; }
+        for at in (0..pc).rev() {
+            if boundaries.contains(at + 1) || self.unit.markers.contains(&at) { return false; }
+            let instruction = self.unit.instructions[at];
+            if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { return false; }
+            if writes(instruction).contains(&register) {
+                if instruction.op() == Op::Move && instruction.result_register() == register {
+                    register = instruction.register_b();
+                } else {
+                    return instruction.defined_register() == Some(register)
+                        && self.hoisted.get(&at).is_some_and(|read| read.ty == Type::INT32);
+                }
+            }
+        }
+        false
+    }
+
+    /// A capture may choose the same checked integer view as a bitwise use, or
+    /// as the already-proved integer on the other side of a Number relation.
+    /// This selects an entry guard; it does not prove the capture's type.
+    fn capture_int32_use(&self, pc: usize, boundaries: &CompoundBitSet) -> bool {
+        let mut aliases: CompoundBitSet = CompoundBitSet::with_capacity(usize::from(self.unit.registers));
+        aliases.insert(usize::from(self.unit.instructions[pc].result_register()));
+        for at in pc + 1..self.unit.instructions.len() {
+            if boundaries.contains(at) || self.unit.markers.contains(&at) { break; }
+            let instruction = self.unit.instructions[at];
+            let operator = match instruction.op() {
+                Op::JumpBinaryFalse => Some(instruction.binary_operator_field()),
+                op if op.js_denotation() == JsDenotation::NumericBinary => Some(instruction.binary_operator()),
+                _ => None,
+            };
+            if let Some(operator) = operator {
+                let operands = [instruction.operand_b(), instruction.operand_c()];
+                let captured = |operand: Operand| operand.register_index()
+                    .is_some_and(|register| aliases.contains(usize::from(register)));
+                if operands.iter().copied().any(captured) {
+                    if super::operations::NumberBitwise::from_operator(operator).is_some() { return true; }
+                    if super::operations::NumberRelation::from_operator(operator).is_some()
+                        && operands.iter().copied().enumerate().any(|(index, operand)| captured(operand)
+                            && self.int32_operand_at(at, operands[1 - index], boundaries)) { return true; }
+                }
+            }
+            if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { break; }
+            let copied = instruction.op() == Op::Move && aliases.contains(usize::from(instruction.register_b()));
+            for register in writes(instruction) { aliases.remove(usize::from(register)); }
+            if copied { aliases.insert(usize::from(instruction.result_register())); }
+            if aliases.is_empty() { break; }
+        }
+        false
+    }
+
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
     /// guard that fails there leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
@@ -2936,11 +3007,7 @@ impl Lowering<'_, '_> {
                     Some(self.builder.use_var(read.value))
                 } else { None };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee);
-                let int32 = self.unit.instructions.get(pc + 1).is_some_and(|next|
-                    next.op() == Op::Binary
-                        && super::operations::NumberBitwise::from_operator(next.binary_operator()).is_some()
-                        && [next.operand_b(), next.operand_c()].iter().any(|operand|
-                            operand.register_index() == Some(instruction.result_register())));
+                let int32 = self.capture_int32_use(pc, &boundaries);
                 (value, int32)
             } else {
                 let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
@@ -2951,10 +3018,9 @@ impl Lowering<'_, '_> {
             };
             let carried = field.is_some();
             let int32 = if carried {
-                let leaders = leaders(&self.unit.instructions);
                 self.loop_fields[field.unwrap()].stores.iter().all(|store| {
                     self.facts.before(*store, self.unit.instructions[*store].register_a(),
-                        &self.unit.instructions, &leaders, &self.program.constants, &writes, self.native_calls) == Type::INT32
+                        &self.unit.instructions, &boundaries, &self.program.constants, &writes, self.native_calls) == Type::INT32
                 })
             } else { int32 };
             if int32 {
@@ -2994,7 +3060,7 @@ impl Lowering<'_, '_> {
                     ty = admitted;
                 }
             }
-            let representation = if carried && int32 { Representation::Int32 } else { Representation::Tagged };
+            let representation = if int32 { Representation::Int32 } else { Representation::Tagged };
             let raw = if representation == Representation::Int32 { self.ins().ireduce(types::I32, value) } else { value };
             let variable = self.builder.declare_var(if representation == Representation::Int32 { types::I32 } else { types::I64 });
             self.builder.def_var(variable, raw);
@@ -3956,7 +4022,7 @@ mod tests {
     #[test]
     #[cfg(feature = "aot")]
     fn inlined_capture_reads_require_an_admitted_invariant_callee() {
-        let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;if(owner.test())result=(result+1)|0;}return result;}";
+        let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;owner.state=(owner.state+1)|0;if(owner.test())result=(result+1)|0;}return result;}";
         let program = crate::Engine::specialize(source, "capture-entry.js").unwrap();
         let named = |name: &str| program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -4007,6 +4073,98 @@ mod tests {
             assert_eq!(calls.len(), captures.len(), "one shared capture projection per entry read");
             for (block, _) in calls {
                 assert!(loops.innermost_loop(block).is_none(), "capture admission must precede the loop");
+            }
+            let body: Vec<_> = function.layout.blocks().filter(|&block| loops.innermost_loop(block).is_some())
+                .flat_map(|block| function.layout.block_insts(block)).collect();
+            assert!(!body.iter().any(|&inst| matches!(function.dfg.insts[inst],
+                ir::InstructionData::FloatCompare { cond: FloatCC::Equal, .. })),
+                "the admitted equality capture must not decode or compare f64 in the loop: {function}");
+            let entry_projection = |value| {
+                let mut pending = vec![value];
+                let mut seen = BTreeSet::new();
+                let mut origin = None;
+                while let Some(value) = pending.pop() {
+                    let value = function.dfg.resolve_aliases(value);
+                    if !seen.insert(value) { continue; }
+                    match function.dfg.value_def(value) {
+                        ir::ValueDef::Param(block, index) => {
+                            let before = pending.len();
+                            for predecessor in cfg.pred_iter(block) {
+                                for branch in function.dfg.insts[predecessor.inst]
+                                    .branch_destination(&function.dfg.jump_tables, &function.dfg.exception_tables) {
+                                    if branch.block(&function.dfg.value_lists) == block {
+                                        let Some(value) = branch.args(&function.dfg.value_lists).nth(index)
+                                            .and_then(|arg| arg.as_value()) else { return false };
+                                        pending.push(value);
+                                    }
+                                }
+                            }
+                            if pending.len() == before { return false; }
+                        }
+                        ir::ValueDef::Result(inst, _) if function.dfg.insts[inst].opcode() == ir::Opcode::Ireduce
+                            && function.layout.inst_block(inst).is_some_and(|block| loops.innermost_loop(block).is_none()) => {
+                                if origin.is_some_and(|other| other != value) { return false; }
+                                origin = Some(value);
+                            }
+                        _ => return false,
+                    }
+                }
+                origin.is_some()
+            };
+            assert!(body.iter().any(|&inst| {
+                let ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. } = function.dfg.insts[inst]
+                    else { return false };
+                args.into_iter().any(|value| function.dfg.value_type(value) == types::I32 && entry_projection(value))
+            }), "an entry-projected I32 capture must feed the native equality: {function}");
+        }
+    }
+
+    #[test]
+    fn relation_capture_entry_preserves_noninteger_values_and_effects() {
+        for (operator, strict) in [("==", false), ("===", true)] {
+            for reversed in [false, true] {
+                let comparison = if reversed { format!("limit{operator}this.bits") }
+                    else { format!("this.bits{operator}limit") };
+                let source = format!(r#"
+                    (function(){{
+                        function make(limit){{class Entry{{constructor(){{this.bits=0;}}probe(){{return {comparison};}}}}
+                            return {{entry:new Entry(),set(value){{limit=value;}},read(){{return limit;}}}};}}
+                        function run(entry,count){{const owner=entry;let n=count|0,result=0;
+                            while(n>0){{n=(n-1)|0;owner.bits=(owner.bits+1)|0;if(owner.probe())result=(result+1)|0;}}return result;}}
+                        function expected(value){{let total=0;for(let i=1;i<=7;i++)if(i{operator}value)total++;return total;}}
+                        const bundle=make(2);
+                        for(let warm=0;warm<96;warm++){{bundle.entry.bits=0;if(run(bundle.entry,7)!==1)throw 'warm';}}
+                        for(const value of [0,-0,1,2,2.5,NaN,Infinity,-Infinity,2n,'2',true,null,undefined,Symbol()]){{
+                            bundle.set(value);bundle.entry.bits=0;
+                            if(run(bundle.entry,7)!==expected(value)||bundle.entry.bits!==7||!Object.is(bundle.read(),value))throw 'capture value';
+                        }}
+                        let effects=0;
+                        bundle.set({{valueOf(){{effects++;return 2;}}}});bundle.entry.bits=0;
+                        if(run(bundle.entry,7)!=={}||effects!=={}||bundle.entry.bits!==7)throw 'coercion';
+                        effects=0;bundle.set({{valueOf(){{effects++;bundle.set(3);return 2;}}}});bundle.entry.bits=0;
+                        if(run(bundle.entry,7)!=={}||effects!=={}||bundle.entry.bits!==7)throw 'coercion mutation';
+                        bundle.set({{valueOf(){{throw 'zero-trip coercion';}}}});bundle.entry.bits=0;
+                        if(run(bundle.entry,0)!==0||bundle.entry.bits!==0)throw 'zero-trip';
+                        bundle.set(2);bundle.entry.bits=0;if(run(bundle.entry,7)!==1)throw 'integer reentry';
+                        function cold(count){{class Entry{{constructor(){{this.bits=0;}}probe(){{return this.bits{operator}hidden;}}}}
+                            const result=run(new Entry(),count);let hidden=2;return result;}}
+                        if(cold(0)!==0)throw 'zero-trip tdz';let caught=false;
+                        try{{cold(1);}}catch(error){{caught=error instanceof ReferenceError;}}if(!caught)throw 'tdz';
+                        throw 42;
+                    }})();
+                "#, usize::from(!strict), if strict { 0 } else { 7 }, usize::from(!strict), usize::from(!strict));
+                for typescript in [false, true] {
+                    let program = if typescript { crate::Engine::specialize_typescript(&source, "relation-capture.cts") }
+                        else { crate::Engine::specialize(&source, "relation-capture.cjs") }.unwrap();
+                    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+                        let mut vm = Vm::new(crate::test_host::TestHost::default());
+                        vm.set_execution_mode(mode);
+                        vm.programs.enable_js_lane_methods();
+                        let error = vm.execute(&program).unwrap_err();
+                        assert_eq!(error.thrown_value(), Some(Value::integer(42)),
+                            "{operator}, reverse={reversed}, TS={typescript}, {mode:?}: {error}");
+                    }
+                }
             }
         }
     }
