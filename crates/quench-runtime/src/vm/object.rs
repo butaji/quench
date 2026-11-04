@@ -1466,7 +1466,7 @@ impl<H: Host> Vm<H> {
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
-            ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
+            representation: self.heap.slot_representation(cache.receiver, usize::from(cache.slot)),
             inherited: None,
         })
     }
@@ -1527,7 +1527,7 @@ impl<H: Host> Vm<H> {
                 slot,
                 storage_len: usize::from(slot) + 1,
                 storage: None,
-                ty: crate::typed_ir::Type::ANY,
+                representation: crate::value_vec::SlotRepresentation::Tagged,
                 inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)], epoch),
             });
         }
@@ -1580,7 +1580,7 @@ impl<H: Host> Vm<H> {
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
         (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
-            ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
+            representation: self.heap.slot_representation(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)),
         })
     }

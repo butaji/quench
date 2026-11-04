@@ -207,29 +207,6 @@ impl SlotRepresentation {
     }
 }
 
-/// Advanced when a slot that has held a value widens its type: native code that read a
-/// slot's type (`NativeFieldLoad::ty`) holds while this is the epoch it compiled under. A
-/// slot's first value widens nothing a read compiled against.
-static SLOT_TYPE_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub(crate) fn slot_type_epoch() -> u64 {
-    SLOT_TYPE_EPOCH.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The epoch's address, which native code reads.
-pub(crate) fn slot_type_epoch_address() -> *const u64 {
-    SLOT_TYPE_EPOCH.as_ptr()
-}
-
-/// `held` joined with `ty`, advancing the epoch where a typed slot widens.
-fn widened_slot_type(held: Type, ty: Type) -> Type {
-    let joined = slot_type(held.join(ty));
-    if joined != held && held != Type::NEVER {
-        SLOT_TYPE_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-    joined
-}
-
 /// The type a slot has held once `ty` joins it: `ty` itself where it is a fact a native read
 /// uses (an int32, a Number, a Boolean, an object or nullish), else any value, which no later
 /// write widens (`ValueArena::saturated`).
@@ -444,7 +421,7 @@ impl ValueArena {
             let owner = self.slot_owner(shape, slot) as usize;
             let mut held = self.owner_reps[owner];
             if held != Type::ANY && !value.is_deleted() {
-                held = widened_slot_type(held, Type::immediate(value));
+                held = slot_type(held.join(Type::immediate(value)));
                 self.owner_reps[owner] = held;
             }
             saturated &= held == Type::ANY;
@@ -491,6 +468,11 @@ impl ValueArena {
         self.owner_reps[self.slot_owner(shape, slot) as usize]
     }
 
+    /// The representation `slot` of `shape` has held, `slot_type`'s projection.
+    #[inline(always)]
+    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> SlotRepresentation {
+        SlotRepresentation::of_type(self.slot_type(shape, slot))
+    }
 
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
     #[inline(always)]
@@ -508,7 +490,7 @@ impl ValueArena {
         let held = self.owner_reps[owner];
         // A slot that has held any value holds every value: the common case pays one compare.
         if held == Type::ANY { return false; }
-        let joined = widened_slot_type(held, Type::immediate(value));
+        let joined = slot_type(held.join(Type::immediate(value)));
         let widened = joined != held;
         if widened { self.owner_reps[owner] = joined; }
         widened

@@ -174,48 +174,6 @@ fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
 }
 
-/// The values a typed field read proves (`Lowering::typed_read`): an ordinary object or
-/// array (`Value::is_record`), `null` or `undefined`.
-fn object_or_nullish() -> Type {
-    Type::language(crate::ValueType::Object)
-        .join(Type::language(crate::ValueType::Null))
-        .join(Type::language(crate::ValueType::Undefined))
-}
-
-/// Whether `value` is of a kind `ty` names, as `Type::immediate` classes it, as an `i8`.
-fn emit_value_in_type(builder: &mut FunctionBuilder<'_>, value: ir::Value, ty: Type) -> ir::Value {
-    use crate::value::ValueLayout;
-    let mut held = builder.ins().iconst(types::I8, 0);
-    let named = |kind: crate::ValueType| Type::language(kind).is_subtype(ty);
-    if Type::INT32.is_subtype(ty) || named(crate::ValueType::Number) {
-        let int = is_int_tagged(builder, value);
-        held = builder.ins().bor(held, int);
-    }
-    if named(crate::ValueType::Number) {
-        let field = builder.ins().ushr_imm_u(value, i64::from(ValueLayout::TAG_SHIFT));
-        let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-        let double = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-        held = builder.ins().bor(held, double);
-    }
-    for (kind, constants) in [(crate::ValueType::Boolean, &[Value::TRUE, Value::FALSE][..]),
-        (crate::ValueType::Null, &[Value::NULL][..]), (crate::ValueType::Undefined, &[Value::UNDEFINED][..])] {
-        if named(kind) {
-            for constant in constants {
-                let same = builder.ins().icmp_imm_u(IntCC::Equal, value, constant.to_bits() as i64);
-                held = builder.ins().bor(held, same);
-            }
-        }
-    }
-    if named(crate::ValueType::Object) {
-        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-        held = builder.ins().bor(held, object);
-        held = builder.ins().bor(held, array);
-    }
-    held
-}
-
 fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
     let payload = builder.ins().uextend(types::I64, int);
     builder.ins().bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
@@ -564,23 +522,20 @@ fn leaders(instructions: &[WideInstruction]) -> Vec<bool> {
 /// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): a lookup with no
 /// sink or completion whose last read's slots have only held int32 values, its value's tag
 /// tested at the read.
-/// The descriptors of the field site whose read defines `instruction`'s result: its own,
-/// or a nested lookup's last.
-fn result_loads<'f>(program: &ResidualProgram, fields: &'f BTreeMap<u16, Vec<NativeFieldLoad>>, instruction: WideInstruction)
-    -> Option<&'f [NativeFieldLoad]> {
-    if instruction.op() != Op::GetField || instruction.returns_from_frame() || instruction.writes_current_this() {
-        return None;
-    }
-    let last = match instruction.field_lookup()? {
-        FieldLookup::Atom { cache_site, .. } => cache_site,
-        FieldLookup::Site(index) => { let site = program.field_sites.get(index)?; site.second.unwrap_or(site.first).1 }
-    };
-    fields.get(&last).map(Vec::as_slice).filter(|loads| !loads.is_empty())
-}
-
 fn int32_read(program: &ResidualProgram, fields: &BTreeMap<u16, Vec<NativeFieldLoad>>, instruction: WideInstruction) -> bool {
-    result_loads(program, fields, instruction)
-        .is_some_and(|loads| loads.iter().all(|field| field.representation() == SlotRepresentation::Int32))
+    if instruction.op() != Op::GetField || instruction.returns_from_frame() || instruction.writes_current_this() {
+        return false;
+    }
+    let last = match instruction.field_lookup() {
+        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
+        Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
+            Some(site) => site.second.unwrap_or(site.first).1,
+            None => return false,
+        },
+        None => return false,
+    };
+    fields.get(&last).is_some_and(|shapes| !shapes.is_empty()
+        && shapes.iter().all(|field| field.representation == SlotRepresentation::Int32))
 }
 
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
@@ -1394,12 +1349,6 @@ impl Lowering<'_, '_> {
                         let bits = self.tagged(state, register);
                         if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
                             self.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-                        } else if fact.ty != Type::NEVER && fact.ty.is_subtype(object_or_nullish()) {
-                            // An ordinary object or array is truthy, `null` and `undefined` not.
-                            let null = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
-                            let undefined = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
-                            let nullish = self.ins().bor(null, undefined);
-                            self.ins().icmp_imm_u(IntCC::Equal, nullish, 0)
                         } else {
                             emit_js_tagged_truthiness(&mut self.builder, bits, exit)
                         }
@@ -2140,8 +2089,7 @@ impl Lowering<'_, '_> {
         // A slot that has only held int32 values is read as one: its value's tag is tested
         // here, once, and a value it no longer holds leaves before the read is defined.
         if !int32_read(self.program, self.fields, instruction) {
-            let ty = self.typed_read(instruction, exit);
-            self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
+            self.set_tagged(state, destination, value);
             return Some(true);
         }
         let integer = is_int_tagged(&mut self.builder, value);
@@ -2497,22 +2445,6 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
-    /// The type `instruction`'s read proves of its value: where every slot it reads has held
-    /// only ordinary objects, arrays or nullish values (`NativeFieldLoad::ty`), that type, under
-    /// the slot-type epoch the code compiled at (`value_vec::slot_type_epoch`), which a widened
-    /// slot advances: the read leaves through `exit` where it has. Any other read proves nothing.
-    fn typed_read(&mut self, instruction: WideInstruction, exit: ir::Block) -> Type {
-        let ty = result_loads(self.program, self.fields, instruction)
-            .map(|loads| loads.iter().fold(Type::NEVER, |ty, load| ty.join(load.ty)))
-            .filter(|ty| *ty != Type::NEVER && ty.is_subtype(object_or_nullish()));
-        let Some(ty) = ty else { return Type::ANY };
-        let address = self.ins().iconst(types::I64, crate::value_vec::slot_type_epoch_address() as i64);
-        let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-        let unchanged = self.ins().icmp_imm_u(IntCC::Equal, epoch, crate::value_vec::slot_type_epoch() as i64);
-        emit_js_guard(&mut self.builder, unchanged, exit);
-        ty
-    }
-
     /// The receiver's shape and storage kind again, and the entry's tests of its shape, after
     /// a store that may have changed them (`emit_lane_receiver`, `Lowering::entry_facts`).
     fn reload_receiver(&mut self) {
@@ -2586,7 +2518,7 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
-        self.represented(field.ty, ty, value, general);
+        self.represented(field.representation, ty, value, general);
         if !ty.is_subtype(Type::NUMBER) {
             let record_id = self.ins().ireduce(types::I32, object_bits);
             let record_id = self.ins().uextend(types::I64, record_id);
@@ -2643,13 +2575,14 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(arena);
     }
 
-    /// Continue where a slot of type `slot` holds `value`, of type `ty`, else at `otherwise`,
-    /// which joins it: statically where `ty` proves it, else by `value`'s class
-    /// (`emit_value_in_type`). A store past here keeps every value within its slot's type,
-    /// which typed reads rely on.
-    fn represented(&mut self, slot: Type, ty: Type, value: ir::Value, otherwise: ir::Block) {
-        if slot == Type::ANY || (ty != Type::NEVER && ty.is_subtype(slot)) { return; }
-        let held = emit_value_in_type(&mut self.builder, value, slot);
+    /// Continue where the slot representation `representation` holds `value`, of type `ty`,
+    /// else at `otherwise`: statically where `ty` proves it, else by `value`'s int tag.
+    fn represented(&mut self, representation: SlotRepresentation, ty: Type, value: ir::Value, otherwise: ir::Block) {
+        let class = if ty.is_subtype(Type::INT32) { SlotRepresentation::Int32 } else { SlotRepresentation::Tagged };
+        if class <= representation { return; }
+        // An int is held by any representation but `None`, a slot no value reached yet.
+        let held = if representation == SlotRepresentation::None { self.ins().iconst(types::I8, 0) }
+            else { is_int_tagged(&mut self.builder, value) };
         emit_js_guard(&mut self.builder, held, otherwise);
     }
 
@@ -2852,7 +2785,7 @@ mod tests {
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
                 Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
-                    ty: Type::ANY, inherited: None }]))
+                    representation: SlotRepresentation::Tagged, inherited: None }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();

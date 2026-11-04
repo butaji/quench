@@ -81,10 +81,9 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
-    /// The type of every value the slot has held when the code was compiled
-    /// (`Heap::slot_type`): a read speculates on it, under the slot-type epoch
-    /// (`value_vec::slot_type_epoch`), and leaves where it fails.
-    pub(crate) ty: crate::typed_ir::Type,
+    /// The representation of every value the slot has held when the code was compiled
+    /// (`Heap::slot_representation`): a read speculates on it and leaves where it fails.
+    pub(crate) representation: SlotRepresentation,
     /// For a holder read, the value its proved immediate prototype holds when the code was
     /// compiled (`Vm::inherited_constant`): a read takes it while the receiver's prototype is
     /// that one and no prototype has changed since (`heap::prototype_value_epoch`).
@@ -137,11 +136,6 @@ impl InheritedConstant {
 }
 
 impl NativeFieldLoad {
-    /// The slot's representation, its type's projection.
-    pub(crate) fn representation(&self) -> SlotRepresentation {
-        SlotRepresentation::of_type(self.ty)
-    }
-
     /// Whether a miss of a site's `loads` asks the VM's caches before it leaves: a slot held
     /// by the immediate prototype proves only that prototype, where a deeper holder's read
     /// may answer, and a polymorphic site's other receivers may be cached. A monomorphic
