@@ -3,6 +3,11 @@ function write(object, value) {
   return value;
 }
 
+function writeNumber(object, value) {
+  object.left = value * 1;
+  return value;
+}
+
 function strictWrite(object, value) {
   'use strict';
   object.left = value;
@@ -44,6 +49,7 @@ globalThis.arenaItem = { left: 9, right: 30.5 };
 for (let index = 0; index < 100; index++) {
   write(packed, 1);
   write(arena, 1.5);
+  writeNumber(arena, 1.5);
   strictWrite(packed, 1);
   strictWrite(arena, 1.5);
   updateAlias(packed, 1);

@@ -23010,7 +23010,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
             let function = global(&mut vm, name);
-            let run = |vm: &mut Vm<TestHost>, method: &super::compiled::LaneMethod, object, value| {
+            let run = |vm: &mut Vm<TestHost>, body: &crate::bytecode::Function, method: &super::compiled::LaneMethod, object, value| {
                 let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
                 for (index, value) in [object, value].into_iter().enumerate() {
                     let register = body.parameter_registers.map(|base| base + index as u16)
@@ -23028,7 +23028,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                 let before = vm.own_property(object, left).unwrap().as_number().unwrap();
                 let right = vm.intern_atom("right");
                 let other = vm.own_property(object, right).unwrap().as_number().unwrap();
-                let (pc, registers) = run(&mut vm, &method, object, Value::integer(7));
+                let (pc, registers) = run(&mut vm, body, &method, object, Value::integer(7));
                 assert_eq!(instructions[pc].op(), Op::Return, "{name}({object_name}) left at {pc}");
                 assert_eq!(vm.own_property(object, left), Some(Value::integer(7)));
                 let expected = if name == "updateAlias" { Value::number(before + 7.0 + other) } else { Value::integer(7) };
@@ -23038,7 +23038,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             for object_name in ["accessor", "readonly", "proxy"] {
                 let object = global(&mut vm, object_name);
                 let before = vm.own_property(vm.realm.globals, effects).unwrap();
-                let (pc, _) = run(&mut vm, &method, object, Value::integer(3));
+                let (pc, _) = run(&mut vm, body, &method, object, Value::integer(3));
                 assert!(matches!(instructions[pc].op(), Op::SetField | Op::SetFieldStrict), "{object_name} leaves before writing");
                 assert_eq!(vm.own_property(vm.realm.globals, effects), Some(before));
                 let result = vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(3)]);
@@ -23068,8 +23068,25 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                 word & (1 << (within % layout.mark_word_bits)) != 0
             };
             assert!(marked(&vm, object), "the first heap write must require logging");
+            let numeric = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "writeNumber")).unwrap();
+            let numeric_function = global(&mut vm, "writeNumber");
+            vm.call_value(&program, numeric_function, Value::UNDEFINED, &[object, Value::number(1.5)]).unwrap();
+            let numeric_body = program.function(numeric);
+            let numeric_method = vm.compile_lane_method(&program, numeric as u32, &|_, _| Vec::new(),
+                &|_| (0, 0), Vec::new(), None).unwrap();
+            for value in [Value::integer(7), Value::number(1.5), Value::number(-0.0),
+                Value::number(f64::NAN), Value::number(f64::INFINITY)] {
+                let (pc, _) = run(&mut vm, numeric_body, &numeric_method, object, value);
+                assert_eq!(numeric_body.instructions().nth(pc).unwrap().op(), Op::Return,
+                    "verified Number store must remain native");
+                let stored = vm.own_property(object, left).unwrap().as_number().unwrap();
+                let expected = value.as_number().unwrap();
+                assert!(stored.to_bits() == expected.to_bits() || (stored.is_nan() && expected.is_nan()));
+                assert!(marked(&vm, object), "Number stores must not consume the reference barrier");
+            }
             let child = vm.heap.alloc_object(crate::heap::Object::new(Value::NULL));
-            let (pc, registers) = run(&mut vm, &method, object, child);
+            let (pc, registers) = run(&mut vm, body, &method, object, child);
             assert_eq!(instructions[pc].op(), Op::Return, "a heap write remains native with the logged helper");
             assert_eq!(registers[usize::from(instructions[pc].register_a())], child);
             assert_eq!(vm.own_property(object, left), Some(child));

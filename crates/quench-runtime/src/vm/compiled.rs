@@ -1945,7 +1945,7 @@ fn emit_js_own_field_set(
     builder.seal_block(name_free);
     let (address, record_id) =
         emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback, None, None, None);
-    emit_unlogged_property_store_guard(builder, payload, record_id, value, fallback);
+    emit_unlogged_property_store_guard(builder, payload, record_id, value, typed_ir::Type::ANY, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
@@ -1955,11 +1955,13 @@ fn emit_js_own_field_set(
 }
 
 /// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier. Otherwise the caller must perform the logged store.
+/// needs no barrier. Verified Numbers are immediate and discharge the test at
+/// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
     builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, fallback: ir::Block,
+    value: ir::Value, ty: typed_ir::Type, fallback: ir::Block,
 ) {
+    if ty.is_subtype(typed_ir::Type::NUMBER) { return; }
     use crate::value::ValueLayout;
     let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
     let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);

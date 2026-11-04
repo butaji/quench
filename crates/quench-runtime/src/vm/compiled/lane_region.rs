@@ -3268,12 +3268,10 @@ impl Lowering<'_, '_> {
             self.represented(field.ty, value, widen);
             widen
         });
-        if !ty.is_subtype(Type::NUMBER) {
-            let record_id = self.ins().ireduce(types::I32, object_bits);
-            let record_id = self.ins().uextend(types::I64, record_id);
-            let payload = self.payload;
-            emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
-        }
+        let record_id = self.ins().ireduce(types::I32, object_bits);
+        let record_id = self.ins().uextend(types::I64, record_id);
+        let payload = self.payload;
+        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, ty, general);
         // An int32 into a packed object's inline slot is its narrow word where it fits and
         // the object has no extras (`Object::store_inline_narrow`); it needs no barrier.
         if ty.is_subtype(Type::INT32) && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
@@ -3357,7 +3355,7 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
                 JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
+            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(packed);
