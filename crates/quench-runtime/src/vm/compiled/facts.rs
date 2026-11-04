@@ -60,6 +60,28 @@ impl Facts {
         types.get(usize::from(register)).copied().unwrap_or(Type::ANY)
     }
 
+    /// Project each reachable definition's post-state through the same transfer
+    /// as the fixed point. Replay each block once, retaining no per-PC cache.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+        constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool,
+        mut visit: impl FnMut(usize, Register, Type)) {
+        let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
+        for start in (0..instructions.len()).filter(|pc| leaders.contains(*pc)) {
+            let Some(entry) = self.at(start) else { continue };
+            types.clear();
+            types.extend_from_slice(entry);
+            for (pc, instruction) in instructions.iter().copied().enumerate().skip(start) {
+                if pc != start && leaders.contains(pc) { break; }
+                let flow = transfer(&mut types, instruction, constants, written, native_calls);
+                for register in written(instruction) {
+                    visit(pc, register, types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
+                }
+                if !matches!(flow, Flow::Next) { break; }
+            }
+        }
+    }
+
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
         let Some(slot) = self.offsets.get_mut(pc) else { return false };
         let Some(offset) = *slot else {
@@ -303,9 +325,95 @@ pub(super) fn analyze(
     facts
 }
 
+/// Prove a checked integer entry contract by induction. Every native write
+/// and every backedge must preserve the entry hypothesis. Rejecting one input
+/// removes that assumption from all dependent proofs on the next iteration.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitSet,
+    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool) -> Option<Facts> {
+    // Each unsuccessful iteration removes at least one candidate. Compile
+    // work is bounded by candidate count, without a semantic iteration cap.
+    while !candidates.is_empty() {
+        let mut inputs = initial.to_vec();
+        for register in candidates.iter() { inputs[register] = Type::INT32; }
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls);
+        let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        for register in candidates.iter() {
+            if facts.backedge().get(register) != Some(&Type::INT32) { rejected.insert(register); }
+        }
+        facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
+            let index = usize::from(register);
+            if body.contains(&pc) && candidates.contains(index) && ty != Type::INT32 { rejected.insert(index); }
+        });
+        if rejected.is_empty() {
+            initial.copy_from_slice(&inputs);
+            return Some(facts);
+        }
+        for register in rejected.iter() { candidates.remove(register); }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
+        let program = crate::Engine::specialize(&format!("function loop(n,flag,seed){{{body}}}"), "inductive.js").unwrap();
+        let function = program.function(1);
+        let instructions: Vec<_> = function.instructions().collect();
+        let leaders = super::super::lane_region::leaders(&instructions);
+        let edges: Vec<_> = instructions.iter().enumerate().filter_map(|(pc, instruction)|
+            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+                .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc).map(|target| (target, pc))).collect();
+        let header = edges.iter().map(|(header, _)| *header).min().unwrap();
+        let back = edges.iter().filter(|(target, _)| *target == header).map(|(_, pc)| *pc).max().unwrap();
+        // These fixtures initialize the tested homes from their third input.
+        // Promoted locals need not retain debugger names in the bytecode.
+        let homes: Vec<_> = instructions[..header].iter().filter(|instruction|
+            instruction.op() == Op::Move && instruction.register_b() == 2)
+            .map(|instruction| instruction.result_register()).take(names.len()).collect();
+        assert_eq!(homes.len(), names.len(), "candidate homes {names:?}: {}", program.disassemble());
+        let mut initial = vec![Type::ANY; usize::from(function.registers)];
+        let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        for register in &homes { candidates.insert(usize::from(*register)); }
+        inductive_int32(&mut initial, candidates, header..=back, &instructions, &leaders, &program.constants,
+            &super::super::lane_region::writes, &|_| None, false);
+        (initial, homes)
+    }
+
+    #[test]
+    fn inductive_integer_definitions_preserve_unchanged_arms_and_all_latches() {
+        for body in [
+            "let acc=seed,i=0;while(i<n){i=(i+1)|0;if(flag)acc=(acc+1)|0;}return acc;",
+            "let acc=seed,i=0;while(i<n){i=(i+1)|0;if(flag)continue;acc=(acc+1)|0;}return acc;",
+            "let acc=seed,i=0;while(i<n){i=(i+1)|0;if(flag)acc=(acc+1)|0;else acc=(acc-1)|0;}return acc;",
+        ] {
+            let (initial, homes) = infer_inductive(body, &["acc"]);
+            assert_eq!(initial[usize::from(homes[0])], Type::INT32, "{body}");
+        }
+    }
+
+    #[test]
+    fn inductive_integer_definitions_reject_wide_and_unproved_writes() {
+        for update in ["acc=0.5", "acc=2147483648", "acc='text'", "acc=1n", "acc=true", "acc=seed"] {
+            let body = format!("let acc=seed,i=0;while(i<n){{i=(i+1)|0;if(flag)acc=(acc+1)|0;else {update};}}return acc;");
+            let (initial, homes) = infer_inductive(&body, &["acc"]);
+            assert_eq!(initial[usize::from(homes[0])], Type::ANY, "{update}");
+        }
+    }
+
+    #[test]
+    fn inductive_integer_definitions_remove_failed_dependencies() {
+        let body = "let x=seed,y=seed,i=0;while(i<n){i=(i+1)|0;if(flag){x=0;y=0;}else{x=y;y=0.5;}}return x;";
+        let (initial, homes) = infer_inductive(body, &["x", "y"]);
+        assert!(homes.iter().all(|home| initial[usize::from(*home)] == Type::ANY));
+        // A home without its own candidate proof cannot supply an I32 fact.
+        let (initial, homes) = infer_inductive("let x=seed,y=seed,i=0;while(i<n){i=(i+1)|0;if(flag)x=0;else x=y;}return x;", &["x"]);
+        assert_eq!(initial[usize::from(homes[0])], Type::ANY);
+    }
 
     #[test]
     fn joins_widen_only_the_reached_block_and_converge_after_storage_growth() {

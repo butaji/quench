@@ -1292,6 +1292,8 @@ pub(super) fn lower(
         field.holder.is_none().then_some((base.register_index()?, field.shape))
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls);
+    let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
+    let loops = local_loops(unit, &program.constants, &starts);
     if coverage.selected_entry() {
         lowering.written = CompoundBitSet::with_capacity(count);
         for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -1332,12 +1334,11 @@ pub(super) fn lower(
         if refined {
             lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls);
         }
+        lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry)); }
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
-    let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
-    let loops = local_loops(unit, &program.constants, &starts);
     lowering.hoists = invariant_reads(unit, &loops);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -2927,6 +2928,35 @@ impl Lowering<'_, '_> {
         self.continue_at(&mut fall_state, pc + 1);
     }
 
+    /// An unchanged arm preserves a checked entry hypothesis. Every definition
+    /// and backedge must preserve it too; failed hypotheses are removed before
+    /// reanalysis so a dependent candidate cannot keep using their assumptions.
+    fn refine_inductive_inputs(&mut self, initial: &mut [Type], instructions: &[WideInstruction],
+        boundaries: &CompoundBitSet, loops: &[(usize, usize)],
+        own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) {
+        let header = self.coverage.entry();
+        let Some((_, back)) = loops.iter().copied().filter(|(start, _)| *start == header)
+            .max_by_key(|(_, back)| *back) else { return };
+        // Alternative markers add edges beyond the bytecode Nop transfer.
+        // Keep their canonical lowering until this analysis models those edges.
+        if self.unit.markers.iter().zip(&self.unit.frames).any(|(pc, frame)|
+            (header..=back).contains(pc) && frame.alternative.is_some()) { return; }
+        let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls,
+            |pc, register, ty| {
+                let index = usize::from(register);
+                if (header..=back).contains(&pc) && register < self.unit.caller_registers
+                    && self.is_live(header, register) && self.written.contains(index)
+                    && matches!(initial[index], Type::ANY | Type::NUMBER) && ty == Type::INT32 {
+                    candidates.insert(index);
+                }
+            });
+        if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls) {
+            self.facts = facts;
+        }
+    }
+
     /// The type already proved for an operand at a use. Feedback is not enough:
     /// an admitted field read carries its actual loop-entry contract, even when
     /// the general analysis has no field feedback (as in linked AOT).
@@ -4117,6 +4147,133 @@ mod tests {
                 args.into_iter().any(|value| function.dfg.value_type(value) == types::I32 && entry_projection(value))
             }), "an entry-projected I32 capture must feed the native equality: {function}");
         }
+    }
+
+    #[test]
+    #[cfg(feature = "aot")]
+    fn inductive_accumulator_keeps_the_predicate_loop_unboxed() {
+        let source = r#"(function(){
+            let mask=4,threshold=2;
+            class Cell{constructor(n,value){this.left=n|0;this.word=value|0;}
+                accepts(){return (this.word&mask)!==0||this.word===threshold;}}
+            function fold(n,value){const cell=new Cell(n,value);let total=0;
+                while(cell.left>0){cell.left=(cell.left-1)|0;
+                    cell.word=(cell.word>>1)^((cell.word&1)?21:0);
+                    if(cell.accepts())total=(total+1)|0;}return total|0;}
+        })();"#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "inductive-predicate.cts") }
+                else { crate::Engine::specialize(source, "inductive-predicate.cjs") }.unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "fold")).unwrap();
+            let targets = static_call_targets(&program);
+            let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
+                &|function, pc| targets[function as usize].get(pc as usize).copied().flatten()
+                    .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
+                    .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
+            assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
+            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let regions = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0);
+            assert!(!regions.is_empty(), "selected caller header must publish");
+            let mut integer_add = false;
+            for region in regions {
+                let function = region.function;
+                cranelift_codegen::verify_function(&function, &*isa).unwrap();
+                let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
+                let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
+                let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+                loops.compute(&function, &cfg, &dom);
+                for block in function.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some()) {
+                    for inst in function.layout.block_insts(block) {
+                        integer_add |= function.dfg.insts[inst].opcode() == ir::Opcode::Iadd
+                            && function.dfg.inst_results(inst).first().is_some_and(|value| function.dfg.value_type(*value) == types::I32);
+                        if let ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. } = function.dfg.insts[inst] {
+                            assert!(!args.into_iter().any(|value| {
+                                let ir::ValueDef::Result(def, _) = function.dfg.value_def(function.dfg.resolve_aliases(value)) else { return false };
+                                matches!(function.dfg.insts[def], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
+                                    if imm.bits() as u64 == crate::value::ValueLayout::INT_TAG >> crate::value::ValueLayout::TAG_SHIFT)
+                            }), "integer tag admission must leave the loop: {function}");
+                        }
+                    }
+                }
+            }
+            assert!(integer_add, "the wrapping accumulator update must remain native I32");
+        }
+    }
+
+    #[test]
+    fn inductive_entry_preserves_misses_wrap_and_cold_checkpoints() {
+        let program = crate::Engine::specialize(
+            "function scan(n,seed,divisor){let acc=seed,i=0;while(i<n){i=(i+1)|0;if((i&1)!==0)acc=(acc+1)|0;let probe=(1/divisor)|0;}return acc;}",
+            "inductive-entry.js").unwrap();
+        let function = program.function(1);
+        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+        let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
+            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+                .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
+        let induction = unit.instructions[header].operand_b().register_index().unwrap();
+        let limit = unit.instructions[header].operand_c().register_index().unwrap();
+        let accumulator = unit.instructions.iter().find(|instruction| instruction.op() == Op::Return).unwrap().register_a();
+        let divisor = unit.instructions.iter().find(|instruction| instruction.op().js_denotation() == JsDenotation::NumericBinary
+            && super::super::super::operations::NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())
+                == Some(super::super::super::operations::NumberArithmetic::Divide)).unwrap().operand_c().register_index().unwrap();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(),
+            &[], None, &*isa, Coverage::Osr(header), Completion::StatusAndPc).expect("inductive native loop");
+        let fault_poll = region.fault_poll;
+        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
+        // SAFETY: this code uses the shared entry ABI, and the mapping remains owned here.
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let mut frame = super::super::LaneFrame::new();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        frame.dispatch.refresh_object_bases(&vm);
+        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
+        frame.context.interrupt = vm.execution_interrupt.atomic_flag() as *const _;
+        frame.context.interrupt_owner = &vm.execution_interrupt;
+        if fault_poll {
+            let (start, end) = super::super::native_poll_page(&vm.execution_interrupt).expect("owned poll capability");
+            (frame.context.poll_start, frame.context.poll_end) = (start, end);
+        }
+        let inputs = |seed, count, division| {
+            let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
+            registers[usize::from(accumulator)] = seed;
+            registers[usize::from(induction)] = Value::integer(0);
+            registers[usize::from(limit)] = Value::integer(count);
+            registers[usize::from(divisor)] = Value::integer(division);
+            registers
+        };
+        for count in [0, 7] {
+            for seed in [Value::number(-0.0), Value::number(1.5), Value::number(2147483648.0),
+                Value::number(f64::NAN), Value::number(f64::INFINITY), Value::number(f64::NEG_INFINITY),
+                Value::UNDEFINED, Value::NULL, Value::TRUE] {
+                let mut registers = inputs(seed, count, 1);
+                let before = registers.clone();
+                let mut word = u64::MAX;
+                // SAFETY: frame, input homes and output remain live through the resumable entry.
+                let status = unsafe { super::super::enter_native(&mut frame.context, 1, 0,
+                    registers.as_mut_ptr().cast(), &mut word, NativeEntryMode::Resumable, entry) };
+                assert_eq!((status, word), (NATIVE_JS_STOPPED, header as u64), "{seed:?}, count={count}");
+                assert_eq!(registers, before, "entry miss must preserve every canonical input");
+            }
+        }
+        for seed in [0_i32, i32::MAX, i32::MIN] {
+            let mut registers = inputs(Value::integer(seed), 7, 1);
+            let mut word = 0;
+            let status = unsafe { super::super::enter_native(&mut frame.context, 1, 0,
+                registers.as_mut_ptr().cast(), &mut word, NativeEntryMode::Resumable, entry) };
+            assert_eq!(status, LANE_BODY_RETURNED);
+            assert_eq!(Value::from_bits(word), Value::integer(seed.wrapping_add(4)));
+        }
+        let mut registers = inputs(Value::integer(i32::MAX), 7, 0);
+        let mut word = 0;
+        let status = unsafe { super::super::enter_native(&mut frame.context, 1, 0,
+            registers.as_mut_ptr().cast(), &mut word, NativeEntryMode::Resumable, entry) };
+        assert_eq!(status, NATIVE_JS_STOPPED);
+        assert!(word > header as u64, "the unsupported infinity projection exits after the first update");
+        assert_eq!(registers[usize::from(accumulator)], Value::integer(i32::MIN));
+        assert_eq!(registers[usize::from(induction)], Value::integer(1));
     }
 
     #[test]
