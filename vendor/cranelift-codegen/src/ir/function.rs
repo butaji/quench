@@ -157,6 +157,17 @@ pub struct EffectSpecialization {
     pub gates: alloc::vec::Vec<(Inst, bool)>,
 }
 
+impl EffectSpecialization {
+    /// Project instruction identities through an IR rebuild. A removed proof
+    /// cannot authorize specialization; removed gates need no annotation.
+    pub fn remap_instructions(&self, map: impl Fn(Inst) -> Option<Inst>) -> Option<Self> {
+        Some(Self {
+            proof: map(self.proof)?,
+            gates: self.gates.iter().filter_map(|&(inst, truth)| map(inst).map(|inst| (inst, truth))).collect(),
+        })
+    }
+}
+
 /// Function fields needed when compiling a function.
 ///
 /// Additionally, these fields can be the same for two functions that would be compiled the same

@@ -524,9 +524,8 @@ fn inline_one(
 
     if let Some(instructions) = effect_instructions {
         for effect in &callee.effect_specializations {
-            if let Some(proof) = instructions[effect.proof] {
-                let gates = effect.gates.iter().filter_map(|&(inst, truth)| instructions[inst].map(|inst| (inst, truth))).collect();
-                func.effect_specializations.push(ir::function::EffectSpecialization { proof, gates });
+            if let Some(effect) = effect.remap_instructions(|inst| instructions[inst]) {
+                func.effect_specializations.push(effect);
             }
         }
     }

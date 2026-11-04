@@ -184,6 +184,8 @@ impl FrameFlow {
             }
             if !changed { break; }
         }
+        let mut replacements = (!native.effect_specializations.is_empty())
+            .then(|| SecondaryMap::<ir::Inst, Option<ir::Inst>>::with_capacity(native.dfg.num_insts()));
         let parameters: Vec<_> = records.iter().map(|(block, _)| native.dfg.block_params(*block).to_vec()).collect();
         for (block, _) in &records { native.layout.remove_block_and_insts(*block); }
         let mut context = FunctionBuilderContext::new();
@@ -264,6 +266,10 @@ impl FrameFlow {
                     }
                 }
                 let (next, _) = builder.ins().build(data, control);
+                if let Some(replacements) = &mut replacements { replacements[*instruction] = Some(next); }
+                builder.func.srclocs[next] = builder.func.srclocs[*instruction];
+                builder.func.debug_tags.clone_tags(*instruction, next);
+                builder.func.debug_tags.set(*instruction, []);
                 builder.func.dfg.clear_results(next);
                 let input = results.first().copied();
                 builder.func.dfg.make_inst_results_reusing(next, control, results.into_iter().map(Some));
@@ -279,6 +285,10 @@ impl FrameFlow {
                     }
                 }
             }
+        }
+        if let Some(replacements) = replacements {
+            builder.func.effect_specializations = std::mem::take(&mut builder.func.effect_specializations)
+                .into_iter().filter_map(|effect| effect.remap_instructions(|inst| replacements[inst])).collect();
         }
         builder.seal_all_blocks();
         builder.finalize(config);
@@ -329,6 +339,109 @@ fn offset(register: u16) -> i32 { i32::from(register) * std::mem::size_of::<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn promotion_preserves_effect_proofs_and_instruction_metadata() {
+        use std::sync::atomic::AtomicU8;
+        extern "C" fn owner_query() -> u64 { 1 }
+        const SOURCE_OFFSET: u32 = 42;
+        const OWNER_TAG: u32 = 7;
+        const OWNER_LABEL: u32 = 0;
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        for (tagged, conservative) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            native.collect_debug_info();
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut native, &mut context);
+            let entry = builder.create_block();
+            let header = builder.create_block();
+            let gate_block = builder.create_block();
+            let polled = builder.create_block();
+            let latch = builder.create_block();
+            let exit = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.append_block_param(header, types::I64);
+            builder.switch_to_block(entry);
+            let args = builder.block_params(entry).to_vec();
+            let callout = builder.ins().iconst(types::I64, 0);
+            let mut flow = FrameFlow::new(args[0], 1);
+            flow.resume(&mut builder, None, 0);
+            let address = builder.ins().iconst(types::I64, owner_query as *const () as usize as i64);
+            let mut query_signature = Signature::new(isa.default_call_conv());
+            query_signature.returns.push(AbiParam::new(types::I64));
+            let query_signature = builder.import_signature(query_signature);
+            builder.set_srcloc(ir::SourceLoc::new(SOURCE_OFFSET));
+            let proof = builder.ins().call_indirect(query_signature, address, &[]);
+            let owner = builder.inst_results(proof)[0];
+            if tagged { builder.func.debug_tags.set(proof, [ir::DebugTag::User(OWNER_TAG)]); }
+            flow.no_frame(proof);
+            builder.ins().jump(header, &[args[2].into()]);
+            builder.switch_to_block(header);
+            let count = builder.block_params(header)[0];
+            // Debug values deliberately select the existing conservative poll
+            // fallback, whose proof and gate must survive frame reconstruction.
+            if conservative { builder.set_val_label(owner, ir::ValueLabel::from_u32(OWNER_LABEL)); }
+            builder.ins().brif(count, gate_block, &[], exit, &[]);
+            builder.switch_to_block(gate_block);
+            let gate = builder.ins().brif(owner, latch, &[], polled, &[]);
+            builder.switch_to_block(polled);
+            builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), args[1]);
+            builder.ins().jump(latch, &[]);
+            builder.switch_to_block(latch);
+            let value = builder.ins().load(types::I64, MemFlagsData::trusted(), args[0], 0);
+            let next = builder.ins().iadd_imm_u(value, 1);
+            builder.ins().store(MemFlagsData::trusted(), next, args[0], 0);
+            let remaining = builder.ins().iadd_imm_s(count, -1);
+            builder.ins().jump(header, &[remaining.into()]);
+            builder.switch_to_block(exit);
+            let result = builder.ins().load(types::I64, MemFlagsData::trusted(), args[0], 0);
+            builder.ins().return_(&[result]);
+            builder.func.effect_specializations.push(ir::function::EffectSpecialization { proof, gates: vec![(gate, false)] });
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            let location = native.srcloc(proof);
+            flow.promote(&mut native, callout, None, isa.frontend_config());
+            let effect = &native.effect_specializations[0];
+            assert_ne!(effect.proof, proof);
+            assert!(native.layout.inst_block(effect.proof).is_some());
+            assert_eq!(native.dfg.insts[effect.proof].opcode(), ir::Opcode::CallIndirect);
+            assert_eq!(native.srcloc(effect.proof), location);
+            assert_eq!(native.debug_tags.has(effect.proof), tagged);
+            assert!(!native.debug_tags.has(proof));
+            assert_eq!(effect.gates.len(), 1);
+            assert_ne!(effect.gates[0].0, gate);
+            assert!(!effect.gates[0].1);
+            assert!(native.layout.inst_block(effect.gates[0].0).is_some());
+            assert_eq!(native.dfg.insts[effect.gates[0].0].opcode(), ir::Opcode::Brif);
+            let mut compiler = cranelift_codegen::Context::for_function(native);
+            let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+            let memory = CodeMemory::new(compiled.buffer.data()).unwrap();
+            let mut calls = 0;
+            let mut polls = 0;
+            for block in compiler.func.layout.blocks() { for inst in compiler.func.layout.block_insts(block) {
+                calls += usize::from(compiler.func.dfg.insts[inst].opcode().is_call());
+                polls += usize::from(compiler.func.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad);
+            }}
+            assert_eq!(calls, usize::from(tagged || !conservative),
+                "only an observable tag or unswitched loop retains the query: {}", compiler.func);
+            assert_eq!(polls, 1, "the conservative fallback must keep cancellation polling");
+            assert!(compiler.func.effect_specializations.is_empty());
+            // SAFETY: the verified ABI receives a live word, an atomic byte,
+            // and a bounded trip count. The code mapping remains live.
+            let run = unsafe { std::mem::transmute::<*mut u8,
+                unsafe extern "C" fn(*mut u64, *const AtomicU8, u64) -> u64>(memory.pointer()) };
+            for trips in [0, 1, 17, 257] {
+                let mut frame = 10;
+                let poll = AtomicU8::new(0);
+                assert_eq!(unsafe { run(&mut frame, &poll, trips) }, 10 + trips);
+                assert_eq!(frame, 10 + trips);
+            }
+        }
+    }
 
     #[test]
     fn packed_effects_preserve_zero_roots_and_distinguish_unknown_calls() {
