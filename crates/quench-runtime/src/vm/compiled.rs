@@ -7695,6 +7695,8 @@ impl<H: Host> Vm<H> {
             }
             let dispatch = &raw mut (*frame).dispatch;
             LaneEntry {
+                program_id: program,
+                field_entries: self.program_field_entries(program).unwrap_or(0),
                 lane_context: lane_context.addr(),
                 native_registers: registers,
                 receiver: receiver.to_bits(),
@@ -7704,7 +7706,6 @@ impl<H: Host> Vm<H> {
             }
             .install(&mut *dispatch);
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
-            (*dispatch).program_id = program;
             (*dispatch).refresh_object_bases(self);
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
             let vm = self as *mut Self;
@@ -7875,6 +7876,8 @@ const SHADOW_FRAMES: usize = 64;
 /// The words of `JsStepDispatch` one lane body entry owns (`Vm::run_lane_method`).
 #[derive(Clone, Copy)]
 struct LaneEntry {
+    program_id: ProgramId,
+    field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
     receiver: u64,
@@ -7886,6 +7889,8 @@ struct LaneEntry {
 impl LaneEntry {
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self {
+            program_id: dispatch.program_id,
+            field_entries: dispatch.field_entries,
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
             receiver: dispatch.receiver,
@@ -7896,6 +7901,8 @@ impl LaneEntry {
     }
 
     fn install(self, dispatch: &mut JsStepDispatch) {
+        dispatch.program_id = self.program_id;
+        dispatch.field_entries = self.field_entries;
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
         dispatch.receiver = self.receiver;
@@ -18711,6 +18718,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn jit_loop_slots_preserve_widening_and_reentry() {
+        let source = concat!("run({count:4096,value:0},1);\n",
+            include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "jit-loop-slots.cts") }
+                else { crate::Engine::specialize(source, "jit-loop-slots.cjs") }.unwrap();
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::Compiled);
+            LOOP_SLOT_STORES.with(|count| count.set(0));
+            let error = vm.execute(&program).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+            assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0,
+                "the JIT must admit a writable loop slot from its program's table");
+        }
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn loop_field_phis_preserve_aliases_widening_and_effects() {
@@ -19479,6 +19503,11 @@ mod tests {
         // This sentinel is never entered: the inner entry installs its own landing.
         let outer_landing = (&program as *const ResidualProgram).addr();
         let original_landing = unsafe { std::mem::replace(&mut (*frame).context.entry_stack, outer_landing) };
+        // These outer program inputs are never dereferenced by the nested body:
+        // entry must replace them, then restore them before returning to the caller.
+        let original_program = unsafe { ((*frame).dispatch.program_id, (*frame).dispatch.field_entries) };
+        let outer_program = (ProgramId::from_raw(1), (&program as *const ResidualProgram).addr());
+        unsafe { ((*frame).dispatch.program_id, (*frame).dispatch.field_entries) = outer_program; }
         let before = unsafe {
             let context = &(*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
@@ -19494,6 +19523,9 @@ mod tests {
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
         assert_eq!(before, after, "outer native recovery binding is borrowed, not replaced");
+        assert_eq!(unsafe { ((*frame).dispatch.program_id, (*frame).dispatch.field_entries) }, outer_program,
+            "the nested entry must restore the outer program's field table");
+        unsafe { ((*frame).dispatch.program_id, (*frame).dispatch.field_entries) = original_program; }
         unsafe { (*frame).context.entry_stack = original_landing; }
 
         unsafe extern "C" fn outer(context: *mut CallContext, _: u64, _: u64,

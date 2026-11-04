@@ -129,39 +129,46 @@ fn typed_field_call_compiles_with_observed_target() {
         globalThis.run = run;
         globalThis.answer = run(4000, 7);
     })();"#;
-    let program = Engine::specialize(source, "typed-field-target.js").unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
-    vm.execute(&program).unwrap();
-    let id = |name: &str| program.functions.iter().position(|body|
-        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
-    let caller = id("run");
-    let callee_id = id("advance");
-    let advance = vm.intern_atom("advance");
-    let callee = vm.own_property(vm.realm.globals, advance).unwrap();
-    let captures = vm.lane_callee_captures(callee);
-    let body = program.function(caller as usize);
-    let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap() as u32;
-    let header = body.instructions().filter(|instruction| instruction.op() == crate::bytecode::Op::Jump)
-        .map(|instruction| instruction.jump_target()).min().unwrap();
-    let method = vm.compile_lane_method(&program, caller, &|function, pc| {
-        if function == caller && pc == call {
-            vec![super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id }]
-        } else { Vec::new() }
-    }, &|_| captures, Vec::new(), Some(header)).expect("observed field target must lower");
-    assert_eq!(method.inlined.len(), 1, "the effectful call must share the typed unit");
-    assert!(method.recovery_space().activations > 0, "effectful recovery needs a callee activation");
-    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(caller as usize)
-        .and_then(super::program_store::derived_lane_view).unwrap();
-    let report = view.body_stats.report(0).expect("field call must enter the typed unit");
-    let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
-    assert!(report.contains(&format!("[(\"{exit}\", 1)]")),
-        "the native loop must leave once at its successor, never at the call: {report}");
-    let expected = (0..4000).fold(7i32, |control, _|
-        (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
-    let answer = vm.intern_atom("answer");
-    assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(expected)));
+    // Keep both VMs alive so the TLS lane payload must switch between distinct
+    // cache tables, with the same site numbers naming opposite physical slots.
+    let mut owners = Vec::new();
+    for fields in ["count: iterations | 0, control: seed | 0", "control: seed | 0, count: iterations | 0"] {
+        let source = source.replace("count: iterations | 0, control: seed | 0", fields);
+        let program = Engine::specialize(&source, "typed-field-target.js").unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let id = |name: &str| program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
+        let caller = id("run");
+        let callee_id = id("advance");
+        let advance = vm.intern_atom("advance");
+        let callee = vm.own_property(vm.realm.globals, advance).unwrap();
+        let captures = vm.lane_callee_captures(callee);
+        let body = program.function(caller as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap() as u32;
+        let header = body.instructions().filter(|instruction| instruction.op() == crate::bytecode::Op::Jump)
+            .map(|instruction| instruction.jump_target()).min().unwrap();
+        let method = vm.compile_lane_method(&program, caller, &|function, pc| {
+            if function == caller && pc == call {
+                vec![super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id }]
+            } else { Vec::new() }
+        }, &|_| captures, Vec::new(), Some(header)).expect("observed field target must lower");
+        assert_eq!(method.inlined.len(), 1, "the effectful call must share the typed unit");
+        assert!(method.recovery_space().activations > 0, "effectful recovery needs a callee activation");
+        let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(caller as usize)
+            .and_then(super::program_store::derived_lane_view).unwrap();
+        let report = view.body_stats.report(0).expect("field call must enter the typed unit");
+        let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
+        assert!(report.contains(&format!("[(\"{exit}\", 1)]")),
+            "the native loop must leave once at its successor, never at the call: {report}");
+        let expected = (0..4000).fold(7i32, |control, _|
+            (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
+        let answer = vm.intern_atom("answer");
+        assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(expected)));
+        owners.push(vm);
+    }
 }
 
 #[test]

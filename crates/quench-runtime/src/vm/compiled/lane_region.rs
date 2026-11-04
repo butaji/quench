@@ -2800,12 +2800,13 @@ impl Lowering<'_, '_> {
                     _ => None,
                 }
             } else { None };
-            let stores: smallvec::SmallVec<[(usize, FieldSlotBinding); INLINE_FIELD_BINDINGS]> =
+            let stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> =
                 self.carried_stores.iter().filter_map(|(store, read)| {
                     if *read != pc || !int32 { return None; }
                     let site = self.unit.instructions[*store].cache_site_index();
-                    self.entry.as_ref()?.fields.iter().find_map(|(known, binding)|
-                        (*known == site).then_some((*store, *binding)))
+                    let binding = self.entry.as_ref()?.fields.iter().find_map(|(known, binding)|
+                        (*known == site).then_some(*binding));
+                    Some((*store, binding))
                 }).collect();
             let object_header = if !stores.is_empty() {
                 receiver.map(|(owner, _)| self.object_header(state, Some(owner), exit))
@@ -2823,7 +2824,7 @@ impl Lowering<'_, '_> {
                     let address = self.builder.append_block_param(done, types::I64);
                     let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder,
                         self.registers_base, self.payload, JsFieldReceiver::Value(object), site,
-                        false, exit, Some(binding), Some(object_header), Some(packed));
+                        false, exit, binding, Some(object_header), Some(packed));
                     self.ins().jump(done, &[ir::BlockArg::Value(arena_address)]);
                     self.builder.switch_to_block(packed);
                     self.ins().jump(done, &[ir::BlockArg::Value(packed_address)]);
