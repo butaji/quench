@@ -449,9 +449,12 @@ struct TargetBody {
 /// past the window lie in spare stack capacity, so no store depends on the window's size.
 const ACTIVATION_FILL_BLOCK: usize = 8;
 
-/// `ACTIVATION_FILL_BLOCK` for a JavaScript activation, whose bodies keep more values in
-/// registers: on V8-v7, most called functions have 9 to 16.
+/// Script windows group two activation blocks into each write.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
+
+#[cfg(all(test, feature = "bench-primitives"))]
+#[path = "primitive_bench/windows.rs"]
+mod window_primitives;
 
 /// The lane-stack room `fill_window::<BLOCK>` writes for a window of `count` registers: whole
 /// blocks, at least one.
