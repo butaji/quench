@@ -21,6 +21,7 @@ mod number_inputs;
 use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 mod fields;
 mod field_reads;
+mod strings;
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
