@@ -38,6 +38,17 @@ trait WindowFill {
     unsafe fn fill(destination: *mut Value, width: usize, initial: Value);
 }
 struct Exact;
+// Retained186's source loop, which LLVM lowers to a pattern-fill library call.
+struct ElementLoop;
+impl WindowFill for ElementLoop {
+    fn extent(width: usize) -> usize { width }
+    unsafe fn fill(destination: *mut Value, width: usize, initial: Value) {
+        for index in 0..width {
+            // SAFETY: the comparison control has the same logical range contract.
+            unsafe { destination.add(index).write_unaligned(initial) };
+        }
+    }
+}
 struct Rounded<const BLOCK: usize>;
 impl WindowFill for Exact {
     fn extent(width: usize) -> usize { width }
@@ -80,29 +91,34 @@ fn window<F: WindowFill>(b: &mut Bencher, width: usize, argc: u16) {
 }
 
 macro_rules! windows {
-    ($(($small:ident, $large:ident, $exact:ident, $width:expr, $argc:expr)),* $(,)?) => {$(
+    ($(($small:ident, $large:ident, $exact:ident, $element:ident, $width:expr, $argc:expr)),* $(,)?) => {$(
         #[bench]
         fn $small(b: &mut Bencher) { window::<Rounded<SMALL_BLOCK>>(b, $width, $argc); }
         #[bench]
         fn $large(b: &mut Bencher) { window::<Rounded<LARGE_BLOCK>>(b, $width, $argc); }
         #[bench]
         fn $exact(b: &mut Bencher) { window::<Exact>(b, $width, $argc); }
+        #[bench]
+        fn $element(b: &mut Bencher) { window::<ElementLoop>(b, $width, $argc); }
     )*};
 }
 
 windows! {
-    (primitive_window_fill8_width4, primitive_window_fill16_width4, primitive_window_fill_exact_width4, 4, 0),
-    (primitive_window_fill8_width6, primitive_window_fill16_width6, primitive_window_fill_exact_width6, 6, 0),
-    (primitive_window_fill8_width7, primitive_window_fill16_width7, primitive_window_fill_exact_width7, 7, 0),
-    (primitive_window_fill8_width5, primitive_window_fill16_width5, primitive_window_fill_exact_width5, 5, 0),
-    (primitive_window_fill8_width8, primitive_window_fill16_width8, primitive_window_fill_exact_width8, 8, 0),
-    (primitive_window_fill8_width14, primitive_window_fill16_width14, primitive_window_fill_exact_width14, 14, 0),
-    (primitive_window_fill8_width21, primitive_window_fill16_width21, primitive_window_fill_exact_width21, 21, 0),
-    (primitive_window_fill8_width23, primitive_window_fill16_width23, primitive_window_fill_exact_width23, 23, 0),
-    (primitive_window_fill8_width42, primitive_window_fill16_width42, primitive_window_fill_exact_width42, 42, 0),
-    (primitive_window_copy8_width5, primitive_window_copy16_width5, primitive_window_copy_exact_width5, 5, 2),
-    (primitive_window_copy8_width14, primitive_window_copy16_width14, primitive_window_copy_exact_width14, 14, 2),
-    (primitive_window_copy8_width21, primitive_window_copy16_width21, primitive_window_copy_exact_width21, 21, 4),
+    (primitive_window_fill8_width4, primitive_window_fill16_width4, primitive_window_fill_exact_width4, primitive_window_fill_element_width4, 4, 0),
+    (primitive_window_fill8_width6, primitive_window_fill16_width6, primitive_window_fill_exact_width6, primitive_window_fill_element_width6, 6, 0),
+    (primitive_window_fill8_width7, primitive_window_fill16_width7, primitive_window_fill_exact_width7, primitive_window_fill_element_width7, 7, 0),
+    (primitive_window_fill8_width5, primitive_window_fill16_width5, primitive_window_fill_exact_width5, primitive_window_fill_element_width5, 5, 0),
+    (primitive_window_fill8_width8, primitive_window_fill16_width8, primitive_window_fill_exact_width8, primitive_window_fill_element_width8, 8, 0),
+    (primitive_window_fill8_width15, primitive_window_fill16_width15, primitive_window_fill_exact_width15, primitive_window_fill_element_width15, 15, 0),
+    (primitive_window_fill8_width16, primitive_window_fill16_width16, primitive_window_fill_exact_width16, primitive_window_fill_element_width16, 16, 0),
+    (primitive_window_fill8_width17, primitive_window_fill16_width17, primitive_window_fill_exact_width17, primitive_window_fill_element_width17, 17, 0),
+    (primitive_window_fill8_width14, primitive_window_fill16_width14, primitive_window_fill_exact_width14, primitive_window_fill_element_width14, 14, 0),
+    (primitive_window_fill8_width21, primitive_window_fill16_width21, primitive_window_fill_exact_width21, primitive_window_fill_element_width21, 21, 0),
+    (primitive_window_fill8_width23, primitive_window_fill16_width23, primitive_window_fill_exact_width23, primitive_window_fill_element_width23, 23, 0),
+    (primitive_window_fill8_width42, primitive_window_fill16_width42, primitive_window_fill_exact_width42, primitive_window_fill_element_width42, 42, 0),
+    (primitive_window_copy8_width5, primitive_window_copy16_width5, primitive_window_copy_exact_width5, primitive_window_copy_element_width5, 5, 2),
+    (primitive_window_copy8_width14, primitive_window_copy16_width14, primitive_window_copy_exact_width14, primitive_window_copy_element_width14, 14, 2),
+    (primitive_window_copy8_width21, primitive_window_copy16_width21, primitive_window_copy_exact_width21, primitive_window_copy_element_width21, 21, 4),
 }
 
 #[test]
@@ -129,6 +145,7 @@ fn primitive_window_fill_bounds_and_argument_prefix() {
     }
     for initial in [Value::UNDEFINED, Value::TRUE, Value::integer(0), Value::integer(17)] {
         check::<Exact>(initial);
+        check::<ElementLoop>(initial);
         check::<Rounded<SMALL_BLOCK>>(initial);
         check::<Rounded<LARGE_BLOCK>>(initial);
     }

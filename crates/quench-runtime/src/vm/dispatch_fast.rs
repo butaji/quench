@@ -502,6 +502,13 @@ unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u
     }
 }
 
+const WINDOW_FILL_PAIR: usize = 2;
+const WINDOW_FILL_HALF: usize = WINDOW_FILL_PAIR * 2;
+const WINDOW_FILL_BLOCK: usize = WINDOW_FILL_HALF * 2;
+// Bound inline work to one complete block and its binary tail. Splitting longer
+// ranges between inline stores and a library fill costs more than one direct fill.
+const WINDOW_INLINE_FILL_LIMIT: usize = WINDOW_FILL_BLOCK * 2;
+
 /// Initializes exactly the live register range. Admission may reserve a larger room,
 /// but padding is not part of the activation's values or materialized frame.
 ///
@@ -509,9 +516,52 @@ unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u
 /// `registers` has writable storage for `count` values, none of them live.
 #[inline(always)]
 unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
-    for index in 0..count {
-        // SAFETY: each destination lies within the caller's uninitialized range.
-        unsafe { registers.add(index).write_unaligned(initial) };
+    if count >= WINDOW_INLINE_FILL_LIMIT {
+        for index in 0..count {
+            // SAFETY: each destination lies within the caller's uninitialized range.
+            unsafe { registers.add(index).write_unaligned(initial) };
+        }
+        return;
+    }
+    #[inline(always)]
+    unsafe fn pair(destination: *mut Value, initial: Value) {
+        // SAFETY: the caller provides both uninitialized values. Individual stores
+        // avoid aggregate-array temporaries in the production call handlers.
+        unsafe {
+            destination.write_unaligned(initial);
+            destination.add(1).write_unaligned(initial);
+        }
+    }
+    #[inline(always)]
+    unsafe fn half(destination: *mut Value, initial: Value) {
+        // SAFETY: the caller provides a complete half block.
+        unsafe {
+            pair(destination, initial);
+            pair(destination.add(WINDOW_FILL_PAIR), initial);
+        }
+    }
+    let mut tail = 0;
+    if count >= WINDOW_FILL_BLOCK {
+        // SAFETY: the logical range contains one complete block.
+        unsafe {
+            half(registers, initial);
+            half(registers.add(WINDOW_FILL_HALF), initial);
+        }
+        tail = WINDOW_FILL_BLOCK;
+    }
+    if count & WINDOW_FILL_HALF != 0 {
+        // SAFETY: this bit proves that a half block remains in the exact tail.
+        unsafe { half(registers.add(tail), initial) };
+        tail += WINDOW_FILL_HALF;
+    }
+    if count & WINDOW_FILL_PAIR != 0 {
+        // SAFETY: this bit proves that a pair remains after the half block.
+        unsafe { pair(registers.add(tail), initial) };
+        tail += WINDOW_FILL_PAIR;
+    }
+    if !count.is_multiple_of(WINDOW_FILL_PAIR) {
+        // SAFETY: the odd final value is within the logical range.
+        unsafe { registers.add(tail).write_unaligned(initial) };
     }
 }
 
