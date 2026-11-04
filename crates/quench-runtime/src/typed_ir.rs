@@ -8,6 +8,9 @@
 
 use crate::{Value, ValueType};
 
+mod int_range;
+pub(crate) use int_range::IntRange;
+
 /// Whether residual execution can export ownership or enter another guest activation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reentry { Closed, Possible }

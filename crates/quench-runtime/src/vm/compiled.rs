@@ -2042,13 +2042,17 @@ fn emit_narrow_integer_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value
 
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    fallback: ir::Block) -> ir::Value {
+    fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
     use crate::value::NarrowLayout as NARROW;
     let int = builder.ins().ireduce(types::I32, value);
-    let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
-    let biased = builder.ins().iadd_imm_s(int, half_range);
-    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
-    emit_js_guard(builder, fits, fallback);
+    if range.is_some_and(|range| typed_ir::IntRange::packed().contains(range)) {
+        #[cfg(test)] PACKED_RANGE_PROOFS.with(|count| count.set(count.get() + 1));
+    } else {
+        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
+        let biased = builder.ins().iadd_imm_s(int, half_range);
+        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
+        emit_js_guard(builder, fits, fallback);
+    }
     let shifted = builder.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
     builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
 }
@@ -2230,6 +2234,7 @@ thread_local! {
     static LOOP_INT32_READ_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static LOOP_INT32_PHIS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LOOP_SLOT_STORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PACKED_RANGE_PROOFS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
@@ -18792,9 +18797,12 @@ mod tests {
             LOOP_INT32_READ_SITE.with(|site| site.set(Some((control_read, 0))));
             LOOP_INT32_PHIS.with(|count| count.set(0));
             LOOP_SLOT_STORES.with(|count| count.set(0));
+            PACKED_RANGE_PROOFS.with(|count| count.set(0));
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
             assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "reuse an entry-proved writable slot");
+            assert!(PACKED_RANGE_PROOFS.with(std::cell::Cell::get) > 0,
+                "the admitted positive count closes its packed decrement without a store range check");
             assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
             assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) >= 2, "carry both count and control unboxed across the loop backedge");
             assert!(LOOP_INT32_READ_SITE.with(|site| site.replace(None).unwrap().1) > 0,
@@ -18810,6 +18818,21 @@ mod tests {
             assert_eq!(writes, 0, "packed integer stores must stay native");
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
             assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn packed_field_ranges_preserve_boundaries_aliases_and_reentry() {
+        let source = concat!(include_str!("../../tests/fixtures/packed-field-ranges.js"), "\nthrow 42;");
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-field-ranges.cts") }
+                else { crate::Engine::specialize(source, "packed-field-ranges.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
     }
 

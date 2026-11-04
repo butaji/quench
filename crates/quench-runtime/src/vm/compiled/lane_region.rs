@@ -26,6 +26,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
+#[path = "lane_region/packed_ranges.rs"]
+mod packed_ranges;
+use crate::typed_ir::IntRange;
+
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
@@ -208,6 +212,7 @@ struct LoopRead {
 struct LoopStore {
     header: ObjectHeader,
     address: ir::Value,
+    packed_range: Option<IntRange>,
 }
 
 pub(super) struct LoweredRegion {
@@ -860,6 +865,8 @@ struct LoopField {
     atom: Atom,
     reads: smallvec::SmallVec<[usize; INLINE_FIELD_BINDINGS]>,
     stores: smallvec::SmallVec<[usize; INLINE_FIELD_BINDINGS]>,
+    /// Conditional on this field's packed/no-extras entry admission.
+    store_ranges: smallvec::SmallVec<[Option<IntRange>; INLINE_FIELD_BINDINGS]>,
 }
 
 fn successors(pc: usize, instruction: WideInstruction) -> [Option<usize>; 2] {
@@ -907,7 +914,8 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
                 if let Some(field) = fields[first_field..].iter_mut().find(|field| field.owner == owner && field.atom == atom) {
                     field.reads.push(pc);
                 } else {
-                    fields.push(LoopField { header, owner, atom, reads: smallvec::smallvec![pc], stores: smallvec::SmallVec::new() });
+                    fields.push(LoopField { header, owner, atom, reads: smallvec::smallvec![pc],
+                        stores: smallvec::SmallVec::new(), store_ranges: smallvec::SmallVec::new() });
                 }
             }
             if stores_own(instruction) {
@@ -942,6 +950,9 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
             field.stores.extend(stores.iter().filter_map(|(_, atom, pc)| (*atom == field.atom).then_some(*pc)));
         }
         fields.retain(|field| !field.stores.is_empty());
+        for field in fields.iter_mut().filter(|field| field.header == header) {
+            field.store_ranges = packed_ranges::analyze(program, unit, field, back);
+        }
     }
     fields
 }
@@ -2903,7 +2914,11 @@ impl Lowering<'_, '_> {
                     self.builder.switch_to_block(packed);
                     self.ins().jump(done, &[ir::BlockArg::Value(packed_address)]);
                     self.builder.switch_to_block(done);
-                    self.loop_stores.insert(store, LoopStore { header: object_header, address });
+                    let packed_range = field.and_then(|index| {
+                        let field = &self.loop_fields[index];
+                        field.stores.iter().position(|pc| *pc == store).and_then(|index| field.store_ranges[index])
+                    });
+                    self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range });
                 }
             }
             let read = LoopRead { value: variable, ty, representation, receiver, header: object_header };
@@ -3327,7 +3342,7 @@ impl Lowering<'_, '_> {
             let done = self.builder.create_block();
             self.ins().brif(slot.header.inline, packed, &[], arena, &[]);
             self.builder.switch_to_block(packed);
-            let narrow = emit_narrow_integer_write(&mut self.builder, value, exit);
+            let narrow = emit_narrow_integer_write(&mut self.builder, value, exit, slot.packed_range);
             self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(arena);
@@ -3461,7 +3476,7 @@ impl Lowering<'_, '_> {
         let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
         let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
         emit_js_guard(&mut self.builder, plain, general);
-        let narrow = emit_narrow_integer_write(&mut self.builder, value, general);
+        let narrow = emit_narrow_integer_write(&mut self.builder, value, general, None);
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
         self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
         self.ins().jump(done, &[]);
@@ -3500,7 +3515,7 @@ impl Lowering<'_, '_> {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, slow);
             }
-            let narrow = emit_narrow_integer_write(&mut self.builder, value, slow);
+            let narrow = emit_narrow_integer_write(&mut self.builder, value, slow, None);
             // Immediate integers cannot introduce a heap edge or require a GC barrier.
             self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
