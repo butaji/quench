@@ -2018,6 +2018,24 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
+        // Profiled raw stores preserve their declared field type. Register those possible
+        // writes once per physical slot, independently of cache-row binding availability.
+        let mut domains = BTreeMap::<(u32, u16), Type>::new();
+        for instruction in instructions {
+            if !matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) { continue; }
+            if let Some(fields) = self.fields.get(&instruction.cache_site_index())
+                && let [field] = fields.as_slice()
+                && field.ty != Type::NEVER {
+                let domain = domains.entry((field.shape, field.slot)).or_insert(Type::NEVER);
+                *domain = domain.join(field.ty);
+            }
+        }
+        for ((shape, slot), domain) in domains {
+            let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+            let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
+            let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
+            self.admit_slot_writes(shape, slot, domain, exit);
+        }
         let records = self.invariant_field_records(instructions, &receiver, object_table, &mut miss);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
@@ -2112,15 +2130,20 @@ impl Lowering<'_, '_> {
     /// Admit once at the edge; later raw stores consume the compile-time domain proof.
     fn admit_field_writes(&mut self, binding: &mut FieldSlotBinding, writes: Type, exit: ir::Block) {
         if binding.writes.is_some_and(|domain| writes.is_subtype(domain)) { return; }
-        let domain = crate::typed_ir::SlotType::from_type(writes);
-        let encoded = self.builder.ins().iconst(types::I64, domain as i64);
         let shape = self.builder.ins().uextend(types::I64, binding.receiver);
         let slot = binding.slot.read(&mut self.builder);
+        let domain = self.admit_slot_writes(shape, slot, writes, exit);
+        binding.writes = Some(binding.writes.map_or(domain, |held| held.join(domain)));
+    }
+
+    fn admit_slot_writes(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, exit: ir::Block) -> Type {
+        let domain = crate::typed_ir::SlotType::from_type(writes);
+        let encoded = self.builder.ins().iconst(types::I64, domain as i64);
         let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         let admitted = self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
         emit_js_guard(&mut self.builder, admitted, exit);
-        binding.writes = Some(binding.writes.map_or(domain.ty(), |held| held.join(domain.ty())));
+        domain.ty()
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
