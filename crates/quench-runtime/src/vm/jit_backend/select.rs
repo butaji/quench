@@ -445,4 +445,196 @@ mod tests {
             }
         }
     }
+
+    // Pack both operand orders into independent bytes so each comparison's
+    // canonical result and the arbitrary unselected byte remain observable.
+    fn complement_select_fixture(isa: &dyn cranelift_codegen::isa::TargetIsa,
+        ty: ir::Type, cc: ir::condcodes::IntCC, mismatched: bool) -> ir::Function {
+        use ir::condcodes::CondCode;
+        let mut signature = ir::Signature::new(isa.default_call_conv());
+        signature.params.extend([ir::AbiParam::new(ir::types::I64); 4]);
+        signature.returns.push(ir::AbiParam::new(ir::types::I64));
+        let mut function = ir::Function::with_name_signature(ir::UserFuncName::user(0, 0), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let args = builder.block_params(entry).to_vec();
+        let mut values = [args[0], args[1], args[2]];
+        if ty != ir::types::I64 {
+            for value in &mut values { *value = builder.ins().ireduce(ty, *value); }
+        }
+        let other = builder.ins().ireduce(ir::types::I8, args[3]);
+        let condition = builder.ins().icmp(cc, values[0], values[1]);
+        let opposite = builder.ins().icmp(cc.complement(), values[0], values[if mismatched { 2 } else { 1 }]);
+        let left = builder.ins().select(condition, other, opposite);
+        let right = builder.ins().select(condition, opposite, other);
+        let left = builder.ins().uextend(ir::types::I64, left);
+        let right = builder.ins().uextend(ir::types::I64, right);
+        let right = builder.ins().ishl_imm_u(right, ir::types::I8.bits() as i64);
+        let packed = builder.ins().bor(left, right);
+        builder.ins().return_(&[packed]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        function
+    }
+
+    #[test]
+    fn complementary_comparisons_are_removed_only_for_identical_operands() {
+        #[cfg(feature = "jit")]
+        let publication = super::super::CodePublication::ExecutableMemory;
+        #[cfg(not(feature = "jit"))]
+        let publication = super::super::CodePublication::RelocatableObject;
+        let isa = super::super::target_isa_for("speed", publication).unwrap();
+        for ty in [ir::types::I8, ir::types::I32, ir::types::I64] {
+            for &cc in ir::condcodes::IntCC::all() {
+                for mismatched in [false, true] {
+                    let function = complement_select_fixture(&*isa, ty, cc, mismatched);
+                    cranelift_codegen::verify_function(&function, &*isa).unwrap();
+                    super::super::compile_function(function, &*isa, None, |_, function| {
+                        cranelift_codegen::verify_function(function, &*isa).unwrap();
+                        let comparisons = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+                            .filter(|inst| function.dfg.insts[*inst].opcode() == ir::Opcode::Icmp).count();
+                        assert_eq!(comparisons, if mismatched { 2 } else { 1 },
+                            "{ty}/{cc:?}, mismatched={mismatched}: {function}");
+                        Ok(())
+                    }).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "jit")]
+    fn complementary_selects_preserve_arbitrary_bytes_and_integer_boundaries() {
+        use ir::condcodes::IntCC;
+        let isa = super::super::target_isa("speed").unwrap();
+        for ty in [ir::types::I8, ir::types::I32, ir::types::I64] {
+            let shift = ir::types::I64.bits() - ty.bits();
+            let mask = u64::MAX >> shift;
+            let sign = 1_u64 << (ty.bits() - 1);
+            let values = [0, 1, sign - 1, sign, mask - 1, mask];
+            let relation = |cc, x: u64, y: u64| {
+                let sx = ((x << shift) as i64) >> shift;
+                let sy = ((y << shift) as i64) >> shift;
+                match cc {
+                    IntCC::Equal => x == y, IntCC::NotEqual => x != y,
+                    IntCC::SignedLessThan => sx < sy, IntCC::SignedGreaterThanOrEqual => sx >= sy,
+                    IntCC::SignedGreaterThan => sx > sy, IntCC::SignedLessThanOrEqual => sx <= sy,
+                    IntCC::UnsignedLessThan => x < y, IntCC::UnsignedGreaterThanOrEqual => x >= y,
+                    IntCC::UnsignedGreaterThan => x > y, IntCC::UnsignedLessThanOrEqual => x <= y,
+                }
+            };
+            for &cc in IntCC::all() {
+                for mismatched in [false, true] {
+                    let function = complement_select_fixture(&*isa, ty, cc, mismatched);
+                    let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
+                        cranelift_codegen::verify_function(function, &*isa).unwrap();
+                        Ok(crate::vm::compiled::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
+                    }).unwrap();
+                    // SAFETY: the owned pure, bounded function has exactly this C signature.
+                    let run: unsafe extern "C" fn(u64, u64, u64, u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
+                    for x in values { for y in values { for z in [y, x ^ mask] {
+                        for other in [0, 1, 2, 0x7f, 0x80, 0xff] {
+                            let condition = relation(cc, x, y);
+                            let opposite = u64::from(!relation(cc, x, if mismatched { z } else { y }));
+                            let left = if condition { other } else { opposite };
+                            let right = if condition { opposite } else { other };
+                            let expected = left | (right << ir::types::I8.bits());
+                            assert_eq!(unsafe { run(x, y, z, other) }, expected,
+                                "{ty}/{cc:?}, mismatch={mismatched}, x={x:#x}, y={y:#x}, z={z:#x}, other={other:#x}");
+                        }
+                    } } }
+                }
+            }
+        }
+    }
+
+
+    #[test]
+    #[cfg(all(feature = "jit", target_arch = "aarch64"))]
+    fn conditional_increments_preserve_width_wrap_and_nonzero_conditions() {
+        // A64 conditional-select class: exclude sf and operand fields; retain
+        // op=0 and o2=1, matching CSINC (including its aliases).
+        const CSINC_OPCODE_MASK: u32 = 0x7fe0_0c00;
+        const CSINC_OPCODE: u32 = 0x1a80_0400;
+        #[derive(Clone, Copy, Debug)]
+        enum Arm {
+            Add { constant_first: bool, other_incremented: bool },
+            One,
+        }
+        let cases = [
+            Arm::Add { constant_first: false, other_incremented: false },
+            Arm::Add { constant_first: true, other_incremented: false },
+            Arm::Add { constant_first: false, other_incremented: true },
+            Arm::Add { constant_first: true, other_incremented: true },
+            Arm::One,
+        ];
+        let isa = super::super::target_isa("speed").unwrap();
+        for ty in [ir::types::I8, ir::types::I16, ir::types::I32, ir::types::I64] {
+            let mask = u64::MAX >> (ir::types::I64.bits() - ty.bits());
+            let sign = 1_u64 << (ty.bits() - 1);
+            for swapped in [false, true] { for case in cases {
+                let mut signature = ir::Signature::new(isa.default_call_conv());
+                signature.params.extend([ir::AbiParam::new(ir::types::I64); 3]);
+                signature.returns.push(ir::AbiParam::new(ir::types::I64));
+                let mut function = ir::Function::with_name_signature(ir::UserFuncName::user(0, 0), signature);
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                let entry = builder.create_block();
+                builder.append_block_params_for_function_params(entry);
+                builder.switch_to_block(entry);
+                let args = builder.block_params(entry).to_vec();
+                let mut operands = [args[1], args[2]];
+                if ty != ir::types::I64 {
+                    for operand in &mut operands { *operand = builder.ins().ireduce(ty, *operand); }
+                }
+                let one = builder.ins().iconst(ty, 1);
+                let (first, alternative) = match case {
+                    Arm::Add { constant_first, other_incremented } => {
+                        let first = if constant_first { builder.ins().iadd(one, operands[0]) }
+                            else { builder.ins().iadd(operands[0], one) };
+                        let alternative = if other_incremented { builder.ins().iadd(operands[1], one) }
+                            else { operands[1] };
+                        (first, alternative)
+                    }
+                    Arm::One => (one, operands[1]),
+                };
+                let result = if swapped { builder.ins().select(args[0], alternative, first) }
+                    else { builder.ins().select(args[0], first, alternative) };
+                let result = if ty == ir::types::I64 { result }
+                    else { builder.ins().uextend(ir::types::I64, result) };
+                builder.ins().return_(&[result]);
+                builder.seal_all_blocks();
+                builder.finalize(isa.frontend_config());
+                cranelift_codegen::verify_function(&function, &*isa).unwrap();
+                let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
+                    cranelift_codegen::verify_function(function, &*isa).unwrap();
+                    let increments = compiled.code_buffer().chunks_exact(std::mem::size_of::<u32>())
+                        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+                        .filter(|word| word & CSINC_OPCODE_MASK == CSINC_OPCODE).count();
+                    assert_eq!(increments, 1, "{ty}, swapped={swapped}, {case:?}: {function}");
+                    Ok(crate::vm::compiled::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
+                }).unwrap();
+                // SAFETY: this owned, pure, bounded function has exactly this C signature.
+                let run: unsafe extern "C" fn(u64, u64, u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
+                for condition in [0, 1, 2, u64::MAX, 1_u64 << (ir::types::I64.bits() - 1)] {
+                    for x in [0, 1, sign - 1, sign, mask - 1, mask, u64::MAX] {
+                        for y in [0, sign, mask] {
+                            let (first, alternative) = match case {
+                                Arm::Add { other_incremented, .. } => (x.wrapping_add(1),
+                                    if other_incremented { y.wrapping_add(1) } else { y }),
+                                Arm::One => (1, y),
+                            };
+                            let expected = if (condition != 0) != swapped { first & mask } else { alternative & mask };
+                            assert_eq!(unsafe { run(condition, x, y) }, expected,
+                                "{ty}, swapped={swapped}, {case:?}, c={condition:#x}, x={x:#x}, y={y:#x}");
+                        }
+                    }
+                }
+            } }
+        }
+    }
+
 }

@@ -440,7 +440,7 @@ fn aarch64_get_operands(inst: &mut Inst, collector: &mut impl OperandVisitor) {
         Inst::MovWide { rd, .. } => {
             collector.reg_def(rd);
         }
-        Inst::CSel { rd, rn, rm, .. } => {
+        Inst::CSel { rd, rn, rm, .. } | Inst::CSInc { rd, rn, rm, .. } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
             collector.reg_use(rm);
@@ -1511,6 +1511,13 @@ impl Inst {
                 let rm = pretty_print_ireg(rm, OperandSize::Size64);
                 let cond = cond.pretty_print(0);
                 format!("csel {rd}, {rn}, {rm}, {cond}")
+            }
+            &Inst::CSInc { size, rd, rn, rm, cond } => {
+                let rd = pretty_print_ireg(rd.to_reg(), size);
+                let rn = pretty_print_ireg(rn, size);
+                let rm = pretty_print_ireg(rm, size);
+                let cond = cond.pretty_print(0);
+                format!("csinc {rd}, {rn}, {rm}, {cond}")
             }
             &Inst::CSNeg { rd, rn, rm, cond } => {
                 let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64);

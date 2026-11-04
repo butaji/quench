@@ -2389,6 +2389,28 @@ fn test_aarch64_binemit() {
         "csel x10, x12, x14, hs",
     ));
     insns.push((
+        Inst::CSInc {
+            size: OperandSize::Size64,
+            rd: writable_xreg(10),
+            rn: xreg(12),
+            rm: xreg(14),
+            cond: Cond::Hs,
+        },
+        "8A258E9A",
+        "csinc x10, x12, x14, hs",
+    ));
+    insns.push((
+        Inst::CSInc {
+            size: OperandSize::Size32,
+            rd: writable_xreg(10),
+            rn: xreg(12),
+            rm: xreg(14),
+            cond: Cond::Hs,
+        },
+        "8A258E1A",
+        "csinc w10, w12, w14, hs",
+    ));
+    insns.push((
         Inst::CSNeg {
             rd: writable_xreg(10),
             rn: xreg(12),
