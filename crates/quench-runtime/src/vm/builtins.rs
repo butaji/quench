@@ -1201,6 +1201,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
+        #[cfg(feature = "profile-memory")]
+        self.name_atom_memo.profile_query(name, |atom| self.atom_units_equal_str(atom, name));
         if let Some(atom) = self.name_atom_memo.candidate(name)
             && self.atom_units_equal_str(atom, name)
         {
