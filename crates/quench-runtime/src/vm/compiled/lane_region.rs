@@ -80,6 +80,18 @@ struct Registers {
 struct State {
     values: Vec<RegisterFact>,
     objects: ObjectProofs,
+    /// Effect-free reads in this memory version. Results are immutable SSA values;
+    /// receiver homes expire on definition, and writes/reentry retire all reads.
+    fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FieldValue {
+    /// Receiver home until its next definition (`None` is the fixed `this`).
+    owner: Option<Register>,
+    atom: Atom,
+    value: ir::Value,
+    ty: Type,
 }
 
 /// Object facts saved at control-flow edges; numeric facts already belong to the
@@ -98,7 +110,8 @@ struct ObjectProofs {
 impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], objects: ObjectProofs {
-            headers: vec![None; registers + 1], layouts: BTreeMap::new(), receivers: BTreeSet::new() } }
+            headers: vec![None; registers + 1], layouts: BTreeMap::new(), receivers: BTreeSet::new() },
+            fields: smallvec::SmallVec::new() }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -109,6 +122,7 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
+        self.fields.clear();
         self.objects.headers.fill(None);
         self.objects.layouts.clear();
         for fact in &mut self.values {
@@ -387,6 +401,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         state.objects.headers[index] = None;
         state.objects.layouts.retain(|(owner, _), _| *owner != Some(register));
         state.objects.receivers.remove(&register);
+        state.fields.retain(|field| field.owner != Some(register));
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -1420,6 +1435,8 @@ impl Lowering<'_, '_> {
     /// `state` past a join with `incoming`: each register's facts as both paths prove them.
     /// A join no verified fact describes invalidates the region.
     fn join_states(&mut self, state: &mut State, incoming: &State) {
+        // Only the same pre-branch SSA definition can survive both numeric arms.
+        state.fields.retain(|field| incoming.fields.contains(field));
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
@@ -1844,6 +1861,7 @@ impl Lowering<'_, '_> {
                 let result = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, receiver]);
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, result, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, hit, exit);
+                state.call_effect();
                 self.set_tagged(state, instruction.result_register(), result);
                 Some(true)
             }
@@ -1947,6 +1965,7 @@ impl Lowering<'_, '_> {
             }
             Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
                 .iter().all(|register| *register < self.unit.registers) => {
+                state.fields.clear();
                 // The lane's in-place element replacement; a miss leaves at the store.
                 let exit = self.guard_exit(state, pc32);
                 let value = self.tagged(state, instruction.register_a());
@@ -2680,7 +2699,21 @@ impl Lowering<'_, '_> {
             && (base == crate::bytecode::FieldBase::THIS
                 || register.is_some_and(|register| state.objects.receivers.contains(&register)));
         let (first, rest) = parts.split_first()?;
-        let mut value = self.base_field_read(state, register, receiver, *first, exit);
+        let field = match instruction.field_lookup() {
+            Some(FieldLookup::Atom { atom, .. }) if sink.is_none() && completes.is_none() => {
+                Some((register, atom))
+            }
+            _ => None,
+        };
+        let known = field.and_then(|(owner, atom)| state.fields.iter().copied()
+            .find(|field| field.owner == owner && field.atom == atom));
+        let mut value = match known {
+            Some(field) => {
+                #[cfg(test)] FIELD_VALUE_FORWARDS.with(|count| count.set(count.get() + 1));
+                field.value
+            }
+            None => self.base_field_read(state, register, receiver, *first, exit),
+        };
         for site in rest {
             value = self.object_field_read(state, value, *site, exit)?;
         }
@@ -2693,12 +2726,25 @@ impl Lowering<'_, '_> {
         }
         // A slot that has only held int32 values is read as one: its value's tag is tested
         // here, once, and a value it no longer holds leaves before the read is defined.
-        if !int32_read(self.program, self.fields, instruction) {
+        let integer = known.is_some_and(|field| field.ty == Type::INT32);
+        let ty = if integer || int32_read(self.program, self.fields, instruction) {
+            if !integer {
+                let integer = is_int_tagged(&mut self.builder, value);
+                emit_js_guard(&mut self.builder, integer, exit);
+            }
+            Type::INT32
+        } else { Type::ANY };
+        if let Some((owner, atom)) = field {
+            let read = FieldValue { owner, atom, value, ty };
+            match state.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
+                Some(field) => *field = read,
+                None => state.fields.push(read),
+            }
+        }
+        if ty != Type::INT32 {
             self.set_tagged(state, destination, value);
             return Some(true);
         }
-        let integer = is_int_tagged(&mut self.builder, value);
-        emit_js_guard(&mut self.builder, integer, exit);
         self.set_tagged(state, destination, value);
         let int = self.ins().ireduce(types::I32, value);
         let variable = self.int_var(usize::from(destination));
@@ -3015,6 +3061,9 @@ impl Lowering<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
         value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
+        // Different receiver values can alias; without a disjointness proof any
+        // write retires this memory version, including writes through inlinees.
+        state.fields.clear();
         let receiver = !self.native_calls
             && (register.is_none() || register.is_some_and(|register| state.objects.receivers.contains(&register)));
         let owner = if receiver { None } else { register };

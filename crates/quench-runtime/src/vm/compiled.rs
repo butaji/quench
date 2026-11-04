@@ -2223,6 +2223,7 @@ const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
 thread_local! {
     static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }
@@ -18538,6 +18539,71 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn forwarded_fields_preserve_effects_aliases_and_immutable_values() {
+        let source = r#"
+            function pair(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const a=owner.value|0; const b=owner.value|0; result=a+b;} return result;}
+            function overwritten(owner) {let first=owner.value; first=100; return (owner.value|0)+first;}
+            function changed(a,b) {const first=a.value|0; b.value=9; return first+(a.value|0);}
+            function replaced(a,b) {const first=a.value|0; a=b; return first+(a.value|0);}
+            function callback(a,fn) {const first=a.value|0; fn(); return first+(a.value|0);}
+            let mask=2;
+            function mark(){this.value=this.value|mask;}
+            function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
+            let owner={value:7};
+            for(let i=0;i<64;i++) {
+                if(pair(owner,1,false)!==14 || overwritten(owner)!==107) throw 'plain';
+                if(changed({value:7},{value:1})!==14) throw 'different owners';
+                if(replaced({value:7},{value:19})!==26) throw 'replacement';
+                if(guarded({value:1,mark})!==5) throw 'guarded store';
+            }
+            if(changed(owner,owner)!==16 || owner.value!==9) throw 'aliased write';
+            let calls=0;
+            const accessor={get value(){return ++calls;}};
+            if(pair(accessor,1,false)!==3 || calls!==2) throw 'accessor reads';
+            calls=0;
+            const coercion={value:{valueOf(){calls++;coercion.value=9;return 3;}}};
+            if(pair(coercion,1,false)!==12 || calls!==1) throw 'coercion mutation';
+            owner.value=7;
+            if(callback(owner,()=>{owner.value=19;})!==26) throw 'callback mutation';
+            let proto={value:7}, child=Object.create(proto);
+            if(changed(child,proto)!==16 || child.value!==9) throw 'prototype alias';
+            let marker={}, prefix={count:0,value:1};
+            function throwing(a) {a.count=(a.count+1)|0; const first=a.value|0; return first+(a.value|0);}
+            for(let i=0;i<64;i++) if(throwing(prefix)!==2) throw 'warm prefix';
+            calls=0;
+            Object.defineProperty(prefix,'value',{get(){if(++calls===2)throw marker;return 4;}});
+            try {throwing(prefix);throw 'missing throw';} catch(e) {if(e!==marker)throw e;}
+            if(prefix.count!==65 || calls!==2) throw 'replayed prefix';
+            throw 42;
+        "#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "field-values.cts") }
+                else { crate::Engine::specialize(source, "field-values.cjs") }.unwrap();
+            let pair = program.functions.iter().position(|function|
+                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pair")).unwrap();
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            FIELD_VALUE_FORWARDS.with(|count| count.set(0));
+            let regions = lower_static_typed_regions(&program, pair as u32, &[], &*isa, 0);
+            assert!(!regions.is_empty() && FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0,
+                "exercise pair's native value forwarding ({} regions, {} forwards): {}",
+                regions.len(), FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), program.disassemble());
+            let guarded = program.functions.iter().position(|function|
+                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "guarded")).unwrap();
+            FIELD_VALUE_FORWARDS.with(|count| count.set(0));
+            let regions = lower_static_typed_regions(&program, guarded as u32, &[], &*isa, 0);
+            assert_eq!(regions.len(), 1, "guarded call must have a native region");
+            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 1,
+                "forward the pre-call read, but reload after the captured store");
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn bound_packed_integer_fields_avoid_per_iteration_helpers() {
         const WARMUP_RUNS: usize = 64;
         for (count, typescript) in [1000, 10000].into_iter()
@@ -18560,7 +18626,9 @@ mod tests {
             }})();"#);
             let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-fields.cts") }
                 else { crate::Engine::specialize(&source, "packed-fields.cjs") }.unwrap();
+            FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             let native = linked_optimized_test_program(program);
+            assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
             FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
             FUNCTION_BINDING_CALLS.with(|count| count.set(0));
             let mut vm = Vm::new(crate::test_host::TestHost::default());
