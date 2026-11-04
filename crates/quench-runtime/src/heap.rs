@@ -1750,20 +1750,16 @@ impl Heap {
     /// Joins each live object record's slot values into its owners' representations.
     fn join_live_slot_values(&mut self) {
         if !self.properties.tracks() { return; }
-        let mut held = Vec::new();
-        let properties = &self.properties;
+        let properties = &mut self.properties;
         self.object_records.for_each_live(|_, object| {
             let shape = object.exact_shape();
             if shape != object.shape() { return; }
             for slot in 0..properties.shape_length(shape) {
-                held.push((shape, slot, object as *const Object));
+                // SAFETY: the live record's exact, non-dictionary shape holds the slot.
+                let value = unsafe { read_exact_slot(object, properties, slot) };
+                if !value.is_deleted() { properties.note_slot_value(shape, slot, value); }
             }
         });
-        for (shape, slot, object) in held {
-            // SAFETY: the record is live and its exact, non-dictionary shape holds the slot.
-            let value = unsafe { self.property_get_flat(&*object, slot) };
-            if !value.is_deleted() { self.properties.note_slot_value(shape, slot, value); }
-        }
     }
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
@@ -3448,19 +3444,8 @@ impl Heap {
     /// The slot exists and the object is not in dictionary storage.
     #[inline(always)]
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
-        // Most objects keep their values in the arena and have no extras; their payload is
-        // their storage start, read here without decoding the other forms.
-        if let Some(start) = object.plain_storage_start() {
-            debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
-            // SAFETY: the caller proves the slot exists outside dictionary storage.
-            return unsafe { self.properties.get_flat_at(start, slot) };
-        }
-        if let Some(value) = object.inline_property(slot) {
-            value
-        } else {
-            // SAFETY: the caller proves the slot exists outside dictionary storage.
-            unsafe { self.properties.get_flat(object.properties(), slot) }
-        }
+        // SAFETY: the caller proves the exact slot exists.
+        unsafe { read_exact_slot(object, &self.properties, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
@@ -4412,6 +4397,27 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
+}
+
+/// Reads a live slot outside dictionary storage, shared by execution and type admission.
+///
+/// # Safety
+/// The slot exists and the object is not in dictionary storage.
+#[inline(always)]
+unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
+    // Most objects keep their values in the arena and have no extras; their payload is
+    // their storage start, read here without decoding the other forms.
+    if let Some(start) = object.plain_storage_start() {
+        debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
+        // SAFETY: the caller proves the slot exists outside dictionary storage.
+        return unsafe { properties.get_flat_at(start, slot) };
+    }
+    if let Some(value) = object.inline_property(slot) {
+        value
+    } else {
+        // SAFETY: the caller proves the slot exists outside dictionary storage.
+        unsafe { properties.get_flat(object.properties(), slot) }
+    }
 }
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:

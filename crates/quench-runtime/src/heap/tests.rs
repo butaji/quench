@@ -1517,3 +1517,37 @@ fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
     assert_eq!(empty.cell_counts[CellKind::WasmV128 as usize], 0);
     assert_eq!(empty.v128_record_used_bytes, 0);
 }
+
+#[test]
+fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
+    use crate::typed_ir::Type;
+    let mut heap = Heap::new();
+    let layouts = [(0, None), (1, None), (2, Some((1, 1)))];
+    heap.register_shape_layouts(&layouts);
+    let link = heap.alloc_object(plain_object());
+    let packed = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
+    let arena = heap.alloc_object_with_properties(Value::NULL, 2, &[link, Value::number(0.5)]);
+    let extras = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED]);
+    heap.object_record_mut(extras).unwrap().set_extensible(false);
+    let deleted = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::DELETED]);
+    assert!(heap.object(packed).unwrap().inline_properties().is_some());
+    assert!(heap.object(arena).unwrap().inline_properties().is_none());
+    heap.track_slot_representations(&layouts);
+    let nullable = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
+    assert_eq!(heap.slot_type(1, 0), nullable);
+    assert_eq!(heap.slot_type(2, 0), nullable);
+    assert_eq!(heap.slot_type(2, 1), Type::NUMBER);
+    assert_eq!(heap.unrepresented_slots(), 0);
+
+    // A fresh admission reflects live contents, not stale observation history.
+    for object in [packed, arena, extras, deleted] { heap.property_set(object, 0, link); }
+    heap.track_slot_representations(&layouts);
+    assert_eq!(heap.slot_type(1, 0), Type::DIRECT_OBJECT_FAMILY);
+    // Reassign shape identities and re-establish the parent-owned slot projection.
+    let remapped = [(0, None), (0, None), (1, None), (2, Some((2, 1)))];
+    heap.remap_live_object_shapes(&[0, 2, 3], &remapped);
+    assert_eq!(heap.slot_type(2, 0), Type::DIRECT_OBJECT_FAMILY);
+    assert_eq!(heap.slot_type(3, 0), Type::DIRECT_OBJECT_FAMILY);
+    assert_eq!(heap.slot_type(3, 1), Type::NUMBER);
+    assert_eq!(heap.unrepresented_slots(), 0);
+}
