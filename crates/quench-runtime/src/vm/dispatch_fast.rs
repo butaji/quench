@@ -445,19 +445,19 @@ struct TargetBody {
     initializes: bool,
 }
 
-/// Registers a lane call writes as one fixed block: a window fills whole blocks, whose slots
-/// past the window lie in spare stack capacity, so no store depends on the window's size.
+/// Conservative admission granule retained from block initialization. Padding stays
+/// spare capacity; logical register counts own initialization and materialization.
 const ACTIVATION_FILL_BLOCK: usize = 8;
 
-/// Script windows group two activation blocks into each write.
+/// Script activation admission groups two base granules.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "primitive_bench/windows.rs"]
 mod window_primitives;
 
-/// The lane-stack room `fill_window::<BLOCK>` writes for a window of `count` registers: whole
-/// blocks, at least one.
+/// Conservative lane-stack admission room for `count` registers: whole blocks, at
+/// least one. Only the logical range is initialized and made live.
 const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
     let room = count.next_multiple_of(BLOCK);
     if room < BLOCK { BLOCK } else { room }
@@ -502,23 +502,16 @@ unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u
     }
 }
 
-/// Writes `initial` to the `count` registers at `registers`, as whole blocks of `BLOCK`: the
-/// first unconditionally, since most windows fit it.
+/// Initializes exactly the live register range. Admission may reserve a larger room,
+/// but padding is not part of the activation's values or materialized frame.
 ///
 /// # Safety
-/// `registers` has room for `fill_room::<BLOCK>(count)` values, none of them live.
+/// `registers` has writable storage for `count` values, none of them live.
 #[inline(always)]
-unsafe fn fill_window<const BLOCK: usize>(registers: *mut Value, count: usize, initial: Value) {
-    // SAFETY: the room holds at least one block.
-    unsafe { registers.cast::<[Value; BLOCK]>().write_unaligned([initial; BLOCK]) };
-    for block in 1..count.div_ceil(BLOCK) {
-        // SAFETY: the block ends within the room the caller provides.
-        unsafe {
-            registers
-                .add(block * BLOCK)
-                .cast::<[Value; BLOCK]>()
-                .write_unaligned([initial; BLOCK]);
-        }
+unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
+    for index in 0..count {
+        // SAFETY: each destination lies within the caller's uninitialized range.
+        unsafe { registers.add(index).write_unaligned(initial) };
     }
 }
 
@@ -1305,7 +1298,7 @@ pub(super) struct ScriptCallTarget {
     env: Value,
     view: *const LaneView,
     registers: u16,
-    /// The lane-stack room its plain activation fills (`fill_room::<SCRIPT_FILL_BLOCK>` of
+    /// The lane-stack room its plain activation reserves (`fill_room::<SCRIPT_FILL_BLOCK>` of
     /// `registers`), derived once.
     room: u16,
     params: u16,
@@ -14973,7 +14966,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     // plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
+        fill_window(registers, count, Value::UNDEFINED);
         copy_arguments(registers, passed, argc);
         stack.values.set_len(window + count);
         Registers(registers)
@@ -15142,11 +15135,11 @@ fn lane_activate_environment<H: Host>(
     // before the length covers it, and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        // Every register and local starts `undefined`, filled in whole blocks within the
-        // target's room, which covers them (`ScriptCallTarget::room`); the entries are then
+        // Every register and local starts `undefined` within the target's reserved
+        // room (`ScriptCallTarget::room`); the metadata entries are then
         // written, and parameter `k` local `k` with its argument where one was passed. The
         // environment is made when one is needed.
-        fill_window::<SCRIPT_FILL_BLOCK>(registers, held + locals, Value::UNDEFINED);
+        fill_window(registers, held + locals, Value::UNDEFINED);
         let entries = registers.add(count);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(Value::DELETED);
         entries
@@ -15554,7 +15547,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window::<ACTIVATION_FILL_BLOCK>(registers, count, Value::UNDEFINED);
+        fill_window(registers, count, Value::UNDEFINED);
         match arguments {
             ActivationArguments::Window(base) => {
                 for index in 0..argc.min(usize::from(target.params)) {
@@ -15741,7 +15734,7 @@ lane_handler! {
             // the length covers it, and no activation's window moves.
             let callee_registers = unsafe {
                 let registers = stack.values.as_mut_ptr().add(window);
-                fill_window::<ACTIVATION_FILL_BLOCK>(registers, count, shape.initial);
+                fill_window(registers, count, shape.initial);
                 let mut offset = 0;
                 while offset < passed {
                     registers
