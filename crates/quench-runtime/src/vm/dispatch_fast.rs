@@ -460,6 +460,10 @@ mod window_primitives;
 #[path = "primitive_bench/activations.rs"]
 mod activation_primitives;
 
+#[cfg(test)]
+#[path = "primitive_bench/commutative_reads.rs"]
+mod commutative_read_primitives;
+
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
 /// least one. Only the logical range is initialized and made live.
 const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
@@ -3463,23 +3467,38 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script(cx))
         };
         r.set(read.a, element);
-        return lane_read_operator::<H, OP>(cx, r, ip);
+        return lane_read_operator::<H, OP>(cx, r, ip, element);
     }
 }
 
 /// The operation of `lane_update_get_index_operator`'s triple at `ip`, whose read the triple
 /// made: the Number operation, else the operator's own record.
 #[inline(always)]
-fn lane_read_operator<H: Host, const OP: u32>(cx: *mut LaneContext<H>, r: Registers, ip: Ip) -> Ip {
+fn lane_read_operator<H: Host, const OP: u32>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, element: Value) -> Ip {
     // SAFETY: the triple is three records, the third never the view's last.
     let operator = unsafe { &*following(following(ip)) };
+    // SAFETY: specialization stores the other register in the fused update's unused c.
+    let (left, right) = read_number_operands::<OP>(r, operator, unsafe { (*ip).c }, element);
     let Some(value) =
-        super::operations::number_value_operator::<OP>(r.get(operator.b), r.get(operator.c))
+        super::operations::number_value_operator::<OP>(left, right)
     else {
         next!(cx, r, following(following(ip)), Carried::script(cx))
     };
     r.set(operator.a, value);
     next!(cx, r, following(following(following(ip))), Carried::script(cx))
+}
+
+/// A read's value may occupy either side of canonical commutative Number arithmetic.
+/// Its register was already written, so reading the other register preserves aliases.
+/// Ordered operations retain both original operands. A non-Number still declines through
+/// the shared Number operation; its original record owns evaluation/coercion order.
+#[inline(always)]
+fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction, other: u16, element: Value) -> (Value, Value) {
+    if super::operations::number_result_is_commutative(OP) {
+        (element, r.get(other))
+    } else {
+        (r.get(operator.b), r.get(operator.c))
+    }
 }
 
 /// The index a proved element record (`specialize_proved_arrays`) reads at: a non-negative
@@ -3585,6 +3604,7 @@ macro_rules! proved_updated_read {
             sibling!(lane_updated_proof_miss::<H>, $r, $ip, Carried::script($cx))
         };
         $r.set(read.a, element);
+        element
     }};
 }
 
@@ -3609,8 +3629,8 @@ script_handler! {
         let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
             sibling!(lane_update_get_index_operator::<H, DECREMENT, OP>, r, ip, Carried::script(cx))
         };
-        proved_updated_read!(cx, r, ip, i, index);
-        return lane_read_operator::<H, OP>(cx, r, ip);
+        let element = proved_updated_read!(cx, r, ip, i, index);
+        return lane_read_operator::<H, OP>(cx, r, ip, element);
     }
 }
 
@@ -19697,6 +19717,8 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
             continue;
         };
         let decrementing = update.handler == decrement;
+        let other = super::operations::number_result_is_commutative(op)
+            .then_some(if operator.b == read.a { operator.c } else { operator.b });
         macro_rules! fused {
             ($($operator:ident),*) => {
                 match (op, decrementing) {
@@ -19707,6 +19729,9 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
             };
         }
         records[pc].handler = fused_arithmetic!(fused) as *const ();
+        if let Some(other) = other {
+            records[pc].c = other;
+        }
     }
 }
 

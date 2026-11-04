@@ -186,6 +186,13 @@ impl NumberArithmetic {
     }
 }
 
+/// Whether swapping two already-evaluated operands preserves the canonical Number
+/// result. This is not a law for evaluating/coercing guest operands or string addition.
+#[inline(always)]
+pub(super) fn number_result_is_commutative(operator: u32) -> bool {
+    matches!(NumberArithmetic::from_operator(operator), Some(NumberArithmetic::Add | NumberArithmetic::Multiply))
+}
+
 /// Sign of a non-overflowing zero product: at least one factor is zero, so
 /// the result is -0 exactly when either factor is negative. The caller must
 /// establish zero before interpreting this predicate; views supply primitives.
