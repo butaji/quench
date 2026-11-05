@@ -1266,6 +1266,18 @@ impl<H: Host> Vm<H> {
         self.heap.property_get(object, slot)
     }
 
+    /// `object[atom]` where an ordinary object record holds it as an own data property in a
+    /// shape without accessors, which a read answers without running code; `None` otherwise.
+    pub(super) fn own_data_field(&self, object: Value, atom: Atom) -> Option<Value> {
+        let record = self.heap.object_record(object)?;
+        let shape = record.shape();
+        let facts = self.shapes[shape as usize].facts;
+        if facts.accessors() || facts.slot_getters() {
+            return None;
+        }
+        self.heap.property_get(record, self.shape_slot(shape, atom)?)
+    }
+
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         if atom == self.length_atom
             && let Some(length) = self.own_array_length(object)

@@ -2685,10 +2685,14 @@ impl Function {
             .as_deref()
     }
 
-    /// The stores of a body whose whole effect is storing parameters and primitive constants
-    /// into fields of `this`, then returning `undefined`, in order; `None` for any other body.
-    /// A constant store is the `SetThisField` of a temporary a primitive constant's
-    /// `LoadConst` wrote, which writes nothing else. A parameter store's value is a parameter as passed (`SetThisField` of
+    /// The stores of a body whose whole effect is storing parameters, primitive constants and
+    /// constructions of primitive constants into fields of `this`, then returning `undefined`,
+    /// in order; `None` for any other body. A constant store is the `SetThisField` of a
+    /// temporary a primitive constant's `LoadConst` wrote, which writes nothing else. A
+    /// construction store is the `SetThisField` of a temporary a `Construct` wrote, whose
+    /// callee a `LoadCapture` and own field reads of it wrote, and whose arguments are such
+    /// constants (`InitializerConstruction`): the construction itself may run code, which a
+    /// consumer of the stores rules out before it takes them. A parameter store's value is a parameter as passed (`SetThisField` of
     /// the parameter's register), or a Number
     /// constant in its place where the parameter is falsy: `this.f = (p ? p : k)` (a
     /// `JumpFalse` of the parameter over its `Move` into a temporary, else the constant's
@@ -2709,8 +2713,15 @@ impl Function {
         let parameter = |register: Register| (register < self.params).then_some(register);
         let mut fallbacks: SmallVec<[Option<f64>; 4]> = smallvec::smallvec![None; usize::from(self.params)];
         let mut stores = Vec::new();
-        // The temporaries primitive constants were loaded into, latest last.
-        let mut temporaries: SmallVec<[(Register, InitializerConstant); 4]> = SmallVec::new();
+        // What the temporaries hold, latest last: a register's latest entry is its value.
+        let mut temporaries: SmallVec<[(Register, Temporary); 8]> = SmallVec::new();
+        let temporary = |temporaries: &[(Register, Temporary)], register: Register| {
+            temporaries.iter().rev().find(|(written, _)| *written == register).map(|(_, held)| *held)
+        };
+        let written = |instruction: &WideInstruction| {
+            (instruction.result_flags() == 0 && instruction.result_register() >= self.params)
+                .then(|| instruction.result_register())
+        };
         let mut pc = 0;
         let store = |instruction: &WideInstruction| {
             matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict).then_some(())
@@ -2763,20 +2774,61 @@ impl Function {
                     });
                     pc += 1;
                 }
-                // `this.f = k` of a temporary a primitive constant was loaded into.
+                // `this.f = k` or `this.f = new C(k...)` of a temporary that holds it.
                 set if store(set).is_some()
-                    && let Some(&(_, constant)) = temporaries.iter().rev().find(|(register, _)| *register == set.register_a()) =>
+                    && let Some(value) = match temporary(&temporaries, set.register_a()) {
+                        Some(Temporary::Constant(constant)) => Some(InitializerValue::Constant(constant)),
+                        Some(Temporary::Constructed(construction)) => Some(InitializerValue::Construct(construction)),
+                        _ => None,
+                    } =>
                 {
-                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Constant(constant) });
+                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value });
                     pc += 1;
                 }
                 // A primitive constant loaded into a temporary, which writes nothing else.
                 load if load.op() == Op::LoadConst
-                    && load.result_flags() == 0
-                    && load.result_register() >= self.params
+                    && let Some(register) = written(load)
                     && let Some(constant) = constants.get(load.constant_index()).and_then(InitializerConstant::of) =>
                 {
-                    temporaries.push((load.result_register(), constant));
+                    temporaries.push((register, Temporary::Constant(constant)));
+                    pc += 1;
+                }
+                // A captured binding, where a construction's callee is read from.
+                load if load.op() == Op::LoadCapture && let Some(register) = written(load) => {
+                    let callee = InitializerCallee { capture: (load.capture_depth(), load.capture_slot()), ..InitializerCallee::EMPTY };
+                    temporaries.push((register, Temporary::Callee(callee)));
+                    pc += 1;
+                }
+                // A field read of such a binding, or of a read of it.
+                read if read.op() == Op::GetField
+                    && let Some(register) = written(read)
+                    && let Some(FieldLookup::Atom { atom, base, cache_site }) = read.field_lookup()
+                    && let Some(Temporary::Callee(callee)) = base.register_index().and_then(|base| temporary(&temporaries, base))
+                    && let Some(callee) = callee.read(atom, cache_site) =>
+                {
+                    temporaries.push((register, Temporary::Callee(callee)));
+                    pc += 1;
+                }
+                // `new C(k...)` of such a callee and constants.
+                construct if construct.op() == Op::Construct
+                    && !construct.is_super_construct()
+                    && let Some(register) = written(construct)
+                    && let Some(Temporary::Callee(callee)) = temporary(&temporaries, construct.register_b())
+                    && let ConstructArguments::Registers(window) = construct.construct_arguments()
+                    && usize::from(window.count) <= INITIALIZER_CONSTRUCTION_ARGUMENTS =>
+                {
+                    let mut construction = InitializerConstruction {
+                        callee,
+                        arguments: [InitializerConstant::Undefined; INITIALIZER_CONSTRUCTION_ARGUMENTS],
+                        argument_count: window.count as u8,
+                    };
+                    for (argument, register) in construction.arguments.iter_mut().zip(window.base..window.base + window.count) {
+                        let Some(Temporary::Constant(constant)) = temporary(&temporaries, register) else {
+                            return None;
+                        };
+                        *argument = constant;
+                    }
+                    temporaries.push((register, Temporary::Constructed(construction)));
                     pc += 1;
                 }
                 _ => break,
@@ -2790,8 +2842,8 @@ impl Function {
                 (undefined_load(completion) && completion.returns_from_frame())
                     || (completion.op() == Op::Return
                         && completion.register_a() >= self.params
-                        && match temporaries.iter().rev().find(|(register, _)| *register == completion.register_a()) {
-                            Some((_, constant)) => *constant == InitializerConstant::Undefined,
+                        && match temporary(&temporaries, completion.register_a()) {
+                            Some(held) => held == Temporary::Constant(InitializerConstant::Undefined),
                             None => self.initial_register == InitialRegister::Undefined,
                         })
             }
@@ -4499,6 +4551,8 @@ pub(crate) enum InitializerValue {
     Parameter { parameter: u16, fallback: Option<f64> },
     /// A primitive constant, whatever is passed: `this.id = 0`, `this.parent = void 0`.
     Constant(InitializerConstant),
+    /// A new object: `this.color = new Namespace.Color(0, 0, 0)`.
+    Construct(InitializerConstruction),
 }
 
 impl InitializerStore {
@@ -4506,9 +4560,71 @@ impl InitializerStore {
     pub(crate) fn parameter(&self) -> Option<u16> {
         match self.value {
             InitializerValue::Parameter { parameter, .. } => Some(parameter),
-            InitializerValue::Constant(_) => None,
+            InitializerValue::Constant(_) | InitializerValue::Construct(_) => None,
         }
     }
+}
+
+/// Field reads from a captured binding to a constructor (`InitializerCallee::reads`); a
+/// longer path keeps its activation.
+pub(crate) const INITIALIZER_CALLEE_READS: usize = 2;
+/// Arguments an initializer construction passes (`InitializerConstruction`); one passing more
+/// keeps its activation.
+pub(crate) const INITIALIZER_CONSTRUCTION_ARGUMENTS: usize = 4;
+
+/// Where an initializer construction reads its constructor: the binding at `capture` (depth
+/// and slot, as `LoadCapture` names it) of the initializer's environment, then its own fields
+/// `reads[..count]` (atom and cache site) in turn: `Namespace.Module.Class`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InitializerCallee {
+    pub(crate) capture: (u16, u16),
+    pub(crate) reads: [(Atom, u16); INITIALIZER_CALLEE_READS],
+    pub(crate) count: u8,
+}
+
+impl InitializerCallee {
+    const EMPTY: Self = Self { capture: (0, 0), reads: [(0, 0); INITIALIZER_CALLEE_READS], count: 0 };
+
+    /// This path extended by the read of `atom` at `site`, `None` past its reads.
+    fn read(mut self, atom: Atom, site: u16) -> Option<Self> {
+        *self.reads.get_mut(usize::from(self.count))? = (atom, site);
+        self.count += 1;
+        Some(self)
+    }
+
+    /// The reads in order.
+    pub(crate) fn reads(&self) -> &[(Atom, u16)] {
+        &self.reads[..usize::from(self.count)]
+    }
+}
+
+/// `new C(k...)` an initializer store gives its field: the constructor `callee` reads, with
+/// the primitive constants `arguments[..argument_count]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InitializerConstruction {
+    pub(crate) callee: InitializerCallee,
+    pub(crate) arguments: [InitializerConstant; INITIALIZER_CONSTRUCTION_ARGUMENTS],
+    pub(crate) argument_count: u8,
+}
+
+impl InitializerConstruction {
+    /// The construction's parameter `k` as a plain activation sees it: argument `k`, or
+    /// undefined when not passed.
+    pub(crate) fn argument(&self, parameter: u16) -> crate::value::Value {
+        let parameter = usize::from(parameter);
+        self.arguments[..usize::from(self.argument_count)]
+            .get(parameter)
+            .map_or(crate::value::Value::UNDEFINED, |constant| constant.value())
+    }
+}
+
+/// What a temporary of an initializing body holds, as its stores read it
+/// (`Function::initializer_stores`).
+#[derive(Clone, Copy, PartialEq)]
+enum Temporary {
+    Constant(InitializerConstant),
+    Callee(InitializerCallee),
+    Constructed(InitializerConstruction),
 }
 
 /// The constants an initializer store writes: those whose value needs no heap cell.

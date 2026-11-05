@@ -1722,6 +1722,10 @@ struct ConstructPlan {
     /// Fields whose store writes a constant (`InitializerValue::Constant`), one bit per field
     /// index, each taking `fallbacks` at its index whatever is passed.
     constant: u8,
+    /// The field whose store constructs `construction` (`InitializerValue::Construct`), one
+    /// bit at its index; a plan holds at most one.
+    constructed: u8,
+    construction: Option<crate::bytecode::InitializerConstruction>,
     fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan, where its body's reads resolved
     /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
@@ -1801,18 +1805,25 @@ impl ConstructPlan {
 
     /// This plan's field values in order, `undefined` past them: the argument each field's
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
-    /// value, or a constant field's constant, as its store computes it.
-    fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
+    /// value, or a constant field's constant, or the constructed field's new object under
+    /// its constructor's plan, read from the environment of `initializer`, the closure whose
+    /// body stores the fields (`initializer_construction`), as its store computes it. `None`
+    /// where that construction has no plan, before any effect but allocation.
+    fn values<H: Host>(&self, vm: &mut Vm<H>, initializer: Value, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             if self.constant & (1 << field) != 0 {
                 *value = self.fallbacks[field];
                 continue;
             }
+            if self.constructed & (1 << field) != 0 {
+                *value = initializer_construction(vm, initializer, self.construction.as_ref()?)?;
+                continue;
+            }
             let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
             *value = initializer_value(vm, argument(self.parameters[field]), fallback);
         }
-        values
+        Some(values)
     }
 
     /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
@@ -1853,6 +1864,14 @@ impl ConstructPlan {
                 self.constant |= 1 << field;
                 self.fallbacks[field] = constant.value();
             }
+            crate::bytecode::InitializerValue::Construct(construction) => {
+                if self.construction.is_some() {
+                    return None;
+                }
+                self.kind = ConstructPlanKind::Defaulted;
+                self.constructed |= 1 << field;
+                self.construction = Some(construction);
+            }
         }
         self.fields += 1;
         Some(self)
@@ -1871,6 +1890,8 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
     defaulted: 0,
     constant: 0,
+    constructed: 0,
+    construction: None,
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
     super_parent: Value::UNDEFINED,
@@ -13571,7 +13592,7 @@ fn lane_construct_keeping_activation<H: Host>(
             let code = unsafe { &*(*cx).code };
             let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
             let argument = lane_construct_argument(r, i);
-            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store| {
+            if lane_add_initializer_fields(vm, code, this, forwarded.callee, forwarded.function, argument, |store| {
                 fields = fields.and_then(|fields| fields.with_field(store));
             }) {
                 if let Some(fields) = fields {
@@ -13611,8 +13632,10 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     {
         return None;
     }
-    let values = plan.values(vm, argument);
-    Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
+    // A construction's allocation needs the VM, so it reads a copy of the plan.
+    let plan = *plan;
+    let values = plan.values(vm, method, argument)?;
+    Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
@@ -13644,6 +13667,8 @@ fn lane_record_forwarded_fields<H: Host>(
         parameters: fields.parameters,
         defaulted: fields.defaulted,
         constant: fields.constant,
+        constructed: fields.constructed,
+        construction: fields.construction,
         fallbacks: fields.fallbacks,
         forwarded: Some(ForwardedResolution {
             initializer: Some(initializer),
@@ -15285,7 +15310,7 @@ fn lane_initialize_fields<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = lane_add_initializer_fields(vm, code, this, function, argument, |store| {
+    let added = lane_add_initializer_fields(vm, code, this, constructor, function, argument, |store| {
         planned = planned.and_then(|plan| plan.with_field(store));
     });
     if !added {
@@ -15303,7 +15328,9 @@ fn lane_initialize_fields<H: Host>(
 }
 
 /// The adds an initializing body (`ScriptCallTarget::initializes`) of `function` makes to
-/// `this`, each the parameter its store names (`argument`) as a cached add that runs no guest
+/// `this`, each the parameter its store names (`argument`), or its constant, or its
+/// construction under the constructor's plan from the environment of `initializer`, the
+/// closure running the body (`initializer_construction`), as a cached add that runs no guest
 /// code, passed to `each` in order. `false` at the first add the caches do not answer: the
 /// adds made so far are the body's own first stores of the same values, which an activation
 /// of the body then makes again as stores, leaving the object as the activation alone would.
@@ -15312,6 +15339,7 @@ fn lane_add_initializer_fields<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
     this: Value,
+    initializer: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
     mut each: impl FnMut(&crate::bytecode::InitializerStore),
@@ -15325,6 +15353,12 @@ fn lane_add_initializer_fields<H: Host>(
                 initializer_value(vm, argument(parameter), fallback.map(Value::number))
             }
             crate::bytecode::InitializerValue::Constant(constant) => constant.value(),
+            crate::bytecode::InitializerValue::Construct(construction) => {
+                match initializer_construction(vm, initializer, &construction) {
+                    Some(value) => value,
+                    None => return false,
+                }
+            }
         };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
             return false;
@@ -15332,6 +15366,25 @@ fn lane_add_initializer_fields<H: Host>(
         each(store);
     }
     true
+}
+
+/// The new object an initializer's construction store (`InitializerConstruction`) gives its
+/// field, under its constructor's holding plan, which runs no guest code: the constructor
+/// the binding in `initializer`'s environment and its own data fields name, which reading
+/// them in the body also gives. `None` where a read meets anything else, such as an
+/// uninitialized binding or an accessor, or the constructor has no plan, leaves the
+/// construction to the body.
+#[inline(never)]
+fn initializer_construction<H: Host>(vm: &mut Vm<H>, initializer: Value, construction: &crate::bytecode::InitializerConstruction) -> Option<Value> {
+    let env = vm.heap.function(initializer)?.env;
+    let (depth, slot) = construction.callee.capture;
+    let (slots, root) = vm.environment_capture_slots(env, false, depth)?;
+    let mut callee = vm.owned_capture(slots, root, slot)?;
+    for &(atom, _) in construction.callee.reads() {
+        callee = vm.own_data_field(callee, atom)?;
+    }
+    let argument = |parameter| construction.argument(parameter);
+    planned_construction(vm, callee, argument).or_else(|| lane_forwarded_fields(vm, callee, argument))
 }
 
 /// The value an initializer store (`InitializerStore`) gives its field from the parameter's
@@ -15401,7 +15454,9 @@ fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: 
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, argument);
+    // A class whose constructor only constructs its parent stores the parent's fields.
+    let initializer = if plan.super_parent.is_undefined() { plan.callee } else { plan.super_parent };
+    let values = plan.values(vm, initializer, argument)?;
     Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
