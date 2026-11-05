@@ -1666,8 +1666,8 @@ impl<H: Host> Vm<H> {
 
     /// `primary_own_field_store_hit` at a site past one shape (`field_site_polymorphic`): the
     /// own-data slot its megamorphic entries, inline or hashed, record for the receiver's
-    /// exact shape, stored with the write barrier; the own entry that hit, a store record's
-    /// hint (`hinted_own_field_store_hit`).
+    /// exact shape, stored with the write barrier under `layout`; the own entry that hit, a
+    /// store record's hint (`hinted_own_field_store_hit`).
     #[inline(always)]
     pub(super) fn polymorphic_own_field_store_hit(
         &mut self,
@@ -1676,6 +1676,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        layout: crate::heap::PropertyStoreLayout,
     ) -> Option<FieldCache> {
         debug_assert!(self.lane_admits(p));
         if self.method_caches_may_name(atom) {
@@ -1689,7 +1690,7 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))?;
         // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
         // shape's own data slot.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, layout) } {
             return None;
         }
         self.profile.field_cache_hit(2, 0);

@@ -6990,14 +6990,12 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
 unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
     // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
-    u64::from(vm.primary_own_field_store_hit::<true>(
-        residual,
-        Value::from_bits(receiver),
-        atom as Atom,
-        Value::from_bits(value),
-        site as u16,
-        crate::heap::PropertyStoreLayout::Preserve,
-    ))
+    let (receiver, atom, value, site) = (Value::from_bits(receiver), atom as Atom, Value::from_bits(value), site as u16);
+    // A site's own entries beyond its primary one name the other exact layouts, storage
+    // forms of one shape included, that native code stores through this helper.
+    let layout = crate::heap::PropertyStoreLayout::Preserve;
+    u64::from(vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, layout)
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, layout).is_some())
 }
 
 /// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
@@ -7071,7 +7069,7 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
     // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_none()
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden).is_none()
         && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }

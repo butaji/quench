@@ -6559,7 +6559,7 @@ script_handler! {
             let vm = unsafe { vm(cx) };
             // The record's hint first, the own entry its last store named, then the entries.
             vm.hinted_own_field_store_hit(i.field_hint(), object, i.imm(), r.get(i.a))
-                || vm.polymorphic_own_field_store_hit(code, object, i.imm(), r.get(i.a), i.c).is_some_and(|own| {
+                || vm.polymorphic_own_field_store_hit(code, object, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::MayWiden).is_some_and(|own| {
                     // A held loop header's `call_link` names its site (`lane_header_site`) and keeps no hint.
                     let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER
                         && i.call_link.get() != NO_CALL_LINK;
