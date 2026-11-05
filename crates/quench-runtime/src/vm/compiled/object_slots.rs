@@ -204,8 +204,19 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
         self.builder.ins().uextend(types::I64, shifted)
     }
     fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
-    fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
-        self.builder.ins().select(cond, then, otherwise)
+    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value, otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        let (then_block, otherwise_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let result = self.builder.append_block_param(join, types::I64);
+        self.builder.ins().brif(cond, then_block, &[], otherwise_block, &[]);
+        for (block, arm) in [(then_block, Box::new(then) as Box<dyn FnOnce(&mut Self) -> ir::Value + '_>), (otherwise_block, Box::new(otherwise))] {
+            self.builder.switch_to_block(block);
+            self.builder.seal_block(block);
+            let value = arm(self);
+            self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+        }
+        self.builder.switch_to_block(join);
+        self.builder.seal_block(join);
+        result
     }
     fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         emit_js_guard(self.builder, cond, miss);

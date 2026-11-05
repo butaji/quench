@@ -35,7 +35,8 @@ pub(crate) trait Stage {
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
-    fn select(&mut self, cond: Self::Cond, then: Self::Word, otherwise: Self::Word) -> Self::Word;
+    /// The word `then` computes where `cond` holds, else `otherwise`'s: only the arm taken runs.
+    fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word, otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
     /// Continues where `cond` holds; `None` where it never can, so nothing runs past it.
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
     /// The property arena's base, whose values a flat object's run starts at its position.
@@ -114,31 +115,33 @@ pub(crate) fn arena_slot_address<S: Stage>(stage: &mut S, layout: Layout<S::Word
 
 /// The value a narrow word (`Value::to_narrow`), zero-extended, encodes (`Value::from_narrow`):
 /// an integer's code shifted down under the int tag, or a reference's upper word by its code
-/// beside its index. Both are computed and one selected, so the decode takes no branch.
+/// beside its index; only the arm the word's integer flag takes runs.
 #[inline(always)]
 pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word {
-    let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
-    let integer = stage.or_imm(shifted, ValueLayout::INT_TAG);
-    let code = stage.shr_imm(narrow, NarrowLayout::CODE_SHIFT);
-    let code = stage.and_imm(code, u64::from(NarrowLayout::CODE_MASK));
-    let offset = stage.mul_imm(code, std::mem::size_of::<u64>() as u64);
-    let table = stage.constant(NarrowLayout::upper_words() as u64);
-    let entry = stage.add(table, offset);
-    let upper = stage.load_table(entry);
-    let lower = stage.shr_imm(narrow, NarrowLayout::INDEX_SHIFT);
-    let reference = stage.or(upper, lower);
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
     let is_reference = stage.eq_imm(flag, 0);
-    stage.select(is_reference, reference, integer)
+    stage.choose(is_reference, |stage| {
+        let code = stage.shr_imm(narrow, NarrowLayout::CODE_SHIFT);
+        let code = stage.and_imm(code, u64::from(NarrowLayout::CODE_MASK));
+        let offset = stage.mul_imm(code, std::mem::size_of::<u64>() as u64);
+        let table = stage.constant(NarrowLayout::upper_words() as u64);
+        let entry = stage.add(table, offset);
+        let upper = stage.load_table(entry);
+        let lower = stage.shr_imm(narrow, NarrowLayout::INDEX_SHIFT);
+        stage.or(upper, lower)
+    }, |stage| {
+        let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
+        stage.or_imm(shifted, ValueLayout::INT_TAG)
+    })
 }
 
 /// The interpreter's stage: words are the machine's own, and a failed guard returns to the
-/// caller's slow path.
-pub(crate) struct Concrete {
-    pub(crate) property_base: u64,
+/// caller's slow path. The heap gives the arena base where an operation addresses the arena.
+pub(crate) struct Concrete<'h> {
+    pub(crate) heap: &'h crate::heap::Heap,
 }
 
-impl Stage for Concrete {
+impl Stage for Concrete<'_> {
     type Word = u64;
     type Cond = bool;
     type Miss = ();
@@ -175,11 +178,13 @@ impl Stage for Concrete {
     #[inline(always)]
     fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
     #[inline(always)]
-    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
+    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
+        if cond { then(self) } else { otherwise(self) }
+    }
     #[inline(always)]
     fn guard(&mut self, cond: bool, _: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
-    fn property_base(&mut self) -> u64 { self.property_base }
+    fn property_base(&mut self) -> u64 { self.heap.native_property_values().0 as u64 }
 }
 
 /// The own data value `slot` of the object `object` where its exact shape is `exact`, as every
@@ -187,7 +192,7 @@ impl Stage for Concrete {
 /// its values sit behind extras, which the caller's general read takes.
 #[inline(always)]
 pub(crate) fn own_field(heap: &crate::heap::Heap, object: &crate::heap::Object, exact: u32, slot: u16, storage_len: usize) -> Option<crate::Value> {
-    let mut stage = Concrete { property_base: heap.native_property_values().0 as u64 };
+    let mut stage = Concrete { heap };
     let record = object as *const crate::heap::Object as u64;
     let matched = exact_shape_is(&mut stage, record, exact);
     stage.guard(matched, ())?;
