@@ -246,7 +246,8 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
             captured.resize(start + usize::from(function.locals), None);
             let mut definitions = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
-                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
+                // A stored or literal-defined data property holding a closure names its body.
+                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::DefineField)
                     && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
                         observe(&mut methods[instruction.atom_index() as usize], id);
                     }
@@ -344,8 +345,12 @@ fn inlinable(instruction: WideInstruction) -> bool {
             None => false,
         },
         Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
-        // A fused `typeof` test (`Lowering::typeof_test`).
-        Op::Unary => plain && crate::bytecode::typeof_test(instruction.unary_operator()).is_some(),
+        // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
+        // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
+        Op::Unary => plain,
+        // Operations native code leaves at, exactly, through the inlined frame's recovery: a
+        // global name's read, a construction and a throw, typically a callee's error path.
+        Op::LoadName | Op::Construct | Op::Throw => instruction.result_flags() == 0,
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
@@ -387,7 +392,7 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Call | Op::Return | Op::LoadThis => true,
+        Op::Call | Op::Return | Op::LoadThis | Op::LoadName | Op::Construct | Op::Throw => true,
         Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
@@ -695,6 +700,11 @@ impl Emitter {
                     WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
                 }
                 Op::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+                // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
+                // the lowering leaves at each, and recovery runs the callee's own instruction.
+                Op::LoadName | Op::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+                Op::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
+                    register(instruction.c()), instruction.imm()),
                 Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                     let flags = instruction.result_flags();
                     WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
