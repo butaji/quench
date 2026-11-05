@@ -362,16 +362,24 @@ impl CheckedObject {
             let inside = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, length);
             let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
             let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            let valid = builder.ins().band(inside, present);
-            let valid = builder.ins().band(valid, arena);
-            let valid = if plan.storage.is_none() && plan.storage_len <= layout.inline_property_count {
+            let requires_arena = plan.storage == Some(PlainPropertyStorage::Arena)
+                || plan.storage_len > layout.inline_property_count;
+            if requires_arena {
+                // Keep the conjunction in control flow: each failed obligation has
+                // the same pre-read recovery, so no boolean temporary is needed.
+                emit_js_guard(builder, present, miss);
+                emit_js_guard(builder, arena, miss);
+                emit_js_guard(builder, inside, miss);
+            } else {
+                let valid = builder.ins().band(inside, present);
+                let valid = builder.ins().band(valid, arena);
                 let is_packed = builder.ins().icmp_imm_u(IntCC::NotEqual, inline, 0);
-                builder.ins().bor(valid, is_packed)
-            } else { valid };
-            emit_js_guard(builder, valid, miss);
+                let valid = builder.ins().bor(valid, is_packed);
+                emit_js_guard(builder, valid, miss);
+            }
             let offset = builder.ins().imul_imm_u(start, layout.property_value_size as i64);
             let arena = builder.ins().iadd(base, offset);
-            if plan.storage == Some(PlainPropertyStorage::Arena) || plan.storage_len > layout.inline_property_count {
+            if requires_arena {
                 Slots::Arena(arena)
             } else {
                 Slots::Dynamic { packed, inline, arena }
