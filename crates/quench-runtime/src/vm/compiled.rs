@@ -2073,6 +2073,37 @@ fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value
     builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
 }
 
+/// The integer and direct-object cases of `Value::to_narrow_reference`.
+/// Other values and overflowing indices retain the shared store's fallback.
+fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
+    ty: typed_ir::Type, fallback: ir::Block) -> ir::Value {
+    if ty.is_subtype(typed_ir::Type::INT32) {
+        return emit_narrow_integer_write(builder, value, fallback, None);
+    }
+    use crate::value::NarrowLayout as N;
+    let integer = builder.create_block();
+    let reference = builder.create_block();
+    let done = builder.create_block();
+    let result = builder.append_block_param(done, types::I32);
+    let is_integer = lane_region::is_int_tagged(builder, value);
+    builder.ins().brif(is_integer, integer, &[], reference, &[]);
+    builder.switch_to_block(integer);
+    let narrow = emit_narrow_integer_write(builder, value, fallback, None);
+    builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
+    builder.switch_to_block(reference);
+    let upper = builder.ins().ushr_imm_u(value, i64::from(u32::BITS));
+    let direct = builder.ins().icmp_imm_u(IntCC::Equal, upper, (N::DIRECT_OBJECT_UPPER >> u32::BITS) as i64);
+    emit_js_guard(builder, direct, fallback);
+    let index = builder.ins().ireduce(types::I32, value);
+    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, 1_i64 << N::INDEX_BITS);
+    emit_js_guard(builder, fits, fallback);
+    let shifted = builder.ins().ishl_imm_u(index, i64::from(N::INDEX_SHIFT));
+    let narrow = builder.ins().bor_imm_u(shifted, i64::from(N::DIRECT_OBJECT_CODE << N::CODE_SHIFT));
+    builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
+    builder.switch_to_block(done);
+    result
+}
+
 /// Decode a packed property using the canonical NarrowLayout, transferring
 /// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
 fn emit_packed_object_slot_read(
@@ -17551,6 +17582,104 @@ impl<H: Host> Vm<H> {
 mod tests {
     use super::*;
     use crate::bytecode::Op;
+
+    #[test]
+    fn native_narrow_store_encoding_matches_shared_values() {
+        use crate::value::NarrowLayout as N;
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut signature = ir::Signature::new(isa.default_call_conv());
+        signature.params.push(AbiParam::new(types::I64));
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let value = builder.block_params(entry)[0];
+        let fallback = builder.create_block();
+        let encoded = emit_narrow_store_value(&mut builder, value, typed_ir::Type::ANY, fallback);
+        let encoded = builder.ins().uextend(types::I64, encoded);
+        builder.ins().return_(&[encoded]);
+        builder.switch_to_block(fallback);
+        let rejected = builder.ins().iconst(types::I64, -1);
+        builder.ins().return_(&[rejected]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
+        // SAFETY: the generated function accepts and returns a single u64.
+        let encode: unsafe extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
+        let limit = 1_i32 << (N::INTEGER_BITS - 1);
+        let mut values = vec![Value::NULL, Value::UNDEFINED, Value::TRUE, Value::DELETED,
+            Value::heap(0), Value::direct_string(0), Value::number(-0.0), Value::number(1.5), Value::number(f64::NAN)];
+        values.extend([i32::MIN, -limit - 1, -limit, -1, 0, 1, limit - 1, limit, i32::MAX].map(Value::integer));
+        values.extend([0, 1, (1 << N::INDEX_BITS) - 1, 1 << N::INDEX_BITS, u32::MAX].map(Value::direct_object));
+        for value in values {
+            let admitted = value.as_int().is_some()
+                || value.to_bits() >> u32::BITS == N::DIRECT_OBJECT_UPPER >> u32::BITS;
+            let expected = admitted.then(|| value.to_narrow_reference()).flatten().map(u64::from).unwrap_or(u64::MAX);
+            assert_eq!(unsafe { encode(value.to_bits()) }, expected, "{value:?}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn bound_packed_reference_stores_preserve_identity() {
+        for typescript in [false, true] {
+            let source = r#"(function() {
+                function walk(s,n){while(n>0){s.current=s.current.next;n=(n-1)|0;}}
+                const a={next:null},b={next:a};a.next=b;
+                const s={current:a};
+                walk(s,10001);
+                if(s.current!==b || a.next!==b || b.next!==a)throw 'identity';
+                throw 42;
+            })();"#;
+            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-reference.cts") }
+                else { crate::Engine::specialize(source, "packed-reference.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+            let writes = FIELD_HELPER_CALLS.with(std::cell::Cell::get)[1];
+            assert!(writes < 10, "packed references must stay native after admission: {writes}");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "aot")]
+    fn packed_reference_stores_preserve_collection_and_effects() {
+        let source = r#"(function() {
+            function replace(s,value,n){while(n>0){s.current=value;n=(n-1)|0;}}
+            const s={current:{id:0}};
+            replace(s,s.current,64);
+            $262.gc();
+            let young={id:42};
+            replace(s,young,64);
+            young=null;
+            $262.gc();
+            if(s.current.id!==42)throw 'collected reference';
+            replace(s,-0,64);
+            if(!Object.is(s.current,-0))throw 'widening';
+            replace(s,null,64);
+            if(s.current!==null)throw 'null';
+            const marker={};let calls=0;
+            Object.defineProperty(s,'current',{set(value){calls++;if(value!==marker)throw 'argument';throw marker;}});
+            try{replace(s,marker,1);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
+            if(calls!==1)throw 'replayed setter';
+            throw 42;
+        })();"#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-reference-effects.cts") }
+                else { crate::Engine::specialize(source, "packed-reference-effects.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
 
     #[test]
     fn native_narrow_decoder_matches_value_bits() {

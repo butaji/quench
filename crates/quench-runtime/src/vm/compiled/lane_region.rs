@@ -414,7 +414,7 @@ fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
     builder.ins().bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
 }
 
-fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
+pub(super) fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
     let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
     let tag = builder.ins().ushr_imm_u(bits, shift);
     builder.ins().icmp_imm_u(IntCC::Equal, tag, (crate::value::ValueLayout::INT_TAG >> shift) as i64)
@@ -4021,12 +4021,12 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(packed);
-            if !ty.is_subtype(Type::INT32) {
-                let integer = is_int_tagged(&mut self.builder, value);
-                emit_js_guard(&mut self.builder, integer, slow);
-            }
-            let narrow = emit_narrow_integer_write(&mut self.builder, value, slow, None);
-            // Immediate integers cannot introduce a heap edge or require a GC barrier.
+            let narrow = emit_narrow_store_value(&mut self.builder, value, ty, slow);
+            // The slot admission proved a direct object. Its index names the same
+            // mark bit as the arena path; a reference needing logging uses the VM.
+            let record = self.ins().ireduce(types::I32, object);
+            let record = self.ins().uextend(types::I64, record);
+            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);

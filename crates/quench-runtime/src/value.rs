@@ -112,6 +112,9 @@ impl NarrowLayout {
     pub(crate) const CODE_SHIFT: u32 = NARROW_CODE_SHIFT;
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
+    pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
+    pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
+    pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
 
     /// Only codes selected by the decoder belong in a native image.
     #[cfg(feature = "aot")]
