@@ -2155,12 +2155,16 @@ pub(super) struct VmFacts {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
+    /// The `call` name and the realm's `Function.prototype.call`, through which a call
+    /// inlines the function it calls (`lane_unit::Frame::function_call`).
+    pub(super) function_call: Option<(Atom, Value)>,
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled() }
+        let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call }
     }
 }
 
@@ -7242,7 +7246,8 @@ impl<H: Host> Vm<H> {
             } else {
                 targets(callee, pc)
             };
-            let unit = lane_unit::unit(function, body, budget, &called, &|callee| program.function_get(callee as usize))?;
+            let unit = lane_unit::unit(function, body, budget, &called, &|callee| program.function_get(callee as usize),
+                self.vm_facts().function_call.map(|(atom, _)| atom))?;
             let loop_entry = match loop_header {
                 Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
                 None => None,

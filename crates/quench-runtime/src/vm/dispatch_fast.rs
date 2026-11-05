@@ -12121,6 +12121,14 @@ script_handler! {
         let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             return lane_bound_arguments_call(cx, r, ip, i);
         };
+        // The function a call through `call` calls is the site's callee for a body that
+        // inlines it (`lane_unit::Planner::through_call`).
+        if matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
+            && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
+            && program == vm.active_program
+        {
+            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee, function });
+        }
         if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
             let kind = *kind;
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {

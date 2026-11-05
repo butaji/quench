@@ -1743,6 +1743,13 @@ impl Lowering<'_, '_> {
             }
             None => emit_js_guard(&mut self.builder, same, exit),
         }
+        // A call through `call` is the call of the function it names while `call` is the realm's.
+        if let Some(register) = inlined.function_call {
+            let (_, call) = self.vm.function_call.expect("a call through `call` plans only where the realm's is known");
+            let native = self.tagged(state, register);
+            let realm = self.ins().icmp_imm_u(IntCC::Equal, native, call.to_bits() as i64);
+            emit_js_guard(&mut self.builder, realm, exit);
+        }
         // A callee that observes no `this` takes any receiver: its binding is unobserved.
         if inlined.observes_this {
             let receiver = self.tagged(state, inlined.receiver);
@@ -2850,9 +2857,9 @@ mod tests {
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -2875,9 +2882,9 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
