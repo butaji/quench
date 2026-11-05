@@ -1661,7 +1661,7 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
 }
 
 // `packed_slot`, when requested, receives a proved own-slot address holding a narrow
-// u32. The ordinary return is always an arena address holding a tagged u64. Neither
+// u32. The ordinary return addresses a full tagged Value in arena or holder extras. Neither
 // projection survives an operation that can change storage or collect the object.
 fn emit_js_cached_field_slot(
     builder: &mut FunctionBuilder<'_>,
@@ -1741,7 +1741,7 @@ fn emit_js_cached_field_slot(
         emit_js_guard(builder, plain, fallback);
         storage
     };
-    let storage = if allow_holder {
+    let address = if allow_holder {
         let own_block = builder.create_block();
         let holder_block = builder.create_block();
         let join = builder.create_block();
@@ -1749,7 +1749,8 @@ fn emit_js_cached_field_slot(
         builder.ins().brif(own, own_block, &[], holder_block, &[]);
         builder.switch_to_block(own_block);
         let storage = own_storage(builder);
-        builder.ins().jump(join, &[ir::BlockArg::Value(storage)]);
+        let address = arena.address(builder, storage, slot, fallback);
+        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
 
         builder.switch_to_block(holder_block);
         let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), object,
@@ -1780,8 +1781,6 @@ fn emit_js_cached_field_slot(
             i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
         );
         let inline = builder.ins().band_imm_u(proto_meta, i64::from(OBJECT.inline_storage_mask));
-        let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(builder, arena, fallback);
         let proto_storage = builder.ins().load(
             types::I64, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
@@ -1792,21 +1791,37 @@ fn emit_js_cached_field_slot(
         let extras_pointer = builder.ins().band_imm_u(proto_storage, !OBJECT.extras_tag_mask as i64);
         let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
         emit_js_guard(builder, present, fallback);
+        let displaced = builder.create_block();
+        let in_arena = builder.create_block();
+        builder.ins().brif(inline, displaced, &[], in_arena, &[]);
+        builder.switch_to_block(displaced);
+        let index = slot.read(builder);
+        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, OBJECT.inline_property_count as i64);
+        emit_js_guard(builder, fits, fallback);
+        // Exact holder shape admits the data slot. Extras hold full Values;
+        // keep this projection inside the same no-GC access as the live prototype.
+        let offset = builder.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
+        let address = builder.ins().iadd(extras_pointer, offset);
+        let address = builder.ins().iadd_imm_s(address, OBJECT.extras_inline_values_offset as i64);
+        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        builder.switch_to_block(in_arena);
         let start = builder.ins().load(
             types::I32, MemFlagsData::trusted(), extras_pointer,
             i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
         );
         let start = builder.ins().uextend(types::I64, start);
-        builder.ins().jump(join, &[ir::BlockArg::Value(start)]);
+        let address = arena.address(builder, start, slot, fallback);
+        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
         builder.seal_block(own_block);
         builder.seal_block(holder_block);
         builder.seal_block(join);
         builder.switch_to_block(join);
         builder.block_params(join)[0]
     } else {
-        own_storage(builder)
+        let storage = own_storage(builder);
+        arena.address(builder, storage, slot, fallback)
     };
-    (arena.address(builder, storage, slot, fallback), record_id)
+    (address, record_id)
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -20439,8 +20454,42 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_holder_reads_preserve_prototype_identity_and_effects() {
+        let source = r#"(function() {
+            function make(delta){return function(){this.state=(this.state+delta)|0;};}
+            const p={tick:make(1)},q={tick:make(2)};
+            const a={next:null,state:0},b={next:a,state:0};a.next=b;
+            Object.setPrototypeOf(a,p);Object.setPrototypeOf(b,q);
+            const s={current:a};
+            function walk(s,n){while(n>0){s.current.tick();s.current=s.current.next;n=(n-1)|0;}}
+            walk(s,1000);
+            if(a.state!==500||b.state!==1000)throw 'prototype identity';
+            p.tick=make(4);walk(s,2);
+            if(a.state!==504||b.state!==1002)throw 'method replacement';
+            let reads=0;const marker={};
+            Object.defineProperty(p,'tick',{get(){reads++;$262.gc();throw marker;}});
+            try{walk(s,1);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
+            if(reads!==1||a.state!==504||s.current!==a)throw 'replayed effect';
+            throw 42;
+        })();"#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "holder-address.cts") }
+                else { crate::Engine::specialize(source, "holder-address.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_holder_read_does_not_require_receiver_arena_storage() {
-        let source = "function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);";
+        for (source, inline_holder) in [
+            ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);", false),
+            ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; globalThis.box=new Box(); box.own=1; read(box);", true),
+        ] {
         let program = crate::Engine::specialize(source, "packed-holder.js").unwrap();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         vm.execute(&program).unwrap();
@@ -20459,7 +20508,8 @@ mod tests {
         let prototype = vm.heap.object(receiver).unwrap().proto();
         let holder = vm.heap.object(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
-        assert!(holder.extras_storage_start().is_some(), "fixture must exercise an arena-backed prototype");
+        assert_eq!(holder.inline_properties().is_some(), inline_holder);
+        assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
 
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
@@ -20504,6 +20554,7 @@ mod tests {
         // A receiver that has not proved the cached shape cannot read this slot.
         assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
         assert_eq!(unsafe { run(records, values, length, vm.realm.globals.to_bits()) }, Value::DELETED.to_bits());
+        }
     }
 
     #[cfg(feature = "aot")]
