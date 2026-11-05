@@ -16,9 +16,7 @@ use std::hash::{Hash, Hasher};
 use std::hint::black_box;
 use test::Bencher;
 
-#[path = "../../benches/support/number_inputs.rs"]
-mod number_inputs;
-use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
+use crate::number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 mod fields;
 mod field_reads;
 mod captures;
