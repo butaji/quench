@@ -125,6 +125,14 @@ struct LocalProofs {
     int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
 }
 
+impl LocalProofs {
+    /// An admitted existing own-slot write changes only this name. Retire it
+    /// for every receiver, since distinct receiver values may alias.
+    fn write_field(&mut self, atom: Atom) {
+        self.fields.retain(|field| field.atom != atom);
+    }
+}
+
 impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
@@ -3450,6 +3458,9 @@ impl Lowering<'_, '_> {
             Some(FieldLookup::Atom { atom, .. }) if sink.is_none() && completes.is_none() => {
                 Some((register, atom))
             }
+            Some(FieldLookup::Site(index)) if sink.is_none() && completes.is_none() => {
+                Some((register, self.program.field_sites.get(index)?.first.0))
+            }
             _ => None,
         };
         let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
@@ -3473,7 +3484,7 @@ impl Lowering<'_, '_> {
         }
         // A slot that has only held int32 values is read as one: its value's tag is tested
         // here, once, and a value it no longer holds leaves before the read is defined.
-        let integer = known.is_some_and(|field| field.ty == Type::INT32);
+        let integer = rest.is_empty() && known.is_some_and(|field| field.ty == Type::INT32);
         let ty = if integer || int32_read(self.program, self.fields, instruction) {
             if !integer {
                 let integer = is_int_tagged(&mut self.builder, value);
@@ -3481,7 +3492,10 @@ impl Lowering<'_, '_> {
             }
             Type::INT32
         } else { Type::ANY };
-        if let Some((owner, atom)) = field {
+        // A fused chain can consume an existing first-slot proof, but its guest
+        // result names the final slot. Do not retain a new anonymous intermediate
+        // solely for forwarding; the existing proof needs no duplicate update.
+        if let Some((owner, atom)) = field.filter(|_| rest.is_empty()) {
             let read = FieldValue { owner, atom, value, ty };
             match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
                 Some(field) => *field = read,
@@ -3823,7 +3837,7 @@ impl Lowering<'_, '_> {
                 .is_some_and(|header| header.record == slot.header.record));
         if let Some(slot) = projected {
             #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
-            state.proofs.fields.clear();
+            state.proofs.write_field(instruction.atom_index());
             let packed = self.builder.create_block();
             let arena = self.builder.create_block();
             let done = self.builder.create_block();
@@ -3867,9 +3881,7 @@ impl Lowering<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
         value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
-        // Different receiver values can alias; without a disjointness proof any
-        // write retires this memory version, including writes through inlinees.
-        state.proofs.fields.clear();
+        state.proofs.write_field(atom);
         let receiver = !self.native_calls
             && (register.is_none() || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
         let owner = if receiver { None } else { register };
