@@ -632,7 +632,8 @@ impl LaneBodyStats {
         self.frames.set(frames as u32);
     }
 
-    fn ended(&self, exit: super::compiled::LaneExit) {
+    /// `frames`, the body's inlined calls, name the function a leave inside one was in.
+    fn ended(&self, exit: super::compiled::LaneExit, frames: &[super::compiled::InlinedCall]) {
         let index = match exit {
             super::compiled::LaneExit::Returned { .. } => 0,
             super::compiled::LaneExit::At(_) => 1,
@@ -642,9 +643,14 @@ impl LaneBodyStats {
         self.ends[index].set(self.ends[index].get() + 1);
         // Prefixed by the compile that left there, the first being `c1`.
         let compile = self.compiles.get();
+        // Each with the function it left in and its PC there, which the report names the
+        // instruction of: `#function@pc`.
         let at = match exit {
-            super::compiled::LaneExit::At(pc) => format!("c{compile} {pc}"),
-            super::compiled::LaneExit::Inlined { frame, pc } => format!("c{compile} {frame}:{pc}"),
+            super::compiled::LaneExit::At(pc) => format!("c{compile} {pc}#{}@{pc}", self.function.get()),
+            super::compiled::LaneExit::Inlined { frame, pc } => match frames.get(frame) {
+                Some(call) => format!("c{compile} {frame}:{pc}#{}@{pc}", call.target.function),
+                None => format!("c{compile} {frame}:{pc}"),
+            },
             _ => return,
         };
         let mut leaves = self.leaves.borrow_mut();
@@ -659,9 +665,12 @@ impl LaneBodyStats {
     pub(super) fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>) -> Option<String> {
         (self.compiles.get() != 0).then(|| {
             let function = self.function.get();
-            // A leave at a caller PC names the instruction there.
-            let leaves: Vec<_> = self.leaves.borrow().iter().map(|(at, count)| match at.rsplit(' ').next().and_then(|pc| pc.parse::<u32>().ok()).and_then(|pc| op_at(function, pc)) {
-                Some(op) => (format!("{at} {op}"), *count),
+            // A leave names the instruction it left at, in the function it left in.
+            let leaves: Vec<_> = self.leaves.borrow().iter().map(|(at, count)| match at.split_once('#') {
+                Some((place, site)) => {
+                    let op = site.split_once('@').and_then(|(function, pc)| op_at(function.parse().ok()?, pc.parse().ok()?));
+                    (format!("{place} f{site} {}", op.unwrap_or_default()), *count)
+                }
                 None => (at.clone(), *count),
             }).collect();
             let [completed, at, inlined, callee] = self.ends.each_ref().map(std::cell::Cell::get);
@@ -14830,7 +14839,7 @@ fn lane_body_left<H: Host>(
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
-        own.body_stats.ended(exit);
+        own.body_stats.ended(exit, &method.inlined);
     }
     let frames = Vm::<H>::take_shadow_frames();
     let (r, own, method) = match lane_materialize_frames(cx, frames) {
