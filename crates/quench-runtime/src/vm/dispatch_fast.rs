@@ -7768,11 +7768,11 @@ fn lane_loop_run<H: Host>(
         if let Some(publication) = &tier.code {
             let code = publication.lease().expect("new publication");
             let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-            for shape in &code.shape_dependencies {
-                if !unsafe { vm(cx) }.heap.subscribe_shape(*shape, &dependent) {
-                    publication.retire();
-                    break;
-                }
+            let heap = &mut unsafe { vm(cx) }.heap;
+            let admitted = code.shape_dependencies.iter().all(|shape| heap.subscribe_shape(*shape, &dependent))
+                && code.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, &dependent));
+            if !admitted {
+                publication.retire();
             }
         }
         if site.diagnostics && tier.is_published() {

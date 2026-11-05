@@ -6730,6 +6730,7 @@ pub(super) struct CompiledOsrRegion {
     /// Own-field descriptors embed shape IDs. Shape compaction retires this code
     /// through its lane view before execution can resume with remapped IDs.
     pub(super) shape_dependencies: Vec<u32>,
+    pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
 }
 
 impl CompiledOsrRegion {
@@ -6911,11 +6912,16 @@ pub(super) fn compile_osr_region(
         .flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
     shape_dependencies.sort_unstable();
     shape_dependencies.dedup();
+    let mut slot_dependencies: Vec<_> = observation.native_field_loads.iter().flatten()
+        .filter_map(|field| field.slot_dependency()).collect();
+    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
+    slot_dependencies.dedup();
     Some(CompiledOsrRegion {
         _code,
         entry,
         widenings,
         shape_dependencies,
+        slot_dependencies,
     })
 }
 
@@ -7754,10 +7760,7 @@ impl<H: Host> Vm<H> {
             let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
             let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
             let mut slot_dependencies: Vec<_> = fields.values().flatten()
-                .filter(|field| field.ty != typed_ir::Type::ANY && field.ty != typed_ir::Type::NEVER)
-                .map(|field| crate::code_dependencies::SlotDependency {
-                    shape: field.holder.unwrap_or(field.shape), slot: field.slot, ty: field.ty,
-                })
+                .filter_map(|field| field.slot_dependency())
                 .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
                 .collect();
             slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));

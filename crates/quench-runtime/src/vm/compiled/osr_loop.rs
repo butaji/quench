@@ -7224,7 +7224,7 @@ mod tests {
         assert_eq!(region.fields.len(), 2);
         for storage in [Some(crate::heap::PlainPropertyStorage::Arena),
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
-            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
+            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad { target_shape: None,
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
                 storage, ty: Type::ANY,
             }]).collect();

@@ -563,6 +563,7 @@ impl Heap {
     /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
     /// Two objects never share arena storage: sweeping either would free the other's values.
     pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
+        self.admit_object_contents(source);
         let Some((object, properties)) = self.object_and_arena_mut(target) else {
             return false;
         };
@@ -757,6 +758,10 @@ impl Heap {
             return crate::typed_ir::Type::ANY;
         }
         self.properties.slot_observation(shape, slot).ty()
+    }
+
+    pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
+        self.properties.slot_target_shape(shape, slot)
     }
 
     pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
