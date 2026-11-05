@@ -191,18 +191,22 @@ impl LoopSite {
 /// were no `i32`, which the next compilation holds as `f64`s.
 #[derive(Default)]
 struct LoopTier {
-    code: Option<super::compiled::CompiledOsrRegion>,
+    code: Option<Rc<crate::code_dependencies::PublishedCode<super::compiled::CompiledOsrRegion>>>,
     widened: std::collections::BTreeSet<super::compiled::Widening>,
     compilations: u32,
 }
 
 impl LoopTier {
+    fn is_published(&self) -> bool {
+        self.code.as_ref().is_some_and(|code| code.is_published())
+    }
+
     /// Whether the site has native code or may still compile it. A site whose compilations
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
     fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
-        self.code.is_some()
+        self.is_published()
             || (self.compilations < LOOP_TIER_MAX_COMPILATIONS && super::compiled::loop_tier_compiles(policy))
     }
 }
@@ -377,7 +381,7 @@ impl LaneView {
             currently_compiled_sites: self
                 .loops
                 .iter()
-                .filter(|site| site.tier.borrow().code.is_some())
+                .filter(|site| site.tier.borrow().is_published())
                 .count(),
             native_entry_attempts: self
                 .loops
@@ -684,7 +688,7 @@ impl LaneView {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
         // execution or recovery can reenter and change the view's publication.
         match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Specialized { method, .. } => method.method(),
+            LaneBody::Specialized { method, .. } => method.lease(),
             LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
         }
     }
@@ -703,7 +707,7 @@ impl LaneView {
             if *entries >= LANE_BODY_WARMUP_ENTRIES {
                 *body = match specialize() {
                     Some(published) => {
-                        let method = published.method().expect("a body just published is live");
+                        let method = published.lease().expect("a body just published is live");
                         // A body whose entry would not pay for itself serves native callers
                         // only (`lane_body_call`, direct calls); the lane's own entries keep
                         // the records, and it has no trial to run.
@@ -751,7 +755,7 @@ impl LaneView {
         // SAFETY: as `lane_body`; settling runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
         if let LaneBody::Specialized { method, tier_prologue, .. } = body
-            && method.method().is_none()
+            && !method.is_published()
         {
             // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
@@ -839,7 +843,7 @@ impl LaneView {
         // SAFETY: no lane body runs during a collection.
         let body = unsafe { &mut *self.tier_lane.get() };
         if let LaneBody::Specialized { method, tier_prologue, .. } = body
-            && method.method().is_some_and(|method| method.names_shapes)
+            && method.lease().is_some_and(|method| method.names_shapes)
         {
             // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection,
             // and no method borrower is held.
@@ -864,9 +868,10 @@ impl LaneView {
             }
         }
         for site in &self.loops {
-            let mut tier = site.tier.borrow_mut();
-            if tier.code.as_ref().is_some_and(|code| code.embeds_shape_ids) {
-                tier.code = None;
+            let tier = site.tier.borrow();
+            if let Some(publication) = &tier.code
+                && publication.lease().is_some_and(|code| !code.shape_dependencies.is_empty()) {
+                publication.retire();
             }
         }
     }
@@ -7478,7 +7483,7 @@ fn lane_loop_native<H: Host>(
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
 /// record runs `lane_loop_header`, and the site keeps the record's own handler.
 fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
-    if !site.hookable || !site.header_handler.get().is_null() || site.tier.borrow().code.is_none() {
+    if !site.hookable || !site.header_handler.get().is_null() || !site.tier.borrow().is_published() {
         return;
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view.
@@ -7694,8 +7699,7 @@ fn lane_loop_run<H: Host>(
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
-    let tier = &mut *tier;
-    if tier.code.is_none() {
+    if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
@@ -7758,19 +7762,31 @@ fn lane_loop_run<H: Host>(
                 &unsafe { vm(cx) }.execution_interrupt,
                 heap.memory_policy(),
                 track_backedges,
-            );
+            ).map(crate::code_dependencies::PublishedCode::new).map(Rc::new);
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
-        if site.diagnostics && tier.code.is_some() {
+        if let Some(publication) = &tier.code {
+            let code = publication.lease().expect("new publication");
+            let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
+            for shape in &code.shape_dependencies {
+                if !unsafe { vm(cx) }.heap.subscribe_shape(*shape, &dependent) {
+                    publication.retire();
+                    break;
+                }
+            }
+        }
+        if site.diagnostics && tier.is_published() {
             site.compile_successes
                 .set(site.compile_successes.get().saturating_add(1));
         }
-        if tier.code.is_none() {
+        if !tier.is_published() {
             tier.compilations = LOOP_TIER_MAX_COMPILATIONS;
             return LoopContinuation::Jump;
         }
     }
-    let code = tier.code.as_ref().expect("compiled above");
+    let publication = Rc::clone(tier.code.as_ref().expect("compiled above"));
+    let code = publication.lease().expect("compiled above");
+    drop(tier);
     // The native field probe may access the VM only through its synchronous, cache-only
     // callback. Pass raw pointers so no Rust borrow of the VM overlaps that callback.
     let (machine, program, interrupt) = unsafe {
@@ -7882,6 +7898,7 @@ fn lane_loop_run<H: Host>(
             false
         }
     };
+    let mut tier = site.tier.borrow_mut();
     if general_dispatch_due {
         match outcome {
             LoopOutcome::Resume(pc) | LoopOutcome::Grow(pc) => return LoopContinuation::Exit(pc),
@@ -7893,7 +7910,7 @@ fn lane_loop_run<H: Host>(
                 if let Some(widening) = code.widening(pc) {
                     tier.widened.insert(widening);
                 }
-                tier.code = None;
+                publication.retire();
                 return LoopContinuation::Exit(pc);
             }
             LoopOutcome::NotEntered(_) | LoopOutcome::Terminated => {}
@@ -7903,7 +7920,7 @@ fn lane_loop_run<H: Host>(
         LoopOutcome::NotEntered(widening) => {
             if let Some(widening) = widening {
                 tier.widened.insert(widening);
-                tier.code = None;
+                publication.retire();
             }
             LoopContinuation::Jump
         }
@@ -7922,7 +7939,7 @@ fn lane_loop_run<H: Host>(
             if let Some(widening) = code.widening(pc) {
                 tier.widened.insert(widening);
             }
-            tier.code = None;
+            publication.retire();
             LoopContinuation::Exit(pc)
         }
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
@@ -14637,7 +14654,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
                 .then_some(())?;
             // SAFETY: a resolved target's view outlives its program.
             let method = unsafe { &*target.view }.published_lane_body()?;
-            let body = method.method().filter(|body| body.calls_only_natively())?;
+            let body = method.lease().filter(|body| body.calls_only_natively())?;
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
             let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
                 .and_then(crate::heap::EnvironmentSlots::native_dense_view)
@@ -14669,6 +14686,42 @@ fn lane_direct_calls<H: Host>(cx: *mut LaneContext<H>) -> bool {
 
 #[cfg(all(test, feature = "aot"))]
 #[test]
+fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
+    let program = crate::Engine::specialize(
+        "var owner={value:1}; var list=[owner]; function run(list,n){var s=0;for(var i=0;i<n;i++){var o=list[i&0];s=(s+o.value)|0;}return s;} for(var j=0;j<50;j++)run(list,1000);",
+        "osr-shape-retirement.js").unwrap();
+    let mut vm = Vm::new(crate::test_host::TestHost::default());
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let atom = vm.intern_atom("owner");
+    let owner = vm.own_property(vm.realm.globals, atom).unwrap();
+    let shape = vm.heap.object(owner).unwrap().shape();
+    let mut publications = Vec::new();
+    for view in vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .iter().filter_map(super::program_store::derived_lane_view) {
+        for site in &view.loops {
+            let tier = site.tier.borrow();
+            if let Some(publication) = &tier.code
+                && publication.lease().is_some_and(|code| code.shape_dependencies.contains(&shape)) {
+                publications.push(publication.clone());
+            }
+        }
+    }
+    assert!(!publications.is_empty(), "must exercise actual OSR field code");
+    let recovery: Vec<_> = publications.iter().map(|code| code.lease().unwrap()).collect();
+    let weak: Vec<_> = recovery.iter().map(Rc::downgrade).collect();
+    let added = vm.intern_atom("added");
+    let next = vm.transition_shape(shape, added);
+    vm.heap.property_add(owner, Value::integer(2), next);
+    assert!(publications.iter().all(|code| !code.is_published() && code.lease().is_none()));
+    assert!(weak.iter().all(|code| code.upgrade().is_some()));
+    drop(recovery);
+    assert!(weak.iter().all(|code| code.upgrade().is_none()));
+}
+
+#[cfg(all(test, feature = "aot"))]
+#[test]
 fn direct_callers_subscribe_to_callee_slot_dependencies() {
     use std::rc::Rc;
     let program = crate::Engine::specialize(
@@ -14691,7 +14744,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
     assert!(!leaf_method.slot_dependencies.is_empty());
     let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap).unwrap();
-    let leaf_body = leaf_publication.method().unwrap();
+    let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
     let pc = code.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
@@ -14712,7 +14765,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
     let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap).unwrap();
-    let active_root = root_publication.method().unwrap();
+    let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);
     drop(leaf_body);
     let owner_atom = vm.intern_atom("owner");
@@ -14720,8 +14773,8 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let atom = vm.intern_atom("edgeValue");
     let slot = vm.shape_slot(vm.heap.object(owner).unwrap().shape(), atom).unwrap();
     vm.heap.property_set(owner, slot, Value::number(0.5));
-    assert!(leaf_publication.method().is_none());
-    assert!(root_publication.method().is_none(), "retire embedded direct entry too");
+    assert!(leaf_publication.lease().is_none());
+    assert!(root_publication.lease().is_none(), "retire embedded direct entry too");
     assert!(leaf_code.upgrade().is_some(), "active caller pins its retired callee");
     drop(active_root);
     assert!(leaf_code.upgrade().is_none());

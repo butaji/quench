@@ -9,6 +9,22 @@ pub(crate) trait DependentCode {
     fn retire(&self);
 }
 
+/// Publication owns future entry; execution and recovery own independent leases.
+/// No borrow of the publication survives acquiring a lease or retiring it.
+pub(crate) struct PublishedCode<T>(std::cell::RefCell<Option<Rc<T>>>);
+
+impl<T> PublishedCode<T> {
+    pub(crate) fn new(code: T) -> Self { Self(std::cell::RefCell::new(Some(Rc::new(code)))) }
+    pub(crate) fn lease(&self) -> Option<Rc<T>> { self.0.borrow().clone() }
+    pub(crate) fn is_published(&self) -> bool { self.0.borrow().is_some() }
+    pub(crate) fn retire(&self) { self.0.borrow_mut().take(); }
+}
+
+impl<T> DependentCode for PublishedCode<T> {
+    fn is_published(&self) -> bool { self.is_published() }
+    fn retire(&self) { self.retire(); }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SlotDependency {
     pub(crate) shape: u32,
@@ -115,6 +131,32 @@ impl Drop for CodeReaders {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn retirement_unlinks_entry_but_preserves_execution_and_recovery_leases() {
+        struct Body(Rc<Cell<usize>>);
+        impl Drop for Body { fn drop(&mut self) { self.0.set(self.0.get() + 1); } }
+        let drops = Rc::new(Cell::new(0));
+        let publication = Rc::new(PublishedCode::new(Body(drops.clone())));
+        let execution = publication.lease().unwrap();
+        let recovery = execution.clone();
+        let reader: Rc<dyn DependentCode> = publication.clone();
+        let mut readers = CodeReaders::default();
+        assert!(readers.subscribe(1, &reader));
+        readers.retire(1);
+        assert!(!publication.is_published());
+        assert!(publication.lease().is_none());
+        assert_eq!(drops.get(), 0);
+        let replacement = PublishedCode::new(Body(drops.clone()));
+        publication.retire();
+        assert!(replacement.is_published(), "retiring old code does not unlink a replacement");
+        drop(execution);
+        assert_eq!(drops.get(), 0, "recovery still owns the old code");
+        drop(recovery);
+        assert_eq!(drops.get(), 1);
+        replacement.retire();
+        assert_eq!(drops.get(), 2);
+    }
     struct Code(Cell<bool>);
     impl DependentCode for Code {
         fn is_published(&self) -> bool { self.0.get() }

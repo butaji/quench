@@ -1054,7 +1054,7 @@ impl ProgramStore {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
-        for dependency in &published.method().expect("new publication").slot_dependencies {
+        for dependency in &published.lease().expect("new publication").slot_dependencies {
             if !heap.subscribe_slot(*dependency, &code) {
                 published.retire();
                 return None;
@@ -1075,12 +1075,12 @@ impl ProgramStore {
             let before = bindings.len();
             bindings.retain(|weak| {
                 let Some(code) = weak.upgrade() else { return false; };
-                let Some(method) = code.method() else { return false; };
+                let Some(method) = code.lease() else { return false; };
                 // Function bindings depend on the owned program definition,
                 // not a particular closure locator. Realm/reset retirement
                 // still uses this inventory for both binding kinds.
                 let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.method().is_none());
+                    || method.direct.iter().any(|callee| !live(callee.callee) || !callee.method.is_published());
                 if dead {
                     code.retire();
                 }

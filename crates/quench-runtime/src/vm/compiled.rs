@@ -6729,7 +6729,7 @@ pub(super) struct CompiledOsrRegion {
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Own-field descriptors embed shape IDs. Shape compaction retires this code
     /// through its lane view before execution can resume with remapped IDs.
-    pub(super) embeds_shape_ids: bool,
+    pub(super) shape_dependencies: Vec<u32>,
 }
 
 impl CompiledOsrRegion {
@@ -6907,11 +6907,15 @@ pub(super) fn compile_osr_region(
     if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
         dump_native_code(directory, region.header, &_code, &clif);
     }
+    let mut shape_dependencies: Vec<_> = observation.native_field_loads.iter().flatten()
+        .flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
+    shape_dependencies.sort_unstable();
+    shape_dependencies.dedup();
     Some(CompiledOsrRegion {
         _code,
         entry,
         widenings,
-        embeds_shape_ids: observation.native_field_loads.iter().any(|loads| !loads.is_empty()),
+        shape_dependencies,
     })
 }
 
@@ -7363,22 +7367,7 @@ impl LaneMethod {
 /// Publication owns future entry; active runs and direct callers own code leases.
 /// Retirement unlinks entry without releasing code that execution or recovery uses.
 /// Guest locator validity and exact exits remain separate obligations.
-pub(super) struct PublishedLaneMethod(std::cell::RefCell<Option<Rc<LaneMethod>>>);
-
-impl PublishedLaneMethod {
-    pub(super) fn new(method: LaneMethod) -> Self { Self(std::cell::RefCell::new(Some(Rc::new(method)))) }
-    pub(super) fn method(&self) -> Option<Rc<LaneMethod>> {
-        self.0.borrow().clone()
-    }
-    pub(super) fn retire(&self) {
-        self.0.borrow_mut().take();
-    }
-}
-
-impl crate::code_dependencies::DependentCode for PublishedLaneMethod {
-    fn is_published(&self) -> bool { self.0.borrow().is_some() }
-    fn retire(&self) { self.retire(); }
-}
+pub(super) type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
 
 /// Where a run of a lane body starts (`Vm::run_lane_method`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18916,7 +18905,7 @@ mod tests {
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
         let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
-        let active = published.method().unwrap();
+        let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
         let receiver_atom = vm.intern_atom("receiver");
         let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
@@ -18924,9 +18913,9 @@ mod tests {
         let shape = vm.heap.object(receiver).unwrap().shape();
         let slot = vm.shape_slot(shape, atom).unwrap();
         vm.heap.property_set(receiver, slot, Value::integer(2));
-        assert!(published.method().is_some());
+        assert!(published.lease().is_some());
         vm.heap.property_set(receiver, slot, Value::number(0.5));
-        assert!(published.method().is_none(), "widening retires future entry at the write");
+        assert!(published.lease().is_none(), "widening retires future entry at the write");
         assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
@@ -18955,7 +18944,7 @@ mod tests {
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
             assert!(!method.slot_dependencies.is_empty());
             let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
-            let active = published.method().unwrap();
+            let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
             let shape = vm.heap.object(receiver).unwrap().shape();
@@ -18980,7 +18969,7 @@ mod tests {
                 }
             };
             assert_eq!(admitted, 0, "widening must exit before mutation");
-            assert!(published.method().is_none());
+            assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
             assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
             if matches!(edge, Edge::Call) {
@@ -19029,11 +19018,11 @@ mod tests {
         // No guest code executes at these collection/realm events; a code lease
         // may remain alive independently of the publication's validity.
         unsafe { vm.programs.retire_dead_native_calls(|_| false); }
-        assert!(published.method().is_some(), "a pure definition embeds no closure locator");
-        let active = published.method().unwrap();
+        assert!(published.lease().is_some(), "a pure definition embeds no closure locator");
+        let active = published.lease().unwrap();
         let code = Rc::downgrade(&active);
         unsafe { vm.programs.retire_native_calls(); }
-        assert!(published.method().is_none(), "realm/reset still retires the publication");
+        assert!(published.lease().is_none(), "realm/reset still retires the publication");
         assert!(code.upgrade().is_some(), "retirement must retain code leased for execution/recovery");
         assert_eq!(active.inlined.len(), 1);
         drop(active);

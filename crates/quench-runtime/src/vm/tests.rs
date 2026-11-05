@@ -21928,7 +21928,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         assert_eq!(method.inlined.len(), 1);
         let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
         vm.collect_now(&program);
-        assert!(published.method().is_some(), "a live callee binding survives collection");
+        assert!(published.lease().is_some(), "a live callee binding survives collection");
         match transition {
             "collection" => {
                 // A second publication names an unrooted function clone. It must
@@ -21939,20 +21939,20 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 let dead = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
                 vm.collect_now(&program);
                 assert!(!vm.heap.is_live(orphan));
-                assert!(dead.method().is_none(), "retire before the function locator can be reused");
-                assert!(published.method().is_some(), "unrelated live binding is retained");
+                assert!(dead.lease().is_none(), "retire before the function locator can be reused");
+                assert!(published.lease().is_some(), "unrelated live binding is retained");
                 let replacement = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 assert_eq!(replacement, orphan);
-                assert!(dead.method().is_none());
+                assert!(dead.lease().is_none());
             }
             "realm" => {
                 let foreign = vm.create_realm_global(&program).unwrap();
                 vm.switch_realm_global(foreign);
-                assert!(published.method().is_none());
+                assert!(published.lease().is_none());
             }
             "reset" => {
                 vm.initialize(&program).unwrap();
-                assert!(published.method().is_none());
+                assert!(published.lease().is_none());
             }
             _ => unreachable!(),
         }

@@ -764,6 +764,11 @@ impl Heap {
         self.properties.subscribe_slot(dependency, code)
     }
 
+    pub(crate) fn subscribe_shape(&mut self, shape: u32,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        self.properties.subscribe_shape(shape, code)
+    }
+
     /// The slots of live object records whose value its owner's representation does not hold
     /// (`ValueArena::slot_observation`): zero while every write joins its value's class;
     /// zero too where representations are not kept.
