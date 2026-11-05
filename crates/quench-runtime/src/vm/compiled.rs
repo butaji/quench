@@ -6983,10 +6983,6 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
     let receiver = Value::from_bits(receiver);
     match vm.cached_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
-        // A miss takes the shape-decided [[Get]] along the receiver's ordinary chain, which
-        // runs no guest code and leaves the site's caches as they are; an accessor or exotic
-        // read leaves.
-        super::object::FieldCacheProbe::OrdinaryMiss => vm.plain_named_get(receiver, atom).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
     }
 }
