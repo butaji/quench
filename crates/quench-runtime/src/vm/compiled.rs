@@ -7359,23 +7359,18 @@ impl LaneMethod {
     }
 }
 
-/// Weakly published code. Retirement runs only outside native execution, before
-/// a dead callee locator can be reused; it releases the code, not a guest root.
-/// A direct caller holds its callee's publication (`DirectCallee::method`) and is
-/// retired with it (`ProgramStore::retire_dead_native_calls`).
-pub(super) struct PublishedLaneMethod(std::cell::UnsafeCell<Option<LaneMethod>>);
+/// Publication owns future entry; active runs and direct callers own code leases.
+/// Retirement unlinks entry without releasing code that execution or recovery uses.
+/// Guest locator validity and exact exits remain separate obligations.
+pub(super) struct PublishedLaneMethod(std::cell::RefCell<Option<Rc<LaneMethod>>>);
 
 impl PublishedLaneMethod {
-    pub(super) fn new(method: LaneMethod) -> Self { Self(std::cell::UnsafeCell::new(Some(method))) }
-    pub(super) fn method(&self) -> Option<&LaneMethod> {
-        // SAFETY: retirement requires that no method reference remains live.
-        unsafe { &*self.0.get() }.as_ref()
+    pub(super) fn new(method: LaneMethod) -> Self { Self(std::cell::RefCell::new(Some(Rc::new(method)))) }
+    pub(super) fn method(&self) -> Option<Rc<LaneMethod>> {
+        self.0.borrow().clone()
     }
-    /// # Safety
-    /// No native body is running and no reference returned by `method` is held.
-    pub(super) unsafe fn retire(&self) {
-        // SAFETY: the lifecycle edge excludes active native code and borrowers.
-        unsafe { &mut *self.0.get() }.take();
+    pub(super) fn retire(&self) {
+        self.0.borrow_mut().take();
     }
 }
 
@@ -7760,7 +7755,7 @@ impl<H: Host> Vm<H> {
             let caller_registers = unit.caller_registers;
             let closed = unit.instructions.iter().enumerate()
                 .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
-            let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.method.method().is_some_and(|method| method.fault_poll));
+            let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
             let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
             Some(LaneMethod { _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
         })();
@@ -7940,6 +7935,8 @@ pub(super) struct DirectCallee {
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
     pub(super) method: Rc<PublishedLaneMethod>,
+    /// Pins the exact entry embedded by the caller, including recovery after retirement.
+    pub(super) body: Rc<LaneMethod>,
     /// The caller's call record, which the callee's activation returns to.
     pub(super) call: usize,
     pub(super) callee: Value,
@@ -18915,11 +18912,18 @@ mod tests {
         assert!(!method.amortizes_entry());
         assert!(!method.calls_only_natively());
         let published = vm.programs.publish_lane_method(method);
-        // No native execution or method borrower remains at either event.
+        // No guest code executes at these collection/realm events; a code lease
+        // may remain alive independently of the publication's validity.
         unsafe { vm.programs.retire_dead_native_calls(|_| false); }
         assert!(published.method().is_some(), "a pure definition embeds no closure locator");
+        let active = published.method().unwrap();
+        let code = Rc::downgrade(&active);
         unsafe { vm.programs.retire_native_calls(); }
         assert!(published.method().is_none(), "realm/reset still retires the publication");
+        assert!(code.upgrade().is_some(), "retirement must retain code leased for execution/recovery");
+        assert_eq!(active.inlined.len(), 1);
+        drop(active);
+        assert!(code.upgrade().is_none(), "the last lease releases code even while the publication remains");
     }
 
     #[cfg(feature = "aot")]

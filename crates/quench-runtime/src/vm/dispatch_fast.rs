@@ -680,9 +680,9 @@ const LANE_BODY_WARMUP_ENTRIES: u16 = 400;
 
 impl LaneView {
     /// The specialized frameless body, if there is one.
-    fn lane_body(&self) -> Option<&super::compiled::LaneMethod> {
-        // SAFETY: specialization and lifecycle retirement run without a native
-        // body or method borrower; the published owner lives with this view.
+    fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
+        // SAFETY: this view is read on its VM's thread. Clone the code owner before
+        // execution or recovery can reenter and change the view's publication.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { method, .. } => method.method(),
             LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
@@ -739,7 +739,7 @@ impl LaneView {
     fn published_lane_body(&self) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>> {
         // SAFETY: as `lane_body`.
         match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Specialized { method, .. } if method.method().is_some() => Some(method.clone()),
+            LaneBody::Specialized { method, .. } => Some(method.clone()),
             _ => None,
         }
     }
@@ -7606,7 +7606,8 @@ script_handler! {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         };
-        if !lane_body_admits(cx, method) {
+        if !lane_body_admits(cx, &method) {
+            drop(method);
             next!(cx, r, header, Carried::script(cx))
         }
         // The header's PC is the backward jump's target; the function's records start
@@ -7617,7 +7618,7 @@ script_handler! {
         let receiver = if this.is_deleted() { Value::DELETED } else { this };
         let captures = capture_reads(unsafe { (*cx).capture });
         let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-        let exit = vm.run_lane_method(method, super::compiled::LaneStart::LoopHeader, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
+        let exit = vm.run_lane_method(&method, super::compiled::LaneStart::LoopHeader, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
         // A run that leaves at the header, before an iteration, pays its entry for nothing: a
         // loop whose runs keep doing so runs in the interpreter. Leaves past the header, which
         // a warming call graph makes, cost one entry each for native iterations.
@@ -7631,7 +7632,8 @@ script_handler! {
         // Shadow exits carry a callee PC and must materialize before attribution.
         let completed_region = !Vm::<H>::lane_shadow_active()
             && matches!(exit, super::compiled::LaneExit::At(pc) if pc > site.backedge as usize);
-        let resumed = lane_body_left(cx, r, own, method, exit);
+        let resumed = lane_body_left(cx, r, own, &method, exit);
+        drop(method);
         // Counted once nothing reads the body: a reoptimization moves it.
         own.note_lane_body_end(exit, completed_region);
         match resumed {
@@ -14446,7 +14448,8 @@ script_handler! {
             own.settle_retired_body();
             next!(cx, r, base, Carried::script(cx))
         };
-        if !method.supports_first_entry() || !lane_body_admits(cx, method) {
+        if !method.supports_first_entry() || !lane_body_admits(cx, &method) {
+            drop(method);
             next!(cx, r, base, Carried::script(cx))
         }
         // SAFETY: the activation just set the context to its own receiver.
@@ -14456,9 +14459,10 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
+        let exit = vm.run_lane_method(&method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
         let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
-        let resumed = lane_body_left(cx, r, own, method, exit);
+        let resumed = lane_body_left(cx, r, own, &method, exit);
+        drop(method);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
         own.note_lane_body_end(exit, false);
@@ -14632,16 +14636,17 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
                 && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
                 .then_some(())?;
             // SAFETY: a resolved target's view outlives its program.
-            let method = unsafe { &*target.view }.published_lane_body()
-                .filter(|published| published.method().is_some_and(super::compiled::LaneMethod::calls_only_natively))?;
+            let method = unsafe { &*target.view }.published_lane_body()?;
+            let body = method.method().filter(|body| body.calls_only_natively())?;
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
             let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
                 .and_then(crate::heap::EnvironmentSlots::native_dense_view)
                 .unwrap_or((std::ptr::null(), 0));
-            let reserve = method.method().expect("a selected publication is live").recovery_space();
+            let reserve = body.recovery_space();
             Some(super::compiled::DirectCallee {
                 target,
                 method,
+                body,
                 call: view.records().wrapping_add(pc).addr(),
                 callee: target.callee,
                 registers: target.registers,
@@ -14683,9 +14688,9 @@ fn lane_materialize_frames<H: Host>(
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
         lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(frame.window), window, argc, Value::from_bits(frame.this), false);
-        let method = callee.method.method().expect("a direct callee's body lives while its caller's does");
-        // SAFETY: the callee's publication outlives the caller's run, which the view and
-        // its caller's body own.
+        let method = callee.body.as_ref();
+        // SAFETY: the active caller's code lease pins this exact callee body through
+        // recovery, even if its publication has already been retired.
         innermost = Some(unsafe { (&*callee.target.view, &*std::ptr::from_ref(method)) });
     }
     innermost
@@ -14835,8 +14840,9 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });
-    let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
-    let resumed = lane_body_left(cx, registers, own, method, exit);
+    let exit = vm.run_nested_lane_method(&method, program, code, registers.0, receiver, captures, cx.cast());
+    let resumed = lane_body_left(cx, registers, own, &method, exit);
+    drop(method);
     own.note_lane_body_end(exit, false);
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,

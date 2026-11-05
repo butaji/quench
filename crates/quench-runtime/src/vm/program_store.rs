@@ -1061,7 +1061,7 @@ impl ProgramStore {
     /// direct one, whose body's own retirement retires its direct callers in turn.
     ///
     /// # Safety
-    /// Collection has stopped native execution and no method reference is held.
+    /// Collection has stopped native execution before guest locators can be reused.
     pub(super) unsafe fn retire_dead_native_calls(&self, live: impl Fn(Value) -> bool) {
         let mut bindings = self.native_call_bindings.borrow_mut();
         loop {
@@ -1075,8 +1075,7 @@ impl ProgramStore {
                 let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
                     || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.method().is_none());
                 if dead {
-                    // SAFETY: forwarded from the collector's publication boundary.
-                    unsafe { code.retire(); }
+                    code.retire();
                 }
                 !dead
             });
@@ -1085,12 +1084,11 @@ impl ProgramStore {
     }
 
     /// # Safety
-    /// Realm/heap transition excludes active native code and method references.
+    /// Realm/heap transition excludes execution using the old realm's guest locators.
     pub(super) unsafe fn retire_native_calls(&self) {
         for weak in self.native_call_bindings.borrow_mut().drain(..) {
             if let Some(code) = weak.upgrade() {
-                // SAFETY: forwarded from the lifecycle boundary.
-                unsafe { code.retire(); }
+                code.retire();
             }
         }
     }

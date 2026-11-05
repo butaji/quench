@@ -2907,9 +2907,8 @@ impl Lowering<'_, '_> {
         self.ins().store(MemFlagsData::trusted(), next, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
         let signature = self.builder.import_signature(signature);
-        // SAFETY: the callee's body lives while the caller's does (`DirectCallee::method`).
-        let entry = self.ins().iconst(types::I64, callee.method.method()
-            .expect("a direct callee's body lives while its caller's does").entry_address() as i64);
+        // The caller owns the exact callee body whose entry it embeds.
+        let entry = self.ins().iconst(types::I64, callee.body.entry_address() as i64);
         let zero = self.ins().iconst(types::I64, 0);
         let context = self.context;
         let status = self.ins().call_indirect(signature, entry, &[context, zero, zero, top, result]);
