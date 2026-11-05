@@ -1562,6 +1562,7 @@ impl<H: Host> Vm<H> {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
             ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
             target_shape: self.heap.slot_target_shape(cache.receiver, usize::from(cache.slot)),
+            inherited: None,
         })
     }
 
@@ -1574,8 +1575,59 @@ impl<H: Host> Vm<H> {
 
     /// `native_field_load_descriptors` with the entries whose slot an immediate prototype
     /// holds (`NativeFieldLoad::holder`): what a read, not a store, may take from the site.
+    /// The site's cached reads, with its proved inherited entries (`inherited_native_loads`)
+    /// joined in: a receiver shape the cache does not name takes its proved entries' load, and
+    /// receivers of one shape whose prototypes differ (sibling classes whose instances have the
+    /// same fields) share one load, its constant selecting each prototype's value
+    /// (`InheritedConstant::joined`).
     pub(super) fn native_field_read_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
-        self.native_field_descriptors(site, true)
+        let mut loads = self.native_field_descriptors(site, true);
+        for load in self.inherited_native_loads(site) {
+            match loads.iter_mut().find(|known| known.shape == load.shape) {
+                Some(known) => if let (Some(held), Some(more)) = (known.inherited, load.inherited)
+                    && let Some(joined) = held.joined(more) {
+                    known.inherited = Some(joined);
+                },
+                None => loads.push(load),
+            }
+        }
+        loads
+    }
+
+    /// The reads a site's proved inherited entries answer (`proved_inherited_field_hit`), as
+    /// constants: a receiver of the entry's shape whose prototype link is the proved one, while
+    /// no prototype changes (`heap::prototype_value_epoch`), reads what the proved holder held
+    /// when the code was compiled, `undefined` for an absent name.
+    fn inherited_native_loads(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+        let epoch = crate::heap::prototype_value_epoch();
+        let mut loads = Vec::new();
+        let mut index = self.inherited_field_indices.get(self.field_cache_index(site));
+        while index != NO_INHERITED_FIELD {
+            let cache = *self.heap.dependencies().inherited(index);
+            index = cache.next;
+            if !cache.proved || cache.receiver == NO_FIELD_RECEIVER {
+                continue;
+            }
+            let Some(holder) = self.heap.object_record(cache.proved_holder) else { continue };
+            let (slot, value) = match cache.answer {
+                InheritedFieldAnswer::Slot(slot) => match self.heap.property_get(holder, usize::from(slot)) {
+                    Some(value) if !value.is_deleted() => (slot, value),
+                    _ => continue,
+                },
+                InheritedFieldAnswer::Absent => (0, Value::UNDEFINED),
+            };
+            loads.push(super::compiled::NativeFieldLoad {
+                shape: cache.receiver,
+                holder: Some(holder.exact_shape()),
+                slot,
+                storage_len: usize::from(slot) + 1,
+                storage: None,
+                ty: crate::typed_ir::Type::ANY,
+                target_shape: None,
+                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)], epoch),
+            });
+        }
+        loads
     }
 
     fn native_field_descriptors(&self, site: u16, holders: bool) -> Vec<super::compiled::NativeFieldLoad> {
@@ -1601,6 +1653,21 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
+    /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the
+    /// link that names it, and the epoch they are read under: what a holder read may take
+    /// while the receiver's link names one of them and the epoch holds
+    /// (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
+    /// prototypes holding the same names share it.
+    fn inherited_constant(&self, holder: u32, slot: u16) -> Option<super::compiled::InheritedConstant> {
+        let mut holders = Vec::new();
+        for prototype in self.heap.prototypes_of_shape(holder) {
+            let value = self.heap.property_get(self.heap.object(prototype)?, usize::from(slot))?;
+            if value.is_deleted() { return None; }
+            holders.push((crate::heap::ProtoLink::of(prototype).bits(), value));
+        }
+        super::compiled::InheritedConstant::of(holders, crate::heap::prototype_value_epoch())
+    }
+
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
     /// one, and the slot, which the shape that holds it must cover.
     fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
@@ -1611,6 +1678,7 @@ impl<H: Host> Vm<H> {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
             ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
             target_shape: self.heap.slot_target_shape(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
+            inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)),
         })
     }
 
@@ -3719,7 +3787,8 @@ impl<H: Host> Vm<H> {
         }
         let data = self.heap.object(object)?;
         let properties = data.properties();
-        if properties.is_dictionary() {
+        // A prototype's stores move what its inheritors read (`Object::note_prototype_value_write`).
+        if properties.is_dictionary() || data.was_used_as_prototype() {
             return None;
         }
         let cache = self.field_cache_entry(site);

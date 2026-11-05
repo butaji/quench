@@ -78,6 +78,20 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) frozen_mask: u32,
 }
 
+/// The native reader's view of a function record: its own properties are the `Object` at
+/// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. Generated code reads them only;
+/// a store's barrier tests object record marks (`emit_unlogged_property_store_guard`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeFunctionLayout {
+    pub(crate) record_size: usize,
+    pub(crate) object_offset: usize,
+}
+
+pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+    record_size: cell::NATIVE_FUNCTION_RECORD_SIZE,
+    object_offset: cell::NATIVE_FUNCTION_OBJECT_OFFSET,
+};
+
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: RECORD_SPACE_CAPACITY,
@@ -1092,7 +1106,15 @@ impl Heap {
         )
     }
 
-    #[inline(always)]
+    /// The registered prototypes, direct objects, of exact shape `shape`; none where the
+    /// registry does not know every prototype.
+    pub(crate) fn prototypes_of_shape(&self, shape: u32) -> impl Iterator<Item = Value> + '_ {
+        let known = match &self.prototypes { PrototypeRegistry::Known(prototypes) => &prototypes[..], _ => &[] };
+        known.iter().map(|(prototype, _)| *prototype).filter(move |prototype| {
+            prototype.direct_object_index().is_some() && self.object(*prototype).is_some_and(|object| object.exact_shape() == shape)
+        })
+    }
+
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
@@ -3368,6 +3390,9 @@ impl Heap {
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         self.note_prototype_elements(array);
         self.write_barrier(array);
+        if let Some(object) = self.object_mut(array) {
+            object.mark_sparse_elements();
+        }
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
@@ -3399,6 +3424,9 @@ impl Heap {
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || length <= dense_length {
             self.materialize_sparse_array(array, length);
             return;
+        }
+        if let Some(object) = self.object_mut(array) {
+            object.mark_sparse_elements();
         }
         let arrays = self
             .sparse_arrays
@@ -3572,6 +3600,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
+            data.note_prototype_value_write();
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3609,6 +3638,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
+            data.note_prototype_value_write();
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -4488,6 +4518,7 @@ unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize)
 /// Preserve declines before changing storage or values.
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, target: TargetShape, layout: PropertyStoreLayout) -> bool {
+    data.note_prototype_value_write();
     // The caller matched the exact shape, which holds the slot.
     let widened = properties.note_slot_target(data.shape(), slot, value, target);
     if widened && layout == PropertyStoreLayout::PreserveNative { return false; }

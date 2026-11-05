@@ -891,6 +891,8 @@ impl<H: Host> Vm<H> {
         } else {
             self.retain_live_method_caches();
         }
+        let heap = &self.heap;
+        self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()

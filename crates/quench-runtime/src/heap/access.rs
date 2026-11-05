@@ -680,6 +680,11 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
+    pub(crate) fn function_record_base(&self) -> Option<*const FunctionRecord> {
+        self.function_records.base_ptr()
+    }
+
     /// Object mark blocks used by no-safepoint native write-barrier guards.
     pub(crate) fn native_object_mark_blocks(&self) -> (*const u8, usize) {
         self.object_records.native_mark_blocks()
