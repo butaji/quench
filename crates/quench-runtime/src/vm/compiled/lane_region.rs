@@ -4459,6 +4459,7 @@ impl Lowering<'_, '_> {
         let properties = self.builder.use_var(entry.receiver.properties);
         let direct = self.builder.create_block();
         let general = self.builder.create_block();
+        self.builder.set_cold_block(general);
         let done = self.builder.create_block();
         let ok = if projection.is_some() { admitted } else {
             let same = if receiver { self.builder.use_var(entry.receiver_shapes[&field.shape]) }
@@ -4482,20 +4483,21 @@ impl Lowering<'_, '_> {
     fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
         properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block,
         general: ir::Block) -> Option<Option<ir::Block>> {
-        let widen = (!ty.is_subtype(field.ty)).then(|| {
+        let (widen, direct_ty) = if !ty.is_subtype(field.ty) {
             let widen = self.builder.create_block();
             self.builder.set_cold_block(widen);
-            self.represented(field.ty, value, widen);
-            widen
-        });
+            (Some(widen), self.represented(field.ty, value, widen))
+        } else { (None, ty) };
         let record_id = self.ins().ireduce(types::I32, object_bits);
         let record_id = self.ins().uextend(types::I64, record_id);
         let payload = self.payload;
-        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, ty, general);
-        // An int32 into a packed object's inline slot is its narrow word where it fits and
-        // the object has no extras (`Object::store_inline_narrow`); it needs no barrier.
-        if ty.is_subtype(Type::INT32) && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
-            self.store_narrow_int(object, inline, field.slot, value, done, general);
+        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, direct_ty, general);
+        // The admitted write domain and barrier above also cover packed
+        // references. Encoding support is shared with bound native stores.
+        if (direct_ty.is_subtype(Type::INT32)
+            || field.storage_len <= crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
+            && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
+            self.store_narrow_value(object, inline, field.slot, value, direct_ty, done, general);
         }
         let projection = match projection {
             Some(projection) => projection,
@@ -4537,10 +4539,10 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Store the int32 `value` (tagged) into inline `slot` of the packed object `record` and
+    /// Store an encodable `value` into inline `slot` of the packed object `record` and
     /// continue at `done`; an object with arena storage continues here, one with extras or a
     /// value past the narrow range takes `general`.
-    fn store_narrow_int(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value,
+    fn store_narrow_value(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value, ty: Type,
         done: ir::Block, general: ir::Block) {
         use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
@@ -4550,7 +4552,7 @@ impl Lowering<'_, '_> {
         let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
         let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
         emit_js_guard(&mut self.builder, plain, general);
-        let narrow = emit_narrow_integer_write(&mut self.builder, value, general, None);
+        let narrow = emit_narrow_store_value(&mut self.builder, value, ty, general);
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
         self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
         self.ins().jump(done, &[]);
@@ -4559,12 +4561,15 @@ impl Lowering<'_, '_> {
 
     /// Continue where a slot of type `slot` (`NativeFieldLoad::ty`) holds `value`, by its int
     /// tag, else at `otherwise`.
-    fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) {
+    fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) -> Type {
         // Only the type algebra may establish that an int fits. In particular,
         // nullable object contracts must not inherit the old numeric-chain rule.
         let held = if Type::INT32.is_subtype(slot) { is_int_tagged(&mut self.builder, value) }
             else { self.ins().iconst(types::I8, 0) };
         emit_js_guard(&mut self.builder, held, otherwise);
+        // Only the successful edge carries this fact. The general store may
+        // also be reached before admission and must retain the original type.
+        Type::INT32
     }
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
@@ -5444,6 +5449,33 @@ mod tests {
         assert_eq!(status, NATIVE_JS_STOPPED);
         assert_eq!(word, 0);
         assert_eq!(registers, before);
+    }
+
+    #[test]
+    fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
+        let program = crate::Engine::specialize(
+            "function write(o, value) { o.value=value; return value; }", "store-proof.js").unwrap();
+        let function = program.function(1);
+        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op() == Op::SetField)
+            .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
+                shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
+                ty: Type::INT32, target_shape: None, inherited: None,
+            }])).collect();
+        assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+        for ty in [Type::INT32, Type::ANY] {
+            fields.values_mut().next().unwrap()[0].ty = ty;
+            let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+                &fields, &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
+                Coverage::Full, Completion::StatusAndPc).unwrap();
+            let native = region.function;
+            let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+                .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
+                    if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32));
+            assert_eq!(barrier, ty == Type::ANY,
+                "only the admitted integer excludes a heap edge:\n{native}");
+        }
     }
 
     #[test]

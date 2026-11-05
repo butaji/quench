@@ -2125,16 +2125,19 @@ fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         return emit_narrow_integer_write(builder, value, fallback, None);
     }
     use crate::value::NarrowLayout as N;
-    let integer = builder.create_block();
-    let reference = builder.create_block();
-    let done = builder.create_block();
-    let result = builder.append_block_param(done, types::I32);
-    let is_integer = lane_region::is_int_tagged(builder, value);
-    builder.ins().brif(is_integer, integer, &[], reference, &[]);
-    builder.switch_to_block(integer);
-    let narrow = emit_narrow_integer_write(builder, value, fallback, None);
-    builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-    builder.switch_to_block(reference);
+    let joined = (!ty.is_direct_object_family()).then(|| {
+        let integer = builder.create_block();
+        let reference = builder.create_block();
+        let done = builder.create_block();
+        let result = builder.append_block_param(done, types::I32);
+        let is_integer = lane_region::is_int_tagged(builder, value);
+        builder.ins().brif(is_integer, integer, &[], reference, &[]);
+        builder.switch_to_block(integer);
+        let narrow = emit_narrow_integer_write(builder, value, fallback, None);
+        builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
+        builder.switch_to_block(reference);
+        (done, result)
+    });
     let upper = builder.ins().ushr_imm_u(value, i64::from(u32::BITS));
     let direct = builder.ins().icmp_imm_u(IntCC::Equal, upper, (N::DIRECT_OBJECT_UPPER >> u32::BITS) as i64);
     emit_js_guard(builder, direct, fallback);
@@ -2143,9 +2146,14 @@ fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     emit_js_guard(builder, fits, fallback);
     let shifted = builder.ins().ishl_imm_u(index, i64::from(N::INDEX_SHIFT));
     let narrow = builder.ins().bor_imm_u(shifted, i64::from(N::DIRECT_OBJECT_CODE << N::CODE_SHIFT));
-    builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-    builder.switch_to_block(done);
-    result
+    match joined {
+        Some((done, result)) => {
+            builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
+            builder.switch_to_block(done);
+            result
+        }
+        None => narrow,
+    }
 }
 
 /// Decode a packed property using the canonical NarrowLayout, transferring
@@ -17908,7 +17916,7 @@ mod tests {
         let source = r#"(function() {
             function replace(s,value,n){while(n>0){s.current=value;n=(n-1)|0;}}
             const s={current:{id:0}};
-            replace(s,s.current,64);
+            replace(s,s.current,10000);
             $262.gc();
             let young={id:42};
             replace(s,young,64);
@@ -17925,13 +17933,20 @@ mod tests {
             if(calls!==1)throw 'replayed setter';
             throw 42;
         })();"#;
-        for typescript in [false, true] {
+        for (typescript, mode) in [false, true].into_iter().flat_map(|typescript|
+            [ExecutionMode::Compiled, ExecutionMode::NativeOnly].map(move |mode| (typescript, mode))) {
             let program = if typescript { crate::Engine::specialize_typescript(source, "packed-reference-effects.cts") }
                 else { crate::Engine::specialize(source, "packed-reference-effects.cjs") }.unwrap();
-            let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
+            vm.set_execution_mode(mode);
+            let error = match mode {
+                ExecutionMode::Compiled => vm.execute(&program).unwrap_err(),
+                ExecutionMode::NativeOnly => {
+                    let native = linked_optimized_test_program(program);
+                    vm.execute_native_program(&native, true).unwrap_err()
+                }
+                _ => unreachable!(),
+            };
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
     }
