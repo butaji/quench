@@ -128,7 +128,7 @@ struct Lowering<'a, 'f> {
     direct: &'a BTreeMap<usize, *const DirectCallee>,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
     /// callee's identity, which its call guards; null where they are not dense.
-    frame_captures: &'a [(usize, usize)],
+    frame_captures: &'a [super::FrameCaptures],
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -659,7 +659,7 @@ pub(super) fn compile(
     vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
-    frame_captures: &[(usize, usize)],
+    frame_captures: &[super::FrameCaptures],
     loop_entry: Option<usize>,
 ) -> Result<LaneRegion, LaneDecline> {
     let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
@@ -682,7 +682,7 @@ fn lower(
     vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
-    frame_captures: &[(usize, usize)],
+    frame_captures: &[super::FrameCaptures],
     loop_entry: Option<usize>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
@@ -1237,11 +1237,12 @@ impl Lowering<'_, '_> {
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-                let (values, len) = match self.unit.origins.get(pc).copied() {
-                    Some(super::lane_unit::Origin::Inlined { frame, .. }) => {
-                        let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
-                        (self.ins().iconst(types::I64, values as i64), self.ins().iconst(types::I64, len as i64))
-                    }
+                let inlined = match self.unit.origins.get(pc).copied() {
+                    Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(self.frame_captures.get(frame).copied().unwrap_or(super::FrameCaptures::NONE)),
+                    _ => None,
+                };
+                let (values, len) = match inlined {
+                    Some(captures) => (self.ins().iconst(types::I64, captures.values as i64), self.ins().iconst(types::I64, captures.len as i64)),
                     _ => {
                         let entry = self.entry.as_ref().expect("entry facts");
                         (self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len))
@@ -1251,8 +1252,8 @@ impl Lowering<'_, '_> {
                 // The body's own captures the dense view does not hold (a root, projected or
                 // sparse environment, or an uninitialized binding) are read by the lane's own
                 // capture read, the interpreter's rule, which leaves only where it does.
-                let general = match self.unit.origins.get(pc) {
-                    Some(super::lane_unit::Origin::Inlined { .. }) => exit,
+                let general = match inlined {
+                    Some(captures) if captures.env.is_deleted() => exit,
                     _ => self.builder.create_block(),
                 };
                 let done = self.builder.create_block();
@@ -1268,7 +1269,15 @@ impl Lowering<'_, '_> {
                 if general != exit {
                     self.builder.switch_to_block(general);
                     self.builder.set_cold_block(general);
-                    let value = self.capture_read(instruction);
+                    let value = match inlined {
+                        // An inlined frame's environment, which its call guard fixes.
+                        Some(captures) => {
+                            let env = self.ins().iconst(types::I64, captures.env.to_bits() as i64);
+                            let packed = self.ins().iconst(types::I64, i64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())));
+                            emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.env_capture_get, &[env, packed])
+                        }
+                        None => self.capture_read(instruction),
+                    };
                     let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
                     emit_js_guard(&mut self.builder, hit, exit);
                     self.ins().jump(done, &[value.into()]);

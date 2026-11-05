@@ -14422,12 +14422,35 @@ fn lane_unit_targets<H: Host>(cx: *mut LaneContext<H>, function: u32, pc: u32) -
 
 /// The dense capture slots of `callee`'s environment (`EnvironmentSlots::native_dense_view`),
 /// as values and count, or none: what an inlined frame of it reads its captures from.
-fn lane_callee_captures<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> (usize, usize) {
-    unsafe { vm(cx) }.script_call_entry(callee)
-        // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
+fn lane_callee_captures<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> super::compiled::FrameCaptures {
+    let vm = unsafe { vm(cx) };
+    // The closure's own environment, which a frameless inlined body's captures start from.
+    let Some(env) = vm.heap.function(callee).map(|function| function.env) else {
+        return super::compiled::FrameCaptures::NONE;
+    };
+    // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
+    let (values, len) = vm.script_call_entry(callee)
         .and_then(|target| unsafe { capture_reads((*target).capture).as_ref() })
         .and_then(crate::heap::EnvironmentSlots::native_dense_view)
-        .map_or((0, 0), |(values, len)| (values.addr(), len))
+        .map_or((0, 0), |(values, len)| (values.addr(), len));
+    super::compiled::FrameCaptures { values, len, env }
+}
+
+/// An inlined frame's read of slot `slot` of its closure environment `env`, the frame's own
+/// depth-0 captures: the lane's own read of it (`Vm::owned_capture`), a root binding past it
+/// (`Vm::plain_projected_root_binding`), or `Value::DELETED`, which leaves the body at the
+/// read. Compiled code roots the frame's callee, which holds `env`.
+pub(super) unsafe extern "C" fn lane_env_capture<H: Host>(vm: u64, _residual: u64, env: u64, slot: u64) -> u64 {
+    // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let (env, slot) = (Value::from_bits(env), slot as u16);
+    // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+    vm.walked_capture_slots(env, false, 0)
+        .and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
+        .or_else(|| vm.plain_projected_root_binding(env, slot))
+        .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
+        .unwrap_or(Value::DELETED)
+        .to_bits()
 }
 
 /// Per PC of `body`, the callee its call record links where the callee's own lane body
@@ -14615,14 +14638,22 @@ fn lane_body_inlined_activation<H: Host>(
 pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
-    let value = match lane_body_callee_env::<H>() {
+    let env = lane_body_callee_env::<H>();
+    let value = match env {
         Some(env) => {
             let vm = unsafe { vm(cx) };
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
             vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
         }
         None => lane_capture_value(cx, depth, slot),
-    };
+    }
+    // A root binding projected to the global object or the realm's lexical record (a
+    // script's top-level `var`), which the interpreter reads without guest code.
+    .or_else(|| {
+        let vm = unsafe { vm(cx) };
+        let env = env.or_else(|| Some(unsafe { (*cx).env }).filter(|env| !env.is_deleted()))?;
+        vm.plain_projected_root_binding(vm.environment_capture_env(env, false, depth)?, slot)
+    });
     value
         .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
         .unwrap_or(Value::DELETED)
@@ -14649,16 +14680,54 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     u64::from(stored)
 }
 
+/// A helper call (`call`) of the innermost body of a run, made over the native frames below
+/// it (`ShadowFrame`): those frames become the activations an exit would make
+/// (`lane_materialize_frames`), so the call's own activation sits above them in their order
+/// and the running activation is the innermost body's, whose records the call names. A call
+/// that completes, or misses before any effect, gives them back to native code, the lane's
+/// stack, context and shadow frames as they were; one that leaves keeps them, and the frames
+/// unwind onto them (`lane_body_left` then finds none to make).
+#[inline(always)]
+fn lane_body_call_over_frames<H: Host>(cx: *mut LaneContext<H>, call: impl FnOnce() -> u64) -> u64 {
+    use super::compiled::{LANE_CALL_LEFT, LANE_CALL_MISSED};
+    if !Vm::<H>::lane_shadow_active() {
+        return call();
+    }
+    // A copy: the call's own direct calls push their frames into the buffer these leave.
+    let frames: smallvec::SmallVec<[super::compiled::ShadowFrame; 8]> = Vm::<H>::take_shadow_frames().iter().copied().collect();
+    let stack = &unsafe { vm(cx) }.lane_stack;
+    // The activations of the frames and the call's own, within the stack's capacity.
+    if stack.activations.len() + frames.len() >= stack.activation_limit.get() {
+        Vm::<H>::restore_shadow_frames(&frames);
+        return LANE_CALL_MISSED;
+    }
+    let depth = stack.activations.len();
+    lane_materialize_frames(cx, &frames);
+    let result = call();
+    if result != LANE_CALL_LEFT {
+        while unsafe { vm(cx) }.lane_stack.activations.len() > depth {
+            let activation = unsafe { vm(cx) }.lane_stack.pop_activation().expect("a materialized activation");
+            lane_restore_caller(cx, &activation);
+        }
+        Vm::<H>::restore_shadow_frames(&frames);
+    }
+    result
+}
+
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
+    lane_body_call_over_frames(cx, || lane_body_call_in(cx, call_pc))
+}
+
+/// A lane body's call at record `call_pc` of the running activation (`lane_body_call`).
+fn lane_body_call_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if Vm::<H>::lane_shadow_active()
-        || !unsafe { (*cx).script_calls }
+    if !unsafe { (*cx).script_calls }
         || lane_constructing(vm, callee)
         || vm.with_scope_entered
         || (returns && !lane_returning_call_admitted(cx))
@@ -14696,14 +14765,18 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
 /// than store fields, its activation, whose completion yields its returned object or the
 /// receiver. A returned construction takes the plan only. Its results are `lane_body_call`'s.
 pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
+    lane_body_call_over_frames(cx, || lane_body_construct_in(cx, call_pc))
+}
+
+/// A lane body's `new` at record `call_pc` of the running activation (`lane_body_construct`).
+fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
-    if Vm::<H>::lane_shadow_active()
-        || !unsafe { (*cx).script_calls && (*cx).script_constructs }
+    if !unsafe { (*cx).script_calls && (*cx).script_constructs }
         || vm.construct_target.is_some()
         || vm.with_scope_entered
         || vm.heap.should_collect()

@@ -2073,6 +2073,8 @@ pub(super) struct LaneHelpers {
     global_get: usize,
     /// An outer capture's read (`dispatch_fast::lane_body_capture`).
     capture_get: usize,
+    /// A capture's read from an inlined frame's environment (`dispatch_fast::lane_env_capture`).
+    env_capture_get: usize,
     /// Strict equality of two distinct strings or BigInts (`lane_strict_equal_cells`).
     strict_equal: usize,
     /// `instanceof` by its steady case (`lane_instance_of`).
@@ -6981,6 +6983,12 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
     let receiver = Value::from_bits(receiver);
     match vm.cached_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
+        // A miss takes the interpreter's data lookup, which runs no guest code and records
+        // the entry that answers the site next time; an accessor or exotic read leaves.
+        super::object::FieldCacheProbe::OrdinaryMiss => vm
+            .field_miss_data_value(receiver, atom, vm.field_cache_index(site))
+            .unwrap_or(Value::DELETED)
+            .to_bits(),
         _ => Value::DELETED.to_bits(),
     }
 }
@@ -7194,7 +7202,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        captures: &dyn Fn(Value) -> (usize, usize),
+        captures: &dyn Fn(Value) -> FrameCaptures,
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
         generic: &[LaneExit],
@@ -7207,6 +7215,7 @@ impl<H: Host> Vm<H> {
             index_set: lane_index_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
             global_get: lane_global_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             capture_get: super::dispatch_fast::lane_body_capture::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            env_capture_get: super::dispatch_fast::lane_env_capture::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             strict_equal: lane_strict_equal_cells::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             instance_of: lane_instance_of::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             typeof_is: lane_typeof_is::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
@@ -7260,7 +7269,7 @@ impl<H: Host> Vm<H> {
             let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> = sites.iter()
                 .filter_map(|(pc, origin)| direct[*origin].as_deref().map(|callee| (*pc, callee as *const DirectCallee)))
                 .collect();
-            let frame_captures: Vec<(usize, usize)> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
+            let frame_captures: Vec<FrameCaptures> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
             match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.vm_facts(), &generic, &direct_sites, &frame_captures, loop_entry) {
                 Ok(region) => break (unit, region, fields, sites),
                 Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
@@ -7397,6 +7406,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Gives back the native frames `take_shadow_frames` took, `frames`, which the run still
+    /// runs in (`dispatch_fast::lane_body_call_over_frames`).
+    pub(super) fn restore_shadow_frames(frames: &[ShadowFrame]) {
+        let frame = lane_frame();
+        // SAFETY: the run bounded its frames by the buffer, which nothing else borrows now.
+        unsafe {
+            let base = (*frame).shadow.as_mut_ptr();
+            std::ptr::copy_nonoverlapping(frames.as_ptr(), base, frames.len());
+            (*frame).dispatch.shadow_top = base.add(frames.len()).addr();
+        }
+    }
+
     /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
     /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
     pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
@@ -7499,6 +7520,22 @@ pub(super) struct ShadowFrame {
 
 impl ShadowFrame {
     const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
+}
+
+/// What an inlined frame's captures read (`Lowering::frame_captures`): its closure
+/// environment's dense slots, where they have them (`EnvironmentSlots::native_dense_view`),
+/// and the environment itself, which the frame's call guard fixes with its callee and which
+/// the lane's own read takes past the view (`dispatch_fast::lane_env_capture`).
+#[derive(Clone, Copy)]
+pub(super) struct FrameCaptures {
+    pub(super) values: usize,
+    pub(super) len: usize,
+    pub(super) env: Value,
+}
+
+impl FrameCaptures {
+    /// A frame of no closure environment, whose every capture read leaves.
+    pub(super) const NONE: Self = Self { values: 0, len: 0, env: Value::DELETED };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
