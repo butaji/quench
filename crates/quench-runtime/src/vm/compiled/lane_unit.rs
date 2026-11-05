@@ -71,6 +71,11 @@ pub(crate) struct Frame {
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub(crate) alternative: Option<usize>,
+    /// For a call through `Function.prototype.call` (`f.call(receiver, ...arguments)`), the
+    /// register holding the `call` native, whose identity the call guards too; the callee
+    /// register then holds `f`, the receiver is the first argument and the window the rest
+    /// (`Planner::through_call`).
+    pub(crate) function_call: Option<Register>,
 }
 
 impl Frame {
@@ -339,6 +344,8 @@ fn inlinable(instruction: WideInstruction) -> bool {
             None => false,
         },
         Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
+        // A fused `typeof` test (`Lowering::typeof_test`).
+        Op::Unary => plain && crate::bytecode::typeof_test(instruction.unary_operator()).is_some(),
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
@@ -417,6 +424,9 @@ struct Plan {
     /// Whether a call the plan does not inline has run (its site linked a target): an
     /// inlined callee's never-run call is an exit of the unit, one that runs is not.
     blocked: bool,
+    /// Per PC, the register of the `call` native an inlined call through it guards; its
+    /// instruction in `code` is then the call of the function it calls.
+    through_call: Vec<Option<Register>>,
 }
 
 struct InlinedPlan {
@@ -450,28 +460,62 @@ struct Planner<'t, 'f> {
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
+    /// The `call` name, where the realm's `Function.prototype.call` is known.
+    call: Option<crate::bytecode::Atom>,
 }
 
 impl Planner<'_, '_> {
     /// The plan of `function`'s `code`, its calls inlined where the budget allows. A callee
     /// is inlined only whole: every call of its own inlined too.
-    fn plan(&mut self, function: u32, code: Vec<WideInstruction>, strict: bool, depth: usize) -> Plan {
+    fn plan(&mut self, function: u32, mut code: Vec<WideInstruction>, strict: bool, depth: usize) -> Plan {
         let mut blocked = false;
+        let mut through_call = vec![None; code.len()];
+        let mut called = Vec::new();
         let calls = code
             .iter()
             .enumerate()
             .map(|(pc, instruction)| {
+                // A call through `call` inlines as the call of the function it calls.
+                let through = self.through_call(&code, pc, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
                 let (calls, ran) = if instruction.op() == Op::Call && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
-                } else { self.inline(function, pc as u32, *instruction, depth) };
+                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth) };
                 blocked |= calls.is_empty() && ran;
+                if let Some((call, native)) = through.filter(|_| !calls.is_empty()) {
+                    called.push((pc, call));
+                    through_call[pc] = Some(native);
+                }
                 calls
             })
             .collect();
-        Plan { code, calls, blocked }
+        for (pc, call) in called {
+            code[pc] = call;
+        }
+        Plan { code, calls, blocked, through_call }
+    }
+
+    /// `f.call(receiver, ...arguments)` at `pc`, its callee read as `call` off `f` before it:
+    /// the call of `f` with that receiver and those arguments, and the register holding the
+    /// `call` native.
+    fn through_call(&self, code: &[WideInstruction], pc: usize, instruction: WideInstruction) -> Option<(WideInstruction, Register)> {
+        let atom = self.call?;
+        let imm = instruction.imm();
+        let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
+        (instruction.op() == Op::Call && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+        let native = instruction.register_b();
+        let read = code[..pc].iter().rev().find(|earlier| {
+            earlier.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister
+                && earlier.result_register() == native
+        })?;
+        matches!(read.field_lookup(), Some(FieldLookup::Atom { atom: name, base: object, .. })
+            if read.op() == Op::GetField && name == atom && object.register_index() == Some(instruction.register_c()))
+            .then_some(())?;
+        let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
+            ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
+        Some((call, native))
     }
 
     /// The callees the call at `pc` of `function` inlines: every target its site linked, or
@@ -606,6 +650,7 @@ impl Emitter {
                         base: callee_base,
                         registers: call.registers,
                         alternative: next,
+                        function_call: plan.through_call[pc].map(register),
                     };
                     self.unit.frames.push(frame_record);
                     // The marker: the call's guards and bindings (`Lowering::inline_call`); a
@@ -672,7 +717,7 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
-    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
+    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body, None)
 }
 
 /// Plan the same unit under a smaller inlining budget after code-size rejection.
@@ -683,9 +728,10 @@ pub(crate) fn with_budget<'f>(
     budget: usize,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
+    call: Option<crate::bytecode::Atom>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
+    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget, call };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

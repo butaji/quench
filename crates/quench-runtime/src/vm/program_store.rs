@@ -3570,8 +3570,11 @@ impl Drop for ProgramStore {
         };
         for (program, entry) in self.programs.iter().enumerate() {
             let Some(entry) = entry else { continue };
+            let code: &ResidualProgram = &entry.residual;
+            let op_at = |function: u32, pc: u32| code.function_get(function as usize)
+                .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
             for view in entry.lane_views.arena.borrow().iter().flatten() {
-                if let Some(line) = view.body_stats.report(program) {
+                if let Some(line) = view.body_stats.report(program, view.lane_body_state(), &op_at) {
                     eprintln!("{line}");
                 }
             }

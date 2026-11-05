@@ -1048,7 +1048,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.
-    fn realm_array_constructor(&self, value: Value) -> bool {
+    pub(super) fn realm_array_constructor(&self, value: Value) -> bool {
         matches!(
             self.heap.function(value),
             Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. }) if *realm == self.realm.globals

@@ -27,9 +27,32 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
 
-/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`.
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and every value read
+/// under the current `PROTOTYPE_VALUE_EPOCH`: a layout change moves what a slot holds.
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
+    advance_prototype_value_epoch();
+}
+
+/// Changes whenever what an object used as a prototype offers its inheritors can have
+/// changed: its layout (`advance_prototype_layout_epoch`) or the value of any of its slots
+/// (`Object::note_prototype_value_write`). Native code that took an inherited value as a
+/// constant reads it while this holds the epoch it was compiled under.
+static PROTOTYPE_VALUE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `PROTOTYPE_VALUE_EPOCH`.
+#[inline(always)]
+pub(crate) fn prototype_value_epoch() -> u64 {
+    PROTOTYPE_VALUE_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Where native code loads `PROTOTYPE_VALUE_EPOCH` from.
+pub(crate) fn prototype_value_epoch_address() -> *const u64 {
+    PROTOTYPE_VALUE_EPOCH.as_ptr()
+}
+
+fn advance_prototype_value_epoch() {
+    PROTOTYPE_VALUE_EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1474,6 +1497,12 @@ impl ProtoLink {
         Self(Object::encode_proto(prototype))
     }
 
+    /// The link as the object header encodes it (`OBJECT.proto_mask`).
+    #[inline(always)]
+    pub(crate) fn bits(self) -> u32 {
+        self.0
+    }
+
     /// The link naming object record `id`.
     #[inline(always)]
     pub(crate) fn object_record(id: u32) -> Self {
@@ -1621,6 +1650,8 @@ pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
     std::mem::offset_of!(ArrayObject, elements);
 /// Where an array record's object part (`Object`: meta, auxiliary, payload) starts.
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
+pub(super) const NATIVE_FUNCTION_RECORD_SIZE: usize = std::mem::size_of::<FunctionRecord>();
+pub(super) const NATIVE_FUNCTION_OBJECT_OFFSET: usize = std::mem::offset_of!(FunctionRecord, object);
 
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
@@ -1801,6 +1832,9 @@ struct ObjectExtras {
     /// Any property descriptor beside the shape has been recorded for this object
     /// (`Vm::insert_descriptor`); never cleared.
     side_descriptors: bool,
+    /// The array has held sparse elements (`Heap::sparse_set`), so its length may exceed its
+    /// dense elements'; never cleared. An array without extras has its dense length.
+    sparse_elements: bool,
     /// A prototype's subject in its heap's dependency table, which its layout and element
     /// changes retire (`Object::note_prototype_layout_change`).
     watch: super::dependencies::Watch,
@@ -2445,6 +2479,14 @@ impl Object {
         }
     }
 
+    /// A write to one of this object's slots: what it offers its inheritors may change.
+    #[inline(always)]
+    pub(crate) fn note_prototype_value_write(&self) {
+        if self.was_used_as_prototype() {
+            advance_prototype_value_epoch();
+        }
+    }
+
     pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
@@ -2562,6 +2604,9 @@ impl Object {
         self.note_prototype_layout_change();
         super::array_proofs::retire_array_storage_proofs();
         self.extras_mut().indexed_descriptors = true;
+    }
+    pub(crate) fn mark_sparse_elements(&mut self) {
+        self.extras_mut().sparse_elements = true;
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {
         self.extras().is_some_and(|extras| extras.length_descriptor)
