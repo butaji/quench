@@ -339,6 +339,16 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.ins().jump(block, &[]);
     }
 
+    /// The lane's own read of `LoadCapture` `instruction`'s binding (`dispatch_fast::lane_body_capture`):
+    /// the value, or `Value::DELETED` where the lane leaves for it.
+    fn capture_read(&mut self, instruction: WideInstruction) -> ir::Value {
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let depth = u64::from(crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()));
+        let slot = u64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+        let packed = self.ins().iconst(types::I64, (depth << u16::BITS | slot) as i64);
+        emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.capture_get, &[context, packed])
+    }
+
     /// A guard's failure block: it leaves at `pc` from the state where the guard sits. It is
     /// filled after the region, since the current block is still open.
     #[track_caller]
@@ -1238,24 +1248,40 @@ impl Lowering<'_, '_> {
                     }
                 };
                 let exit = self.guard_exit(state, pc32);
+                // The body's own captures the dense view does not hold (a root, projected or
+                // sparse environment, or an uninitialized binding) are read by the lane's own
+                // capture read, the interpreter's rule, which leaves only where it does.
+                let general = match self.unit.origins.get(pc) {
+                    Some(super::lane_unit::Origin::Inlined { .. }) => exit,
+                    _ => self.builder.create_block(),
+                };
+                let done = self.builder.create_block();
+                self.builder.append_block_param(done, types::I64);
                 let in_bounds = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, len, slot as i64);
-                emit_js_guard(&mut self.builder, in_bounds, exit);
+                emit_js_guard(&mut self.builder, in_bounds, general);
                 let offset = i32::try_from(slot * std::mem::size_of::<Value>()).expect("capture slot offset fits i32");
                 let value = self.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
                 let tag = self.ins().band_imm_u(value, crate::value::ValueLayout::TAG_MASK as i64);
                 let ordinary = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::INTERNAL_TAG as i64);
-                emit_js_guard(&mut self.builder, ordinary, exit);
+                emit_js_guard(&mut self.builder, ordinary, general);
+                self.ins().jump(done, &[value.into()]);
+                if general != exit {
+                    self.builder.switch_to_block(general);
+                    self.builder.set_cold_block(general);
+                    let value = self.capture_read(instruction);
+                    let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                    emit_js_guard(&mut self.builder, hit, exit);
+                    self.ins().jump(done, &[value.into()]);
+                }
+                self.builder.switch_to_block(done);
+                let value = self.builder.block_params(done)[0];
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
             // An outer capture of the caller's activation, by the lane's own lookup.
-            Op::LoadCapture if plain && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
+            Op::LoadCapture if plain && !matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Inlined { .. })) => {
                 let exit = self.guard_exit(state, pc32);
-                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-                let depth = u64::from(crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()));
-                let slot = u64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-                let packed = self.ins().iconst(types::I64, (depth << u16::BITS | slot) as i64);
-                let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.capture_get, &[context, packed]);
+                let value = self.capture_read(instruction);
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, hit, exit);
                 self.set_tagged(state, instruction.result_register(), value);
