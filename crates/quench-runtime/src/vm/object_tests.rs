@@ -1052,7 +1052,7 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
             assert!(
                 field_cache_entries(&vm, &program, noncanonical)
                     .iter()
-                    .any(|entry| entry.receiver == vm.object_data(view).unwrap().shape()),
+                    .any(|entry| entry.receiver == vm.object_data(view).unwrap().exact_shape()),
                 "noncanonical typed-array names use ordinary shape storage"
             );
         }

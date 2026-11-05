@@ -5077,14 +5077,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
         );
         let frozen = self.body.builder.ins().band_imm_u(meta, i64::from(array_layout.frozen_mask));
         self.guard(pc, frozen);
-        let payload = self.body.builder.ins().load(
-            types::I64,
+        let auxiliary = self.body.builder.ins().load(
+            types::I32,
             flags(),
             record,
-            (array_layout.object_offset + object_layout.payload_offset) as i32,
+            (array_layout.object_offset + object_layout.auxiliary_offset) as i32,
         );
-        let tag = self.body.builder.ins().band_imm_u(payload, object_layout.extras_tag_mask as i64);
-        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, object_layout.extras_tag as i64);
+        let extras = self.body.builder.ins().band_imm_u(auxiliary, i64::from(object_layout.extras_storage_mask));
         self.guard(pc, extras);
         Some(ArrayView { identity: value.value, elements, entry_index: None, access: ArrayAccess::InBounds { length } })
     }
@@ -5803,10 +5802,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, header.shape, i64::from(load.shape));
         self.guard(pc, wrong_shape);
         let base = self.word(heap_base + 1);
-        let exit = self.exit_block(pc);
         let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-        let checked = CheckedObject::prove(&mut self.body.builder, header.record, header.inline, base,
-            load, access, exit)?;
+        let checked = CheckedObject::prove(&mut self.body.builder, header.record, base, load, access)?;
         let current = self.body.builder.current_block().expect("checked projection");
         self.chains.insert(current, chain);
         self.objects.insert(key, (checked, chain));
@@ -5845,8 +5842,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(matched);
                 self.body.builder.seal_block(matched);
                 let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-                let object = CheckedObject::prove(&mut self.body.builder, header.record, header.inline,
-                    base, *load, access, exit)?;
+                let object = CheckedObject::prove(&mut self.body.builder, header.record, base, *load, access)?;
                 let value = object.read(&mut self.body.builder, load.slot);
                 self.body.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
                 self.body.builder.switch_to_block(next);
@@ -7192,11 +7188,11 @@ mod tests {
         let region = region(function, &instructions, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap();
         assert_eq!(region.fields.len(), 2);
-        for storage in [Some(crate::heap::PlainPropertyStorage::Arena),
-            Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
+        // The exact shape's storage form: arena, then packed inline.
+        for shape in [0, crate::value_vec::PACKED_STORAGE] {
             let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
-                shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
-                storage, representation: crate::value_vec::SlotRepresentation::Tagged, inherited: None,
+                shape, holder: None, slot: slot as u16, storage_len: region.fields.len(),
+                representation: crate::value_vec::SlotRepresentation::Tagged, inherited: None,
             }]).collect();
             let widened = Default::default();
             let observation = Observation {

@@ -2169,7 +2169,7 @@ impl Lowering<'_, '_> {
         let owner = if receiver { None } else { register };
         let probed = NativeFieldLoad::probes_misses(&shapes);
         self.probed_read(state, owner, probed, object_bits, read, exit, |lowering, state, generic| {
-            let (object, shape, inline) = if receiver {
+            let (object, shape, _) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
                 (
                     lowering.builder.use_var(entry.receiver.object),
@@ -2179,7 +2179,7 @@ impl Lowering<'_, '_> {
             } else {
                 lowering.object_record(state, register, true, generic)
             };
-            lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)
+            lowering.shape_switch_read(state, Some(owner), object, shape, &shapes, generic)
         })
     }
 
@@ -2196,7 +2196,7 @@ impl Lowering<'_, '_> {
             let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
-            lowering.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, generic)
+            lowering.shape_switch_read(state, None, header.record, header.shape, &shapes, generic)
         }))
     }
 
@@ -2244,7 +2244,6 @@ impl Lowering<'_, '_> {
         owner: Option<Option<Register>>,
         object: ir::Value,
         shape: ir::Value,
-        inline: ir::Value,
         shapes: &[NativeFieldLoad],
         exit: ir::Block,
     ) -> Option<ir::Value> {
@@ -2262,8 +2261,7 @@ impl Lowering<'_, '_> {
                 Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
                 _ => {
                     self.prove_shape(state, owner, shape, field.shape, exit);
-                    let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                        *field, PackedAccess::Reload, exit)?;
+                    let projection = CheckedObject::prove(&mut self.builder, object, properties, *field, PackedAccess::Reload)?;
                     if let Some(owner) = owner {
                         state.layouts.insert((owner, field.shape), projection);
                     }
@@ -2275,7 +2273,7 @@ impl Lowering<'_, '_> {
         // A layout family: own fields at one slot in every shape. One membership test and one
         // read serve them all, bounded by the shortest storage, which still holds the slot.
         if let [first, ..] = shapes
-            && shapes.iter().all(|field| field.holder.is_none() && field.slot == first.slot && field.storage == first.storage) {
+            && shapes.iter().all(|field| field.holder.is_none() && field.slot == first.slot && field.storage() == first.storage()) {
             let mut member = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(first.shape));
             for field in &shapes[1..] {
                 let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
@@ -2283,8 +2281,7 @@ impl Lowering<'_, '_> {
             }
             emit_js_guard(&mut self.builder, member, exit);
             let shortest = shapes.iter().copied().min_by_key(|field| field.storage_len).expect("a family has a shape");
-            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                shortest, PackedAccess::Reload, exit)?;
+            let projection = CheckedObject::prove(&mut self.builder, object, properties, shortest, PackedAccess::Reload)?;
             return Some(projection.read(&mut self.builder, first.slot));
         }
         let join = self.builder.create_block();
@@ -2296,8 +2293,7 @@ impl Lowering<'_, '_> {
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
             let read = match field.holder {
-                None => CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
+                None => CheckedObject::prove(&mut self.builder, object, properties, *field, PackedAccess::Reload)?.read(&mut self.builder, field.slot),
                 Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
             };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
@@ -2360,18 +2356,9 @@ impl Lowering<'_, '_> {
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
         emit_js_guard(&mut self.builder, same, exit);
-        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
-        let holder_meta = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.meta_offset as i32);
-        let inline = self.ins().band_imm_u(holder_meta, i64::from(OBJECT.inline_storage_mask));
-        let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(&mut self.builder, arena, exit);
-        let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let tag = self.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
-        let tagged = self.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
-        emit_js_guard(&mut self.builder, tagged, exit);
-        let extras = self.ins().band_imm_u(storage, !OBJECT.extras_tag_mask as i64);
-        let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
-        emit_js_guard(&mut self.builder, present, exit);
+        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`),
+        // which the exact holder shape's storage form proves (`Vm::native_field_entry`).
+        let extras = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
         let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
         let start = self.ins().uextend(types::I64, start);
         // The prototype's run lies inside the arena, as every live flat object's does
@@ -2489,8 +2476,7 @@ impl Lowering<'_, '_> {
         self.ins().brif(present, found, &[], done, &[]);
         self.builder.switch_to_block(found);
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.auxiliary_offset as i32);
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.meta_offset as i32);
-        let inline = self.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = self.ins().band_imm_u(shape, i64::from(OBJECT.packed_storage_mask));
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);
         self.ins().jump(done, &[]);
@@ -2528,7 +2514,7 @@ impl Lowering<'_, '_> {
             // A shape switch, as a read's (`shape_switch_read`): each own shape stores directly,
             // any other takes the VM's hit.
             _ => {
-                let (object, shape, inline) = self.object_record(state, register, false, exit);
+                let (object, shape, _) = self.object_record(state, register, false, exit);
                 let admitted = self.emit_store_atom_admitted(atom);
                 let properties = { let entry = self.entry.as_ref().expect("entry facts"); self.builder.use_var(entry.receiver.properties) };
                 let (general, done) = (self.builder.create_block(), self.builder.create_block());
@@ -2538,7 +2524,7 @@ impl Lowering<'_, '_> {
                     let ok = self.ins().band(same, admitted);
                     self.ins().brif(ok, matched, &[], next, &[]);
                     self.builder.switch_to_block(matched);
-                    self.store_direct(field, object_bits, object, inline, properties, None, value, ty, done, general)?;
+                    self.store_direct(field, object_bits, object, properties, None, value, ty, done, general);
                     self.builder.switch_to_block(next);
                 }
                 self.ins().jump(general, &[]);
@@ -2559,11 +2545,10 @@ impl Lowering<'_, '_> {
         };
         let entry = self.entry.as_ref().expect("entry facts");
         let projection = state.layouts.get(&(owner, field.shape)).copied();
-        let (object, shape, inline) = header.unwrap_or_else(|| (
+        let (object, shape) = header.map_or_else(|| (
             self.builder.use_var(entry.receiver.object),
             self.builder.use_var(entry.receiver.shape),
-            self.builder.use_var(entry.receiver.inline),
-        ));
+        ), |(object, shape, _)| (object, shape));
         let properties = self.builder.use_var(entry.receiver.properties);
         let direct = self.builder.create_block();
         let general = self.builder.create_block();
@@ -2575,7 +2560,7 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
-        self.store_direct(field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
+        self.store_direct(field, object_bits, object, properties, projection, value, ty, done, general);
         self.builder.switch_to_block(general);
         self.store_helper(state, object_bits, atom, site, value, exit);
         self.ins().jump(done, &[]);
@@ -2584,11 +2569,13 @@ impl Lowering<'_, '_> {
     }
 
     /// The store of `value`, of type `ty`, into `field`'s slot of the object `object` whose
-    /// shape the caller proved `field.shape`, continuing at `done`; one the slot's
-    /// representation, the barrier or the storage does not admit continues at `general`.
+    /// exact shape the caller proved `field.shape`, continuing at `done`; one the slot's
+    /// representation, the barrier or the shape's storage form does not admit continues at
+    /// `general`.
     #[allow(clippy::too_many_arguments)]
-    fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
-        properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block, general: ir::Block) -> Option<()> {
+    fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value,
+        properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block, general: ir::Block) {
+        use crate::heap::PlainPropertyStorage;
         self.represented(field.representation, ty, value, general);
         if !ty.is_subtype(Type::NUMBER) {
             let record_id = self.ins().ireduce(types::I32, object_bits);
@@ -2596,39 +2583,31 @@ impl Lowering<'_, '_> {
             let payload = self.payload;
             emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
         }
-        // An int32 into a packed object's inline slot is its narrow word where it fits and
-        // the object has no extras (`Object::store_inline_narrow`); it needs no barrier.
-        if ty.is_subtype(Type::INT32) && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
-            self.store_narrow_int(object, inline, field.slot, value, done, general);
-        }
-        let projection = match projection {
-            Some(projection) => projection,
-            None => {
-                let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
-                CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    plan, PackedAccess::Reload, general)?
+        match field.storage() {
+            Some(PlainPropertyStorage::Arena) => {
+                let projection = projection.or_else(|| CheckedObject::prove(&mut self.builder, object, properties, field, PackedAccess::Reload));
+                match projection.and_then(|projection| projection.arena_address(&mut self.builder, field.slot)) {
+                    Some(address) => {
+                        self.ins().store(MemFlagsData::trusted(), value, address, 0);
+                        self.ins().jump(done, &[]);
+                    }
+                    None => { self.ins().jump(general, &[]); }
+                }
             }
-        };
-        let address = projection.arena_address(&mut self.builder, field.slot, general)?;
-        self.ins().store(MemFlagsData::trusted(), value, address, 0);
-        self.ins().jump(done, &[]);
-        Some(())
+            // An int32 into a packed object's inline slot is its narrow word where it fits
+            // (`Object::store_inline_narrow`); it needs no barrier.
+            Some(PlainPropertyStorage::PackedInline) if ty.is_subtype(Type::INT32)
+                && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count =>
+                self.store_narrow_int(object, field.slot, value, done, general),
+            _ => { self.ins().jump(general, &[]); }
+        }
     }
 
-    /// Store the int32 `value` (tagged) into inline `slot` of the packed object `record` and
-    /// continue at `done`; an object with arena storage continues here, one with extras or a
-    /// value past the narrow range takes `general`.
-    fn store_narrow_int(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value,
-        done: ir::Block, general: ir::Block) {
+    /// Store the int32 `value` (tagged) into inline `slot` of the packed object `record`, which
+    /// has no extras, and continue at `done`; a value past the narrow range takes `general`.
+    fn store_narrow_int(&mut self, record: ir::Value, slot: u16, value: ir::Value, done: ir::Block, general: ir::Block) {
         use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         use crate::value::NarrowLayout as NARROW;
-        let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
-        self.ins().brif(inline, packed, &[], arena, &[]);
-        self.builder.switch_to_block(packed);
-        let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
-        let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
-        let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
-        emit_js_guard(&mut self.builder, plain, general);
         let int = self.ins().ireduce(types::I32, value);
         let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
         let biased = self.ins().iadd_imm_s(int, half_range);
@@ -2639,7 +2618,6 @@ impl Lowering<'_, '_> {
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
         self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
         self.ins().jump(done, &[]);
-        self.builder.switch_to_block(arena);
     }
 
     /// Continue where the slot representation `representation` holds `value`, of type `ty`,
@@ -2852,7 +2830,7 @@ mod tests {
             if instruction.op() == Op::GetField
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2,
                     representation: SlotRepresentation::Tagged, inherited: None }]))
             } else { None }
         }).collect();

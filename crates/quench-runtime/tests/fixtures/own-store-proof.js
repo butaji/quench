@@ -49,4 +49,6 @@ for (let index = 0; index < 100; index++) {
   updateAlias(packed, 1);
   updateAlias(arena, 1.5);
   append.call({ left: 9, right: 3 }, { left: { left: null, right: 4 }, right: 5 });
+  // The values behind extras are another exact layout, which the sites record too.
+  append.call({ left: 9, right: 3.5 }, { left: { left: null, right: 4.5 }, right: 5.5 });
 }

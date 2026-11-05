@@ -151,7 +151,7 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
     let auxiliary = reader.u32()?;
     let payload = match reader.u8()? {
         0 => reader.u64()?,
-        1 => Object::tag_extras(Box::new(read_extras(reader)?)),
+        1 => Object::extras_word(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
     };
     Ok(Object { meta, auxiliary, payload })

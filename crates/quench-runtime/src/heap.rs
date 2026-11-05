@@ -126,13 +126,14 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) auxiliary_offset: usize,
     pub(crate) payload_offset: usize,
     pub(crate) extras_arena_start_offset: usize,
-    pub(crate) inline_storage_mask: u32,
+    /// The auxiliary word's storage form bits (`value_vec::STORAGE_FORM`): packed inline values
+    /// in the payload word, and extras the payload word names.
+    pub(crate) packed_storage_mask: u32,
+    pub(crate) extras_storage_mask: u32,
     pub(crate) array_mask: u32,
     pub(crate) storage_start_mask: u32,
     pub(crate) dictionary_mask: u32,
     pub(crate) inline_property_count: usize,
-    pub(crate) extras_tag: u64,
-    pub(crate) extras_tag_mask: u64,
     pub(crate) proto_mask: u32,
     pub(crate) proto_record_base: u32,
     pub(crate) proto_record_end: u32,
@@ -153,13 +154,12 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     auxiliary_offset: cell::NATIVE_OBJECT_AUXILIARY_OFFSET,
     payload_offset: cell::NATIVE_OBJECT_PAYLOAD_OFFSET,
     extras_arena_start_offset: cell::NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
-    inline_storage_mask: cell::NATIVE_OBJECT_INLINE_STORAGE_MASK,
+    packed_storage_mask: cell::NATIVE_OBJECT_PACKED_STORAGE,
+    extras_storage_mask: cell::NATIVE_OBJECT_EXTRAS_STORAGE,
     array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,
     storage_start_mask: crate::value_vec::START_MASK,
     dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
     inline_property_count: INLINE_PROPERTY_COUNT,
-    extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
-    extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
     proto_mask: cell::NATIVE_OBJECT_PROTO_MASK,
     proto_record_base: cell::NATIVE_OBJECT_PROTO_RECORD_BASE,
     proto_record_end: cell::NATIVE_OBJECT_PROTO_RECORD_END,
@@ -1772,8 +1772,7 @@ impl Heap {
         let mut held = Vec::new();
         let properties = &self.properties;
         self.object_records.for_each_live(|_, object| {
-            let shape = object.exact_shape();
-            if shape != object.shape() { return; }
+            let Some(shape) = object.plain_shape() else { return };
             for slot in 0..properties.shape_length(shape) {
                 held.push((shape, slot, object as *const Object));
             }
@@ -3563,8 +3562,7 @@ impl Heap {
     fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
         if !self.properties.tracks() { return; }
         if let Some(data) = self.object(object) {
-            let shape = data.exact_shape();
-            if shape == data.shape() && slot < self.properties.shape_length(shape) {
+            if let Some(shape) = data.plain_shape() && slot < self.properties.shape_length(shape) {
                 self.properties.note_slot_value(shape, slot, value);
             }
         }

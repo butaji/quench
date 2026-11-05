@@ -244,14 +244,14 @@ impl<H: Host> Vm<H> {
         let prototype = object.proto();
         if shape != other.exact_shape()
             || prototype != other.proto()
-            || self.shape_is_dictionary(shape)
+            || self.shape_is_dictionary(object.shape())
             || !self.template_record(template)
             || !self.template_record(witness)
         {
             return None;
         }
         let array = object.is_array();
-        let len = self.shapes[shape as usize].storage_len();
+        let len = self.shapes[object.shape() as usize].storage_len();
         if array && (len != 0 || !self.empty_array(template) || !self.empty_array(witness)) {
             return None;
         }
@@ -294,7 +294,7 @@ impl<H: Host> Vm<H> {
         let data = self.template_layout_object(object)?;
         // A dictionary keeps its shape across changes, and side descriptors and exotic
         // objects keep properties no shape describes.
-        if self.shape_is_dictionary(data.exact_shape()) || data.has_side_descriptors() || data.is_module_namespace() {
+        if self.shape_is_dictionary(data.shape()) || data.has_side_descriptors() || data.is_module_namespace() {
             return None;
         }
         layouts.push(TemplateLayout { object, shape: data.shape(), prototype: data.proto() });

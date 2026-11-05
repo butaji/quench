@@ -13,7 +13,23 @@ pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
 /// the object's exact auxiliary (`exact_auxiliary`) from every shape a cache records, so a
 /// shape match proves the object ordinary with no further test.
 pub(crate) const EXOTIC_ACCESS: u32 = 1 << 30;
-const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS);
+/// The physical storage form of an ordinary object's named values, a fact of its exact
+/// auxiliary (`exact_auxiliary`) beside its shape: `PACKED_STORAGE` where its record's payload
+/// word packs them (`Value::to_narrow`), else in the arena; `EXTRAS_STORAGE` where the payload
+/// word names the object's extras, which then hold those values or their arena position. A
+/// recorded exact auxiliary therefore proves where the shape's slots live, so a reader that
+/// matched it reads them at fixed places with no further test.
+pub(crate) const PACKED_STORAGE: u32 = 1 << 29;
+pub(crate) const EXTRAS_STORAGE: u32 = 1 << 28;
+/// The bits of the auxiliary word that are the object's facts, not its shape.
+pub(crate) const STORAGE_FORM: u32 = PACKED_STORAGE | EXTRAS_STORAGE;
+const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM);
+
+/// The shape an exact auxiliary word (`ValueVec::exact_auxiliary`), such as a cache records,
+/// names in the shape table.
+pub(crate) const fn logical_shape(exact: u32) -> u32 {
+    exact & SHAPE_MASK
+}
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -96,9 +112,9 @@ impl ValueVec {
         self.auxiliary & SHAPE_MASK
     }
 
-    /// The auxiliary word with its dictionary and exotic bits: equal to `auxiliary` exactly
-    /// when the vector is neither in dictionary storage nor an exotic object's, so one
-    /// comparison with a recorded shape proves all three.
+    /// The auxiliary word with its dictionary, exotic and storage form bits: one comparison
+    /// with a recorded exact auxiliary proves the shape, the storage and the ordinary access
+    /// it was recorded with.
     pub(crate) const fn exact_auxiliary(self) -> u32 {
         self.auxiliary
     }

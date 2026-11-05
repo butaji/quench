@@ -1456,17 +1456,17 @@ impl<H: Host> Vm<H> {
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
     /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
-    pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
+    pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<super::compiled::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
-        let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
+        // Values behind extras are the VM's to read.
+        crate::heap::PlainPropertyStorage::of_exact(cache.receiver)?;
+        let shape = crate::value_vec::logical_shape(cache.receiver);
+        let storage_len = self.shapes.get(shape as usize)?.storage_len();
         if usize::from(cache.slot) >= storage_len { return None; }
-        let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
-            .filter(|object| object.exact_shape() == cache.receiver)
-            .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
-            shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
-            representation: self.heap.slot_representation(cache.receiver, usize::from(cache.slot)),
+            shape: cache.receiver, holder: None, slot: cache.slot, storage_len,
+            representation: self.heap.slot_representation(shape, usize::from(cache.slot)),
             inherited: None,
         })
     }
@@ -1526,7 +1526,6 @@ impl<H: Host> Vm<H> {
                 holder: Some(holder.exact_shape()),
                 slot,
                 storage_len: usize::from(slot) + 1,
-                storage: None,
                 representation: crate::value_vec::SlotRepresentation::Tagged,
                 inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)], epoch),
             });
@@ -1541,7 +1540,7 @@ impl<H: Host> Vm<H> {
         if table_index == NO_MEGAMORPHIC_FIELD {
             let cache = self.field_cache_entry(site);
             return match cache.holder {
-                NO_FIELD_HOLDER => self.native_field_load_descriptor(site, None).into_iter().collect(),
+                NO_FIELD_HOLDER => self.native_field_load_descriptor(site).into_iter().collect(),
                 _ if holders => self.native_field_entry(cache).into_iter().collect(),
                 _ => Vec::new(),
             };
@@ -1577,11 +1576,22 @@ impl<H: Host> Vm<H> {
     fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
-        let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
+        // An own read of values behind extras is the VM's to make.
+        let inherited = holder.and_then(|holder| self.inherited_constant(holder, entry.slot));
+        // A holder read that loads the slot finds it in the arena behind the prototype's
+        // extras (`Lowering::holder_read`), which the holder's exact shape must say.
+        match holder {
+            None => { crate::heap::PlainPropertyStorage::of_exact(entry.receiver)?; }
+            Some(holder) if inherited.is_none()
+                && holder & crate::value_vec::STORAGE_FORM != crate::value_vec::EXTRAS_STORAGE => return None,
+            Some(_) => {}
+        }
+        let owner = crate::value_vec::logical_shape(holder.unwrap_or(entry.receiver));
+        let storage_len = self.shapes.get(owner as usize)?.storage_len();
         (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
-            shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
-            representation: self.heap.slot_representation(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
-            inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)),
+            shape: entry.receiver, holder, slot: entry.slot, storage_len,
+            representation: self.heap.slot_representation(owner, usize::from(entry.slot)),
+            inherited,
         })
     }
 
@@ -1728,7 +1738,7 @@ impl<H: Host> Vm<H> {
         if !data.admits_cached_add() {
             return false;
         }
-        let (shape, link) = (data.shape(), data.proto_link());
+        let (shape, link) = (data.exact_shape(), data.proto_link());
         let site = self.field_cache_index(site);
         self.try_cached_field_add(object, atom, shape, link, value, site)
     }
@@ -1928,7 +1938,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: a site's index names a recorded entry (`record_inherited_field`).
         let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
-        if cache.receiver != receiver.shape()
+        if cache.receiver != receiver.exact_shape()
             || function_receiver && !cache.function_links
             || !cache.proved
             || cache.proved_prototype != receiver.proto_link()
@@ -2415,7 +2425,7 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
-        let receiver_shape = receiver.shape();
+        let receiver_shape = receiver.exact_shape();
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(site) };
         if cache.receiver == receiver_shape && cache.holder == NO_FIELD_HOLDER {
@@ -2502,11 +2512,11 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(site) };
-        let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
+        let (cache, tier) = if cache.receiver == receiver.exact_shape() && cache.holder == holder.exact_shape()
         {
             (cache, 0)
         } else {
-            let cache = self.megamorphic_field_cache(site, receiver.shape(), holder.shape())?;
+            let cache = self.megamorphic_field_cache(site, receiver.exact_shape(), holder.exact_shape())?;
             (cache, 2)
         };
         let value = unsafe {
@@ -2548,7 +2558,7 @@ impl<H: Host> Vm<H> {
                 self.record_field_cache(
                     site,
                     FieldCache {
-                        receiver: receiver.shape(),
+                        receiver: receiver.exact_shape(),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                     },
@@ -2806,7 +2816,7 @@ impl<H: Host> Vm<H> {
                 self.record_field_cache(
                     site,
                     FieldCache {
-                        receiver: receiver.shape(),
+                        receiver: receiver.exact_shape(),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                     },
@@ -2822,7 +2832,7 @@ impl<H: Host> Vm<H> {
             self.record_field_cache(
                 site,
                 FieldCache {
-                    receiver: receiver.shape(),
+                    receiver: receiver.exact_shape(),
                     holder: holder_shape,
                     slot: slot as u16,
                 },
@@ -2898,7 +2908,7 @@ impl<H: Host> Vm<H> {
             }
             // SAFETY: a site's index names a recorded entry (`record_inherited_field`).
             let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
-            if cache.receiver == receiver.shape() {
+            if cache.receiver == receiver.exact_shape() {
                 break cache;
             }
             index = cache.next;
@@ -3018,7 +3028,7 @@ impl<H: Host> Vm<H> {
         }
         let function_links = self.function_links_answer(atom);
         let mut cache = InheritedFieldCache {
-            receiver: object.shape(),
+            receiver: object.exact_shape(),
             atom,
             prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
             depth: 0,
@@ -3084,15 +3094,15 @@ impl<H: Host> Vm<H> {
         if holder.is_module_namespace() {
             return None;
         }
-        let holder_shape = holder.shape();
-        let slot = self.shape_slot(holder_shape, atom)?;
+        let slot = self.shape_slot(holder.shape(), atom)?;
         if self
             .slot_attributes(holder, slot)
             .is_some_and(|attributes| attributes.accessor)
         {
             return None;
         }
-        Some((holder_shape, slot, self.heap.property_get(holder, slot)?))
+        // Holder entries name the holder by its exact word, as `cached_holder_matches` tests it.
+        Some((holder.exact_shape(), slot, self.heap.property_get(holder, slot)?))
     }
     pub(super) fn set_property(
         &mut self,
@@ -3724,7 +3734,7 @@ impl<H: Host> Vm<H> {
         if !data.admits_cached_add() {
             return false;
         }
-        let (shape, link) = (data.shape(), data.proto_link());
+        let (shape, link) = (data.exact_shape(), data.proto_link());
         let site = self.field_cache_index(site);
         self.try_cached_field_add(object, atom, shape, link, value, site)
     }
@@ -3882,17 +3892,18 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .and_then(|data| self.shape_slot(data.shape(), atom));
         self.check_property_write(object, atom, existing.is_some())?;
-        let shape = self
+        let exact = self
             .object_data(object)
-            .map(Object::shape)
+            .map(Object::exact_shape)
             .unwrap_or(u32::MAX);
+        let shape = crate::value_vec::logical_shape(exact);
         let add_prototype_guard =
-            if existing.is_none() && shape != u32::MAX && self.field_add_atom_eligible(atom) {
+            if existing.is_none() && exact != u32::MAX && self.field_add_atom_eligible(atom) {
                 self.add_prototype_guard(object, PropertyKey::string(atom))
             } else {
                 None
             };
-        if shape != u32::MAX && self.try_cached_field_store(object, atom, shape, value, site) {
+        if exact != u32::MAX && self.try_cached_field_store(object, atom, exact, value, site) {
             return Ok(());
         }
         self.profile.field_cache(false);
@@ -3901,7 +3912,7 @@ impl<H: Host> Vm<H> {
         let slot = self
             .shape_slot(data.shape(), atom)
             .expect("property transition records the new shape slot");
-        let data_shape = data.shape();
+        let (data_shape, data_exact) = (data.shape(), data.exact_shape());
         if slot <= u16::MAX as usize && !self.shape_is_dictionary(data_shape) {
             if existing.is_none()
                 && data_shape != shape
@@ -3913,7 +3924,7 @@ impl<H: Host> Vm<H> {
                     site,
                     FieldAddCache {
                         atom,
-                        source_shape: shape,
+                        source_shape: exact,
                         target_shape: data_shape,
                         slot: slot as u16,
                         ..prototype_guard
@@ -3923,7 +3934,7 @@ impl<H: Host> Vm<H> {
             self.record_field_cache(
                 site,
                 FieldCache {
-                    receiver: data_shape,
+                    receiver: data_exact,
                     holder: NO_FIELD_HOLDER,
                     slot: slot as u16,
                 },
@@ -4007,7 +4018,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) {
-        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        debug_assert_eq!(slot as usize, self.shapes[crate::value_vec::logical_shape(shape) as usize].storage_len());
         self.heap.record_property_add_at(object, usize::from(slot), value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -4033,10 +4044,12 @@ impl<H: Host> Vm<H> {
             return self.define_class_field(p, object, key, value);
         };
         let site = self.field_cache_index(site);
-        if let Some((_, cache)) = self.field_add_entry(site, shape, atom) {
+        // Add entries name their source by its exact word, as every add site's do.
+        let exact = self.heap.ordinary_object(object).map_or(shape, Object::exact_shape);
+        if let Some((_, cache)) = self.field_add_entry(site, exact, atom) {
             let (target_shape, slot) = (cache.target_shape, cache.slot);
             debug_assert!(self.class_field_is_plain_add(object, key));
-            self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+            self.apply_cached_field_add(object, atom, exact, target_shape, slot, value);
             return Ok(());
         }
         let plain = self.class_field_is_plain_add(object, key);
@@ -4053,7 +4066,7 @@ impl<H: Host> Vm<H> {
                 site,
                 FieldAddCache {
                     atom,
-                    source_shape: shape,
+                    source_shape: exact,
                     target_shape,
                     slot,
                     ..FieldAddCache::EMPTY
@@ -4172,7 +4185,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() || !self.field_add_atom_eligible(atom) {
             return None;
         }
-        Some((shape, self.add_prototype_guard(object, PropertyKey::string(atom))?))
+        Some((data.exact_shape(), self.add_prototype_guard(object, PropertyKey::string(atom))?))
     }
 
     /// Remembers the add of `atom` that moved `object` from `shape`, proved by `guard`
@@ -4185,9 +4198,10 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.shape_slot(target_shape, atom) else {
             return;
         };
-        if target_shape == shape
+        // `shape` is the source's exact word (`keyed_add_guard`), which `keyed_add_hit` matches.
+        if target_shape == crate::value_vec::logical_shape(shape)
             || self.shape_is_dictionary(target_shape)
-            || slot != self.shapes[shape as usize].storage_len()
+            || slot != self.shapes[crate::value_vec::logical_shape(shape) as usize].storage_len()
         {
             return;
         }
@@ -4247,7 +4261,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let site = self.field_cache_index(site);
-        let (shape, link, extensible) = (data.shape(), data.proto_link(), data.is_extensible());
+        let (shape, link, extensible) = (data.exact_shape(), data.proto_link(), data.is_extensible());
         self.try_cached_field_store(object, atom, shape, value, site)
             || (extensible
                 && self.field_cache_atom_eligible(atom)
@@ -4681,8 +4695,7 @@ impl<H> Vm<H> {
         const TAGGED: u8 = 3;
         let mut classes: std::collections::HashMap<(u32, u16), u8> = std::collections::HashMap::new();
         self.heap.for_each_live_object_record(|object| {
-            let shape = object.exact_shape();
-            if shape != object.shape() { return; }
+            let Some(shape) = object.plain_shape() else { return };
             let Some(len) = self.shapes.get(shape as usize).map(|shape| shape.storage_len()) else { return };
             for slot in 0..len {
                 // SAFETY: an exact, non-dictionary shape holds `len` slots.

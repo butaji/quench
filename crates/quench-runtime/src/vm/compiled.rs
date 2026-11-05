@@ -1403,14 +1403,14 @@ pub(super) fn emit_array_length_read(
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
 
     let record = emit_array_record(builder, payload, base, fallback);
-    let object_payload = builder.ins().load(
-        types::I64,
+    let object_auxiliary = builder.ins().load(
+        types::I32,
         MemFlagsData::trusted(),
         record,
-        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
+        i32::try_from(ARRAY.object_offset + OBJECT.auxiliary_offset).expect("array auxiliary offset fits i32"),
     );
-    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
-    let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+    let extras = builder.ins().band_imm_u(object_auxiliary, i64::from(OBJECT.extras_storage_mask));
+    let ordinary = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
     emit_js_guard(builder, ordinary, fallback);
     let header = builder.ins().load(
         types::I64,
@@ -1638,25 +1638,23 @@ fn emit_js_cached_field_slot(
     );
     let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
+    // Plain arena storage, neither packed nor behind extras, has the arena start alone in
+    // the payload word.
+    let form = builder.ins().band_imm_u(shape, i64::from(OBJECT.packed_storage_mask | OBJECT.extras_storage_mask));
+    let plain = builder.ins().icmp_imm_u(IntCC::Equal, form, 0);
+    emit_js_guard(builder, plain, fallback);
     let meta = builder.ins().load(
         types::I32,
         MemFlagsData::trusted(),
         object,
         i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
     );
-    let inline = builder.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
-    let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-    emit_js_guard(builder, arena_storage, fallback);
-    // Plain storage has the arena start alone in the payload's lower half.
     let storage = builder.ins().load(
         types::I64,
         MemFlagsData::trusted(),
         object,
         i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
     );
-    let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
-    let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
-    emit_js_guard(builder, plain, fallback);
     let storage = if allow_holder {
         let own_block = builder.create_block();
         let holder_block = builder.create_block();
@@ -1688,23 +1686,14 @@ fn emit_js_cached_field_slot(
         );
         let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
         emit_js_guard(builder, same_holder, fallback);
-        let proto_meta = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
-        );
-        let inline = builder.ins().band_imm_u(proto_meta, i64::from(OBJECT.inline_storage_mask));
-        let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(builder, arena, fallback);
-        let proto_storage = builder.ins().load(
+        // A prototype's arena values sit behind its extras (`PrototypeLookupState`).
+        let form = builder.ins().band_imm_u(proto_shape, i64::from(OBJECT.packed_storage_mask | OBJECT.extras_storage_mask));
+        let behind_extras = builder.ins().icmp_imm_u(IntCC::Equal, form, i64::from(OBJECT.extras_storage_mask));
+        emit_js_guard(builder, behind_extras, fallback);
+        let extras_pointer = builder.ins().load(
             types::I64, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
         );
-        let tag = builder.ins().band_imm_u(proto_storage, OBJECT.extras_tag_mask as i64);
-        let extras = builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
-        emit_js_guard(builder, extras, fallback);
-        let extras_pointer = builder.ins().band_imm_u(proto_storage, !OBJECT.extras_tag_mask as i64);
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
-        emit_js_guard(builder, present, fallback);
         let start = builder.ins().load(
             types::I32, MemFlagsData::trusted(), extras_pointer,
             i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
@@ -2060,8 +2049,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, rec
     let address = builder.ins().iadd(records, offset);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
     let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
-    let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
-    let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+    let inline = builder.ins().band_imm_u(shape, i64::from(layout.packed_storage_mask));
     builder.def_var(receiver.object, address);
     builder.def_var(receiver.shape, shape);
     builder.def_var(receiver.inline, inline);

@@ -22527,14 +22527,15 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         let function = vm.own_property(vm.realm.globals, atom).unwrap();
         assert_eq!(vm.call_value(&program, function, receiver, &[Value::number(0.5)]).unwrap(), Value::number(1.5));
 
-        // The same artifact proves the new arena form at its next entry.
+        // The new storage form is a new exact shape (`value_vec::STORAGE_FORM`): the artifact,
+        // specialized to the packed one, leaves before the store again, and the general path
+        // completes it.
         registers.fill(Value::UNDEFINED);
         registers[0] = Value::number(2.5);
         let pc = vm.run_lane_method(&method, super::compiled::LaneStart::First, false, super::program_store::ProgramId::MAIN,
             &program, registers.as_mut_ptr(), receiver, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
-        let instruction = instructions[pc];
-        assert_eq!(instruction.op(), Op::Return);
-        assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
+        assert_eq!(pc, store_pc, "{name}: an artifact of the packed form reads no other form");
+        assert_eq!(vm.call_value(&program, function, receiver, &[Value::number(2.5)]).unwrap(), Value::number(3.5));
     }
 }
 

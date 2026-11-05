@@ -1457,12 +1457,13 @@ pub(crate) struct Object {
     /// `ValueVec::auxiliary`: the shape and the dictionary flag. Property names live once in
     /// the VM's shape table; objects keep only the data the shape selects.
     auxiliary: u32,
-    /// One word: with `ObjectExtras`, `EXTRAS_TAG` and a pointer to them, and they then hold
-    /// the inline values and the storage position. Extras are rare, so the common object pays
-    /// no word for them. Without extras: the inline values as narrow values
-    /// (`Value::to_narrow`), the first slot in the lower half; or, without inline storage,
-    /// the storage position (`ValueVec`'s start). An inline value that has no narrow form
-    /// moves the values into extras, so every value stays storable.
+    /// One word, as the auxiliary word's storage form (`STORAGE_FORM`) says: with extras
+    /// (`EXTRAS_STORAGE`), the address of the `ObjectExtras`, which then hold the inline
+    /// values and the storage position. Extras are rare, so the common object pays no word for
+    /// them. Without extras: the inline values as narrow values (`Value::to_narrow`), the
+    /// first slot in the lower half, under `PACKED_STORAGE`; or else the storage position
+    /// (`ValueVec`'s start). An inline value that has no narrow form moves the values into
+    /// extras, so every value stays storable.
     payload: u64,
 }
 
@@ -1552,10 +1553,8 @@ impl ProtoLink {
 }
 
 const OBJECT_ARRAY: u32 = 1 << 28;
-const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
 const _: () = assert!(
-    PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
-        && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
+    PROTO_INDEX_BITS & (OBJECT_ARRAY | VALUE_VEC_INTEGRITY_BITS) == 0 && OBJECT_ARRAY & VALUE_VEC_INTEGRITY_BITS == 0
 );
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
@@ -1567,15 +1566,27 @@ impl Default for DisplacedInline {
     }
 }
 
-const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
-const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 
 /// Storage forms whose complete layout is in the ordinary object's record.
-/// This is an observation until a native receiver guard establishes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainPropertyStorage {
     PackedInline,
     Arena,
+}
+
+impl PlainPropertyStorage {
+    /// The form an object of exact auxiliary `exact` (`Object::exact_shape`) keeps its values
+    /// in, which a match of that word proves (`value_vec::STORAGE_FORM`); `None` where they sit
+    /// behind extras.
+    pub(crate) const fn of_exact(exact: u32) -> Option<Self> {
+        if exact & crate::value_vec::EXTRAS_STORAGE != 0 {
+            None
+        } else if exact & crate::value_vec::PACKED_STORAGE != 0 {
+            Some(Self::PackedInline)
+        } else {
+            Some(Self::Arena)
+        }
+    }
 }
 
 /// Layout facts for the generated read-only ordinary-object field path. Keep these derived
@@ -1588,10 +1599,9 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = std::mem::offset_of!(Ob
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, payload);
 pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
     std::mem::offset_of!(ObjectExtras, arena_start);
-pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
+pub(super) const NATIVE_OBJECT_PACKED_STORAGE: u32 = crate::value_vec::PACKED_STORAGE;
+pub(super) const NATIVE_OBJECT_EXTRAS_STORAGE: u32 = crate::value_vec::EXTRAS_STORAGE;
 pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
-pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
-pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
 pub(super) const NATIVE_OBJECT_PROTO_MASK: u32 = PROTO_INDEX_BITS;
 pub(super) const NATIVE_OBJECT_PROTO_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE;
 pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE;
@@ -1612,7 +1622,7 @@ impl Clone for Object {
     fn clone(&self) -> Self {
         // The word copies bit for bit; a copy with extras gets its own.
         let payload = match self.extras() {
-            Some(extras) => Self::tag_extras(Box::new(extras.clone())),
+            Some(extras) => Self::extras_word(Box::new(extras.clone())),
             None => self.payload,
         };
         Self {
@@ -1997,7 +2007,7 @@ impl Object {
     #[inline(always)]
     pub(crate) fn properties(&self) -> ValueVec {
         let integrity = self.meta & VALUE_VEC_INTEGRITY_BITS;
-        let position = if self.meta & OBJECT_INLINE_STORAGE != 0 {
+        let position = if self.packed() {
             ValueVec::inline_property_storage(0).into_parts().0 & VALUE_VEC_START_BITS
         } else {
             self.storage_position()
@@ -2008,39 +2018,38 @@ impl Object {
     /// Stores `properties`. A change from inline to other storage overwrites the payload
     /// word that held an inline value, so callers move inline values out first.
     pub(crate) fn set_properties(&mut self, properties: ValueVec) {
+        use crate::value_vec::{EXOTIC_ACCESS, EXTRAS_STORAGE, PACKED_STORAGE, STORAGE_FORM};
         let (start, auxiliary) = properties.into_parts();
-        // Exotic access is a fact of the object, not of the storage that replaces its own.
-        self.auxiliary = auxiliary | (self.auxiliary & crate::value_vec::EXOTIC_ACCESS);
-        let flags = self.meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
-        let position = start & VALUE_VEC_START_BITS;
-        if properties.has_inline_property_storage() {
-            self.meta = flags | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
-        } else {
-            self.meta = flags | (start & VALUE_VEC_INTEGRITY_BITS);
-            self.set_storage_position(position);
+        // Exotic access and extras are facts of the object, not of the storage that replaces
+        // its own; the storage decides whether the payload word packs the values.
+        let packed = if properties.has_inline_property_storage() { PACKED_STORAGE } else { 0 };
+        self.auxiliary = auxiliary & !STORAGE_FORM | self.auxiliary & (EXOTIC_ACCESS | EXTRAS_STORAGE) | packed;
+        self.meta = self.meta & !VALUE_VEC_INTEGRITY_BITS | start & VALUE_VEC_INTEGRITY_BITS;
+        if packed == 0 {
+            self.set_storage_position(start & VALUE_VEC_START_BITS);
         }
+    }
+
+    /// Whether the object's inline slots hold its named values (`PACKED_STORAGE`): in its
+    /// payload word, or in its extras when it has them.
+    #[inline(always)]
+    fn packed(&self) -> bool {
+        self.auxiliary & crate::value_vec::PACKED_STORAGE != 0
     }
 
     /// The storage start of an object whose values live in the arena and that has no
-    /// extras: its payload word is then that start alone (`set_properties`), and its upper
-    /// half is zero, which an extras word (`EXTRAS_TAG`) never is. `None` for inline storage
-    /// or extras, whose start `storage_position` decodes.
+    /// extras: its payload word is then that start alone (`set_properties`). `None` for
+    /// inline storage or extras, whose start `storage_position` decodes.
     #[inline(always)]
     pub(crate) fn plain_storage_start(&self) -> Option<usize> {
-        let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
-        debug_assert!(!plain || self.extras_pointer().is_none());
-        plain.then_some(self.payload as usize)
+        (self.auxiliary & crate::value_vec::STORAGE_FORM == 0).then_some(self.payload as usize)
     }
 
-    pub(crate) fn plain_property_storage(&self) -> Option<PlainPropertyStorage> {
-        if self.properties().is_dictionary() || self.extras_pointer().is_some() {
-            return None;
-        }
-        Some(if self.meta & OBJECT_INLINE_STORAGE != 0 {
-            PlainPropertyStorage::PackedInline
-        } else {
-            PlainPropertyStorage::Arena
-        })
+    /// The shape of an object outside dictionary storage and exotic access, whatever its
+    /// storage form: the shape that describes every slot it holds.
+    #[inline(always)]
+    pub(crate) fn plain_shape(&self) -> Option<u32> {
+        (self.auxiliary & (crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::EXOTIC_ACCESS) == 0).then(|| self.shape())
     }
 
     /// The storage start of an object whose values live in the arena behind extras, as a
@@ -2048,7 +2057,7 @@ impl Object {
     /// (`storage_position`). `None` for inline storage or no extras.
     #[inline(always)]
     pub(crate) fn extras_storage_start(&self) -> Option<usize> {
-        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+        if self.packed() {
             return None;
         }
         // SAFETY: an extras pointer names the extras this object owns.
@@ -2081,20 +2090,14 @@ impl Object {
         }
     }
 
-    fn tag_extras(extras: Box<ObjectExtras>) -> u64 {
-        let address = Box::into_raw(extras) as usize as u64;
-        assert_eq!(
-            address & EXTRAS_TAG_MASK,
-            0,
-            "object extras outside 48-bit space"
-        );
-        EXTRAS_TAG | address
+    /// The payload word of an object whose extras are `extras` (`EXTRAS_STORAGE`): their
+    /// address.
+    fn extras_word(extras: Box<ObjectExtras>) -> u64 {
+        Box::into_raw(extras) as usize as u64
     }
 
     fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
-        let word = self.payload;
-        (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
-            .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
+        (self.auxiliary & crate::value_vec::EXTRAS_STORAGE != 0).then_some(self.payload as usize as *mut ObjectExtras)
     }
 
     fn extras(&self) -> Option<&ObjectExtras> {
@@ -2108,16 +2111,17 @@ impl Object {
             None => {
                 // The payload word moves into the extras: the inline values, or the storage
                 // position.
-                let (inline, arena_start) = if self.meta & OBJECT_INLINE_STORAGE != 0 {
+                let (inline, arena_start) = if self.packed() {
                     (Self::unpack_inline(self.payload), 0)
                 } else {
                     ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload as u32)
                 };
-                self.payload = Self::tag_extras(Box::new(ObjectExtras {
+                self.payload = Self::extras_word(Box::new(ObjectExtras {
                     inline_properties: DisplacedInline(inline),
                     arena_start,
                     ..ObjectExtras::default()
                 }));
+                self.auxiliary |= crate::value_vec::EXTRAS_STORAGE;
                 self.extras_pointer().expect("extras just installed")
             }
         };
@@ -2256,13 +2260,13 @@ impl Object {
 
     #[inline(always)]
     pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
-        (self.meta & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_values())
+        (self.packed()).then(|| self.inline_values())
     }
 
     /// The inline property at `slot`, when the object stores its properties inline.
     #[inline(always)]
     pub(crate) fn inline_property(&self, slot: usize) -> Option<Value> {
-        if self.meta & OBJECT_INLINE_STORAGE == 0 {
+        if !self.packed() {
             return None;
         }
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
@@ -2313,7 +2317,7 @@ impl Object {
         if self.extras_pointer().is_some() {
             return false;
         }
-        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+        if self.packed() {
             return slot < INLINE_PROPERTY_COUNT && value.to_narrow().is_some();
         }
         ValueArena::appends_in_place(self.properties(), slot)
@@ -2325,7 +2329,7 @@ impl Object {
     pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
         properties.note_shape_value(shape, slot, value);
         debug_assert!(self.admits_plain_append(slot, value));
-        match value.to_narrow().filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0) {
+        match value.to_narrow().filter(|_| self.packed()) {
             Some(narrow) => self.store_payload_narrow(slot, narrow),
             // SAFETY: `admits_plain_append` found the arena range's room for the value.
             None => unsafe { properties.push_in_place(self.properties(), slot, value) },
@@ -2494,7 +2498,7 @@ impl Object {
     /// storage (`ValueVec::EXOTIC_ACCESS`).
     #[inline(always)]
     pub(crate) fn ordinary_shape(&self) -> u32 {
-        self.auxiliary & !crate::value_vec::DICTIONARY_STORAGE
+        self.auxiliary & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM)
     }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32) {

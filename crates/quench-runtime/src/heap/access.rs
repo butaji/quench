@@ -743,8 +743,7 @@ impl Heap {
         if !self.properties.tracks() { return 0; }
         let mut unrepresented = 0;
         self.object_records.for_each_live(|_, object| {
-            let shape = object.exact_shape();
-            if shape != object.shape() { return; }
+            let Some(shape) = object.plain_shape() else { return };
             for slot in 0..self.properties.shape_length(shape) {
                 // SAFETY: an exact, non-dictionary shape holds its registered slots.
                 let value = unsafe { self.property_get_flat(object, slot) };
