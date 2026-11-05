@@ -588,7 +588,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
         LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
-        lane_region::Coverage::Full, lane_region::Completion::Number)?;
+        lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
         |code| Some(code.to_vec())).ok()?;
@@ -1216,7 +1216,7 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations.
-fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     let (truncated, is_integer) = emit_js_exact_int32(builder, number);
     let result_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
     let integer_bits = builder.ins().uextend(types::I64, truncated);
@@ -2397,6 +2397,8 @@ lane_helper_inventory! { H;
     NewArray => lane_new_array::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
+    /// A loop's hoisted typed array view (`lane_typed_array_view`).
+    TypedArrayView => lane_typed_array_view::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -2717,30 +2719,39 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
             || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
                 | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return)
             || (instruction.op() == Op::LoadCapture && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
-    let lower = |coverage: lane_region::Coverage| {
+    // A region whose loops index arrays in place also gets its typed-array variant, which the
+    // dispatcher enters at the same header where the dense one leaves there (it comes first
+    // here, the dispatcher trying the last first). Each variant's symbol is its header and kind.
+    let lower = |coverage: lane_region::Coverage| -> Option<Vec<StaticTypedRegion>> {
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
-        lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-            &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
-            coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
-            .map(|mut region| {
-                region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, header);
-                StaticTypedRegion { header: header as usize, function: region.function }
-            })
+        let variant = |views: lane_region::ElementViews| {
+            lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
+                &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
+                coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
+                .map(|mut region| {
+                    let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
+                    region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, symbol);
+                    (region.hoists_arrays, StaticTypedRegion { header: header as usize, function: region.function })
+                })
+        };
+        let (hoists_arrays, dense) = variant(lane_region::ElementViews::Dense)?;
+        let typed = hoists_arrays.then(|| variant(lane_region::ElementViews::Typed)).flatten().map(|(_, region)| region);
+        Some(typed.into_iter().chain(std::iter::once(dense)).collect())
     };
     // Preserve pure preheaders in the SSA graph. Otherwise, first try the
     // complete region previously admitted by the whole-suffix contract.
-    if scalar && !headers.is_empty() && let Some(region) = lower(lane_region::Coverage::Full) {
-        return vec![region];
+    if scalar && !headers.is_empty() && let Some(regions) = lower(lane_region::Coverage::Full) {
+        return regions;
     }
     if let Some(header) = headers.first().copied().or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))
-        && let Some(region) = lower(lane_region::Coverage::FullFrom(header)) {
-        return vec![region];
+        && let Some(regions) = lower(lane_region::Coverage::FullFrom(header)) {
+        return regions;
     }
     // Independent loop entries share the original unit PC/frame IDs. Prefix
     // lowering stops before an opaque operation and returns its exact origin;
     // neither initialization nor a preceding loop is replayed on re-entry.
-    headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).collect()
+    headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect()
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
@@ -2904,10 +2915,13 @@ pub(super) fn lower_js_general_dispatch(
         for entry in _scalar_regions {
             entries.to_mut()[entry.range.start] = builder.create_block();
         }
+        // Units of one header chain: each leaves at the header into the one registered before
+        // it, the first into the header's own code.
         let typed_entries: Vec<_> = _typed_regions.iter().copied().map(|unit| {
             let fallback = entries[unit.header];
-            entries.to_mut()[unit.header] = builder.create_block();
-            (unit, fallback)
+            let entry = builder.create_block();
+            entries.to_mut()[unit.header] = entry;
+            (unit, entry, fallback)
         }).collect();
         (entries, typed_entries)
     };
@@ -4029,8 +4043,8 @@ pub(super) fn lower_js_general_dispatch(
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
-        let gate = typed_entries.iter().find(|(unit, _)| unit.header == entry.range.start)
-            .map_or(entries[entry.range.start], |(_, fallback)| *fallback);
+        let gate = typed_entries.iter().find(|(unit, _, _)| unit.header == entry.range.start)
+            .map_or(entries[entry.range.start], |(_, _, fallback)| *fallback);
         let call = scalar_region::emit_entry(&mut builder, isa, entry, gate,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc, &control);
         frame_flow.residual(call, entry.frame);
@@ -4038,8 +4052,8 @@ pub(super) fn lower_js_general_dispatch(
     #[cfg(feature = "aot")]
     let mut typed_returns = Vec::new();
     #[cfg(feature = "aot")]
-    for (unit, fallback) in &typed_entries {
-        builder.switch_to_block(entries[unit.header]);
+    for (unit, entry, fallback) in &typed_entries {
+        builder.switch_to_block(*entry);
         let run = builder.create_block();
         let specialized = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
@@ -4054,7 +4068,7 @@ pub(super) fn lower_js_general_dispatch(
         // After inlining ordinary exits preserve SSA edges. Exact callee
         // materialization owns a canonical frame boundary below.
         let pc = builder.inst_results(call)[0];
-        typed_returns.push((unit.header, pc));
+        typed_returns.push((*fallback, unit.header, pc));
         let pc = builder.ins().uextend(types::I64, pc);
         builder.ins().jump(typed_continue.expect("typed continuation").0, &[ir::BlockArg::Value(pc)]);
     }
@@ -4074,7 +4088,7 @@ pub(super) fn lower_js_general_dispatch(
         builder.ins().brif(materialized, stopped_block, &[], source, &[]);
         builder.switch_to_block(source);
         let targets: Vec<_> = entries.iter().copied().enumerate().map(|(pc, entry)|
-            typed_entries.iter().find(|(unit, _)| unit.header == pc).map_or(entry, |(_, fallback)| *fallback)).collect();
+            typed_entries.iter().find(|(unit, _, _)| unit.header == pc).map_or(entry, |(_, _, fallback)| *fallback)).collect();
         emit_js_pc_dispatch(&mut builder, pc, &targets, invalid_pc);
     }
     builder.seal_block(continue_block);
@@ -4107,7 +4121,7 @@ pub(super) fn lower_js_general_dispatch(
         // The residual returns a statically fixed source PC on every exit.
         // Link those edges before frame promotion instead of dispatching a
         // known PC through a memory/result join and another jump table.
-        for (header, result) in typed_returns {
+        for (own_fallback, header, result) in typed_returns {
             let result = native.dfg.resolve_aliases(result);
             let ir::ValueDef::Param(join, parameter) = native.dfg.value_def(result) else {
                 return Err("typed-residual-return-is-not-a-join");
@@ -4121,9 +4135,7 @@ pub(super) fn lower_js_general_dispatch(
                     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
                     let pc = usize::try_from(imm.bits()).ok()?;
                     if pc == JS_INLINE_MATERIALIZED_PC as usize { return Some((instruction, stopped_block)); }
-                    let target = *entries.get(pc)?;
-                    let target = typed_entries.iter().find(|(unit, _)| unit.header == header && header == pc)
-                        .map_or(target, |(_, fallback)| *fallback);
+                    let target = if pc == header { own_fallback } else { *entries.get(pc)? };
                     Some((instruction, target))
                 }).collect();
             for (instruction, target) in exits {
@@ -7944,6 +7956,28 @@ unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     array.to_bits()
+}
+
+/// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
+#[repr(C)]
+pub(super) struct LaneTypedArrayView {
+    pub(super) elements: u64,
+    pub(super) length: u64,
+    /// The `TypedArrayKind` discriminant.
+    pub(super) kind: u64,
+}
+
+/// A lane loop's typed array view (`Vm::lane_typed_array_elements`), written to `out`; zero
+/// where the loop cannot address the elements in place, which leaves at the loop's header.
+unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64, writable: u64, out: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the view reads cells and allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let Some((elements, length, kind)) = vm.lane_typed_array_elements(Value::from_bits(object), writable != 0) else {
+        return 0;
+    };
+    // SAFETY: `out` is the caller's stack slot of one view.
+    unsafe { *(out as *mut LaneTypedArrayView) = LaneTypedArrayView { elements: elements as u64, length: length as u64, kind: kind as u64 } };
+    1
 }
 
 /// A lane body's element store: the lane's own in-place replacement of a record array's

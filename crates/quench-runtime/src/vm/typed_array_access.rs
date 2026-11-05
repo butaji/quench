@@ -341,6 +341,32 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// A lane loop's view of the typed array `object`'s elements: its first element's address,
+    /// element count and kind, which native code reads (and, `writable`, replaces) in place
+    /// until the loop calls out. Only an attached buffer of Number elements this heap holds
+    /// qualifies, and to write, one the buffer owns alone (`BufferBytes::lane_mut`), so no
+    /// store copies or moves it; anything else stays on the general path.
+    pub(super) fn lane_typed_array_elements(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
+        let view = self.typed_array_view(object)?;
+        if view.kind.is_bigint() || view.kind == TypedArrayKind::Float16 {
+            return None;
+        }
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+            return None;
+        };
+        let (base, byte_length) = if writable {
+            let store = bytes.lane_mut()?;
+            (store.as_mut_ptr(), store.len())
+        } else {
+            match bytes.read() {
+                crate::heap::BufferRead::Borrowed(store) => (store.as_ptr().cast_mut(), store.len()),
+                _ => return None,
+            }
+        };
+        let length = view.length_within(byte_length);
+        Some((base.wrapping_add(if length == 0 { 0 } else { view.offset }), length, view.kind))
+    }
+
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;
@@ -967,20 +993,24 @@ struct TypedArrayView {
 }
 
 impl TypedArrayView {
-    /// The byte offset of element `index` in an attached buffer of `byte_length` bytes, or
-    /// `None` past the array's length as `Vm::typed_array_length` derives it: a
-    /// length-tracking view covers the buffer past its offset, a fixed one covers none of it
-    /// once the buffer shrank below its end.
-    fn element(self, index: usize, byte_length: usize) -> Option<usize> {
+    /// The elements an attached buffer of `byte_length` bytes holds, as
+    /// `Vm::typed_array_length` derives them: a length-tracking view covers the buffer past its
+    /// offset, a fixed one covers none of it once the buffer shrank below its end.
+    fn length_within(self, byte_length: usize) -> usize {
         let width = self.kind.width();
-        let length = if self.length_tracking {
+        if self.length_tracking {
             byte_length.saturating_sub(self.offset) / width
         } else if self.offset.saturating_add(self.length * width) > byte_length {
             0
         } else {
             self.length
-        };
-        (index < length).then(|| self.offset + index * width)
+        }
+    }
+
+    /// The byte offset of element `index` in an attached buffer of `byte_length` bytes, or
+    /// `None` past the array's length (`length_within`).
+    fn element(self, index: usize, byte_length: usize) -> Option<usize> {
+        (index < self.length_within(byte_length)).then(|| self.offset + index * self.kind.width())
     }
 }
 
