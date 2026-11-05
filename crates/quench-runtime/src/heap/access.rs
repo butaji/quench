@@ -731,11 +731,11 @@ impl Heap {
         }
     }
 
-    /// Admit a generated writer's domain for a registered own slot before execution.
+    /// Admit a generated writer's domain before execution. Widening retires readers
+    /// and declines the writer before its raw stores; the next admission sees the wider domain.
     pub(crate) fn admit_slot_writes(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type) -> bool {
         if slot >= self.properties.shape_length(shape) { return false; }
-        self.properties.note_slot_type(shape, slot, writes);
-        true
+        !self.properties.note_slot_type(shape, slot, writes)
     }
 
     /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.

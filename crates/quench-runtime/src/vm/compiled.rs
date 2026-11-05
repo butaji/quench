@@ -4969,7 +4969,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
             let value = Value::from_bits(unsafe { result.read() });
             let receiver = Value::from_bits(receiver_bits);
             return vm.primary_own_field_store_hit::<true>(program, receiver, atom, value, site,
-                crate::heap::PropertyStoreLayout::Preserve).then_some(Value::UNDEFINED);
+                crate::heap::PropertyStoreLayout::PreserveNative).then_some(Value::UNDEFINED);
         }
         if cache_site == OSR_INITIALIZED_LOCAL_READ {
             if vm.lane_has_activations()
@@ -7494,7 +7494,8 @@ unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64
 }
 
 /// A logged own-field store that preserves every native storage projection.
-/// Migration declines before writing, leaving the full store to the lane.
+/// Migration or observed type widening declines before writing, leaving the full
+/// store to the lane at its original PC after retiring dependent native entries.
 unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
@@ -7518,7 +7519,7 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
         atom as Atom,
         Value::from_bits(value),
         site as u16,
-        crate::heap::PropertyStoreLayout::Preserve,
+        crate::heap::PropertyStoreLayout::PreserveNative,
     );
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
@@ -18934,6 +18935,56 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_widening_edges_retire_readers_before_guest_store() {
+        for raw_admission in [false, true] {
+            let program = crate::Engine::specialize(
+                "var receiver={edgeValue:1,a:2,b:3}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} function write(x){receiver.edgeValue=x;} read();write(1);",
+                "native-widening-edge.js").unwrap();
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.execute(&program).unwrap();
+            vm.programs.enable_js_lane_methods();
+            vm.keep_slot_representations();
+            let reader = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
+            let writer = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
+            let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
+            let method = vm.compile_lane_method(&program, reader as u32,
+                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
+            assert!(!method.slot_dependencies.is_empty());
+            let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+            let active = published.method().unwrap();
+            let atom = vm.intern_atom("receiver");
+            let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+            let shape = vm.heap.object(receiver).unwrap().shape();
+            let slot = vm.shape_slot(shape, store.atom_index()).unwrap();
+            let residual = (&program as *const ResidualProgram).addr() as u64;
+            let machine = (&mut vm as *mut Vm<crate::test_host::TestHost>).addr() as u64;
+            // Both helpers are called with the same live VM/program and exact slot
+            // as a native region; neither may perform the guest store on rejection.
+            let admitted = unsafe {
+                if raw_admission {
+                    lane_field_write_admission::<crate::test_host::TestHost>(machine, residual,
+                        shape as u64, slot as u64, crate::typed_ir::SlotType::from_type(crate::typed_ir::Type::NUMBER) as u64)
+                } else {
+                    lane_field_set::<crate::test_host::TestHost>(machine, residual, receiver.to_bits(),
+                        store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5).to_bits())
+                }
+            };
+            assert_eq!(admitted, 0, "widening must exit before mutation");
+            assert!(published.method().is_none());
+            assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
+            assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
+            vm.heap.property_set(receiver, slot, Value::number(0.5));
+            assert!(vm.heap.admit_slot_writes(shape, slot, crate::typed_ir::Type::NUMBER),
+                "the wider domain is admitted on the next entry");
+            assert_eq!(vm.heap.unrepresented_slots(), 0);
+            drop(active);
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn function_bound_osr_owns_definitions_without_retaining_closure_identities() {
         let program = crate::Engine::specialize(
             "function pipe(){function step(x){return (x+1)|0;}let x=0;for(let i=0;i<3;i=(i+1)|0)x=step(x);return x;}",
@@ -19924,7 +19975,7 @@ mod tests {
     #[test]
     fn untyped_native_store_records_widening_before_mutation() {
         let program = crate::Engine::specialize(
-            "var receiver={value:0,a:1,b:2}; function write(x){receiver.value=x;} for(let i=0;i<200;i++)write(i); write(0.5);",
+            "var before=0,after=0; var receiver={value:0,a:1,b:2}; function write(x){before++;receiver.value=x;after++;} for(let i=0;i<200;i++)write(i); write(0.5);",
             "untyped-native-write.js").unwrap();
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut owners = Vec::new();
@@ -19949,6 +20000,11 @@ mod tests {
         vm.set_execution_mode(ExecutionMode::NativeOnly);
         FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
         vm.execute_native_program(&native, true).unwrap();
+        for name in ["before", "after"] {
+            let atom = vm.lookup_atom(name).unwrap();
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(201)),
+                "native store fallback must not replay prefix or skip suffix effects");
+        }
         let atom = vm.lookup_atom("receiver").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
         let atom = vm.lookup_atom("value").unwrap();

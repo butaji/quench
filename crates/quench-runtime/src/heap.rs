@@ -92,11 +92,13 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
 
-/// Whether an existing-slot store may replace its owner's property storage.
-/// Native views require Preserve until their execution ends.
+/// Which invariants an existing-slot store must preserve. Native views cannot
+/// replace property storage; typed native regions also leave on content widening.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PropertyStoreLayout {
     Preserve,
+    /// Native code leaves before a store that retires its content observations.
+    PreserveNative,
     MayWiden,
 }
 
@@ -4442,7 +4444,8 @@ unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize)
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     // The caller matched the exact shape, which holds the slot.
-    properties.note_slot_value(data.shape(), slot, value);
+    let widened = properties.note_slot_value(data.shape(), slot, value);
+    if widened && layout == PropertyStoreLayout::PreserveNative { return false; }
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
@@ -4451,7 +4454,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     }
     if data.properties().has_inline_property_storage() {
         if !data.store_inline_narrow(slot, value) {
-            if layout == PropertyStoreLayout::Preserve {
+            if layout != PropertyStoreLayout::MayWiden {
                 return false;
             }
             let length = properties.len(data.properties());
