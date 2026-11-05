@@ -111,6 +111,8 @@ mod cell_layout_tests {
         );
 
         let layout = super::super::NATIVE_OBJECT_LAYOUT;
+        assert_eq!(layout.extras_inline_values_offset,
+            std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0));
         assert_eq!(layout.record_size, std::mem::size_of::<Object>());
         assert_eq!(layout.record_align, std::mem::align_of::<Object>());
         assert_eq!(layout.meta_offset, NATIVE_OBJECT_META_OFFSET);
@@ -1589,6 +1591,8 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = std::mem::offset_of!(Ob
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, payload);
 pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
     std::mem::offset_of!(ObjectExtras, arena_start);
+pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize =
+    std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0);
 pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
 pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
@@ -1608,6 +1612,9 @@ const _: () = assert!(
     NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET + std::mem::size_of::<u32>()
         <= std::mem::size_of::<ObjectExtras>()
 );
+
+const _: () = assert!(NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET
+    + INLINE_PROPERTY_COUNT * std::mem::size_of::<Value>() <= std::mem::size_of::<ObjectExtras>());
 
 impl Clone for Object {
     fn clone(&self) -> Self {
