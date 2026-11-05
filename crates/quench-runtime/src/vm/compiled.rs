@@ -2211,6 +2211,8 @@ lane_helper_inventory! { H;
     GlobalGet => lane_global_get::<H>,
     FieldWriteAdmission => lane_field_write_admission::<H>,
     MaterializeInlineChain => lane_materialize_inline_chain::<H>,
+    CallBudget => lane_call_budget,
+    AdmittedFunctionBinding => lane_admitted_function_binding::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -2307,6 +2309,7 @@ thread_local! {
     static FIELD_WRITE_ADMISSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     static FUNCTION_BINDING_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CALL_BUDGET_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_VALUE_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_FORWARD_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static LOOP_INT32_READ_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
@@ -7565,19 +7568,34 @@ unsafe extern "C" fn lane_guarded_call<H: Host>(vm: u64, residual: u64, program:
         .unwrap_or(Value::DELETED).to_bits()
 }
 
-/// Admit the actual closure for a statically selected body without entering it.
-unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64, depth: u64) -> u64 {
+fn lane_function_matches<H: Host>(vm: &Vm<H>, program: u64, callee: u64, function: u64) -> bool {
     #[cfg(test)] FUNCTION_BINDING_CALLS.with(|count| count.set(count.get() + 1));
+    !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
+        .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function)
+}
+
+/// Admit the actual closure and complete call depth without entering it.
+unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64, depth: u64) -> u64 {
     // SAFETY: the linked unit owns this VM/program throughout the no-GC operation.
     let vm = unsafe { &*(vm as *const Vm<H>) };
-    let matches = !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
-        .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function);
-    // Admit the prefix's call/interrupt permission. A residual guest call
-    // materializes its activation before reentry; no-frame helpers cannot reenter.
-    // Every suspended inline frame must fit before any prefix effect runs.
-    // The closed region cannot consume call budget until it materializes.
-    u64::from(matches && crate::stack::GuestCallGuard::remaining() as u64 >= depth
+    u64::from(lane_function_matches(vm, program, callee, function)
+        && crate::stack::GuestCallGuard::remaining() as u64 >= depth
         && vm.enter_guarded_call().is_some())
+}
+
+/// The same binding after closed-loop entry has admitted complete call depth.
+unsafe extern "C" fn lane_admitted_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64) -> u64 {
+    // SAFETY: the region owns the VM; only termination can change asynchronously.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(lane_function_matches(vm, program, callee, function)
+        && !vm.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Available guest activations, stable until guest reentry. Closed native regions
+/// bind this at entry; regions with calls read it at each binding edge.
+unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
+    #[cfg(test)] CALL_BUDGET_READS.with(|count| count.set(count.get() + 1));
+    crate::stack::GuestCallGuard::remaining() as u64
 }
 
 /// Static call-site obligations discharged once during lowering. The helper
@@ -19135,7 +19153,8 @@ mod tests {
                         let target = function.dfg.resolve_aliases(function.dfg.inst_args(*instruction)[0]);
                         let ir::ValueDef::Result(load, _) = function.dfg.value_def(target) else { return false; };
                         matches!(function.dfg.insts[load], ir::InstructionData::Load { offset, .. }
-                            if i32::from(offset) == LaneHelper::FunctionBinding as i32 * std::mem::size_of::<usize>() as i32)
+                            if [LaneHelper::FunctionBinding, LaneHelper::AdmittedFunctionBinding].into_iter()
+                                .any(|helper| i32::from(offset) == helper as i32 * std::mem::size_of::<usize>() as i32))
                     }).collect();
                 assert_eq!(bindings.len(), 1, "one actual callee admission per region: {function}\n{}", program.disassemble());
                 let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
@@ -19888,6 +19907,34 @@ mod tests {
         }
         vm.execution_interrupt.request_termination();
         assert_eq!(admitted(&vm, 1), 0, "termination must precede the inlined store");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn closed_native_loop_binds_call_budget_outside_repeated_calls() {
+        for looping in [false, true] {
+            let source = "function Node(next){this.state=0;this.next=next;}Node.prototype.mark=function(){this.state=this.state|2;};function walk(node,n){while(n>0){node.mark();node=node.next;n=(n-1)|0;}return node.state;}let a=new Node(null);let b=new Node(a);a.next=b;for(let i=0;i<20;i++)walk(a,2);throw walk(a,100);";
+            let source = if looping { source.to_owned() } else {
+                source.replace("while(n>0){node.mark();node=node.next;n=(n-1)|0;}",
+                    "node.mark();node=node.next;node.mark();")
+            };
+            let program = crate::Engine::specialize(&source, "call-budget.js").unwrap();
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            FUNCTION_BINDING_CALLS.with(|count| count.set(0));
+            CALL_BUDGET_READS.with(|count| count.set(0));
+            let value = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
+            assert_eq!(value.as_int(), Some(2));
+            let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
+            let budgets = CALL_BUDGET_READS.with(std::cell::Cell::get);
+            assert!(bindings > 0, "the native binding path must execute");
+            if looping {
+                assert!(budgets > 0 && budgets < bindings,
+                    "closed-loop budget must be amortized: {budgets} reads, {bindings} bindings");
+            } else {
+                assert_eq!(budgets, 0, "straight-line calls keep the combined admission helper");
+            }
+        }
     }
 
     #[cfg(feature = "aot")]

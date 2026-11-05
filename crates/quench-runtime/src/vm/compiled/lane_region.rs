@@ -293,6 +293,8 @@ struct Lowering<'a, 'f> {
     /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
     /// so no read or store folds the receiver facts its entry proved.
     native_calls: bool,
+    /// Entry-bound guest depth for a region whose helpers cannot reenter.
+    call_budget: Option<ir::Value>,
     /// The registers' types at each block leader (`facts::analyze`).
     facts: super::facts::Facts,
     /// The unit's register liveness by unit PC (`Unit::register_masks`), where the unit
@@ -1214,6 +1216,7 @@ pub(super) fn lower(
         // A static typed region's calls are guarded leaves (`guarded_call_instruction`).
         native_calls: completion == Completion::StatusAndPc
             && unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
+        call_budget: None,
         facts: super::facts::Facts::default(),
         live,
         valid: true,
@@ -1293,6 +1296,14 @@ pub(super) fn lower(
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls);
     let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
     let loops = local_loops(unit, &program.constants, &starts);
+    // An entry query earns its extra helper call only when it replaces a
+    // repeated binding admission. Straight-line calls keep combined admission.
+    if !lowering.native_calls && !numeric && unit.frames.iter().zip(&unit.markers)
+        .any(|(frame, marker)| frame.target.callee == CalleeBinding::Function
+            && loops.iter().any(|&(header, back)| (header..=back).contains(marker))) {
+        let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::CallBudget);
+        lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
+    }
     if coverage.selected_entry() {
         lowering.written = CompoundBitSet::with_capacity(count);
         for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -1376,6 +1387,14 @@ pub(super) fn lower(
         }
         let target = lowering.blocks.get(pc).copied().flatten()?;
         let mut state = State::canonical(count);
+        if let Some(budget) = lowering.call_budget {
+            // Every body edge is dominated by this admission. The closed region
+            // cannot change thread call depth before leaving to materialize.
+            let depth = lowering.unit.recovery_depth().max(1) as i64;
+            let admitted = lowering.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, budget, depth);
+            let miss = lowering.guard_exit(&state, pc as u32);
+            emit_js_guard(&mut lowering.builder, admitted, miss);
+        }
         if numeric {
             for register in 0..function.params {
                 let number = lowering.builder.ins().load(types::F64, MemFlagsData::trusted(),
@@ -2798,10 +2817,15 @@ impl Lowering<'_, '_> {
             std::mem::offset_of!(JsStepDispatch, program_id) as i32);
         let program = self.ins().uextend(types::I64, program);
         let function = self.ins().iconst(types::I64, i64::from(function));
-        let depth = self.unit.recovery_depth().max(1) as i64;
-        let depth = self.ins().iconst(types::I64, depth);
-        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionBinding);
-        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function, depth]);
+        let admitted = if self.call_budget.is_some() {
+            let helper = self.helpers.address(self.builder.ins(), LaneHelper::AdmittedFunctionBinding);
+            emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function])
+        } else {
+            let depth = self.unit.recovery_depth().max(1) as i64;
+            let depth = self.ins().iconst(types::I64, depth);
+            let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionBinding);
+            emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function, depth])
+        };
         self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)
     }
 
