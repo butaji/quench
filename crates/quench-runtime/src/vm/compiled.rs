@@ -1370,7 +1370,6 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
 
 /// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
 fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     use crate::value::ValueLayout;
 
     let family = builder
@@ -1402,7 +1401,12 @@ fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base
         .ins()
         .icmp_imm_u(IntCC::NotEqual, record_base, 0);
     emit_js_guard(builder, base_is_present, fallback);
+    emit_array_record_address(builder, record_base, record_id)
+}
 
+/// Where record `record_id` (an `i64`) of the array reservation at `record_base` lives.
+fn emit_array_record_address(builder: &mut FunctionBuilder<'_>, record_base: ir::Value, record_id: ir::Value) -> ir::Value {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
     let record_offset = builder.ins().imul_imm_u(record_id, record_size);
     builder.ins().iadd(record_base, record_offset)
@@ -1504,6 +1508,21 @@ pub(super) fn emit_dense_array_view(
     }
     let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
     DenseArrayView { values, length, writable }
+}
+
+/// The backing's first value and length of the array `base` (tagged) an earlier view
+/// proved, after a helper that may have grown its backing: the array, its record and its
+/// writability stay what the view proved, so only the backing is read again.
+pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
+    let record = emit_array_record_address(builder, record_base, record_id);
+    let header = emit_array_header(builder, record);
+    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
 }
 
 /// The address of `view`'s present element `index` (an int32) and its value; an index past

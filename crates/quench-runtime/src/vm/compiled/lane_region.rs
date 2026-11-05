@@ -261,6 +261,24 @@ struct InvariantRead {
     owner: Option<Register>,
 }
 
+/// An array base a local loop indexes and never redefines: its loop's entry proves the
+/// array's view once, writable where the loop stores through it, and only the element
+/// store's general path, which may grow the backing, loads the view again.
+#[derive(Clone, Copy)]
+struct LoopArray {
+    header: usize,
+    back: usize,
+    register: Register,
+    writable: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ArrayVariables {
+    bits: Variable,
+    values: Variable,
+    length: Variable,
+}
+
 /// A STORE-site projection admitted on entry to a storage-preserving loop.
 /// The record is physical receiver identity, not merely an equal shape.
 #[derive(Clone, Copy)]
@@ -347,6 +365,10 @@ struct Lowering<'a, 'f> {
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<InvariantRead>>,
     hoisted: BTreeMap<usize, LoopRead>,
+    /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
+    loop_arrays: Vec<LoopArray>,
+    /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
+    array_vars: BTreeMap<Register, ArrayVariables>,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
@@ -922,6 +944,28 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
     loops
 }
 
+fn loop_arrays(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> Vec<LoopArray> {
+    let mut arrays = Vec::new();
+    for &(header, back) in loops {
+        let body = &unit.instructions[header..=back];
+        let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
+        let first = arrays.len();
+        for instruction in body {
+            let (base, stores) = match instruction.op() {
+                Op::GetIndex => (instruction.operand_b().register_index(), false),
+                Op::SetIndex => (Some(instruction.register_b()), true),
+                _ => continue,
+            };
+            let Some(register) = base.filter(|register| *register < unit.caller_registers && !written.contains(register)) else { continue };
+            match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.register == register) {
+                Some(array) => array.writable |= stores,
+                None => arrays.push(LoopArray { header, back, register, writable: stores }),
+            }
+        }
+    }
+    arrays
+}
+
 fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
@@ -1305,6 +1349,8 @@ pub(super) fn lower(
         number_returns: smallvec::SmallVec::new(),
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
+        loop_arrays: Vec::new(),
+        array_vars: BTreeMap::new(),
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         at: 0,
@@ -1433,6 +1479,7 @@ pub(super) fn lower(
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     lowering.hoists = invariant_reads(unit, &loops);
+    lowering.loop_arrays = loop_arrays(unit, &loops);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner) });
@@ -2516,7 +2563,7 @@ impl Lowering<'_, '_> {
                 let base = self.operand_tagged(state, instruction.operand_b());
                 let index = self.operand_int(state, instruction.operand_c(), exit);
                 base.zip(index).map(|(base, index)| {
-                    let view = self.array_view(state, base, false, exit);
+                    let view = self.array_view(state, pc, instruction.operand_b().register_index(), base, false, exit);
                     let (_, value) = super::emit_dense_element(&mut self.builder, view, index, exit);
                     self.set_tagged(state, instruction.result_register(), value);
                     true
@@ -3671,6 +3718,7 @@ impl Lowering<'_, '_> {
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
     /// guard that fails there leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
+        self.hoist_arrays(state, header);
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         let boundaries = leaders(&self.unit.instructions);
         for InvariantRead { pc, owner } in reads.iter().copied() {
@@ -3827,9 +3875,49 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The view of the array `base` holds, proved once until a storage change retires it;
-    /// a `writable` request upgrades a read view.
-    fn array_view(&mut self, state: &mut State, base: ir::Value, writable: bool, exit: ir::Block) -> super::DenseArrayView {
+    /// Prove the views of the arrays the loop at `header` indexes without redefining them, on
+    /// its entering edge; a base that is no such array leaves at the header.
+    fn hoist_arrays(&mut self, state: &mut State, header: usize) {
+        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied().filter(|array| array.header == header).collect();
+        if arrays.is_empty() { return; }
+        let exit = self.guard_exit(state, header as u32);
+        for array in arrays {
+            let bits = self.tagged(state, array.register);
+            let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
+            let variables = self.array_variables(array.register);
+            self.builder.def_var(variables.bits, bits);
+            self.builder.def_var(variables.values, view.values);
+            self.builder.def_var(variables.length, view.length);
+        }
+    }
+
+    fn array_variables(&mut self, register: Register) -> ArrayVariables {
+        let builder = &mut self.builder;
+        *self.array_vars.entry(register).or_insert_with(|| ArrayVariables {
+            bits: builder.declare_var(types::I64),
+            values: builder.declare_var(types::I64),
+            length: builder.declare_var(types::I32),
+        })
+    }
+
+    /// The hoisted array of `register` the innermost loop around `pc` proved, if any.
+    fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
+        let register = register?;
+        self.loop_arrays.iter().copied()
+            .filter(|array| array.register == register && (array.header..=array.back).contains(&pc))
+            .min_by_key(|array| array.back - array.header)
+    }
+
+    /// The view of the array `base` (the value of `register`, where it is one) holds at `pc`:
+    /// its loop's hoisted view, or one proved once until a storage change retires it, where a
+    /// `writable` request upgrades a read view.
+    fn array_view(&mut self, state: &mut State, pc: usize, register: Option<Register>, base: ir::Value, writable: bool,
+        exit: ir::Block) -> super::DenseArrayView {
+        if let Some(array) = self.loop_array(pc, register).filter(|array| array.writable || !writable) {
+            let variables = self.array_variables(array.register);
+            return super::DenseArrayView { values: self.builder.use_var(variables.values),
+                length: self.builder.use_var(variables.length), writable: array.writable };
+        }
         if let Some((_, view)) = state.proofs.arrays.iter().find(|(known, view)| *known == base && (view.writable || !writable)) {
             return *view;
         }
@@ -3860,24 +3948,40 @@ impl Lowering<'_, '_> {
             let slow = self.builder.create_block();
             self.builder.set_cold_block(slow);
             let done = self.builder.create_block();
-            let view = self.array_view(state, base, true, slow);
+            let view = self.array_view(state, pc as usize, Some(instruction.register_b()), base, true, slow);
             let (address, old) = super::emit_dense_element(&mut self.builder, view, index, slow);
             super::emit_dense_element_replace(&mut self.builder, view, address, old, value);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
             general(self);
+            self.reload_loop_arrays(pc as usize);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(done);
             self.builder.seal_block(done);
         } else {
             general(self);
+            self.reload_loop_arrays(pc as usize);
         }
         state.proofs.arrays.clear();
         state.proofs.fields.clear();
         // The helper may write a prototype's element or mapped argument.
         state.proofs.epoch = None;
         true
+    }
+
+    /// After the element store's helper, which may grow a backing: the hoisted views of the
+    /// loops around `pc` read their backings again (`emit_dense_array_reload`).
+    fn reload_loop_arrays(&mut self, pc: usize) {
+        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
+            .filter(|array| (array.header..=array.back).contains(&pc)).collect();
+        for array in arrays {
+            let variables = self.array_variables(array.register);
+            let bits = self.builder.use_var(variables.bits);
+            let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
+            self.builder.def_var(variables.values, values);
+            self.builder.def_var(variables.length, length);
+        }
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
