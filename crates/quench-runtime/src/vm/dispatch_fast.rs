@@ -12116,9 +12116,9 @@ script_handler! {
             }
             None => {
                 r.set(done_read.a, Value::TRUE);
-                // SAFETY: the exit records the distance to its validated target.
-                let exit = unsafe { ip.add(form.exit()) };
-                next!(cx, r, unsafe { exit.byte_offset((*exit).jump()) }, Carried::script(cx))
+                // The exit jump runs as its own record: a jump absorbing the move at its
+                // target (`JumpFusions::THROUGH`) records the distance past that move.
+                next!(cx, r, unsafe { ip.add(form.exit()) }, Carried::script(cx))
             }
         }
     }

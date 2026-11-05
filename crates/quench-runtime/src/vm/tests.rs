@@ -24126,3 +24126,40 @@ fn lane_bodies_keep_the_callees_they_inline_across_collections() {
         assert_eq!(vm.own_property(vm.realm.globals, atom).and_then(Value::as_number), Some((0..40).map(|round| f64::from(200 * round + 300)).sum()));
     }
 }
+
+#[test]
+fn lane_iterator_step_exits_run_the_move_their_jump_absorbs() {
+    // Node oracle: "object". The body is long enough that the step's `done` test compiles as
+    // a `JumpFalse` over the loop's exit `Jump`, which the lane fuses with the argument move at
+    // its target (`JumpFusions::THROUGH`). A finished step must run that move, not jump past it.
+    let padding = (0..3000).map(|index| format!("total = total + {index};\n")).collect::<String>();
+    let source = format!(
+        r#"(function () {{
+      function exitCall(source) {{
+        var total = 0;
+        {padding}
+        var hasOwn = Object.prototype.hasOwnProperty;
+        function makePredicate(name, known) {{ return typeof known; }}
+        var copy = {{}};
+        for (var key in source) {{
+          if (hasOwn.call(source, key)) copy[key] = source[key];
+        }}
+        return makePredicate("x", copy);
+      }}
+      const source = {{}};
+      for (let i = 0; i < 5000; i++) source["k" + i] = i;
+      let result;
+      for (let i = 0; i < 3; i++) result = exitCall(source);
+      globalThis.answer = result;
+    }})();"#
+    );
+    let program = Engine::specialize(&source, "lane-step-exit.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        if let Err(error) = vm.execute(&program) { panic!("{mode:?}: {error:?}"); }
+        let atom = vm.intern_atom("answer");
+        let answer = vm.own_property(vm.realm.globals, atom).unwrap();
+        assert_eq!(vm.to_string(&program, answer).unwrap(), "object", "{mode:?}");
+    }
+}
