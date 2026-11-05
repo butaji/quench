@@ -13533,7 +13533,7 @@ fn lane_construct_keeping_activation<H: Host>(
     let finishes = lane_finishes_construction(cx, i);
     // A plan holding for `callee` fixes its function, so the plan alone answers before its
     // target is resolved.
-    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, r, i) {
+    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
         return Ok(KeepingConstruction::Finished(this));
@@ -13601,7 +13601,7 @@ fn lane_construct_keeping_activation<H: Host>(
 /// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
 /// body completes with `undefined`, as the forwarding body then does.
 #[inline(always)]
-fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
@@ -13611,7 +13611,7 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i
     {
         return None;
     }
-    let values = plan.values(vm, lane_construct_argument(r, i));
+    let values = plan.values(vm, argument);
     Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -15385,7 +15385,8 @@ pub(super) unsafe fn lane_body_construction<H: Host>(context: *mut (), callee: V
     }
     // SAFETY: the caller passes the body's argument registers.
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
-    let this = planned_construction(vm, callee, argument)?;
+    // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
+    let this = planned_construction(vm, callee, argument).or_else(|| lane_forwarded_fields(vm, callee, argument))?;
     note_allocation(vm);
     Some(this)
 }
