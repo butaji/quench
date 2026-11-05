@@ -14487,7 +14487,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
                 (std::ptr::null(), 0, 0)
             } else {
                 let callee = unsafe { &*target.view };
-                let method = callee.lane_body()?;
+                let method = callee.lane_body().filter(|method| method.calls_only_natively())?;
                 (method as *const super::compiled::LaneMethod, method.entry_address(), callee.lane_body_room())
             };
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
