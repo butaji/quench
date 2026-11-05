@@ -202,7 +202,10 @@ pub(crate) struct ValueArena {
     /// Per owner shape, compact observed content types. Recording writes joins
     /// them; native raw writes can bypass recording, so this is not a proof.
     owner_types: Vec<SlotType>,
-    slot_readers: crate::code_dependencies::SlotReaders,
+    slot_readers: crate::code_dependencies::CodeReaders,
+    /// Numeric shape departures only; heap admission, exotic access and physical
+    /// storage remain separate proof obligations.
+    shape_readers: crate::code_dependencies::CodeReaders,
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
@@ -221,7 +224,8 @@ impl Default for ValueArena {
             shape_chains: Vec::new(),
             chain_owners: Vec::new(),
             owner_types: Vec::new(),
-            slot_readers: crate::code_dependencies::SlotReaders::default(),
+            slot_readers: crate::code_dependencies::CodeReaders::default(),
+            shape_readers: crate::code_dependencies::CodeReaders::default(),
             tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -245,7 +249,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -293,6 +297,7 @@ impl ValueArena {
     }
 
     pub(crate) fn reset(&mut self) {
+        self.shape_readers.reset();
         self.values.clear();
         for bucket in &mut self.free {
             bucket.clear();
@@ -306,6 +311,7 @@ impl ValueArena {
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
+        self.shape_readers.retire(shape);
         assert!(shape <= SHAPE_MASK, "object shape table exhausted");
         assert!(
             length <= u32::MAX as usize,
@@ -319,6 +325,7 @@ impl ValueArena {
     }
 
     pub(crate) fn reset_shapes(&mut self) {
+        self.shape_readers.reset();
         self.slot_readers.reset();
         self.tracking = false;
         self.shape_lengths.clear();
@@ -421,7 +428,25 @@ impl ValueArena {
         let slot = usize::from(slot);
         if !self.tracking || slot >= self.shape_length(shape)
             || self.slot_observation(shape, slot).ty() != ty { return false; }
-        self.slot_readers.subscribe(self.slot_owner(shape, slot), code)
+        self.subscribe_shape(shape, code)
+            && self.slot_readers.subscribe(self.slot_owner(shape, slot), code)
+    }
+
+    /// Observe the next departure from this shape, not the contents of its slots.
+    /// The caller must establish its target-shape assumption before subscribing.
+    pub(crate) fn subscribe_shape(&mut self, shape: u32,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        if shape as usize >= self.shape_lengths.len() { return false; }
+        self.shape_readers.subscribe(shape, code)
+    }
+
+    pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
+        if previous != next { self.shape_readers.retire(previous); }
+    }
+
+    /// Shape identifiers will be remapped; retire assumptions before any object moves.
+    pub(crate) fn retire_shape_readers(&mut self) {
+        self.shape_readers.reset();
     }
 
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
@@ -786,6 +811,7 @@ impl ValueArena {
                 .sum::<usize>()
             + self.free_dictionaries.capacity() * size_of::<u32>()
             + self.slot_readers.memory_bytes()
+            + self.shape_readers.memory_bytes()
     }
 
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {

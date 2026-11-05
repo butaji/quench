@@ -549,6 +549,17 @@ impl Heap {
         Some((object, properties))
     }
 
+    /// Changes a published object's shape, retiring target-shape readers first.
+    pub(crate) fn set_object_shape(&mut self, value: Value, shape: u32) {
+        let (object, arena) = self.object_and_arena_mut(value).expect("shape owner is an object");
+        object.set_shape(shape, arena);
+    }
+
+    /// A detached object may be a clone of a published one; notify conservatively.
+    pub(crate) fn set_detached_object_shape(&mut self, object: &mut Object, shape: u32) {
+        object.set_shape(shape, &mut self.properties);
+    }
+
     /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
     /// Two objects never share arena storage: sweeping either would free the other's values.
     pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
@@ -556,7 +567,7 @@ impl Heap {
             return false;
         };
         let storage = properties.duplicate(source.properties());
-        let previous = object.copy_property_storage_from(source, storage);
+        let previous = object.copy_property_storage_from(source, storage, properties);
         properties.release(previous);
         true
     }

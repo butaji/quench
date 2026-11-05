@@ -1,4 +1,4 @@
-//! Weak native publications indexed by the slot owner whose observation they used.
+//! Weak native publications indexed by the shape or slot owner they depend on.
 //! These notifications do not turn observations into unchecked read permissions.
 
 use std::{num::NonZeroU32, rc::{Rc, Weak}};
@@ -23,13 +23,13 @@ struct Reader {
 }
 
 #[derive(Default)]
-pub(crate) struct SlotReaders {
+pub(crate) struct CodeReaders {
     heads: Vec<Link>,
     readers: Vec<Reader>,
     free: Link,
 }
 
-impl SlotReaders {
+impl CodeReaders {
     pub(crate) fn memory_bytes(&self) -> usize {
         self.heads.capacity() * size_of::<Link>() + self.readers.capacity() * size_of::<Reader>()
     }
@@ -107,7 +107,7 @@ impl SlotReaders {
     }
 }
 
-impl Drop for SlotReaders {
+impl Drop for CodeReaders {
     fn drop(&mut self) { self.reset(); }
 }
 
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn readers_are_weak_selective_deduplicated_and_recycled() {
-        let mut readers = SlotReaders::default();
+        let mut readers = CodeReaders::default();
         let first: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
         let second: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
         assert!(readers.subscribe(1, &first));

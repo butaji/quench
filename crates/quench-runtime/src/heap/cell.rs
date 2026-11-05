@@ -1642,7 +1642,7 @@ impl ArrayObject {
             let mut properties = ValueVec::new();
             properties.set_auxiliary(current.auxiliary());
             properties.preserve_integrity_from(current);
-            object.set_properties(properties);
+            object.initialize_properties(properties);
         }
         Self { object, elements }
     }
@@ -1996,7 +1996,13 @@ impl Object {
 
     /// Stores `properties`. A change from inline to other storage overwrites the payload
     /// word that held an inline value, so callers move inline values out first.
-    pub(crate) fn set_properties(&mut self, properties: ValueVec) {
+    pub(crate) fn set_properties(&mut self, properties: ValueVec, arena: &mut ValueArena) {
+        arena.note_shape_transition(self.shape(), properties.auxiliary());
+        self.initialize_properties(properties);
+    }
+
+    /// Construction before publication has no shape dependents.
+    fn initialize_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
         // Exotic access is a fact of the object, not of the storage that replaces its own.
         self.auxiliary = auxiliary | (self.auxiliary & crate::value_vec::EXOTIC_ACCESS);
@@ -2149,7 +2155,7 @@ impl Object {
             payload,
         };
         // Inline storage leaves the payload word alone.
-        object.set_properties(ValueVec::inline_property_storage(shape));
+        object.initialize_properties(ValueVec::inline_property_storage(shape));
         Some(object)
     }
 
@@ -2207,7 +2213,7 @@ impl Object {
             auxiliary: 0,
             payload: 0,
         };
-        object.set_properties(properties);
+        object.initialize_properties(properties);
         // A new object has no extras: its payload word holds the values when each is narrow.
         if properties.has_inline_property_storage() {
             match Self::pack_inline(inline_properties) {
@@ -2309,7 +2315,7 @@ impl Object {
     }
 
     /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
-    /// Without extras the object was never a prototype, so the move retires no proof.
+    /// Without extras it was never a prototype; the move still retires shape readers.
     #[inline(always)]
     pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
         properties.note_shape_value(shape, slot, value);
@@ -2319,7 +2325,7 @@ impl Object {
             // SAFETY: `admits_plain_append` found the arena range's room for the value.
             None => unsafe { properties.push_in_place(self.properties(), slot, value) },
         }
-        self.set_shape(shape);
+        self.set_shape(shape, properties);
     }
 
     /// Stores the narrow form `narrow` at inline `slot` of the payload word, which holds the
@@ -2342,10 +2348,11 @@ impl Object {
         &mut self,
         mut properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
+        arena: &mut ValueArena,
     ) -> ValueVec {
         let previous = self.properties();
         properties.preserve_integrity_from(previous);
-        self.set_properties(properties);
+        self.set_properties(properties, arena);
         // Arena storage keeps its position in the payload word (or the extras) instead.
         if properties.has_inline_property_storage() {
             self.store_inline_values(inline_properties);
@@ -2355,9 +2362,9 @@ impl Object {
 
     /// Takes `source`'s property values, given `properties`, the arena's duplicate of
     /// `source.properties()`, and returns the storage this object held before.
-    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec) -> ValueVec {
+    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec, arena: &mut ValueArena) -> ValueVec {
         let previous = self.properties();
-        self.set_properties(properties);
+        self.set_properties(properties, arena);
         if properties.has_inline_property_storage() {
             self.store_inline_values(source.inline_values());
         }
@@ -2480,7 +2487,8 @@ impl Object {
         self.auxiliary & !crate::value_vec::DICTIONARY_STORAGE
     }
     #[inline(always)]
-    pub(crate) fn set_shape(&mut self, shape: u32) {
+    pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
+        arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(0, self.auxiliary);
         properties.set_auxiliary(shape);
@@ -2670,7 +2678,7 @@ const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as
 mod object_payload_tests {
     use super::Object;
     use crate::value::Value;
-    use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
+    use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec, ValueArena};
 
     #[test]
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {
@@ -2689,7 +2697,7 @@ mod object_payload_tests {
         assert_eq!(object.inline_properties().unwrap()[0], Value::integer(11));
         assert!(cloned.is_arguments_object());
 
-        object.set_shape(19);
+        object.set_shape(19, &mut ValueArena::default());
         assert_eq!(object.shape(), 19);
         assert!(object.is_arguments_object());
     }

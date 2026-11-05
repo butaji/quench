@@ -1601,6 +1601,51 @@ fn object_publication_admits_preinitialized_slots_after_census() {
 }
 
 #[test]
+fn shape_departures_retire_readers_through_each_storage_path() {
+    use crate::{code_dependencies::{DependentCode, SlotDependency}, typed_ir::Type};
+    struct Reader(std::cell::Cell<bool>);
+    impl DependentCode for Reader {
+        fn is_published(&self) -> bool { self.0.get() }
+        fn retire(&self) { self.0.set(false); }
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum Change { Shape, Replace, Copy, Append, Remap }
+    for change in [Change::Shape, Change::Replace, Change::Copy, Change::Append, Change::Remap] {
+        for inline in [false, true] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None), (1, None), (2, Some((1, 1)))]);
+            let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], inline);
+            let object = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
+            let reader: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
+            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32 }, &reader));
+            let unrelated: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
+            assert!(heap.properties.subscribe_shape(2, &unrelated));
+            // No departure: a repeated shape and storage descriptor preserve the
+            // shape assumption (physical storage needs its own proof).
+            heap.set_object_shape(object, 1);
+            let (data, arena) = heap.object_and_arena_mut(object).unwrap();
+            data.set_properties(data.properties(), arena);
+            assert!(reader.is_published());
+            match change {
+                Change::Shape => heap.set_object_shape(object, 2),
+                Change::Replace => heap.initialize_object_properties(object, 2, &[Value::integer(3)]),
+                Change::Copy => {
+                    let source = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(3)]);
+                    let source = heap.object(source).unwrap().clone();
+                    assert!(heap.copy_property_storage(&source, object));
+                }
+                Change::Append => heap.property_add(object, Value::integer(3), 3),
+                Change::Remap => heap.remap_live_object_shapes(&[0, 2, 1, 3],
+                    &[(0, None), (1, None), (1, None), (2, Some((2, 1)))]),
+            }
+            assert!(!reader.is_published(), "{change:?}, inline={inline}");
+            assert_eq!(unrelated.is_published(), !matches!(change, Change::Remap), "{change:?}");
+            assert_eq!(heap.object(object).unwrap().shape(), if matches!(change, Change::Append) { 3 } else { 2 });
+        }
+    }
+}
+
+#[test]
 fn named_property_publication_retires_readers_for_every_record_family() {
     use crate::{code_dependencies::{DependentCode, SlotDependency}, typed_ir::Type};
     struct Reader(std::cell::Cell<bool>);

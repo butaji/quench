@@ -608,9 +608,7 @@ impl<H: Host> Vm<H> {
         let storage_len = self.shapes[shape as usize].storage_len();
         let dictionary_shape =
             self.append_shape(shape, ShapeTransition::Dictionary { trigger }, storage_len);
-        self.object_data_mut(object)
-            .expect("object survived dictionary transition")
-            .set_shape(dictionary_shape);
+        self.heap.set_object_shape(object, dictionary_shape);
         self.profile.dictionary_transition(trigger);
     }
     #[inline(always)]
@@ -934,9 +932,7 @@ impl<H: Host> Vm<H> {
                     attributes: recorded,
                 },
             );
-            self.object_data_mut(object)
-                .expect("object survived descriptor transition")
-                .set_shape(next_id);
+            self.heap.set_object_shape(object, next_id);
             self.store_accessor_slot(object, slot, current, attributes, recorded);
             self.invalidate_method_caches_for_key(key);
             return;
@@ -1000,9 +996,7 @@ impl<H: Host> Vm<H> {
             self.invalidate_field_caches();
         }
         if shape != original {
-            self.object_data_mut(object)
-                .expect("object survived descriptor transitions")
-                .set_shape(shape);
+            self.heap.set_object_shape(object, shape);
         }
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
@@ -1016,9 +1010,7 @@ impl<H: Host> Vm<H> {
                     attributes: DEFAULT_SHAPE_ATTRIBUTES,
                 },
             );
-            self.object_data_mut(object)
-                .expect("object survived descriptor transition")
-                .set_shape(next_id);
+            self.heap.set_object_shape(object, next_id);
             self.invalidate_method_caches_for_key(key);
             return;
         }
@@ -4617,9 +4609,7 @@ impl<H: Host> Vm<H> {
                     .collect::<Vec<_>>();
                 self.heap.initialize_object_properties(object, parent, &values);
             }
-            self.object_data_mut(object)
-                .expect("object survived property deletion")
-                .set_shape(parent);
+            self.heap.set_object_shape(object, parent);
             self.reconfigure_function_name(object, key);
             self.invalidate_method_caches_for_key(key);
             return;
@@ -4652,9 +4642,7 @@ impl<H: Host> Vm<H> {
         } else {
             next_id
         };
-        self.object_data_mut(object)
-            .expect("object survived property deletion")
-            .set_shape(next_id);
+        self.heap.set_object_shape(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
     }

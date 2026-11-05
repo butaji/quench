@@ -1648,7 +1648,7 @@ impl Heap {
         values: &[Value],
     ) -> Value {
         let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
-        let previous = array.replace_property_storage(properties, inline_properties);
+        let previous = array.replace_property_storage(properties, inline_properties, &mut self.properties);
         self.properties.release(previous);
         let value = self.alloc(Cell::Array { object: array });
         #[cfg(feature = "profile-memory")]
@@ -1670,8 +1670,8 @@ impl Heap {
         self.properties.note_shape_values(shape, values);
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
-            let object = self.object_mut(owner).expect("property owner is an object");
-            object.replace_property_storage(properties, inline_properties)
+            let (object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
+            object.replace_property_storage(properties, inline_properties, arena)
         };
         self.properties.release(previous);
         #[cfg(feature = "profile-memory")]
@@ -1708,32 +1708,33 @@ impl Heap {
     /// each shape's length and parent (a parent precedes its children), its slot owners, and
     /// their representations joined anew from the values live objects hold.
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], layouts: &[(usize, Option<(u32, usize)>)]) {
+        self.properties.retire_shape_readers();
         self.object_records.for_each_live_mut(|_, object| {
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape]);
+            object.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.array_records.for_each_live_mut(|_, array| {
             let old_shape = array.shape() as usize;
-            array.set_shape(mapping[old_shape]);
+            array.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.function_records.for_each_live_mut(|_, function| {
             let old_shape = function.object.shape() as usize;
-            function.object.set_shape(mapping[old_shape]);
+            function.object.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.promise_records.for_each_live_mut(|_, promise| {
             let old_shape = promise.object.shape() as usize;
-            promise.object.set_shape(mapping[old_shape]);
+            promise.object.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.iterator_records.for_each_live_mut(|_, iterator| {
             let old_shape = iterator.object.shape() as usize;
-            iterator.object.set_shape(mapping[old_shape]);
+            iterator.object.set_shape(mapping[old_shape], &mut self.properties);
         });
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
                 continue;
             };
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape]);
+            object.set_shape(mapping[old_shape], &mut self.properties);
         }
         self.register_shape_layouts(layouts);
     }
@@ -1833,7 +1834,7 @@ impl Heap {
             .expect("property owner remains live during compaction");
             let mut vector = object.properties();
             target += properties.compact_vector(&mut vector, target);
-            object.set_properties(vector);
+            object.set_properties(vector, properties);
         }
         properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
@@ -4386,7 +4387,7 @@ fn widen_inline_storage(
     let mut values = data.inline_properties().expect("inline storage");
     values[slot] = value;
     let moved = properties.with_values(shape, &values[..length]);
-    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
     properties.release(previous);
 }
 
@@ -4402,7 +4403,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         // An append within its range leaves the storage as it was; `set_shape` below
         // records the grown shape.
         if vector.into_parts() != before {
-            data.set_properties(vector);
+            data.set_properties(vector, properties);
         }
     } else if slot < INLINE_PROPERTY_COUNT {
         if !data.store_inline_narrow(slot, value) {
@@ -4416,9 +4417,9 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
         grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
         let moved = properties.with_values(shape, &grown);
-        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
     }
-    data.set_shape(shape);
+    data.set_shape(shape, properties);
 }
 
 /// Join an initialized object's contents at publication or a new live-heap census.
