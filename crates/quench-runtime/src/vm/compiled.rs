@@ -18936,9 +18936,11 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn native_widening_edges_retire_readers_before_guest_store() {
-        for raw_admission in [false, true] {
+        #[derive(Clone, Copy)]
+        enum Edge { Store, Domain, Pointer, Call }
+        for edge in [Edge::Store, Edge::Domain, Edge::Pointer, Edge::Call] {
             let program = crate::Engine::specialize(
-                "var receiver={edgeValue:1,a:2,b:3}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} function write(x){receiver.edgeValue=x;} read();write(1);",
+                "var receiver={edgeValue:1,a:2,b:3}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} function write(x){receiver.edgeValue=x;} function make(n){return function store(){this.edgeValue=n;};} var setter=make(0.5);setter.call(receiver);write(1);read();",
                 "native-widening-edge.js").unwrap();
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.execute(&program).unwrap();
@@ -18960,21 +18962,34 @@ mod tests {
             let slot = vm.shape_slot(shape, store.atom_index()).unwrap();
             let residual = (&program as *const ResidualProgram).addr() as u64;
             let machine = (&mut vm as *mut Vm<crate::test_host::TestHost>).addr() as u64;
-            // Both helpers are called with the same live VM/program and exact slot
-            // as a native region; neither may perform the guest store on rejection.
+            // Each edge uses the same live VM/program and exact slot as a native
+            // region; rejection must precede the guest store or raw pointer escape.
             let admitted = unsafe {
-                if raw_admission {
-                    lane_field_write_admission::<crate::test_host::TestHost>(machine, residual,
-                        shape as u64, slot as u64, crate::typed_ir::SlotType::from_type(crate::typed_ir::Type::NUMBER) as u64)
-                } else {
-                    lane_field_set::<crate::test_host::TestHost>(machine, residual, receiver.to_bits(),
-                        store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5).to_bits())
+                match edge {
+                    Edge::Domain => lane_field_write_admission::<crate::test_host::TestHost>(machine, residual,
+                        shape as u64, slot as u64, crate::typed_ir::SlotType::from_type(crate::typed_ir::Type::NUMBER) as u64),
+                    Edge::Store => lane_field_set::<crate::test_host::TestHost>(machine, residual, receiver.to_bits(),
+                        store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5).to_bits()),
+                    Edge::Pointer => u64::from(vm.cached_field_store_pointer(&program, receiver,
+                        store.atom_index(), store.cache_site_index(), crate::typed_ir::Type::NUMBER).is_some()),
+                    Edge::Call => {
+                        let atom = vm.intern_atom("setter");
+                        let setter = vm.own_property(vm.realm.globals, atom).unwrap();
+                        u64::from(vm.guarded_call_values(&program, vm.active_program, setter, receiver).is_some())
+                    }
                 }
             };
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.method().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
             assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
+            if matches!(edge, Edge::Call) {
+                let atom = vm.intern_atom("setter");
+                let setter = vm.own_property(vm.realm.globals, atom).unwrap();
+                assert_eq!(vm.guarded_call_values(&program, vm.active_program, setter, receiver), Some(Value::UNDEFINED),
+                    "the actual guarded call succeeds after wider-domain admission");
+                assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+            }
             vm.heap.property_set(receiver, slot, Value::number(0.5));
             assert!(vm.heap.admit_slot_writes(shape, slot, crate::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");

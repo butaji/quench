@@ -3494,7 +3494,9 @@ impl Heap {
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
-        self.properties.note_slot_type(shape, slot, writes);
+        // A widening can retire an active caller. Decline before exposing a raw
+        // writer so its existing call/OSR miss leaves before any guest effect.
+        if !self.admit_slot_writes(shape, slot, writes) { return None; }
         // SAFETY: shape/slot and storage lifetime are the caller's obligations above.
         Some(unsafe { self.properties.flat_mut_ptr_unchecked(vector, slot) })
     }

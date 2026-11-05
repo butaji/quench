@@ -175,9 +175,12 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
     // SAFETY: the receiver remains rooted by its global binding; no allocation
     // or collection happens between obtaining this slot and the Number write.
-    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
-    // Admission widens before the raw write, including an int-to-double transition.
+    assert!(unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
+        "widening declines before exposing a raw writer to an active native caller");
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
+    assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
+    // The next admission consumes the already-widened domain.
+    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
     for value in [Value::number(0.5), Value::number(-0.0), Value::number(f64::NAN), Value::integer(7)] {
         unsafe { pointer.write(value); }
         assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
