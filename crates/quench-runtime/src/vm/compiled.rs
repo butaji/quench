@@ -1660,8 +1660,10 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
         arena: FieldArena::Unbound { values, length }, writes: None }
 }
 
-// `packed_slot`, when requested, receives a proved own-slot address holding a narrow
-// u32. The ordinary return is always an arena address holding a tagged u64. Neither
+// `packed_slot`, when requested, receives a proved data-slot address holding a narrow
+// u32. `displaced_value` receives a tagged value loaded from displaced inline storage;
+// keeping this load on its branch preserves indexed arena loads in callers.
+// The ordinary return is an arena address holding a tagged u64. Neither
 // projection survives an operation that can change storage or collect the object.
 fn emit_js_cached_field_slot(
     builder: &mut FunctionBuilder<'_>,
@@ -1674,6 +1676,7 @@ fn emit_js_cached_field_slot(
     binding: Option<FieldSlotBinding>,
     header: Option<object_slots::ObjectHeader>,
     packed_slot: Option<ir::Block>,
+    displaced_value: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
@@ -1702,7 +1705,8 @@ fn emit_js_cached_field_slot(
     emit_js_guard(builder, same_shape, fallback);
     // A holder read uses only the receiver's shape and prototype link. Its own
     // property representation is unrelated to the holder's slot address.
-    let own_storage = |builder: &mut FunctionBuilder<'_>| {
+    let plain_storage = |builder: &mut FunctionBuilder<'_>, record: object_slots::ObjectRecord, inline: ir::Value| {
+        let object = record.address(builder);
         if let Some(packed_slot) = packed_slot {
             let packed = builder.create_block();
             let arena = builder.create_block();
@@ -1748,7 +1752,7 @@ fn emit_js_cached_field_slot(
         builder.append_block_param(join, types::I64);
         builder.ins().brif(own, own_block, &[], holder_block, &[]);
         builder.switch_to_block(own_block);
-        let storage = own_storage(builder);
+        let storage = plain_storage(builder, record, inline);
         builder.ins().jump(join, &[ir::BlockArg::Value(storage)]);
 
         builder.switch_to_block(holder_block);
@@ -1780,18 +1784,42 @@ fn emit_js_cached_field_slot(
             i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
         );
         let inline = builder.ins().band_imm_u(proto_meta, i64::from(OBJECT.inline_storage_mask));
-        let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(builder, arena, fallback);
         let proto_storage = builder.ins().load(
             types::I64, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
         );
         let tag = builder.ins().band_imm_u(proto_storage, OBJECT.extras_tag_mask as i64);
         let extras = builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
-        emit_js_guard(builder, extras, fallback);
+        let extras_block = builder.create_block();
+        let plain_block = builder.create_block();
+        builder.ins().brif(extras, extras_block, &[], plain_block, &[]);
+        builder.switch_to_block(plain_block);
+        let storage = plain_storage(builder,
+            object_slots::ObjectRecord::Indexed { base: records, offset: proto_offset }, inline);
+        builder.ins().jump(join, &[ir::BlockArg::Value(storage)]);
+        builder.switch_to_block(extras_block);
         let extras_pointer = builder.ins().band_imm_u(proto_storage, !OBJECT.extras_tag_mask as i64);
         let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
         emit_js_guard(builder, present, fallback);
+        let displaced = builder.create_block();
+        let arena_block = builder.create_block();
+        builder.ins().brif(inline, displaced, &[], arena_block, &[]);
+        builder.switch_to_block(displaced);
+        if let Some(done) = displaced_value {
+            let slot = slot.read(builder);
+            let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot, OBJECT.inline_property_count as i64);
+            emit_js_guard(builder, fits, fallback);
+            let offset = builder.ins().imul_imm_u(slot, OBJECT.property_value_size as i64);
+            let address = builder.ins().iadd(extras_pointer, offset);
+            let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address,
+                i32::try_from(OBJECT.extras_inline_offset).expect("displaced inline offset fits i32"));
+            builder.ins().jump(done, &[ir::BlockArg::Value(value)]);
+        } else {
+            builder.ins().jump(fallback, &[]);
+        }
+        builder.seal_block(displaced);
+        builder.seal_block(arena_block);
+        builder.switch_to_block(arena_block);
         let start = builder.ins().load(
             types::I32, MemFlagsData::trusted(), extras_pointer,
             i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
@@ -1800,13 +1828,16 @@ fn emit_js_cached_field_slot(
         builder.ins().jump(join, &[ir::BlockArg::Value(start)]);
         builder.seal_block(own_block);
         builder.seal_block(holder_block);
+        builder.seal_block(plain_block);
+        builder.seal_block(extras_block);
         builder.seal_block(join);
         builder.switch_to_block(join);
         builder.block_params(join)[0]
     } else {
-        own_storage(builder)
+        plain_storage(builder, record, inline)
     };
-    (arena.address(builder, storage, slot, fallback), record_id)
+    let address = arena.address(builder, storage, slot, fallback);
+    (address, record_id)
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -1866,7 +1897,7 @@ fn emit_js_own_field_get(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None, None);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
@@ -1886,7 +1917,7 @@ fn emit_js_own_field_return(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None, None);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     emit_js_guarded_return(builder, value, result_pointer, exact.pc, fallback);
     exact.emit(builder, fallback);
@@ -2862,12 +2893,12 @@ pub(super) fn lower_js_general_dispatch(
         {
             let fallback = builder.create_block();
             let (address, _) = emit_js_cached_field_slot(
-                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None, None, None,
+                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None, None, None, None,
             );
             let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             if let Some((_, cache)) = site.second {
                 let (address, _) = emit_js_cached_field_slot(
-                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None, None, None,
+                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None, None, None, None,
                 );
                 value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             }
@@ -19290,6 +19321,49 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn bound_packed_prototype_methods_avoid_per_iteration_helpers() {
+        for (count, typescript) in [100, 1000].into_iter()
+            .flat_map(|count| [false, true].map(move |typescript| (count, typescript))) {
+            let source = format!(r#"
+                function Link(next) {{ this.next = next; this.a = 0; this.b = 0; }}
+                Link.prototype.append = function(head) {{
+                    this.next = null;
+                    if (head == null) return this;
+                    let tail = head;
+                    while (tail.next != null) tail = tail.next;
+                    tail.next = this;
+                    return head;
+                }};
+                function run(count) {{
+                    let head = new Link(new Link(null));
+                    let spare = new Link(null);
+                    for (let i = 0; i < count; i = (i + 1) | 0) {{
+                        let result = spare.append(head);
+                        head = result.next;
+                        spare = result;
+                        spare.next = null;
+                    }}
+                    if (head === spare || head.next === spare || head.next.next !== null)
+                        throw 'broken links';
+                }}
+                run({count});
+                throw 42;
+            "#);
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "bound-method.cts") }
+                else { crate::Engine::specialize(&source, "bound-method.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+            let [reads, _] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
+            assert_eq!(reads, 0, "packed prototype reads must remain native, count={count}, TS={typescript}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn packed_field_ranges_preserve_boundaries_aliases_and_reentry() {
         let source = concat!(include_str!("../../tests/fixtures/packed-field-ranges.js"), "\nthrow 42;");
         for typescript in [false, true] {
@@ -20045,70 +20119,81 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn native_holder_read_does_not_require_receiver_arena_storage() {
-        let source = "function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);";
-        let program = crate::Engine::specialize(source, "packed-holder.js").unwrap();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.execute(&program).unwrap();
-        let atom = vm.lookup_atom("box").unwrap();
-        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap.object(receiver).unwrap().inline_properties().is_some());
-        let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let function = program.functions.iter().position(|function|
-            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
-        let site = program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
-            Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site), _ => None,
-        }).unwrap();
-        let cache = vm.field_cache_entry(site);
-        assert_ne!(cache.holder, super::super::NO_FIELD_HOLDER);
-        assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap.object(receiver).unwrap().proto();
-        let holder = vm.heap.object(prototype).unwrap();
-        assert_eq!(holder.exact_shape(), cache.holder);
-        assert!(holder.extras_storage_start().is_some(), "fixture must exercise an arena-backed prototype");
+        for padding in ["", "Box.prototype.pad=0;"] {
+            let source = format!("function read(o){{return o.method;}} function Box(){{}} Box.prototype.method=42; {padding} globalThis.box=new Box(); box.own=1; read(box);");
+            let program = crate::Engine::specialize(&source, "packed-holder.js").unwrap();
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.execute(&program).unwrap();
+            let atom = vm.lookup_atom("box").unwrap();
+            let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+            assert!(vm.heap.object(receiver).unwrap().inline_properties().is_some());
+            let program = vm.programs.get(ProgramId::MAIN).unwrap();
+            let function = program.functions.iter().position(|function|
+                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
+            let site = program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
+                Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site), _ => None,
+            }).unwrap();
+            let cache = vm.field_cache_entry(site);
+            assert_ne!(cache.holder, super::super::NO_FIELD_HOLDER);
+            assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
+            let prototype = vm.heap.object(receiver).unwrap().proto();
+            let holder = vm.heap.object(prototype).unwrap();
+            assert_eq!(holder.exact_shape(), cache.holder);
+            assert_eq!(holder.inline_properties().is_some(), padding.is_empty());
 
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
-        let mut signature = Signature::new(isa.default_call_conv());
-        signature.params.extend([AbiParam::new(types::I64); 4]);
-        signature.returns.push(AbiParam::new(types::I64));
-        let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut native, &mut context);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        let parameters = builder.block_params(entry).to_vec();
-        let mut binding = FieldSlotBinding {
-            receiver: builder.ins().iconst(types::I32, i64::from(cache.receiver)),
-            holder: builder.ins().iconst(types::I32, i64::from(cache.holder)),
-            slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
-            records: parameters[0],
-            arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
-            writes: None,
-        };
-        let slot = binding.slot.read(&mut builder);
-        binding.arena = binding.arena.bind(&mut builder, slot);
-        let miss = builder.create_block();
-        let unused = builder.ins().iconst(types::I64, 0);
-        let (address, _) = emit_js_cached_field_slot(&mut builder, unused, unused,
-            JsFieldReceiver::Value(parameters[3]), site, true, miss, Some(binding), None, None);
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-        builder.ins().return_(&[value]);
-        builder.switch_to_block(miss);
-        let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-        builder.ins().return_(&[deleted]);
-        builder.seal_all_blocks();
-        builder.finalize(isa.frontend_config());
-        let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the four inputs name this VM's live reservation, arena and
-        // receiver. No guest call or collection occurs while the code runs.
-        let run = unsafe { std::mem::transmute::<*mut u8,
-            unsafe extern "C" fn(usize, *const Value, usize, u64) -> u64>(memory.pointer()) };
-        let (values, length) = vm.heap.native_property_values();
-        let records = vm.heap.object_record_base().unwrap() as usize;
-        assert_eq!(Value::from_bits(unsafe { run(records, values, length, receiver.to_bits()) }), Value::number(42.0));
-        // A receiver that has not proved the cached shape cannot read this slot.
-        assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
-        assert_eq!(unsafe { run(records, values, length, vm.realm.globals.to_bits()) }, Value::DELETED.to_bits());
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 4]);
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut native, &mut context);
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            let parameters = builder.block_params(entry).to_vec();
+            let mut binding = FieldSlotBinding {
+                receiver: builder.ins().iconst(types::I32, i64::from(cache.receiver)),
+                holder: builder.ins().iconst(types::I32, i64::from(cache.holder)),
+                slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
+                records: parameters[0],
+                arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
+                writes: None,
+            };
+            let slot = binding.slot.read(&mut builder);
+            binding.arena = binding.arena.bind(&mut builder, slot);
+            let miss = builder.create_block();
+            let packed = builder.create_block();
+            let packed_address = builder.append_block_param(packed, types::I64);
+            let done = builder.create_block();
+            let result = builder.append_block_param(done, types::I64);
+            let unused = builder.ins().iconst(types::I64, 0);
+            let (address, _) = emit_js_cached_field_slot(&mut builder, unused, unused,
+                JsFieldReceiver::Value(parameters[3]), site, true, miss, Some(binding), None, Some(packed), Some(done));
+            let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            builder.ins().jump(done, &[ir::BlockArg::Value(value)]);
+            builder.switch_to_block(packed);
+            let narrow = builder.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
+            emit_narrow_read(&mut builder, narrow, NarrowTable::Process, done);
+            builder.switch_to_block(done);
+            builder.ins().return_(&[result]);
+            builder.switch_to_block(miss);
+            let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+            builder.ins().return_(&[deleted]);
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: the four inputs name this VM's live reservation, arena and
+            // receiver. No guest call or collection occurs while the code runs.
+            let run = unsafe { std::mem::transmute::<*mut u8,
+                unsafe extern "C" fn(usize, *const Value, usize, u64) -> u64>(memory.pointer()) };
+            let (values, length) = vm.heap.native_property_values();
+            let records = vm.heap.object_record_base().unwrap() as usize;
+            assert_eq!(Value::from_bits(unsafe { run(records, values, length, receiver.to_bits()) }), Value::number(42.0));
+            // A receiver that has not proved the cached shape cannot read this slot.
+            assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
+            assert_eq!(unsafe { run(records, values, length, vm.realm.globals.to_bits()) }, Value::DELETED.to_bits());
+        }
     }
 
     #[cfg(feature = "aot")]

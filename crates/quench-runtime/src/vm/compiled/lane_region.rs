@@ -3299,7 +3299,7 @@ impl Lowering<'_, '_> {
                     let address = self.builder.append_block_param(done, types::I64);
                     let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder,
                         self.registers_base, self.payload, JsFieldReceiver::Value(object), site,
-                        false, exit, Some(binding), Some(object_header), Some(packed));
+                        false, exit, Some(binding), Some(object_header), Some(packed), None);
                     self.ins().jump(done, &[ir::BlockArg::Value(arena_address)]);
                     self.builder.switch_to_block(packed);
                     self.ins().jump(done, &[ir::BlockArg::Value(packed_address)]);
@@ -3688,7 +3688,7 @@ impl Lowering<'_, '_> {
             let packed_address = self.builder.append_block_param(packed, types::I64);
             let result = self.builder.append_block_param(done, types::I64);
             let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header, Some(packed));
+                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header, Some(packed), Some(done));
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(packed);
@@ -3923,7 +3923,7 @@ impl Lowering<'_, '_> {
             let allowed = self.store_atom_admitted(atom);
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed), None);
             emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
