@@ -72,7 +72,8 @@ fusion_recipes! {
                 return None;
             }
             let local = u16::try_from(first.local_slot()).ok()?;
-            second.set_b(crate::bytecode::FieldBase::local(local)?.0);
+            // A local past the packed field domain keeps the pair.
+            second.try_set_b(crate::bytecode::FieldBase::local(local)?.0)?;
             Some(second)
         };
     ProducerMove: [
@@ -1251,6 +1252,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn local_field_keeps_the_pair_for_a_local_past_the_packed_field() {
+        // Each captured binding and its function take a local, so the bindings declared after
+        // them lie past what a packed field base holds; a field read of one (`hasOwn.call`)
+        // must keep its load (Node oracle: no error).
+        let bindings = (0..3000)
+            .map(|index| format!("var c{index} = {index}; function f{index}() {{ return c{index}; }}\n"))
+            .collect::<String>();
+        let source = format!(
+            r#"(function () {{ 'use strict';
+{bindings}var hasOwn = Object.prototype.hasOwnProperty;
+var side = {{ A: true }}, leap = {{ B: true }};
+for (var type in leap) {{ if (hasOwn.call(leap, type)) side[type] = leap[type]; }}
+if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
+}})();"#
+        );
+        let program = crate::Engine::specialize(&source, "local-field-wide.js").unwrap();
+        crate::Runtime::new(crate::SystemHost).execute(&program).unwrap();
     }
 
     #[test]
