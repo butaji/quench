@@ -279,7 +279,6 @@ pub(super) fn emit_entry(
             None,
             None,
             None,
-            None,
         );
         let bits = builder
             .ins()
