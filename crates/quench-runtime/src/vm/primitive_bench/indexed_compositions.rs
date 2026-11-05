@@ -100,18 +100,48 @@ const STENCIL_INVERSE_DIVISOR: f64 = 0.5;
 const STENCIL_X_SCALE: f64 = 0.0625;
 const STENCIL_Y_SCALE: f64 = -0.03125;
 const STENCIL_PROBE_DELTA: f64 = 0.25;
+const SCHEDULE_BLOCK_STEPS: usize = 2;
+const STENCIL_STREAMS: usize = 2;
+const STENCIL_LOADED_NEIGHBORS: usize = 3;
 
-fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usize>(b: &mut Bencher) {
-    let first = if PAIRED {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StencilPattern {
+    Single,
+    SuitePair,
+    Blocked,
+    Interleaved,
+}
+
+fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, steps: usize) {
+    let paired = pattern != StencilPattern::Single;
+    let offset = usize::from(pattern == StencilPattern::SuitePair);
+    let scheduled = matches!(pattern, StencilPattern::Blocked | StencilPattern::Interleaved);
+    let block_steps = if scheduled { SCHEDULE_BLOCK_STEPS } else { 1 };
+    assert!(steps.is_multiple_of(block_steps));
+    let first = if pattern == StencilPattern::SuitePair {
         // The first component precedes the second component's index increments.
         "lastX = outX[current] = (x0[current] + a * (lastX + x[current] + x[above] + x[below])) * inverse;"
     } else {
         "lastX = outX[current] = (x0[current] + a * (lastX + x[++current] + x[++above] + x[++below])) * inverse;"
     };
-    let second = if PAIRED {
+    let second = if paired {
         "lastY = outY[current] = (y0[current] + a * (lastY + y[++current] + y[++above] + y[++below])) * inverse;"
     } else { "" };
-    let output = if ALIASED { "var outX = x, outY = y;" } else { "var outX = x.slice(), outY = y.slice();" };
+    let body = if scheduled {
+        // Both schedules contain the same statements and one loop branch per block.
+        // Only their order changes; each stream owns independent cursors and carry.
+        let x_step = "lastX = outX[currentX] = (x0[currentX] + a * (lastX + x[++currentX] + x[++aboveX] + x[++belowX])) * inverse;";
+        let y_step = "lastY = outY[currentY] = (y0[currentY] + a * (lastY + y[++currentY] + y[++aboveY] + y[++belowY])) * inverse;";
+        match pattern {
+            StencilPattern::Blocked => format!("{}{}", x_step.repeat(block_steps), y_step.repeat(block_steps)),
+            StencilPattern::Interleaved => format!("{x_step}{y_step}").repeat(block_steps),
+            _ => unreachable!(),
+        }
+    } else { format!("{first}{second}") };
+    let cursors = if scheduled {
+        "var currentX = current, currentY = current, aboveX = above, aboveY = above, belowX = below, belowY = below;"
+    } else { "" };
+    let output = if aliased { "var outX = x, outY = y;" } else { "var outX = x.slice(), outY = y.slice();" };
     let source = format!(r#"
         var x = [], y = [], x0 = [], y0 = [];
         for (var i = 0; i < {length}; i++) {{
@@ -128,7 +158,8 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
             var current = {stride}, above = 0, below = {below};
             var lastX = x[current], lastY = y[current];
             ++current;
-            for (var i = 0; i < steps; i++) {{ {first} {second} }}
+            {cursors}
+            for (var i = 0; i < steps; i += {block_steps}) {{ {body} }}
             return lastX + lastY;
         }}
     "#, length = STENCIL_ROWS * STENCIL_STRIDE,
@@ -136,7 +167,7 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
         start = STENCIL_STRIDE + 1, end = STENCIL_STRIDE + 1 + ELEMENTS,
         x_scale = STENCIL_X_SCALE, y_scale = STENCIL_Y_SCALE,
         inverse = STENCIL_INVERSE_DIVISOR, a = STENCIL_COEFFICIENT,
-        right = usize::from(!PAIRED), offset = usize::from(PAIRED));
+        right = 1 - offset);
     let program = crate::Engine::specialize(&source, "fractional-stencil.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.set_execution_mode(crate::ExecutionMode::Interpreted);
@@ -148,7 +179,7 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
     let callee = global(&mut vm, "stencil");
     let arrays = ["x", "x0", "y", "y0", "outX", "outY"].map(|name| global(&mut vm, name));
     let args = [arrays[0], arrays[1], arrays[2], arrays[3], arrays[4], arrays[5],
-        Value::integer(STEPS as i32), Value::number(STENCIL_COEFFICIENT), Value::number(STENCIL_INVERSE_DIVISOR)];
+        Value::integer(steps as i32), Value::number(STENCIL_COEFFICIENT), Value::number(STENCIL_INVERSE_DIVISOR)];
     // Stationary timing inputs alone could hide a missing store. Perturb one RHS,
     // require a changed destination at the pre-increment index, then restore it.
     let destination = STENCIL_STRIDE + 1;
@@ -157,14 +188,24 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
     let original = vm.get_index(&program, arrays[4], key).unwrap();
     vm.set_index(&program, arrays[1], key, Value::number(rhs.as_number().unwrap() + STENCIL_PROBE_DELTA)).unwrap();
     let mut probe_args = args;
-    probe_args[6] = Value::integer(1);
+    probe_args[6] = Value::integer(block_steps as i32);
     vm.call_value(&program, callee, Value::UNDEFINED, &probe_args).unwrap();
-    assert_eq!(vm.get_index(&program, arrays[4], key).unwrap(), Value::number(original.as_number().unwrap() + STENCIL_PROBE_DELTA * STENCIL_INVERSE_DIVISOR));
-    let next_key = Value::integer((destination + 1) as i32);
-    assert_eq!(vm.get_index(&program, arrays[4], next_key).unwrap(), Value::number((destination + 2) as f64 * STENCIL_X_SCALE));
+    let mut delta = STENCIL_PROBE_DELTA * STENCIL_INVERSE_DIVISOR;
+    for step in 0..block_steps {
+        let index = destination + step;
+        let expected = (index + 1) as f64 * STENCIL_X_SCALE + delta;
+        assert_eq!(vm.get_index(&program, arrays[4], Value::integer(index as i32)).unwrap(), Value::number(expected));
+        delta *= STENCIL_COEFFICIENT * STENCIL_INVERSE_DIVISOR;
+    }
+    let untouched = destination + block_steps;
+    assert_eq!(vm.get_index(&program, arrays[4], Value::integer(untouched as i32)).unwrap(), Value::number((untouched + 1) as f64 * STENCIL_X_SCALE));
     vm.set_index(&program, arrays[1], key, rhs).unwrap();
     vm.set_index(&program, arrays[4], key, original).unwrap();
-    assert!(STEPS <= ELEMENTS);
+    for step in 1..block_steps {
+        let index = destination + step;
+        vm.set_index(&program, arrays[4], Value::integer(index as i32), Value::number((index + 1) as f64 * STENCIL_X_SCALE)).unwrap();
+    }
+    assert!(steps <= ELEMENTS);
     let initial = |scale| (0..STENCIL_ROWS * STENCIL_STRIDE).map(|i| (i + 1) as f64 * scale).collect::<Vec<_>>();
     let x = initial(STENCIL_X_SCALE);
     let y = initial(STENCIL_Y_SCALE);
@@ -172,15 +213,14 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
     let mut expected_y = y.clone();
     let mut last_x = x[STENCIL_STRIDE];
     let mut last_y = y[STENCIL_STRIDE];
-    for step in 0..STEPS {
+    for step in 0..steps {
         let store = STENCIL_STRIDE + 1 + step;
-        let offset = usize::from(PAIRED);
         // Preserve guest left-associative addition, including its carried operand.
         let rhs_x = x[store] / STENCIL_INVERSE_DIVISOR
-            - STENCIL_COEFFICIENT * (((x[store - 1] + x[store + usize::from(!PAIRED)]) + x[store - STENCIL_STRIDE - offset]) + x[store + STENCIL_STRIDE - offset]);
-        last_x = (rhs_x + STENCIL_COEFFICIENT * (((last_x + x[store + usize::from(!PAIRED)]) + x[store - STENCIL_STRIDE - offset]) + x[store + STENCIL_STRIDE - offset])) * STENCIL_INVERSE_DIVISOR;
+            - STENCIL_COEFFICIENT * (((x[store - 1] + x[store + 1 - offset]) + x[store - STENCIL_STRIDE - offset]) + x[store + STENCIL_STRIDE - offset]);
+        last_x = (rhs_x + STENCIL_COEFFICIENT * (((last_x + x[store + 1 - offset]) + x[store - STENCIL_STRIDE - offset]) + x[store + STENCIL_STRIDE - offset])) * STENCIL_INVERSE_DIVISOR;
         expected_x[store] = last_x;
-        if PAIRED {
+        if paired {
             let rhs_y = y[store] / STENCIL_INVERSE_DIVISOR
                 - STENCIL_COEFFICIENT * (((y[store - 1] + y[store + 1]) + y[store - STENCIL_STRIDE]) + y[store + STENCIL_STRIDE]);
             last_y = (rhs_y + STENCIL_COEFFICIENT * (((last_y + y[store + 1]) + y[store - STENCIL_STRIDE]) + y[store + STENCIL_STRIDE])) * STENCIL_INVERSE_DIVISOR;
@@ -202,20 +242,21 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
         assert!(vm.active_call_roots.is_empty());
     };
     validate(&mut vm);
-    if STEPS != 0 {
+    if steps != 0 {
         let function = (0..program.function_count()).find(|&index| {
             program.function_get(index).unwrap().name.is_some_and(|name| &program.atoms[name as usize] == "stencil")
         }).unwrap();
         let views = vm.programs.lane_views(ProgramId::MAIN).unwrap();
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
+        let fused_read = lane_update_get_index_operator_proved::<TestHost, false, ADDITION> as Handler as *const ();
         let kinds = [
-            ("read", lane_get_index_proved::<TestHost> as Handler as *const ()),
-            ("update_read", lane_update_get_index_proved::<TestHost, false> as Handler as *const ()),
-            ("update_read_add", lane_update_get_index_operator_proved::<TestHost, false, ADDITION> as Handler as *const ()),
-            ("store", lane_set_index_proved::<TestHost> as Handler as *const ()),
-            ("store_move", lane_set_index_move_proved::<TestHost> as Handler as *const ()),
+            ("read", lane_get_index_proved::<TestHost> as Handler as *const (), false),
+            ("update_read", lane_update_get_index_proved::<TestHost, false> as Handler as *const (), false),
+            ("update_read_add", fused_read, false),
+            ("store", lane_set_index_proved::<TestHost> as Handler as *const (), true),
+            ("store_move", lane_set_index_move_proved::<TestHost> as Handler as *const (), true),
         ];
-        let mut counts = [0; 5];
+        let mut counts = vec![0; kinds.len()];
         for record in &view.records {
             let ip = record.get();
             // SAFETY: validation has returned; the view owns these live records and
@@ -225,13 +266,19 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
                     (*lane_header_site(ip)).header_handler.get()
                 } else { (*ip).handler }
             };
-            for (index, (_, candidate)) in kinds.iter().enumerate() {
+            for (index, (_, candidate, _)) in kinds.iter().enumerate() {
                 counts[index] += usize::from(handler == *candidate);
             }
         }
-        assert!(counts[..3].iter().sum::<usize>() > 0, "expected proved indexed reads");
-        assert!(counts[3..].iter().sum::<usize>() > 0, "expected proved indexed stores");
-        println!("stencil paired={PAIRED} aliased={ALIASED} steps={STEPS} records={} indexed={:?}", view.records.len(), kinds.iter().zip(counts).map(|((name, _), count)| (*name, count)).collect::<Vec<_>>());
+        let stores: usize = kinds.iter().zip(&counts).filter(|((_, _, store), _)| *store).map(|(_, count)| count).sum();
+        assert!(counts.iter().sum::<usize>() > stores, "expected proved indexed reads");
+        assert!(stores > 0, "expected proved indexed stores");
+        if scheduled {
+            let fused = kinds.iter().position(|(_, handler, _)| *handler == fused_read).unwrap();
+            assert_eq!(counts[fused], STENCIL_LOADED_NEIGHBORS * block_steps * STENCIL_STREAMS, "three fused reads per stream update");
+            assert_eq!(stores, block_steps * STENCIL_STREAMS, "one store per stream update");
+        }
+        println!("stencil pattern={pattern:?} aliased={aliased} steps={steps} registers={} records={} indexed={:?}", program.function_get(function).unwrap().registers, view.records.len(), kinds.iter().zip(counts).map(|((name, _, _), count)| (*name, count)).collect::<Vec<_>>());
     }
     b.iter(|| { black_box(call(black_box(&mut vm))); });
     validate(&mut vm);
@@ -240,8 +287,30 @@ fn fractional_stencil<const PAIRED: bool, const ALIASED: bool, const STEPS: usiz
 macro_rules! stencil_compositions {
     ($($name:ident: $paired:literal, $aliased:literal, $steps:expr;)*) => {$(
         #[bench]
-        fn $name(b: &mut Bencher) { fractional_stencil::<$paired, $aliased, $steps>(b); }
+        fn $name(b: &mut Bencher) { fractional_stencil(b, if $paired { StencilPattern::SuitePair } else { StencilPattern::Single }, $aliased, $steps); }
     )*};
+}
+
+macro_rules! schedule_compositions {
+    ($($name:ident: $pattern:ident, $aliased:literal, $steps:expr;)*) => {$(
+        #[bench]
+        fn $name(b: &mut Bencher) { fractional_stencil(b, StencilPattern::$pattern, $aliased, $steps); }
+    )*};
+}
+
+schedule_compositions! {
+    primitive_schedule_blocked_alias_entry: Blocked, true, 0;
+    primitive_schedule_blocked_alias_short: Blocked, true, SHORT_STEPS;
+    primitive_schedule_blocked_alias_long: Blocked, true, ELEMENTS;
+    primitive_schedule_blocked_separate_entry: Blocked, false, 0;
+    primitive_schedule_blocked_separate_short: Blocked, false, SHORT_STEPS;
+    primitive_schedule_blocked_separate_long: Blocked, false, ELEMENTS;
+    primitive_schedule_interleaved_alias_entry: Interleaved, true, 0;
+    primitive_schedule_interleaved_alias_short: Interleaved, true, SHORT_STEPS;
+    primitive_schedule_interleaved_alias_long: Interleaved, true, ELEMENTS;
+    primitive_schedule_interleaved_separate_entry: Interleaved, false, 0;
+    primitive_schedule_interleaved_separate_short: Interleaved, false, SHORT_STEPS;
+    primitive_schedule_interleaved_separate_long: Interleaved, false, ELEMENTS;
 }
 
 stencil_compositions! {
