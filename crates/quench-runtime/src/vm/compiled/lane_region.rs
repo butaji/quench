@@ -2610,7 +2610,6 @@ impl Lowering<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value,
         properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block, general: ir::Block) {
-        use crate::heap::PlainPropertyStorage;
         self.represented(field.representation, ty, value, general);
         if !ty.is_subtype(Type::NUMBER) {
             let record_id = self.ins().ireduce(types::I32, object_bits);
@@ -2618,41 +2617,14 @@ impl Lowering<'_, '_> {
             let payload = self.payload;
             emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
         }
-        match field.storage() {
-            Some(PlainPropertyStorage::Arena) => {
-                let projection = projection.or_else(|| CheckedObject::prove(&mut self.builder, object, properties, field, PackedAccess::Reload));
-                match projection.and_then(|projection| projection.arena_address(&mut self.builder, field.slot)) {
-                    Some(address) => {
-                        self.ins().store(MemFlagsData::trusted(), value, address, 0);
-                        self.ins().jump(done, &[]);
-                    }
-                    None => { self.ins().jump(general, &[]); }
-                }
-            }
-            // An int32 into a packed object's inline slot is its narrow word where it fits
-            // (`Object::store_inline_narrow`); it needs no barrier.
-            Some(PlainPropertyStorage::PackedInline) if ty.is_subtype(Type::INT32)
-                && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count =>
-                self.store_narrow_int(object, field.slot, value, done, general),
-            _ => { self.ins().jump(general, &[]); }
-        }
-    }
-
-    /// Store the int32 `value` (tagged) into inline `slot` of the packed object `record`, which
-    /// has no extras, and continue at `done`; a value past the narrow range takes `general`.
-    fn store_narrow_int(&mut self, record: ir::Value, slot: u16, value: ir::Value, done: ir::Block, general: ir::Block) {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-        use crate::value::NarrowLayout as NARROW;
-        let int = self.ins().ireduce(types::I32, value);
-        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
-        let biased = self.ins().iadd_imm_s(int, half_range);
-        let fits = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
-        emit_js_guard(&mut self.builder, fits, general);
-        let shifted = self.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
-        let narrow = self.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG));
-        let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
-        self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
-        self.ins().jump(done, &[]);
+        // The store every tier makes of a proved own field (`staged::store_slot`); a value the
+        // shared store does not take continues at `general`.
+        let layout = projection.or_else(|| CheckedObject::prove(&mut self.builder, object, properties, field, PackedAccess::Reload));
+        let int = ty.is_subtype(Type::INT32);
+        let stored = layout.and_then(|layout| crate::vm::staged::store_slot(
+            &mut super::object_slots::Emit { builder: &mut self.builder, property_base: None }, layout, field.slot, value, int, general));
+        let next = if stored.is_some() { done } else { general };
+        self.ins().jump(next, &[]);
     }
 
     /// Continue where the slot representation `representation` holds `value`, of type `ty`,

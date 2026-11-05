@@ -23,6 +23,8 @@ pub(crate) trait Stage {
     fn constant(&mut self, bits: u64) -> Self::Word;
     fn load_u32(&mut self, base: Self::Word, offset: i32) -> Self::Word;
     fn load_u64(&mut self, base: Self::Word, offset: i32) -> Self::Word;
+    fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     /// A load from a table that never changes while the process runs.
     fn load_table(&mut self, address: Self::Word) -> Self::Word;
     fn add(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
@@ -35,6 +37,8 @@ pub(crate) trait Stage {
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    /// Whether `a` is below `imm`, both unsigned.
+    fn below_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s: only the arm taken runs.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word, otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
     /// Continues where `cond` holds; `None` where it never can, so nothing runs past it.
@@ -104,13 +108,42 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word>, slot: 
     decode_narrow(stage, narrow)
 }
 
-/// The address of value `slot` of an object of `layout` in the arena, where a flat store
-/// writes it; `None` for packed values, which a store narrows itself.
+/// Stores `value` at `slot` of an object of `layout`, as every tier stores an own field of a
+/// proved exact shape: an arena slot takes the word itself; a packed slot takes an integer's
+/// narrow word (`Value::to_narrow`) where it fits the narrow range, and an integer needs no
+/// write barrier. `int` says the value is known an integer, so its tag is not tested. `None`
+/// for any other packed value (a reference's narrow form, or a wide value), which the caller's
+/// general store takes, the object unchanged; `miss` where a test of the value fails.
 #[inline(always)]
-pub(crate) fn arena_slot_address<S: Stage>(stage: &mut S, layout: Layout<S::Word>, slot: u16) -> Option<S::Word> {
+pub(crate) fn store_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word>, slot: u16, value: S::Word, int: bool, miss: S::Miss) -> Option<()> {
     debug_assert!(usize::from(slot) < layout.storage_len);
-    let Slots::Arena(base) = layout.slots else { return None };
-    Some(stage.add_imm(base, u64::from(slot) * OBJECT.property_value_size as u64))
+    let record = match layout.slots {
+        Slots::Arena(base) => {
+            stage.store_u64(base, i32::from(slot) * OBJECT.property_value_size as i32, value);
+            return Some(());
+        }
+        // A snapshot of packed values serves only a caller no store reaches.
+        Slots::Packed(_) => return None,
+        Slots::PackedRecord(record) => record,
+    };
+    if !int {
+        let upper = stage.and_imm(value, !u64::from(u32::MAX));
+        let integer = stage.eq_imm(upper, ValueLayout::INT_TAG);
+        stage.guard(integer, miss)?;
+    }
+    // The int's low word, biased by half the narrow range, lies below the whole range.
+    let half = 1_u64 << (NarrowLayout::INTEGER_BITS - 1);
+    let low = stage.and_imm(value, u64::from(u32::MAX));
+    let biased = stage.add_imm(low, half);
+    let biased = stage.and_imm(biased, u64::from(u32::MAX));
+    let fits = stage.below_imm(biased, half << 1);
+    stage.guard(fits, miss)?;
+    let shifted = stage.mul_imm(low, 1 << NarrowLayout::CODE_SHIFT);
+    let narrow = stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG));
+    let narrow = stage.and_imm(narrow, u64::from(u32::MAX));
+    let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
+    stage.store_u32(record, offset as i32, narrow);
+    Some(())
 }
 
 /// The value a narrow word (`Value::to_narrow`), zero-extended, encodes (`Value::from_narrow`):
@@ -136,12 +169,12 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
 }
 
 /// The interpreter's stage: words are the machine's own, and a failed guard returns to the
-/// caller's slow path. The heap gives the arena base where an operation addresses the arena.
-pub(crate) struct Concrete<'h> {
-    pub(crate) heap: &'h crate::heap::Heap,
+/// caller's slow path. The property arena gives its base where an operation addresses it.
+pub(crate) struct Concrete {
+    pub(crate) arena: *const crate::value_vec::ValueArena,
 }
 
-impl Stage for Concrete<'_> {
+impl Stage for Concrete {
     type Word = u64;
     type Cond = bool;
     type Miss = ();
@@ -159,6 +192,16 @@ impl Stage for Concrete<'_> {
     }
     #[inline(always)]
     fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
+    #[inline(always)]
+    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
+        // SAFETY: as `load_u32`, into a record or value the caller owns exclusively.
+        unsafe { ((base as usize).wrapping_add_signed(offset as isize) as *mut u32).write(value as u32) }
+    }
+    #[inline(always)]
+    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
+        // SAFETY: as `store_u32`.
+        unsafe { ((base as usize).wrapping_add_signed(offset as isize) as *mut u64).write(value) }
+    }
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
     #[inline(always)]
@@ -178,13 +221,16 @@ impl Stage for Concrete<'_> {
     #[inline(always)]
     fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
     #[inline(always)]
+    fn below_imm(&mut self, a: u64, imm: u64) -> bool { a < imm }
+    #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }
     }
     #[inline(always)]
     fn guard(&mut self, cond: bool, _: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
-    fn property_base(&mut self) -> u64 { self.heap.native_property_values().0 as u64 }
+    // SAFETY: the stage lives within the operation, while the arena lives with its heap.
+    fn property_base(&mut self) -> u64 { unsafe { (*self.arena).native_values().0 as u64 } }
 }
 
 /// The own data value `slot` of the object `object` where its exact shape is `exact`, as every
@@ -192,10 +238,22 @@ impl Stage for Concrete<'_> {
 /// its values sit behind extras, which the caller's general read takes.
 #[inline(always)]
 pub(crate) fn own_field(heap: &crate::heap::Heap, object: &crate::heap::Object, exact: u32, slot: u16, storage_len: usize) -> Option<crate::Value> {
-    let mut stage = Concrete { heap };
+    let mut stage = Concrete { arena: heap.property_arena() };
     let record = object as *const crate::heap::Object as u64;
     let matched = exact_shape_is(&mut stage, record, exact);
     stage.guard(matched, ())?;
     let layout = layout(&mut stage, record, exact, storage_len, false)?;
     Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
+}
+
+/// `store_slot` of `value` at `slot` of `object`, of the exact shape `exact`, into the property
+/// arena `arena`, as the interpreter stores a proved own field; `false` where the shared store
+/// does not take it (`store_slot`), the object unchanged.
+#[inline(always)]
+pub(crate) fn store_own_field(arena: &mut crate::value_vec::ValueArena, object: &mut crate::heap::Object, exact: u32, slot: u16, value: crate::Value) -> bool {
+    let mut stage = Concrete { arena };
+    let record = object as *mut crate::heap::Object as u64;
+    layout(&mut stage, record, exact, usize::from(slot) + 1, false)
+        .and_then(|layout| store_slot(&mut stage, layout, slot, value.to_bits(), false, ()))
+        .is_some()
 }

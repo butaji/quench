@@ -188,6 +188,13 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
     fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
         self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
     }
+    fn store_u32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        let word = self.builder.ins().ireduce(types::I32, value);
+        self.builder.ins().store(MemFlagsData::trusted(), word, base, offset);
+    }
+    fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
+    }
     fn load_table(&mut self, address: ir::Value) -> ir::Value {
         self.builder.ins().load(types::I64, invariant(), address, 0)
     }
@@ -204,6 +211,7 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
         self.builder.ins().uextend(types::I64, shifted)
     }
     fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
+    fn below_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, a, imm as i64) }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value, otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         let (then_block, otherwise_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let result = self.builder.append_block_param(join, types::I64);
@@ -243,11 +251,5 @@ impl CheckedObject {
     /// Read fresh contents using only the established layout and slot bound (`staged::read_slot`).
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
         crate::vm::staged::read_slot(&mut Emit { builder, property_base: None }, self, slot)
-    }
-
-    /// The arena address a flat store of `slot` writes; packed writes use the VM's
-    /// narrow-value encoder and layout-preserving barrier helper instead.
-    pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> Option<ir::Value> {
-        crate::vm::staged::arena_slot_address(&mut Emit { builder, property_base: None }, self, slot)
     }
 }

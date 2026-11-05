@@ -4456,10 +4456,10 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     data.note_prototype_value_write();
     // The caller matched the exact shape, which holds the slot.
     properties.note_slot_value(data.shape(), slot, value);
-    if let Some(start) = data.plain_storage_start() {
-        debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { properties.set_flat_at(start, slot, value) };
+    // The store every tier makes of a proved own field (`staged::store_slot`).
+    if let Ok(narrow_slot) = u16::try_from(slot)
+        && crate::vm::staged::store_own_field(properties, data, data.exact_shape(), narrow_slot, value)
+    {
         return true;
     }
     if data.properties().has_inline_property_storage() {

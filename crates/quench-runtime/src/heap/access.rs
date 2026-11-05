@@ -680,6 +680,12 @@ impl Heap {
     /// Native readers may use these only during synchronous no-safepoint execution and must
     /// bounds-check every slot. Compaction relocates property ranges; the ordinary
     /// allocation fallback may also move the base when the arena grows.
+    /// The property arena, which a staged operation's interpreter stage addresses
+    /// (`vm::staged::Concrete`).
+    pub(crate) fn property_arena(&self) -> *const crate::value_vec::ValueArena {
+        &self.properties
+    }
+
     pub(crate) fn native_property_values(&self) -> (*const Value, usize) {
         self.properties.native_values()
     }
