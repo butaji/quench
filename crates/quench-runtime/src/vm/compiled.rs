@@ -1573,6 +1573,16 @@ pub(super) fn emit_dense_element_replace(
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
 }
 
+/// Mark a writable view's backing as holding uncounted other values (`OTHERS_UNKNOWN`), so
+/// stores through it need not keep the count (`ArrayElements::replace_through`), as
+/// `osr_loop` does for the arrays a region writes; the count stays unknown until the heap
+/// counts the values again.
+pub(super) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
+    debug_assert!(view.writable, "only a writable view's backing is this array's own");
+    let unknown = builder.ins().iconst(types::I32, i64::from(crate::heap::OTHERS_UNKNOWN));
+    builder.ins().store(MemFlagsData::trusted(), unknown, view.values, crate::heap::OTHERS_FROM_VALUES);
+}
+
 /// The present element `index` (an int32) of the dense own-array `base` (tagged): the
 /// record and its current backing reloaded per access, so receiver changes and copy-on-write
 /// writes are visible. Any other base, an index past the elements or a hole leaves through

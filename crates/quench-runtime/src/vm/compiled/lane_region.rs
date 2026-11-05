@@ -3938,6 +3938,8 @@ impl Lowering<'_, '_> {
             match self.views {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
+                    // Stores through the hoisted view then write the element alone.
+                    if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
                 }
@@ -4054,6 +4056,10 @@ impl Lowering<'_, '_> {
             let variables = self.array_variables(array.register);
             let bits = self.builder.use_var(variables.bits);
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
+            // A grown backing may count its values again; stores through the view keep none.
+            if array.writable {
+                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true });
+            }
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
         }
@@ -4148,8 +4154,9 @@ impl Lowering<'_, '_> {
             let (slow, done) = (self.builder.create_block(), self.builder.create_block());
             self.builder.set_cold_block(slow);
             let view = super::DenseArrayView { values, length, writable: true };
-            let (address, old) = super::emit_dense_element(&mut self.builder, view, index, slow);
-            super::emit_dense_element_replace(&mut self.builder, view, address, old, value);
+            // The view's backing counts no values (`hoist_arrays`): the store writes the element.
+            let (address, _) = super::emit_dense_element(&mut self.builder, view, index, slow);
+            self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
