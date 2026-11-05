@@ -1435,12 +1435,14 @@ impl<H: Host> Vm<H> {
     /// `None` where its shape differs.
     #[inline(always)]
     fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
-        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
-        if cache.receiver != receiver.exact_shape() {
-            return None;
+        // The shared read every tier makes (`staged::own_field`); values behind extras,
+        // where the exact shape still matches, take the heap's general flat read.
+        if let Some(value) = super::staged::own_field(&self.heap, receiver, cache.receiver, cache.slot, usize::from(cache.slot) + 1) {
+            return Some(value);
         }
+        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
         // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        Some(unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) })
+        (cache.receiver == receiver.exact_shape()).then(|| unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) })
     }
 
     /// The field cache entry of the active program's `site`.

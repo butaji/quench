@@ -12,6 +12,7 @@ pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
 mod compiled;
+mod staged;
 #[cfg(feature = "profile-native-ops")]
 mod native_op_profile;
 mod js_compiled;

@@ -1969,43 +1969,6 @@ struct LaneReceiver {
     properties_len: Variable,
 }
 
-/// Decode a packed property using the canonical NarrowLayout, transferring
-/// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
-fn emit_packed_object_slot_read(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    slot: u16,
-    join: ir::Block,
-) {
-    use crate::value::ValueLayout;
-    debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
-    let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
-    let narrow = builder.ins().ireduce(types::I32, half);
-    let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
-    let integer_block = builder.create_block();
-    let reference_block = builder.create_block();
-    builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
-    builder.switch_to_block(integer_block);
-    builder.seal_block(integer_block);
-    let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let value = builder.ins().uextend(types::I64, value);
-    let encoded = builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-    builder.switch_to_block(reference_block);
-    builder.seal_block(reference_block);
-    let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
-    let code = builder.ins().uextend(types::I64, code);
-    let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
-    let table = builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
-    let address = builder.ins().iadd(table, offset);
-    let upper = builder.ins().load(types::I64, invariant(), address, 0);
-    let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
-    let lower = builder.ins().uextend(types::I64, lower);
-    let encoded = builder.ins().bor(upper, lower);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-}
-
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.

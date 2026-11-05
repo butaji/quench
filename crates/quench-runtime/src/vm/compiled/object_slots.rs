@@ -162,57 +162,61 @@ impl NativeFieldLoad {
 #[derive(Clone, Copy)]
 pub(super) enum PackedAccess { Snapshot, Reload }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PackedValue { Snapshot(ir::Value), Record(ir::Value) }
+/// A projection for a guarded receiver and exact shape: the shared layout
+/// (`staged::Layout`) of its IR values. It may only be reused while no admitted effect can
+/// change its layout, arena base or object lifetime.
+pub(super) type CheckedObject = crate::vm::staged::Layout<ir::Value>;
 
-impl PackedValue {
-    fn load(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
-        match self {
-            Self::Snapshot(bits) => bits,
-            Self::Record(record) => builder.ins().load(types::I64, MemFlagsData::trusted(), record,
-                crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32),
-        }
+/// The specializer's stage (`staged::Stage`): each operation of the shared semantics emits
+/// its IR, a guard leaving through its miss block.
+pub(super) struct Emit<'a, 'b> {
+    pub(super) builder: &'a mut FunctionBuilder<'b>,
+    /// The property arena's base the residual reads (`JsStepDispatch::property_values`),
+    /// for an operation that addresses the arena.
+    pub(super) property_base: Option<ir::Value>,
+}
+
+impl crate::vm::staged::Stage for Emit<'_, '_> {
+    type Word = ir::Value;
+    type Cond = ir::Value;
+    type Miss = ir::Block;
+    fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
+    fn load_u32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        let word = self.builder.ins().load(types::I32, MemFlagsData::trusted(), base, offset);
+        self.builder.ins().uextend(types::I64, word)
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Slots {
-    Packed(PackedValue),
-    Arena(ir::Value),
-}
-
-/// The address of the first arena slot of the object whose payload word is `payload`, in the
-/// arena at `base`. An object in arena form without extras (`PlainPropertyStorage::Arena`)
-/// keeps its storage start alone in that word (`Object::plain_storage_start`). A live object of
-/// an exact shape with flat storage holds its run inside the arena: allocation places it there,
-/// compaction moves position and base together, and native code reads the base again after
-/// anything that allocates and spans no collection. So the range needs no bound.
-fn arena_range(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> ir::Value {
-    let offset = builder.ins().imul_imm_u(payload, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-    builder.ins().iadd(base, offset)
-}
-
-/// A projection for a guarded receiver and exact shape. It may only be reused
-/// while no admitted effect can change its layout, arena base or object lifetime.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct CheckedObject {
-    slots: Slots,
-    pub(super) storage_len: usize,
+    fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
+    }
+    fn load_table(&mut self, address: ir::Value) -> ir::Value {
+        self.builder.ins().load(types::I64, invariant(), address, 0)
+    }
+    fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
+    fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn add_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().iadd_imm_u(a, imm as i64) }
+    fn mul_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().imul_imm_u(a, imm as i64) }
+    fn and_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().band_imm_u(a, imm as i64) }
+    fn or_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().bor_imm_u(a, imm as i64) }
+    fn shr_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value { self.builder.ins().ushr_imm_u(a, i64::from(shift)) }
+    fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
+        let low = self.builder.ins().ireduce(types::I32, a);
+        let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
+        self.builder.ins().uextend(types::I64, shifted)
+    }
+    fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
+    fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
+        self.builder.ins().select(cond, then, otherwise)
+    }
+    fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        emit_js_guard(self.builder, cond, miss);
+        Some(())
+    }
+    fn property_base(&mut self) -> ir::Value { self.property_base.expect("an arena layout's caller passes the arena base") }
 }
 
 impl CheckedObject {
-    /// A flat store can reuse the range proof; packed writes use the VM's
-    /// narrow-value encoder and layout-preserving barrier helper instead.
-    pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> Option<ir::Value> {
-        debug_assert!(usize::from(slot) < self.storage_len);
-        let Slots::Arena(base) = self.slots else { return None };
-        Some(builder.ins().iadd_imm_u(base,
-            i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
-    }
-
     /// The projection of a receiver whose identity and exact shape, `plan.shape`, the caller
-    /// proved: that shape's storage form fixes where its values live, so the projection reads
-    /// the record's payload word once and tests nothing. `None` for values behind extras.
+    /// proved (`staged::layout`). `None` for values behind extras.
     pub(super) fn prove(
         builder: &mut FunctionBuilder<'_>,
         record: ir::Value,
@@ -221,38 +225,18 @@ impl CheckedObject {
         access: PackedAccess,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let slots = match plan.storage()? {
-            PlainPropertyStorage::PackedInline => Slots::Packed(match access {
-                PackedAccess::Snapshot => PackedValue::Snapshot(
-                    builder.ins().load(types::I64, MemFlagsData::trusted(), record, layout.payload_offset as i32)),
-                PackedAccess::Reload => PackedValue::Record(record),
-            }),
-            PlainPropertyStorage::Arena => {
-                let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), record, layout.payload_offset as i32);
-                Slots::Arena(arena_range(builder, payload, base))
-            }
-        };
-        Some(Self { slots, storage_len: plan.storage_len })
+        let mut stage = Emit { builder, property_base: Some(base) };
+        crate::vm::staged::layout(&mut stage, record, plan.shape, plan.storage_len, matches!(access, PackedAccess::Snapshot))
     }
 
-    /// Read fresh contents using only the established layout and slot bound.
+    /// Read fresh contents using only the established layout and slot bound (`staged::read_slot`).
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        debug_assert!(usize::from(slot) < self.storage_len);
-        match self.slots {
-            Slots::Arena(base) => {
-                let offset = i32::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i32;
-                builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
-            }
-            Slots::Packed(packed) => {
-                let join = builder.create_block();
-                let bits = builder.append_block_param(join, types::I64);
-                let payload = packed.load(builder);
-                emit_packed_object_slot_read(builder, payload, slot, join);
-                builder.switch_to_block(join);
-                builder.seal_block(join);
-                bits
-            }
-        }
+        crate::vm::staged::read_slot(&mut Emit { builder, property_base: None }, self, slot)
+    }
+
+    /// The arena address a flat store of `slot` writes; packed writes use the VM's
+    /// narrow-value encoder and layout-preserving barrier helper instead.
+    pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> Option<ir::Value> {
+        crate::vm::staged::arena_slot_address(&mut Emit { builder, property_base: None }, self, slot)
     }
 }
