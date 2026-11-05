@@ -654,6 +654,13 @@ pub fn release_before_entry_compile() {
 /// The main entry is compiled; its execution can refault only the code it uses.
 pub fn release_after_entry_compile() {
     release_read_only_code_and_data();
+    release_main_text_at_phase_boundary();
+}
+
+/// Retire the previous phase's resident main-image translations. Code needed by
+/// the next phase refaults at the same addresses from the same backing object.
+/// Other platforms retain their existing phase-specific release policy.
+pub fn release_main_text_at_phase_boundary() {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     darwin::release_main_text();
 }

@@ -518,6 +518,9 @@ pub(crate) fn finish_shared_execution(
     runtime: &mut Runtime<NodeHost>, program: &quench_runtime::ResidualProgram,
     execution: Result<(), quench_runtime::JsError>,
 ) -> Result<SharedCompletion, String> {
+    // Completion may run jobs and revive guest work; those paths refault as
+    // needed instead of retaining the entire initial execution working set.
+    crate::host::resident_pages::release_main_text_at_phase_boundary();
     let shared_state = runtime.host_mut().shared_state();
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(runtime, program),
