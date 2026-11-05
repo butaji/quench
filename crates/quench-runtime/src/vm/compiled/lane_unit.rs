@@ -112,6 +112,19 @@ impl Unit {
         chain
     }
 
+    /// Maximum simultaneous inlined activations, derived from the parent graph.
+    pub(crate) fn recovery_depth(&self) -> usize {
+        (0..self.frames.len()).map(|index| {
+            let mut depth = 1;
+            let mut parent = self.frames[index].parent;
+            while let Some(index) = parent {
+                depth += 1;
+                parent = self.frames[index].parent;
+            }
+            depth
+        }).max().unwrap_or(0)
+    }
+
     /// Project the original functions' recovery liveness onto unit registers. A suspended
     /// frame retains both its call inputs and continuation state, and so do the frames
     /// around it; callee facts include implicit observations such as legacy f.arguments.

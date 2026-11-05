@@ -161,7 +161,7 @@ fn typed_field_call_compiles_with_observed_target() {
             .and_then(super::program_store::derived_lane_view).unwrap();
         let report = view.body_stats.report(0).expect("field call must enter the typed unit");
         let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
-        assert!(report.contains(&format!("[(\"{exit}\", 1)]")),
+        assert!(report.contains(&format!("\"leaves\":[[\"{exit}\",1]]")),
             "the native loop must leave once at its successor, never at the call: {report}");
         let expected = (0..4000).fold(7i32, |control, _|
             (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
@@ -14382,6 +14382,97 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
                 "scoped={scoped} captured={captured}: a boxed callee must not be guarded as a Number: {diagnostics:?}"
             );
         }
+    }
+}
+
+#[test]
+#[cfg(all(feature = "aot", not(quench_profiled)))]
+fn inlined_nested_field_uses_callee_register_coordinates() {
+    // GetField + SetThisField fuses into a site whose register zero belongs to read.
+    // The caller's register zero is the numeric count, never an object entry input.
+    let source = r#"
+        function Owner(){this.scratch=0;}
+        Owner.prototype.read=function(node){this.scratch=node.value;return this.scratch;};
+        Owner.prototype.sum=function sum(count,node){let total=0;for(let i=0;i<count;i=(i+1)|0)total+=this.read(node);return total;};
+        let owner=new Owner();
+        let node={value:3};
+        print(owner.sum(10000,node));
+        node.value=7;print(owner.sum(10,node));
+        let marker={},effects=0;
+        Object.defineProperty(node,'value',{get(){effects++;throw marker;}});
+        try{owner.sum(10,node);}catch(error){print(error===marker);}
+        print(effects);
+    "#;
+    let program = Engine::specialize(source, "inlined-nested-field.js").unwrap();
+    let function = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum")).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["30000", "70", "true", "1"]);
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function).and_then(super::program_store::derived_lane_view).unwrap();
+    let report = view.body_stats.report(1).expect("nested field must admit a native body");
+    let stats: serde_json::Value = serde_json::from_str(report.strip_prefix("QUENCH_LANE_BODY ").unwrap()).unwrap();
+    assert!(stats["frames"].as_u64().unwrap() > 0, "{report}");
+    assert!(stats["completed"].as_u64().unwrap() > 0, "{report}");
+}
+
+#[test]
+#[cfg(all(feature = "aot", not(quench_profiled)))]
+fn shared_nested_captured_store_loop_reaches_native_body() {
+    for global in [false, true] {
+    for deep in [false, true] {
+    let source = r#"
+        let mask=4;
+        function Link(next,state){this.next=next;this.state=state;}
+        Link.prototype.mark=function(){'use strict';this.state=this.state|mask;};
+        function Owner(current){this.count=0;this.current=current;}
+        Owner.prototype.step=function(){this.count++;this.current.mark();return this.current.next;};
+        function walk(owner,count){for(let i=0;i<count;i=(i+1)|0)owner.current=owner.step();}
+        let a=new Link(null,0),b=new Link(a,1);a.next=b;
+        let owner=new Owner(a);walk(owner,10000);
+        print(owner.count+' '+(owner.current===a)+' '+a.state+' '+b.state);
+        mask=8;walk(owner,20);
+        print(owner.count+' '+a.state+' '+b.state);
+        Object.defineProperty(b,'state',{writable:false});
+        try{walk(owner,2);}catch(error){print(error instanceof TypeError);}
+        print(owner.count+' '+(owner.current===b)+' '+b.state);
+        Object.defineProperty(b,'state',{writable:true});
+        let marker={},effects=0;
+        mask={valueOf(){effects++;$262.gc();throw marker;}};
+        try{walk(owner,2);}catch(error){print(error===marker);}
+        print(owner.count+' '+effects+' '+(owner.current===b));
+        Link.prototype.mark=function(){this.state=31;};
+        walk(owner,2);
+        print(owner.count+' '+a.state+' '+b.state+' '+(owner.current===b));
+    "#;
+    let source = if deep { source.replace(
+        "Link.prototype.mark=function(){'use strict';this.state=this.state|mask;};",
+        "Link.prototype.mark=function(){this.first();};\nLink.prototype.first=function(){this.second();};\nLink.prototype.second=function(){this.third();};\nLink.prototype.third=function(){'use strict';this.state=this.state|mask;};") }
+        else { source.to_owned() };
+    let source = if global { source.replace("let mask=4;", "var mask=4;") } else { source };
+    let program = Engine::specialize(&source, "nested-captured-store.js").unwrap();
+    let function = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["10000 true 4 5", "10020 12 13", "true",
+        "10022 true 13", "true", "10023 1 true", "10025 31 31 true"]);
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function).and_then(super::program_store::derived_lane_view).unwrap();
+    let report = view.body_stats.report(1).expect("nested captured store must admit a native body");
+    let stats: serde_json::Value = serde_json::from_str(report.strip_prefix("QUENCH_LANE_BODY ").unwrap()).unwrap();
+    assert!(stats["frames"].as_u64().unwrap() >= if deep { 5 } else { 2 }, "{report}");
+    assert!(stats["completed"].as_u64().unwrap() > 0, "{report}");
+    }
     }
 }
 

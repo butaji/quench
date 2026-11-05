@@ -657,9 +657,13 @@ impl LaneBodyStats {
     pub(super) fn report(&self, program: usize) -> Option<String> {
         (self.compiles.get() != 0).then(|| {
             let [completed, at, inlined, callee, terminated] = self.ends.each_ref().map(std::cell::Cell::get);
+            // Locations are generated decimal PCs or frame:PC pairs, never guest text.
+            let leaves = self.leaves.borrow().iter()
+                .map(|(pc, count)| format!("[\"{pc}\",{count}]"))
+                .collect::<Vec<_>>().join(",");
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":\"{:?}\"}}",
-                self.function.get(), self.compiles.get(), self.frames.get(), self.leaves.borrow(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                self.function.get(), self.compiles.get(), self.frames.get(),
             )
         })
     }
@@ -7612,6 +7616,7 @@ script_handler! {
             next!(cx, r, header, Carried::script(cx))
         };
         if !lane_body_admits(cx, &method) {
+            if lane_body_prepare_recovery(cx, &method) { return exit(header); }
             drop(method);
             next!(cx, r, header, Carried::script(cx))
         }
@@ -14466,6 +14471,7 @@ script_handler! {
             next!(cx, r, base, Carried::script(cx))
         };
         if !method.supports_first_entry() || !lane_body_admits(cx, &method) {
+            if method.supports_first_entry() && lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
             next!(cx, r, base, Carried::script(cx))
         }
@@ -14821,6 +14827,25 @@ fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::
             && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= room.values
             && unsafe { (*cx).script_calls }
             && !vm.with_scope_entered)
+}
+
+/// A compiled region's recovery demand may exceed the calls the lane has observed.
+/// Materialize before growing either Vec: live lane windows borrow their storage.
+/// The caller must exit immediately and resume from its original semantic record.
+#[cold]
+#[inline(never)]
+fn lane_body_prepare_recovery<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod) -> bool {
+    let room = method.recovery_space();
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls } || vm.with_scope_entered { return false; }
+    let values = vm.lane_stack.values.capacity() - vm.lane_stack.values.len() < room.values;
+    let activations = vm.lane_stack.activations.capacity() - vm.lane_stack.activations.len() < room.activations;
+    if !values && !activations { return false; }
+    vm.materialize_lane_activations(cx);
+    if values { vm.lane_stack.values.reserve(room.values); }
+    if activations { vm.lane_stack.activations.reserve(room.activations); }
+    vm.lane_stack.refresh_activation_limit();
+    true
 }
 
 /// The activation a lane body that left inside inlined `frame` of `method`, at its callee's

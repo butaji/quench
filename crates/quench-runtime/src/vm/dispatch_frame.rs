@@ -108,6 +108,12 @@ pub(super) struct PendingGeneralCall {
     pub(super) caller_program: Option<SavedProgram>,
 }
 
+/// Already materialized calls, adopted by the ordinary return/unwind loop before resuming.
+pub(crate) struct RecoveredCalls {
+    pub(super) calls: Vec<PendingGeneralCall>,
+    pub(super) failure: Option<(u32, JsError)>,
+}
+
 /// Where a lane run that no general loop started left its frames (`Vm::lane_native_callback`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
@@ -1686,6 +1692,11 @@ impl<H: Host> Vm<H> {
             // call, or at the residual `current_program` keeps alive until it is replaced,
             // and it is re-derived at that replacement.
             let p = unsafe { &*executing_residual };
+            // Check the stable entry state. A native tail-call result may already
+            // have replaced this frame; its old cursor still identifies the call
+            // until the TailCall transition below adopts the replacement.
+            debug_assert_eq!(cursor.program, self.frames[frame].program);
+            debug_assert_eq!(cursor.function, self.frames[frame].function);
             if let Err(error)=self.check_execution_interrupt() {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 return self.unwind_general_loop(entry_program,frame,pc,pc as u32,error,pending_calls,&mut cursor,&mut executing,fast_lane)
@@ -2040,8 +2051,6 @@ impl<H: Host> Vm<H> {
                 self.frames[frame].pc_is_resume = true;
                 return Ok(FrameOutcome::ParameterInitializationComplete);
             }
-            debug_assert_eq!(cursor.program, self.frames[frame].program);
-            debug_assert_eq!(cursor.function, self.frames[frame].function);
             let native_step = native_step.take();
             let instruction_pc = native_step.as_ref().map_or(pc, |step| step.instruction_pc);
             let ins = cursor.instruction(instruction_pc);
@@ -2526,6 +2535,20 @@ impl<H: Host> Vm<H> {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                }
+                Ok(StepResult::ResumeFrames(recovered)) => {
+                    pending_calls.extend(recovered.calls);
+                    frame = self.frames.len() - 1;
+                    pc = self.frames[frame].pc;
+                    // Static inline bindings admit only this program's plain functions.
+                    debug_assert_eq!(self.frames[frame].program, executing_program);
+                    cursor = self.general_cursor(executing_program,
+                        unsafe { &*executing_residual }, self.frames[frame].function, fast_lane);
+                    published_pc = &mut self.frames[frame].pc;
+                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                    if let Some((call_pc, error)) = recovered.failure {
+                        unwind_at!(call_pc, error);
+                    }
                 }
                 Ok(StepResult::TailCall) => {
                     let replacement_program = self.frames[frame].program;

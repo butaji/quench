@@ -2210,6 +2210,69 @@ lane_helper_inventory! { H;
     InterruptOwner => lane_interrupt_owner,
     GlobalGet => lane_global_get::<H>,
     FieldWriteAdmission => lane_field_write_admission::<H>,
+    MaterializeInlineChain => lane_materialize_inline_chain::<H>,
+}
+
+/// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
+#[repr(C)]
+struct InlineRecoveryFrame {
+    function: u32,
+    call_pc: u32,
+    source_pc: u32,
+    registers: u32,
+}
+
+unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
+    vm: u64, residual: u64, payload: u64, entries: u64, count: u64, registers: u64,
+) -> u64 {
+    // SAFETY: generated code publishes the caller and the complete chain's live homes;
+    // plain activation setup cannot invoke guest code or collect before adoption.
+    let (vm, program, dispatch, entries) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+            &mut *(payload as *mut JsStepDispatch),
+            std::slice::from_raw_parts(entries as *const InlineRecoveryFrame, count as usize))
+    };
+    let mut caller = dispatch.frame;
+    let mut recovered = super::dispatch_frame::RecoveredCalls {
+        calls: Vec::with_capacity(entries.len()), failure: None,
+    };
+    for entry in entries {
+        let body = program.function(vm.frames[caller].function as usize);
+        let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
+        let callee = vm.read(caller, instruction.register_b());
+        let receiver = vm.read(caller, instruction.register_c());
+        let env = vm.heap.function(callee).expect("admitted inline closure").env;
+        let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
+        vm.frames[caller].pc = entry.call_pc as usize + 1;
+        vm.frames[caller].pc_is_resume = true;
+        let guard = vm.push_general_user_frame(program, entry.function, env, receiver,
+            unsafe { &*passed }, super::CallContext::user_function(entry.function, callee));
+        let guard = match guard {
+            Ok(guard) => guard,
+            Err(error) => { recovered.failure = Some((entry.call_pc, error)); break; }
+        };
+        let frame = vm.frames.last_mut().expect("recovered inline frame");
+        let snapshot = unsafe { std::slice::from_raw_parts(
+            (registers as *const Value).add(entry.registers as usize), frame.registers.len()) };
+        frame.registers.copy_from_slice(snapshot);
+        frame.pc = entry.source_pc as usize;
+        frame.pc_is_resume = true;
+        vm.active_registers = frame.registers.as_mut_ptr();
+        recovered.calls.push(super::dispatch_frame::PendingGeneralCall {
+            caller, caller_cursor: None, call_pc: entry.call_pc,
+            destination: instruction.result_register(), completion: super::CallCompletion::Value,
+            returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
+        });
+        caller += 1;
+        #[cfg(test)] {
+            INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
+            INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((entry.function, entry.source_pc))));
+        }
+    }
+    let call_pc = entries[0].call_pc as usize;
+    dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
+        result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
+    0
 }
 
 unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
@@ -2226,41 +2289,13 @@ unsafe extern "C" fn lane_materialize_inline<H: Host>(
     vm: u64, residual: u64, payload: u64, function: u64, call_pc: u64,
     source_pc: u64, registers: u64,
 ) -> u64 {
-    #[cfg(test)]
-    INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
-    #[cfg(test)]
-    INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((function as u32, source_pc as u32))));
-    // SAFETY: the native entry owns all three bindings through this call.
-    let (vm, program, dispatch) = unsafe {
-        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
-            &mut *(payload as *mut JsStepDispatch))
+    let entry = InlineRecoveryFrame {
+        function: function as u32, call_pc: call_pc as u32,
+        source_pc: source_pc as u32, registers: 0,
     };
-    let caller = dispatch.frame;
-    let call_pc = call_pc as usize;
-    let function = function as u32;
-    let body = unsafe { &*dispatch.body };
-    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[call_pc]);
-    let callee = vm.read(caller, instruction.register_b());
-    let receiver = vm.read(caller, instruction.register_c());
-    let env = vm.heap.function(callee).expect("admitted inline closure").env;
-    let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
-    vm.frames[caller].pc = call_pc + 1;
-    vm.frames[caller].pc_is_resume = true;
-    // SAFETY: setup only pushes a boxed frame; the caller's window is stable.
-    let result = vm.push_general_user_frame(program, function, env, receiver,
-        unsafe { &*passed }, super::CallContext::user_function(function, callee))
-        .map(|call_guard| {
-            let frame = vm.frames.last_mut().expect("recovered callee frame");
-            // SAFETY: the compiled snapshot contains this verified body's register count.
-            let snapshot = unsafe { std::slice::from_raw_parts(registers as *const Value, frame.registers.len()) };
-            frame.registers.copy_from_slice(snapshot);
-            frame.pc = source_pc as usize;
-            frame.pc_is_resume = true;
-            StepResult::PushFrame { destination: instruction.result_register(), call_guard,
-                completion: super::CallCompletion::Value }
-        });
-    dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1, result });
-    0
+    // SAFETY: the descriptor and native register snapshot live through this call.
+    unsafe { lane_materialize_inline_chain::<H>(vm, residual, payload,
+        &entry as *const InlineRecoveryFrame as u64, 1, registers) }
 }
 
 /// A typed residual has materialized its exact callee continuation in the
@@ -2434,18 +2469,17 @@ pub(super) struct StaticTypedRegion {
 }
 
 #[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Option<u32>],
+pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<Option<u32>>],
     isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
 {
     if isa.pointer_type() != types::I64 { return Vec::new(); }
     let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return Vec::new(); }
-    // Source-PC recovery materializes one callee frame. Root calls may inline
-    // a non-leaf prefix: its residual call recovers that exact frame and PC.
-    // Nested calls are not spliced; the unit owns their origins and live homes.
-    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
-        .then(|| targets.get(pc as usize).copied().flatten()).flatten()
-        .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+    // Both binding-time divisions plan the full call graph. Static bindings use
+    // actual function admission and the same exact suspended-frame recovery.
+    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc|
+        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
@@ -3894,7 +3928,8 @@ pub(super) fn lower_js_general_dispatch(
                     match native.dfg.value_def(target) {
                         ir::ValueDef::Result(load, _) => matches!(native.dfg.insts[load],
                             ir::InstructionData::Load { offset, .. }
-                                if i32::from(offset) == LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32),
+                                if [LaneHelper::MaterializeInline, LaneHelper::MaterializeInlineChain].into_iter()
+                                    .any(|helper| i32::from(offset) == helper as i32 * std::mem::size_of::<usize>() as i32)),
                         _ => false,
                     }
                 } else { false };
@@ -7531,7 +7566,7 @@ unsafe extern "C" fn lane_guarded_call<H: Host>(vm: u64, residual: u64, program:
 }
 
 /// Admit the actual closure for a statically selected body without entering it.
-unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64) -> u64 {
+unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64, depth: u64) -> u64 {
     #[cfg(test)] FUNCTION_BINDING_CALLS.with(|count| count.set(count.get() + 1));
     // SAFETY: the linked unit owns this VM/program throughout the no-GC operation.
     let vm = unsafe { &*(vm as *const Vm<H>) };
@@ -7539,7 +7574,10 @@ unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, pro
         .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function);
     // Admit the prefix's call/interrupt permission. A residual guest call
     // materializes its activation before reentry; no-frame helpers cannot reenter.
-    u64::from(matches && vm.enter_guarded_call().is_some())
+    // Every suspended inline frame must fit before any prefix effect runs.
+    // The closed region cannot consume call budget until it materializes.
+    u64::from(matches && crate::stack::GuestCallGuard::remaining() as u64 >= depth
+        && vm.enter_guarded_call().is_some())
 }
 
 /// Static call-site obligations discharged once during lowering. The helper
@@ -7569,16 +7607,18 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking
-/// guest code. Root projections and uninitialized bindings decline exactly as
-/// the interpreter's direct-capture projection does.
+/// guest code. Owned slots and plain root projections use the lane's shared reads;
+/// accessors, uninitialized bindings and other projections decline at the read.
 unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, slot: u64) -> u64 {
     // SAFETY: the lane owns this VM while generated code runs; no collection or
     // reentry occurs while it holds the closure's environment slots.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     let read = || {
         let env = vm.heap.function(Value::from_bits(callee))?.env;
+        let slot = u16::try_from(slot).ok()?;
         let (slots, root) = vm.environment_capture_slots(env, false, 0)?;
-        vm.owned_capture(slots, root, u16::try_from(slot).ok()?)
+        vm.owned_capture(slots, root, slot)
+            .or_else(|| vm.plain_projected_root_binding(env, slot))
     };
     read().unwrap_or(Value::DELETED).to_bits()
 }
@@ -7690,9 +7730,10 @@ impl<H: Host> Vm<H> {
                     bound.truncate(kept);
                     bound
                 };
-                // Captured stores already use the shared frameless kernel.
-                let unit = lane_unit::with_budget(program, function, body, budget, &bindings, &|callee| program.function_get(callee as usize)
-                    .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
+                // A captured store can also be part of a larger native region.
+                // Its standalone frameless kernel must not block transitive inlining.
+                let unit = lane_unit::with_budget(program, function, body, budget, &bindings,
+                    &|callee| program.function_get(callee as usize))?;
                 if !valid_bindings.get() { return None; }
                 if !unit.frames.iter().all(|frame| match frame.target.callee {
                     CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
@@ -8824,7 +8865,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     Ok(super::StepResult::TailCall) => {
                         super::program_store::JsJitCallOutcome::TailCall
                     }
-                    Ok(super::StepResult::PushFrame { .. }) => {
+                    Ok(super::StepResult::PushFrame { .. } | super::StepResult::ResumeFrames(_)) => {
                         super::program_store::JsJitCallOutcome::PushFrame
                     }
                     Ok(super::StepResult::Return(_)) => {
@@ -18583,7 +18624,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
-        let region = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0).into_iter().next().unwrap();
+        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0).into_iter().next().unwrap();
         let native = &region.function;
         let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|instruction| matches!(native.dfg.insts[*instruction],
@@ -18677,7 +18718,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
-        let region = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0).into_iter().next().unwrap();
+        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0).into_iter().next().unwrap();
         assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
             .any(|instruction| region.function.dfg.insts[instruction].opcode() == ir::Opcode::Fadd),
@@ -18856,8 +18897,8 @@ mod tests {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
-        for (id, targets) in targets.iter().enumerate().take(program.function_count()) {
-            let mut regions = lower_static_typed_regions(&program, id as u32, targets, &*isa, 0);
+        for id in 0..program.function_count() {
+            let mut regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0);
             for region in &mut regions {
                 bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
             }
@@ -19083,7 +19124,7 @@ mod tests {
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
-            let regions = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0);
+            let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0);
             assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
             assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
             for region in &regions {
@@ -19505,7 +19546,7 @@ mod tests {
             assert_eq!(unit.frames.len(), 1);
             assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
-            assert!(!lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).is_empty());
+            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).is_empty());
             let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
@@ -19538,7 +19579,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "walk")).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
-            assert!(!lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).is_empty());
+            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).is_empty());
             let native = linked_optimized_test_program(program);
             let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
@@ -19596,7 +19637,7 @@ mod tests {
             let call = program.function(consume).instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
-            let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0)
+            let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0)
                 .into_iter().next().expect("non-leaf prefix has exact one-frame recovery");
             assert!(!region.function.sized_stack_slots.is_empty(), "callee state must have recovery homes");
             let native = linked_optimized_test_program(program);
@@ -19628,7 +19669,7 @@ mod tests {
         assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next()
+        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next()
             .expect("a write followed by a fallible read has exact recovery");
         let offset = LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32;
         assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -19658,19 +19699,36 @@ mod tests {
             try{runner.run(owner,input);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
             if(owner.count!==22)throw 'replay';throw keep.value;
         "#;
-        for (typescript, terminal) in [false, true].into_iter()
-            .flat_map(|typescript| [false, true].map(|terminal| (typescript, terminal))) {
+        for (typescript, terminal, nested) in [false, true].into_iter()
+            .flat_map(|typescript| [false, true].into_iter().flat_map(move |terminal|
+                [false, true].map(|nested| (typescript, terminal, nested)))) {
             let source = if terminal {
                 source.replace("let result=owner.consume(input);return result+3;", "return owner.consume(input);")
                     .replace("!==66", "!==63")
             } else { source.to_owned() };
+            let source = if nested {
+                source.replace("owner.consume(input)", "owner.bridge(input)")
+                    .replace("let runner=", "p.bridge=function bridge(input){this.bridgeCount=this.bridgeCount+1;let result=this.consume(input);return result+5;};let runner=")
+                    .replace("owner.count=0;", "owner.count=0;owner.bridgeCount=0;")
+                    .replace("p.consume.caller!==runner.run", "p.consume.caller!==p.bridge||p.bridge.caller!==runner.run")
+                    .replace("!==66", "!==71").replace("!==63", "!==68")
+                    .replace("if(owner.count!==22)", "if(owner.count!==22||owner.bridgeCount!==22)")
+            } else { source };
             let program = if typescript { crate::Engine::specialize_typescript(&source, "exact-gc.cts") }
                 else { crate::Engine::specialize(&source, "exact-gc.cjs") }.unwrap();
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
+            if nested {
+                let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|id, pc|
+                    targets[id as usize].get(pc as usize).copied().flatten()
+                        .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                    &|id| program.function_get(id as usize)).unwrap();
+                assert!(unit.frames.iter().any(|frame| frame.parent.is_some()), "exercise nested recovery planning");
+
+            }
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
-            let mut region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next().unwrap();
+            let mut region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next().unwrap();
             let consume = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
             let read = program.function(consume).instructions().position(|instruction|
@@ -19702,6 +19760,40 @@ mod tests {
                 "the exact callee materialization path must actually execute");
             assert_eq!(INLINE_LAST_MATERIALIZATION.with(std::cell::Cell::get), Some((consume as u32, read as u32)),
                 "recovery must occur at the read after the native prefix store and parameter update");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn nested_static_recovery_admits_budget_before_prefix_effects() {
+        for strict_tail in [false, true] {
+            let middle = if strict_tail {
+                "'use strict';this.outer=this.outer+1;return this.leaf(input);"
+            } else { "this.outer=this.outer+1;let result=this.leaf(input);return result+1;" };
+            let source = format!(r#"
+                let p={{outer:0,inner:0}};
+                p.leaf=function leaf(input){{this.inner=this.inner+1;return input.value;}};
+                p.middle=function middle(input){{{middle}}};
+                function run(owner,input){{let result=owner.middle(input);return result+1;}}
+                let input={{get value(){{$262.gc();return 40;}}}};
+                try{{print(run(p,input));}}catch(error){{print(error.name);}}
+                print(p.outer,p.inner);
+            "#);
+            let program = crate::Engine::specialize(&source, "nested-budget.cjs").unwrap();
+            let native = linked_optimized_test_program(program.clone());
+            for limit in 1..=6 {
+                let _limit = crate::stack::GuestCallLimitGuard::enter(limit);
+                let before = crate::stack::GuestCallGuard::remaining();
+                let mut expected = Vm::new(crate::test_host::TestHost::default().with_test262());
+                expected.set_execution_mode(ExecutionMode::Interpreted);
+                expected.execute(&program).unwrap();
+                assert_eq!(crate::stack::GuestCallGuard::remaining(), before);
+                let mut actual = Vm::new(crate::test_host::TestHost::default().with_test262());
+                actual.set_execution_mode(ExecutionMode::NativeOnly);
+                actual.execute_native_program(&native, true).unwrap();
+                assert_eq!(*actual.host.lines(), *expected.host.lines(), "limit={limit} strict_tail={strict_tail}");
+                assert_eq!(crate::stack::GuestCallGuard::remaining(), before, "recovered guards must unwind");
+            }
         }
     }
 
@@ -19777,19 +19869,25 @@ mod tests {
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         let callee = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
         let (program, function, _) = vm.same_realm_user_target(callee).unwrap();
-        let admitted = |vm: &Vm<crate::test_host::TestHost>| unsafe {
+        let admitted = |vm: &Vm<crate::test_host::TestHost>, depth| unsafe {
             lane_function_binding::<crate::test_host::TestHost>(vm as *const _ as u64, 0,
-                u64::from(program.raw()), callee.to_bits(), u64::from(function))
+                u64::from(program.raw()), callee.to_bits(), u64::from(function), depth)
         };
-        assert_eq!(admitted(&vm), 1);
+        assert_eq!(admitted(&vm, 1), 1);
         {
             let _limit = crate::stack::GuestCallLimitGuard::enter(1);
             let _active = crate::stack::GuestCallGuard::enter().unwrap();
-            assert_eq!(admitted(&vm), 0, "no store may run after call-depth exhaustion");
+            assert_eq!(admitted(&vm, 1), 0, "no store may run after call-depth exhaustion");
         }
-        assert_eq!(admitted(&vm), 1);
+        assert_eq!(admitted(&vm, 1), 1);
+        {
+            let _limit = crate::stack::GuestCallLimitGuard::enter(2);
+            let _active = crate::stack::GuestCallGuard::enter().unwrap();
+            assert_eq!(admitted(&vm, 1), 1);
+            assert_eq!(admitted(&vm, 2), 0, "the complete chain must fit before effects");
+        }
         vm.execution_interrupt.request_termination();
-        assert_eq!(admitted(&vm), 0, "termination must precede the inlined store");
+        assert_eq!(admitted(&vm, 1), 0, "termination must precede the inlined store");
     }
 
     #[cfg(feature = "aot")]
@@ -19808,7 +19906,7 @@ mod tests {
         assert_eq!(unit.frames.len(), 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next()
+        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next()
             .expect("closed loop with an inlined store");
         assert!(region.header > 0, "prefix store cannot execute again on loop reentry");
         assert!(program.function(caller).instructions().any(|instruction|
@@ -19849,7 +19947,7 @@ mod tests {
         assert_eq!(unit.frames[0].arguments, 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next().is_some());
+        assert!(lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next().is_some());
     }
 
     #[cfg(feature = "aot")]
@@ -19869,7 +19967,7 @@ mod tests {
         assert_eq!(unit.frames[0].target.callee, CalleeBinding::Function);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next()
+        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next()
             .expect("restartable captured store inline region");
         let scratch_offset = std::mem::offset_of!(JsStepDispatch, inlined) as i32;
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))

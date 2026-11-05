@@ -110,7 +110,7 @@ struct FieldValue {
 
 /// Available object and value proofs saved at control-flow edges. Register types
 /// belong to the shared dataflow analysis and need no duplicate snapshots.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct LocalProofs {
     /// Direct-object proofs by owner, until an effect that may change the object retires
     /// them: a register's, and in the final entry fixed `this`'s.
@@ -287,7 +287,9 @@ struct Lowering<'a, 'f> {
     /// Whether this entry's caller loop reaches its native latch.
     backedge: bool,
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
-    pending: Vec<(ir::Block, State, u32)>,
+    // Recovery boxes register values; object/layout proofs authorize forward execution
+    // only and must not be retained in every guard's snapshot.
+    pending: Vec<(ir::Block, Vec<RegisterFact>, u32)>,
     /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
     /// so no read or store folds the receiver facts its entry proved.
     native_calls: bool,
@@ -573,7 +575,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
-        self.pending.push((block, state.clone(), pc));
+        self.pending.push((block, state.values.clone(), pc));
         block
     }
 
@@ -1107,10 +1109,10 @@ pub(super) fn lower(
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
         || !numeric_unit(program, unit) || function.params > unit.caller_registers) { return None; }
     // Source-PC recovery admits each statically bound callee at its call edge and
-    // materializes one callee frame (`lane_materialize_inline`).
+    // materializes the suspended chain through the shared call/unwind loop.
     if fields.values().flatten().any(|field| !field.valid())
         || (completion == Completion::SourcePc && unit.frames.iter().any(|frame|
-            frame.target.callee != CalleeBinding::Function || frame.parent.is_some())) { return None; }
+            frame.target.callee != CalleeBinding::Function)) { return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
@@ -1440,21 +1442,26 @@ pub(super) fn lower(
         }
     }
     if matches!(coverage, Coverage::PrefixFrom(_) | Coverage::Osr(_)) && !lowering.backedge { return None; }
-    for (block, mut leaving, pc) in std::mem::take(&mut lowering.pending) {
+    for (block, values, pc) in std::mem::take(&mut lowering.pending) {
         lowering.builder.switch_to_block(block);
+        let mut leaving = State { values, proofs: LocalProofs::default() };
         lowering.exit(&mut leaving, pc);
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the window its recovery makes the activation from, then leave
     // at the origin.
-    let snapshot = (lowering.completion == Completion::SourcePc).then(||
-        unit.frames.iter().filter(|frame| frame.recovery == super::lane_unit::CallRecovery::Materialize)
-            .map(|frame| frame.registers).max()).flatten().map(|registers| {
+    let recovery_slots = if lowering.completion == Completion::SourcePc && !unit.frames.is_empty() {
         let word = types::I64.bytes();
-        lowering.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot, u32::from(registers) * word,
-            word.trailing_zeros() as u8))
-    });
+        let snapshot = lowering.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot, u32::from(unit.registers - unit.caller_registers) * word,
+            word.trailing_zeros() as u8));
+        let depth = unit.recovery_depth();
+        let descriptors = lowering.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            u32::try_from(depth.checked_mul(size_of::<InlineRecoveryFrame>())?).ok()?,
+            align_of::<InlineRecoveryFrame>().trailing_zeros() as u8));
+        Some((snapshot, descriptors))
+    } else { None };
     for pc in 0..lowering.exits.len() {
         let Some(block) = lowering.exits[pc] else { continue };
         lowering.builder.switch_to_block(block);
@@ -1467,22 +1474,51 @@ pub(super) fn lower(
         let word = match unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
             super::lane_unit::Origin::Caller(record) => u64::from(record),
             super::lane_unit::Origin::Inlined { frame, pc: record } if lowering.completion == Completion::SourcePc => {
-                let inlined = unit.frames[frame];
-                let scratch = lowering.builder.ins().stack_addr(types::I64, snapshot.expect("materialized callee snapshot"), 0);
-                for register in 0..inlined.registers {
-                    let bits = if lowering.is_live(pc, inlined.base + register) {
-                        lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)])
-                    } else {
-                        lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
-                    };
-                    lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register));
+                let (snapshot, descriptors) = recovery_slots.expect("materialized chain homes");
+                let scratch = lowering.builder.ins().stack_addr(types::I64, snapshot, 0);
+                let entries = lowering.builder.ins().stack_addr(types::I64, descriptors, 0);
+                let chain = unit.chain(frame);
+                for (depth, index) in chain.iter().copied().enumerate() {
+                    let inlined = unit.frames[index];
+                    for register in inlined.base..inlined.base + inlined.registers {
+                        let bits = if lowering.is_live(pc, register) {
+                            lowering.builder.use_var(lowering.registers.tagged[usize::from(register)])
+                        } else {
+                            lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
+                        };
+                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch,
+                            register_offset(register - unit.caller_registers));
+                    }
+                    // Ancestors are suspended at the next child's call; the innermost
+                    // activation resumes at the exact operation whose admission failed.
+                    let source = chain.get(depth + 1).map_or(record, |child| unit.frames[*child].call);
+                    for (offset, value) in [
+                        (std::mem::offset_of!(InlineRecoveryFrame, function), inlined.target.function),
+                        (std::mem::offset_of!(InlineRecoveryFrame, call_pc), inlined.call),
+                        (std::mem::offset_of!(InlineRecoveryFrame, source_pc), source),
+                        (std::mem::offset_of!(InlineRecoveryFrame, registers), u32::from(inlined.base - unit.caller_registers)),
+                    ] {
+                        let bits = lowering.builder.ins().iconst(types::I32, i64::from(value));
+                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, entries,
+                            i32::try_from(depth * size_of::<InlineRecoveryFrame>() + offset).ok()?);
+                    }
                 }
-                let function = lowering.builder.ins().iconst(types::I64, i64::from(inlined.target.function));
-                let call = lowering.builder.ins().iconst(types::I64, i64::from(inlined.call));
-                let source = lowering.builder.ins().iconst(types::I64, i64::from(record));
-                let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::MaterializeInline);
-                emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
-                    &[lowering.payload, function, call, source, scratch]);
+                if chain.len() == 1 {
+                    let inlined = unit.frames[frame];
+                    let function = lowering.builder.ins().iconst(types::I64, i64::from(inlined.target.function));
+                    let call = lowering.builder.ins().iconst(types::I64, i64::from(inlined.call));
+                    let source = lowering.builder.ins().iconst(types::I64, i64::from(record));
+                    let scratch = lowering.builder.ins().iadd_imm_u(scratch,
+                        i64::from(register_offset(inlined.base - unit.caller_registers)));
+                    let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::MaterializeInline);
+                    emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
+                        &[lowering.payload, function, call, source, scratch]);
+                } else {
+                    let count = lowering.builder.ins().iconst(types::I64, i64::try_from(chain.len()).ok()?);
+                    let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::MaterializeInlineChain);
+                    emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
+                        &[lowering.payload, entries, count, scratch]);
+                }
                 lowering.return_at(u64::from(JS_INLINE_MATERIALIZED_PC));
                 continue;
             }
@@ -2080,11 +2116,7 @@ impl Lowering<'_, '_> {
             if !reachable { continue; }
             let owner = match instruction.op() {
                 Op::GetField => {
-                    let base = match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { base, .. }) => Some(base),
-                        Some(FieldLookup::Site(site)) => self.program.field_sites.get(site).map(|site| site.base),
-                        _ => None,
-                    };
+                    let base = self.field_base(pc, *instruction);
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
                         else { base.register_index().map(usize::from) })
                 }
@@ -2766,8 +2798,10 @@ impl Lowering<'_, '_> {
             std::mem::offset_of!(JsStepDispatch, program_id) as i32);
         let program = self.ins().uextend(types::I64, program);
         let function = self.ins().iconst(types::I64, i64::from(function));
+        let depth = self.unit.recovery_depth().max(1) as i64;
+        let depth = self.ins().iconst(types::I64, depth);
         let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionBinding);
-        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
+        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function, depth]);
         self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)
     }
 
@@ -3326,6 +3360,25 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Nested sites retain callee coordinates; atom operands are already renamed by lane_unit.
+    fn field_base(&self, pc: usize, instruction: WideInstruction) -> Option<crate::bytecode::FieldBase> {
+        use crate::bytecode::FieldBase;
+        match instruction.field_lookup()? {
+            FieldLookup::Atom { base, .. } => Some(base),
+            FieldLookup::Site(index) => {
+                let base = self.program.field_sites.get(index)?.base;
+                match self.unit.origins.get(pc)? {
+                    super::lane_unit::Origin::Inlined { frame, .. } => {
+                        let frame = self.unit.frames[*frame];
+                        Some(FieldBase::register(if base == FieldBase::THIS { frame.receiver }
+                            else { frame.base.checked_add(base.register_index()?)? }))
+                    }
+                    _ => Some(base),
+                }
+            }
+        }
+    }
+
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
@@ -3344,17 +3397,13 @@ impl Lowering<'_, '_> {
             Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(self.unit.frames[*frame]),
             _ => None,
         };
-        let (base, parts, sink): (_, Vec<u16>, _) = match instruction.field_lookup()? {
-            FieldLookup::Atom { base, cache_site, .. } => (base, vec![cache_site], None),
+        let base = self.field_base(pc, instruction)?;
+        let (parts, sink): (Vec<u16>, _) = match instruction.field_lookup()? {
+            FieldLookup::Atom { cache_site, .. } => (vec![cache_site], None),
             FieldLookup::Site(index) => {
                 let site = *self.program.field_sites.get(index)?;
                 let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| cache).collect();
-                let base = match frame {
-                    Some(frame) if site.base == crate::bytecode::FieldBase::THIS => crate::bytecode::FieldBase::register(frame.receiver),
-                    Some(frame) => crate::bytecode::FieldBase::register(frame.base + site.base.register_index()?),
-                    None => site.base,
-                };
-                (base, reads, instruction.writes_current_this().then_some(site.sink).flatten())
+                (reads, instruction.writes_current_this().then_some(site.sink).flatten())
             }
         };
         let sink_owner = frame.map(|frame| frame.receiver);
@@ -4381,7 +4430,7 @@ mod tests {
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
             let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-            let regions = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0);
+            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0);
             assert!(!regions.is_empty(), "selected caller header must publish");
             let mut integer_add = false;
             for region in regions {

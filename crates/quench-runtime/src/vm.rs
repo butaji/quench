@@ -1680,6 +1680,7 @@ enum CallTarget {
 pub(super) enum StepResult {
     Continue,
     TailCall,
+    ResumeFrames(Box<dispatch_frame::RecoveredCalls>),
     PushFrame {
         destination: Register,
         call_guard: crate::stack::GuestCallGuard,
