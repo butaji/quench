@@ -202,6 +202,7 @@ pub(crate) struct ValueArena {
     /// Per owner shape, compact observed content types. Recording writes joins
     /// them; native raw writes can bypass recording, so this is not a proof.
     owner_types: Vec<SlotType>,
+    slot_readers: crate::code_dependencies::SlotReaders,
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
@@ -220,6 +221,7 @@ impl Default for ValueArena {
             shape_chains: Vec::new(),
             chain_owners: Vec::new(),
             owner_types: Vec::new(),
+            slot_readers: crate::code_dependencies::SlotReaders::default(),
             tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -243,7 +245,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -317,6 +319,7 @@ impl ValueArena {
     }
 
     pub(crate) fn reset_shapes(&mut self) {
+        self.slot_readers.reset();
         self.tracking = false;
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
@@ -337,6 +340,7 @@ impl ValueArena {
             self.shape_chains.resize(index + 1, 0);
             self.owner_types.resize(index + 1, SlotType::None);
         }
+        self.slot_readers.retire(shape);
         self.owner_types[index] = SlotType::None;
         // A parent's chain covers its length once registered; one that does not (a parent the
         // heap never registered at that length) lends no owners, and the child owns its slots.
@@ -384,6 +388,7 @@ impl ValueArena {
 
     /// Starts joining writes' classes from none: the caller joins what live objects hold.
     pub(crate) fn track(&mut self) {
+        self.slot_readers.reset();
         self.tracking = true;
         self.owner_types.fill(SlotType::None);
     }
@@ -410,6 +415,15 @@ impl ValueArena {
         self.owner_types[self.slot_owner(shape, slot) as usize]
     }
 
+    pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        let crate::code_dependencies::SlotDependency { shape, slot, ty } = dependency;
+        let slot = usize::from(slot);
+        if !self.tracking || slot >= self.shape_length(shape)
+            || self.slot_observation(shape, slot).ty() != ty { return false; }
+        self.slot_readers.subscribe(self.slot_owner(shape, slot), code)
+    }
+
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
     #[inline(always)]
     pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
@@ -432,7 +446,10 @@ impl ValueArena {
         if held == SlotType::Tagged { return false; }
         let class = held.join(incoming);
         let widened = class != held;
-        if widened { self.owner_types[owner] = class; }
+        if widened {
+            self.slot_readers.retire(owner as u32);
+            self.owner_types[owner] = class;
+        }
         widened
     }
 
@@ -768,6 +785,7 @@ impl ValueArena {
                 .map(|values| values.capacity() * size_of::<(u32, Value)>())
                 .sum::<usize>()
             + self.free_dictionaries.capacity() * size_of::<u32>()
+            + self.slot_readers.memory_bytes()
     }
 
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {

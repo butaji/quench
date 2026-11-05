@@ -21926,7 +21926,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None).unwrap();
         assert_eq!(method.inlined.len(), 1);
-        let published = vm.programs.publish_lane_method(method);
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
         vm.collect_now(&program);
         assert!(published.method().is_some(), "a live callee binding survives collection");
         match transition {
@@ -21936,7 +21936,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None).unwrap();
-                let dead = vm.programs.publish_lane_method(method);
+                let dead = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
                 vm.collect_now(&program);
                 assert!(!vm.heap.is_live(orphan));
                 assert!(dead.method().is_none(), "retire before the function locator can be reused");

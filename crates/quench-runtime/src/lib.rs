@@ -12,6 +12,7 @@ pub use vm::NativeFaultHandler;
 mod bigint;
 mod bytecode;
 mod compile;
+mod code_dependencies;
 mod heap;
 mod host;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]

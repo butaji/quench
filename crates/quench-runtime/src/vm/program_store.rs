@@ -1048,13 +1048,20 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
-    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod)
-        -> Rc<super::compiled::PublishedLaneMethod>
+    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod, heap: &mut crate::heap::Heap)
+        -> Option<Rc<super::compiled::PublishedLaneMethod>>
     {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
+        let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
+        for dependency in &published.method().expect("new publication").slot_dependencies {
+            if !heap.subscribe_slot(*dependency, &code) {
+                published.retire();
+                return None;
+            }
+        }
         if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
-        published
+        Some(published)
     }
 
     /// Retires each published body whose code names a callee that died: an inlined one, or a

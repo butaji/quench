@@ -7305,6 +7305,7 @@ struct JsStepDispatch {
 const LANE_BODY_MIN_INSTRUCTIONS: usize = 24;
 
 pub(super) struct LaneMethod {
+    pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
     _code: CodeMemory,
     entry: Entry,
     /// An OSR-only body keeps normal calls on their baseline entry.
@@ -7372,6 +7373,11 @@ impl PublishedLaneMethod {
     pub(super) fn retire(&self) {
         self.0.borrow_mut().take();
     }
+}
+
+impl crate::code_dependencies::DependentCode for PublishedLaneMethod {
+    fn is_published(&self) -> bool { self.0.borrow().is_some() }
+    fn retire(&self) { self.retire(); }
 }
 
 /// Where a run of a lane body starts (`Vm::run_lane_method`).
@@ -7757,7 +7763,16 @@ impl<H: Host> Vm<H> {
                 .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
             let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
             let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
-            Some(LaneMethod { _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
+            let mut slot_dependencies: Vec<_> = fields.values().flatten()
+                .filter(|field| field.ty != typed_ir::Type::ANY && field.ty != typed_ir::Type::NEVER)
+                .map(|field| crate::code_dependencies::SlotDependency {
+                    shape: field.holder.unwrap_or(field.shape), slot: field.slot, ty: field.ty,
+                })
+                .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
+                .collect();
+            slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
+            slot_dependencies.dedup();
+            Some(LaneMethod { slot_dependencies, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
         })();
         self.host.after_native_compilation();
         result
@@ -18886,6 +18901,39 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn slot_widening_unlinks_compiled_readers_without_releasing_active_code() {
+        let program = crate::Engine::specialize(
+            "var receiver={edgeValue:1}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} read();",
+            "slot-reader-retirement.js").unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.execute(&program).unwrap();
+        vm.programs.enable_js_lane_methods();
+        vm.keep_slot_representations();
+        let function = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
+        let method = vm.compile_lane_method(&program, function as u32,
+            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
+        assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let active = published.method().unwrap();
+        let weak = Rc::downgrade(&active);
+        let receiver_atom = vm.intern_atom("receiver");
+        let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
+        let atom = vm.intern_atom("edgeValue");
+        let shape = vm.heap.object(receiver).unwrap().shape();
+        let slot = vm.shape_slot(shape, atom).unwrap();
+        vm.heap.property_set(receiver, slot, Value::integer(2));
+        assert!(published.method().is_some());
+        vm.heap.property_set(receiver, slot, Value::number(0.5));
+        assert!(published.method().is_none(), "widening retires future entry at the write");
+        assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
+        drop(active);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn function_bound_osr_owns_definitions_without_retaining_closure_identities() {
         let program = crate::Engine::specialize(
             "function pipe(){function step(x){return (x+1)|0;}let x=0;for(let i=0;i<3;i=(i+1)|0)x=step(x);return x;}",
@@ -18911,7 +18959,7 @@ mod tests {
         assert!(!method.supports_first_entry());
         assert!(!method.amortizes_entry());
         assert!(!method.calls_only_natively());
-        let published = vm.programs.publish_lane_method(method);
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
         // No guest code executes at these collection/realm events; a code lease
         // may remain alive independently of the publication's validity.
         unsafe { vm.programs.retire_dead_native_calls(|_| false); }

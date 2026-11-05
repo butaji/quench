@@ -7542,7 +7542,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         if diagnostics && let Some(method) = &method {
             own.body_stats.compiled(function, method.inlined.len());
         }
-        method.map(|method| vm.programs.publish_lane_method(method))
+        method.and_then(|method| vm.programs.publish_lane_method(method, &mut vm.heap))
     };
     if now {
         own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
@@ -14665,6 +14665,66 @@ fn lane_direct_calls<H: Host>(cx: *mut LaneContext<H>) -> bool {
     let vm = unsafe { vm(cx) };
     let script_calls = unsafe { (*cx).script_calls };
     script_calls && !vm.with_scope_entered && vm.construct_target.is_none()
+}
+
+#[cfg(all(test, feature = "aot"))]
+#[test]
+fn direct_callers_subscribe_to_callee_slot_dependencies() {
+    use std::rc::Rc;
+    let program = crate::Engine::specialize(
+        "var owner={edgeValue:1}; function leaf(){var n=0;for(var i=0;i<5;i++)n=(n+owner.edgeValue)|0;return n;} function root(){return leaf();} for(var warm=0;warm<40;warm++)root();",
+        "direct-slot-retirement.js").unwrap();
+    program.compile_released();
+    let mut vm = Vm::new(crate::test_host::TestHost::default());
+    vm.execute(&program).unwrap();
+    vm.programs.enable_js_lane_methods();
+    vm.keep_slot_representations();
+    let leaf_atom = vm.intern_atom("leaf");
+    let root_atom = vm.intern_atom("root");
+    let leaf = vm.own_property(vm.realm.globals, leaf_atom).unwrap();
+    let root = vm.own_property(vm.realm.globals, root_atom).unwrap();
+    let target = vm.resolve_script_call_target(&program, leaf).unwrap();
+    let root_target = vm.resolve_script_call_target(&program, root).unwrap();
+    assert!(target.entry == CallEntry::Activates && !target.view.is_null());
+    assert!(!root_target.view.is_null());
+    let leaf_method = vm.compile_lane_method(&program, target.function,
+        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
+    assert!(!leaf_method.slot_dependencies.is_empty());
+    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap).unwrap();
+    let leaf_body = leaf_publication.method().unwrap();
+    assert!(leaf_body.calls_only_natively());
+    let code = program.function(root_target.function as usize);
+    let pc = code.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+    let mut direct = vec![None; code.code.len()];
+    // Resolve the capture view exactly as production direct-call publication does.
+    let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
+        .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+        .unwrap_or((std::ptr::null(), 0));
+    direct[pc] = Some(super::compiled::DirectCallee {
+        target, method: leaf_publication.clone(), body: leaf_body.clone(),
+        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(),
+        callee: leaf, registers: target.registers, reserve: leaf_body.recovery_space(),
+        sloppy: target.this_binding == ThisBinding::Sloppy,
+        capture_values, capture_len,
+    });
+    let root_method = vm.compile_lane_method(&program, root_target.function,
+        &|_, _| Vec::new(), &|_| (0, 0), direct, None).unwrap();
+    assert_eq!(root_method.direct.len(), 1);
+    assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
+    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap).unwrap();
+    let active_root = root_publication.method().unwrap();
+    let leaf_code = Rc::downgrade(&leaf_body);
+    drop(leaf_body);
+    let owner_atom = vm.intern_atom("owner");
+    let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
+    let atom = vm.intern_atom("edgeValue");
+    let slot = vm.shape_slot(vm.heap.object(owner).unwrap().shape(), atom).unwrap();
+    vm.heap.property_set(owner, slot, Value::number(0.5));
+    assert!(leaf_publication.method().is_none());
+    assert!(root_publication.method().is_none(), "retire embedded direct entry too");
+    assert!(leaf_code.upgrade().is_some(), "active caller pins its retired callee");
+    drop(active_root);
+    assert!(leaf_code.upgrade().is_none());
 }
 
 /// Pushes the activations of the native frames a run of a lane body left inside
