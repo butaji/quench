@@ -65,7 +65,7 @@ pub(super) use lane_unit::static_call_targets;
 mod object_slots;
 mod frame_ssa;
 mod numeric_flow;
-pub(super) use object_slots::NativeFieldLoad;
+pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
 #[cfg(feature = "aot")]
 mod scalar_region;
 #[cfg(feature = "aot")]
@@ -587,7 +587,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -1368,16 +1368,8 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
     builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
 }
 
-/// The present element `key` of the dense own-array `base`, both tagged: the record and
-/// its current backing reloaded per access, so receiver changes and copy-on-write writes are
-/// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
-pub(super) fn emit_dense_element_read(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    base: ir::Value,
-    key: ir::Value,
-    fallback: ir::Block,
-) -> ir::Value {
+/// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
+fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     use crate::value::ValueLayout;
 
@@ -1391,27 +1383,9 @@ pub(super) fn emit_dense_element_read(
     );
     emit_js_guard(builder, is_array, fallback);
 
-    let index = builder.ins().ireduce(types::I32, key);
-    let key_tag = builder
-        .ins()
-        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
-    let is_integer = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
-    emit_js_guard(builder, is_integer, fallback);
-    let nonnegative = builder
-        .ins()
-        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
-    emit_js_guard(builder, nonnegative, fallback);
-
+    // A direct array's index names a live record of the reservation.
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
-    let record_in_bounds = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThan,
-        record_id,
-        i64::try_from(ARRAY.record_capacity).expect("array record capacity fits i64"),
-    );
-    emit_js_guard(builder, record_in_bounds, fallback);
 
     let record_base_address = builder.ins().iadd_imm_s(
         payload,
@@ -1431,7 +1405,62 @@ pub(super) fn emit_dense_element_read(
 
     let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
     let record_offset = builder.ins().imul_imm_u(record_id, record_size);
-    let record = builder.ins().iadd(record_base, record_offset);
+    builder.ins().iadd(record_base, record_offset)
+}
+
+/// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
+/// which an array without extras has as its length (no arguments object, no sparse elements,
+/// `Object::mark_sparse_elements`). Any other base, or a length past int32, leaves through
+/// `fallback`.
+pub(super) fn emit_array_length_read(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    base: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+
+    let record = emit_array_record(builder, payload, base, fallback);
+    let object_payload = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record,
+        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
+    );
+    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
+    let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+    emit_js_guard(builder, ordinary, fallback);
+    let header = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record,
+        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
+    );
+    let length = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        header,
+        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
+    );
+    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
+    emit_js_guard(builder, int32, fallback);
+    length
+}
+
+/// The present element `index` (an int32) of the dense own-array `base` (tagged): the
+/// record and its current backing reloaded per access, so receiver changes and copy-on-write
+/// writes are visible. Any other base, an index past the elements (a negative one among them,
+/// compared unsigned) or a hole leaves through `fallback`, with nothing read.
+pub(super) fn emit_dense_element_read(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    base: ir::Value,
+    index: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+
+    let record = emit_array_record(builder, payload, base, fallback);
     let elements = builder.ins().iadd_imm_s(
         record,
         i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
@@ -1442,11 +1471,6 @@ pub(super) fn emit_dense_element_read(
         elements,
         i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
     );
-    let header_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, header, 0);
-    emit_js_guard(builder, header_is_present, fallback);
-
     let length = builder.ins().load(
         types::I32,
         MemFlagsData::trusted(),
@@ -1509,7 +1533,11 @@ fn emit_js_dense_array_get(
         arguments,
         base_offset,
     );
-    let value = emit_dense_element_read(builder, payload, base, key, fallback);
+    let key_tag = builder.ins().band_imm_u(key, crate::value::ValueLayout::TAG_MASK as i64);
+    let is_integer = builder.ins().icmp_imm_u(IntCC::Equal, key_tag, crate::value::ValueLayout::INT_TAG as i64);
+    emit_js_guard(builder, is_integer, fallback);
+    let index = builder.ins().ireduce(types::I32, key);
+    let value = emit_dense_element_read(builder, payload, base, index, fallback);
     builder.ins().store(
         MemFlagsData::trusted(),
         value,
@@ -2053,15 +2081,16 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
 }
 
-/// What a lane body knows of its receiver from entry on: nothing in a body's run allocates
-/// or changes a shape (calls and stores that add properties leave it), so the record, exact
-/// shape and storage mode found at entry hold for the whole run.
+/// What a lane body knows of its receiver from entry on: the record, exact shape and
+/// storage mode found at entry, which only an adding store changes, after which the body reads
+/// them again (`Lowering::reload_receiver`); and the property arena's base, which an
+/// allocating helper may move, after which the body reloads it
+/// (`Lowering::reload_property_arena`).
 struct LaneReceiver {
     object: Variable,
     shape: Variable,
     inline: Variable,
     properties: Variable,
-    properties_len: Variable,
 }
 
 /// Decode an already proved narrow integer without a process-local lookup table.
@@ -2197,12 +2226,10 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
         shape: builder.declare_var(types::I32),
         inline: builder.declare_var(types::I32),
         properties: builder.declare_var(types::I64),
-        properties_len: builder.declare_var(types::I64),
     };
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-    let (properties, properties_len) = emit_js_property_values(builder, payload);
+    let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    builder.def_var(receiver.properties_len, properties_len);
     let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
     let zero = builder.ins().iconst(types::I32, 0);
     let null = builder.ins().iconst(types::I64, 0);
@@ -2267,6 +2294,25 @@ lane_helper_inventory! { H;
     MaterializeInlineChain => lane_materialize_inline_chain::<H>,
     CallBudget => lane_call_budget,
     AdmittedFunctionBinding => lane_admitted_function_binding::<H>,
+    /// An outer capture's read (`dispatch_fast::lane_body_capture`).
+    CaptureGet => super::dispatch_fast::lane_body_capture::<H>,
+    /// A capture's store (`dispatch_fast::lane_body_capture_store`).
+    CaptureSet => super::dispatch_fast::lane_body_capture_store::<H>,
+    /// Strict equality of two distinct strings or BigInts (`lane_strict_equal_cells`).
+    StrictEqual => lane_strict_equal_cells::<H>,
+    /// `instanceof` by its steady case (`lane_instance_of`).
+    InstanceOf => lane_instance_of::<H>,
+    /// A fused `typeof` test of a heap value (`lane_typeof_is`).
+    TypeofIs => lane_typeof_is::<H>,
+    /// A planned construction (`lane_construct`).
+    Construct => lane_construct::<H>,
+    /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
+    ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
+    /// An object literal's and an array literal's allocation.
+    NewObject => lane_new_object::<H>,
+    NewArray => lane_new_array::<H>,
+    /// A store that may add its property (`lane_field_add`).
+    FieldAdd => lane_field_add::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -2458,14 +2504,44 @@ fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: Wide
     Some(NullishComparison { source, expected, strict, negated })
 }
 
-/// Whether JumpBinaryFalse takes its target, preserving IsHTMLDDA fallback.
+/// The facts of the VM a lowering specializes to, fixed when the VM is built.
+#[derive(Clone, Copy)]
+pub(super) struct VmFacts {
+    /// The VM's `length` name.
+    pub(super) length: Atom,
+    /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
+    /// it, loosely only `null` and `undefined` equal `null`.
+    pub(super) html_dda: bool,
+    /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
+    pub(super) diagnostics: bool,
+    /// The `call` name and the realm's `Function.prototype.call`, through which a call
+    /// inlines the function it calls (`lane_unit::Frame::function_call`).
+    pub(super) function_call: Option<(Atom, Value)>,
+}
+
+impl VmFacts {
+    /// The facts of no particular VM, for code shared across VMs, as a static image's is:
+    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`.
+    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None };
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn vm_facts(&self) -> VmFacts {
+        let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
+        let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call }
+    }
+}
+
+/// Whether JumpBinaryFalse takes its target. Where the IsHTMLDDA object may exist
+/// (`html_dda`), a loose test leaves at `fallback` for any heap value but an object record.
 fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, fallback: ir::Block) -> ir::Value {
+    comparison: NullishComparison, html_dda: bool, fallback: ir::Block) -> ir::Value {
     let taken = builder.create_block();
     let fall = builder.create_block();
     let join = builder.create_block();
     let result = builder.append_block_param(join, types::I8);
-    emit_nullish_edges(builder, value, comparison, fallback, taken, fall, None);
+    emit_nullish_edges(builder, value, comparison, html_dda, fallback, taken, fall, None);
     for (block, bit) in [(taken, 1), (fall, 0)] {
         builder.switch_to_block(block);
         let bit = builder.ins().iconst(types::I8, bit);
@@ -2476,8 +2552,9 @@ fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
 }
 
 /// Resolve comparison continuations without materializing a Boolean at their join.
+#[allow(clippy::too_many_arguments)]
 fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, fallback: ir::Block, taken: ir::Block, fall: ir::Block,
+    comparison: NullishComparison, html_dda: bool, fallback: ir::Block, taken: ir::Block, fall: ir::Block,
     direct_object: Option<ir::Block>) {
     use crate::value::ValueLayout;
     let equal = if comparison.strict {
@@ -2491,11 +2568,13 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         let unequal = if comparison.negated { fall } else { taken };
         builder.ins().brif(object, direct_object.unwrap_or(unequal), &[], remaining, &[]);
         builder.switch_to_block(remaining);
-        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-        let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-        let safe = builder.ins().bor(immediate, array);
-        emit_js_guard(builder, safe, fallback);
+        if html_dda {
+            let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+            let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+            let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+            let safe = builder.ins().bor(immediate, array);
+            emit_js_guard(builder, safe, fallback);
+        }
         let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
         let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
         builder.ins().bor(null, undefined)
@@ -2558,7 +2637,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-            &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, isa,
+            &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
             coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
             .map(|mut region| {
                 region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, header);
@@ -3468,7 +3547,7 @@ pub(super) fn lower_js_general_dispatch(
                 JsGeneralBranch::NullishFalse(comparison) => {
                     let source = register_offset(comparison.source).expect("prevalidated branch register");
                     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
-                    emit_nullish_branch(&mut builder, value, comparison, fallback)
+                    emit_nullish_branch(&mut builder, value, comparison, true, fallback)
                 }
             };
             if target <= pc {
@@ -7354,6 +7433,9 @@ struct JsStepDispatch {
     /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
     /// of them, so each is read again after one (`refresh_heap_bases`).
     object_record_base: usize,
+    /// The function record reservation, whose records' own fields reads take
+    /// (`ObjectHeader::prove_readable`); zero where absent.
+    function_record_base: usize,
     object_mark_blocks: usize,
     object_mark_block_count: usize,
     /// Canonical allocator header in this entry's live VM. Its address is fixed
@@ -7378,6 +7460,9 @@ struct JsStepDispatch {
     /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     inlined: usize,
+    /// The lowering line of the guard a lane body last left at, where its code was compiled
+    /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
+    exit_line: u64,
     /// A lane body's running lane context, which its native calls make activations in.
     lane_context: usize,
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
@@ -7557,12 +7642,25 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
 /// A lane body's field read where its own-slot path does not apply: the VM's cache probe
 /// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
 /// leaves native code for the lane's full read.
-unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, site: u64) -> u64 {
+unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
+    // The read's atom above its cache site (`Lowering::field_probe`).
+    let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
-    match vm.cached_field_hit(residual, Value::from_bits(receiver), site as u16) {
+    // An array's `length`, an own data property no shape holds, answers first: a loop's
+    // condition reads it every iteration (`Vm::array_length_field`).
+    if let Some(length) = vm.array_length_field(Value::from_bits(receiver), atom) {
+        return length.to_bits();
+    }
+    // A read native code has no descriptor for is mostly an inherited method's: its proved
+    // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
+    if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
+        return value.to_bits();
+    }
+    let receiver = Value::from_bits(receiver);
+    match vm.cached_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         _ => Value::DELETED.to_bits(),
     }
@@ -7666,6 +7764,104 @@ unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64,
     vm.lane_global_read(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
 }
 
+/// A lane body's strict equality of two distinct heap values of one content-compared family
+/// (`Vm::heap_values_strictly_equal`): 1 for equal strings or BigInts, else 0.
+unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, left: u64, right: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the comparison reads the heap and allocates nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
+}
+
+/// A lane body's `value instanceof constructor` (`Vm::steady_instanceof`): 1 or 0, or
+/// `Value::DELETED` where the full algorithm decides, which leaves the body at the test.
+unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
+        .map_or(Value::DELETED.to_bits(), u64::from)
+}
+
+/// A lane body's fused `typeof` test of a heap value (`Vm::typeof_test_value`): 1 where its
+/// name is the one at `index` of `bytecode::TYPEOF_NAMES`, else 0.
+unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the test reads the value's cell and allocates nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
+}
+
+/// A lane body's `new callee(...)` of the `argc` registers at `arguments`
+/// (`dispatch_fast::lane_body_construction`): the receiver, or `Value::DELETED`, which leaves
+/// the body at the construction. The allocation may have grown the heap's arenas, whose bases
+/// the dispatch then holds again for the body to reload (`JsStepDispatch::refresh_object_bases`).
+unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, arguments: u64, argc: u64) -> u64 {
+    let dispatch = payload as *mut JsStepDispatch;
+    // SAFETY: the body passes its own dispatch and argument registers; the construction runs
+    // no guest code and collects nothing.
+    let built = unsafe {
+        super::dispatch_fast::lane_body_construction::<H>((*dispatch).lane_context as *mut (), Value::from_bits(callee), arguments as *const Value, argc as u16)
+    };
+    // SAFETY: as above; nothing else borrows the VM while the helper runs.
+    unsafe { (*dispatch).refresh_object_bases(&*(vm as *const Vm<H>)) };
+    built.unwrap_or(Value::DELETED).to_bits()
+}
+
+/// A lane body's store of `value` to the field the packed `write` names (its atom above its
+/// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
+/// object has (`Vm::primary_own_field_store_hit`, or a polymorphic site's
+/// `Vm::polymorphic_own_field_store_hit`), else the cached add of the property
+/// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
+/// property arena, whose base and length the dispatch reads again. Zero where neither hits,
+/// or a collection is due, which the body leaves for.
+unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running one.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
+    let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
+    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::Preserve) {
+        return 1;
+    }
+    if vm.heap.should_collect() {
+        return 0;
+    }
+    // A site past one shape stores through its megamorphic own entries, which may widen the
+    // object's storage; the body retires its proofs after this store either way.
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_none()
+        && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+        return 0;
+    }
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    1
+}
+
+/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
+/// `DELETED` where a collection is due, which the body leaves for. The allocation may move
+/// the property arena, whose base and length the dispatch reads again.
+unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
+    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let object = vm.object();
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    object.to_bits()
+}
+
+/// A lane body's array literal of `length` holes, as the lane's own
+/// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
+/// `lane_new_object`.
+unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64) -> u64 {
+    // SAFETY: as `lane_new_object`.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let array = vm.hole_array(length as usize);
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    array.to_bits()
+}
+
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
@@ -7733,23 +7929,34 @@ impl<H: Host> Vm<H> {
     /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
     /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
     /// per read of its chain, and its sink's store.
-    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit) -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+    /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
+    fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
+        match instruction.op() {
+            Op::GetField => match instruction.field_lookup() {
+                Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
+                Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
+                    let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
+                    reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
+                }),
+                None => Vec::new(),
+            },
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The proved shapes and slots of `unit`'s field sites, but those of the instructions at
+    /// `generic`, where a previous body left on its runs: their proofs did not hold for the
+    /// values they met (a function's own field, read through a plain object's proof), so
+    /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
+    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
+        -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        let generic: Vec<u16> = generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
+            .map(|(site, _)| site).collect();
         unit.instructions
             .iter()
-            .flat_map(|instruction| -> Vec<(u16, bool)> {
-                match instruction.op() {
-                    Op::GetField => match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
-                        Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
-                            let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
-                            reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
-                        }),
-                        None => Vec::new(),
-                    },
-                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
-                    _ => Vec::new(),
-                }
-            })
+            .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
+            .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
@@ -7765,10 +7972,12 @@ impl<H: Host> Vm<H> {
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
+        generic: &[LaneExit],
     ) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let result = (|| {
             let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
+            let facts = self.vm_facts();
             let body = program.function_get(function as usize)?;
             let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
             let (unit, region, fields, direct, direct_sites) = loop {
@@ -7776,7 +7985,10 @@ impl<H: Host> Vm<H> {
                 // Bind its definition at the edge, as AOT does, so fresh closures share
                 // the same residual while recovery retries the actual caller value.
                 let valid_bindings = std::cell::Cell::new(true);
-                let bindings = |caller, pc| {
+                // A call the body left at takes no inlined callee: its call binds what the inlined
+                // frame could not (a receiver its callee's `this` proofs do not hold for).
+                let bindings = |caller, pc: u32| {
+                    if caller == function && generic.contains(&LaneExit::At(pc as usize)) { return Vec::new(); }
                     let mut bound = targets(caller, pc);
                     for target in &mut bound {
                         let numeric = program.function_get(target.function as usize).is_some_and(|body|
@@ -7803,7 +8015,7 @@ impl<H: Host> Vm<H> {
                 // A captured store can also be part of a larger native region.
                 // Its standalone frameless kernel must not block transitive inlining.
                 let unit = lane_unit::with_budget(program, function, body, budget, &bindings,
-                    &|callee| program.function_get(callee as usize))?;
+                    &|callee| program.function_get(callee as usize), facts.function_call.map(|(atom, _)| atom))?;
                 if !valid_bindings.get() { return None; }
                 if !unit.frames.iter().all(|frame| match frame.target.callee {
                     CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
@@ -7817,7 +8029,13 @@ impl<H: Host> Vm<H> {
                     Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
                     None => None,
                 };
-                let fields = self.lane_unit_fields(program, &unit);
+                // A previous body's leaves, at their unit PCs: the specialization's feedback.
+                let left_at: Vec<usize> = generic.iter().filter_map(|exit| unit.origins.iter().position(|origin| match *exit {
+                    LaneExit::At(pc) => *origin == lane_unit::Origin::Caller(pc as u32),
+                    LaneExit::Inlined { frame, pc } => *origin == lane_unit::Origin::Inlined { frame, pc },
+                    LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated => false,
+                })).collect();
+                let fields = self.lane_unit_fields(program, &unit, &left_at);
                 let global_reads = self.lane_global_reads(program, function, &unit);
                 // The calls the unit still makes (none it inlines) whose callees have bodies.
                 // Each candidate owns one contiguous stable slice. A rejected candidate
@@ -7835,8 +8053,8 @@ impl<H: Host> Vm<H> {
                 let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
                     .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
                 let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-                match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, &direct_sites,
-                    &frame_captures, loop_entry, allow_first_entry) {
+                match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, facts, &left_at,
+                    &direct_sites, &frame_captures, loop_entry, allow_first_entry) {
                     Ok(region) => break (unit, region, fields, direct, direct_sites),
                     Err(lane_region::LaneDecline::Rejected(reason))
                         if reason.exceeds_code_budget() && !unit.frames.is_empty() && budget > 0 => budget /= 2,
@@ -7984,6 +8202,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
+    /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
+    pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
+        let frame = lane_frame();
+        // SAFETY: as `lane_shadow_active`; a pushed frame names the caller-owned callee.
+        unsafe {
+            let base = (*frame).shadow.as_mut_ptr();
+            let top = (*frame).dispatch.shadow_top as *const ShadowFrame;
+            (!top.is_null() && top != base.cast_const()).then(|| &*(*top.sub(1)).callee)
+        }
+    }
+
     /// Whether a running body has native frames below the innermost: a helper's activation
     /// would sit under them, so a call from one takes the body's exit instead
     /// (`dispatch_fast::lane_body_call`).
@@ -8061,8 +8291,10 @@ pub(super) struct DirectCallee {
     /// The values past its registers a leave inside a call it inlines takes
     /// and the activations that recovery needs, proved free with its own.
     pub(super) reserve: super::dispatch_fast::LaneRecoverySpace,
-    /// The callee binds a sloppy receiver: the call takes only a direct object one directly.
-    pub(super) sloppy: bool,
+    /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
+    /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
+    /// takes any receiver as it is.
+    pub(super) sloppy: Option<Value>,
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(super) capture_values: *const Value,
     pub(super) capture_len: usize,
@@ -8164,6 +8396,7 @@ impl LaneFrame {
                 capture_len: 0,
                 array_record_base: 0,
                 object_record_base: 0,
+                function_record_base: 0,
                 object_mark_blocks: 0,
                 object_mark_block_count: 0,
                 property_buffer: 0,
@@ -8177,6 +8410,7 @@ impl LaneFrame {
                 residual: 0,
                 body: std::ptr::null(),
                 inlined: 0,
+                exit_line: 0,
                 lane_context: 0,
                 returned_pc: 0,
                 native_top: 0,
@@ -8200,6 +8434,13 @@ thread_local! {
 }
 
 /// This thread's lane frame, made at its first lane body run.
+/// The lowering line of the guard the lane body that just ran left at, reset; zero where it
+/// recorded none (`VmFacts::diagnostics`).
+pub(super) fn take_lane_exit_line() -> u64 {
+    // SAFETY: as `lane_frame`.
+    unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
+}
+
 fn lane_frame() -> *mut LaneFrame {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -8311,7 +8552,7 @@ impl JsNativeActivation {
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, object_record_base: 0, object_mark_blocks: 0,
+            array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, field_store: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
@@ -8320,6 +8561,7 @@ impl JsNativeActivation {
             residual: Rc::as_ptr(&program) as usize,
             body,
             inlined: 0,
+            exit_line: 0,
             lane_context: 0,
             returned_pc: 0,
             native_top: 0,
@@ -8352,6 +8594,7 @@ impl JsStepDispatch {
     /// Allocation or collection between native entries may move any of them.
     fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
@@ -19107,7 +19350,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
+            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
         let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
         let active = published.lease().unwrap();
@@ -19146,7 +19389,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
             let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
+                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
             assert!(!method.slot_dependencies.is_empty());
             let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
             let active = published.lease().unwrap();
@@ -19212,7 +19455,7 @@ mod tests {
         let method = vm.compile_lane_method(&program, caller as u32, &|function, pc|
             (function == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|instruction| instruction.op() == Op::Call))
                 .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|_| (0, 0), Vec::new(), Some(header)).unwrap();
+            &|_| (0, 0), Vec::new(), Some(header), &[]).unwrap();
         assert_eq!(method.inlined.len(), 1);
         assert_eq!(method.inlined[0].target.callee, CalleeBinding::Function);
         assert_eq!(method.recovery_space().activations, 1);
@@ -20775,7 +21018,7 @@ mod tests {
             "nested-poll-binding.js").unwrap();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
-            &|_| (0, 0), Vec::new(), None).expect("polling lane body");
+            &|_| (0, 0), Vec::new(), None, &[]).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = lane_frame();
         // The real outer landing must survive an inner trampoline overwriting it.

@@ -176,6 +176,15 @@ fn set(types: &mut [Type], register: Register, ty: Type) {
     }
 }
 
+/// Whether a binary `operator` yields a Boolean however it completes: an equality, a
+/// relation, `instanceof` or `in`.
+pub(super) fn boolean_binary(operator: u32) -> bool {
+    use oxc_ast::ast::BinaryOperator;
+    super::super::operations::equality_operator(operator).is_some()
+        || super::super::operations::NumberRelation::from_operator(operator).is_some()
+        || [BinaryOperator::Instanceof, BinaryOperator::In].iter().any(|relation| *relation as u32 == operator)
+}
+
 /// Applies `instruction` to `types`; returns where control goes next. A call continues where
 /// the region makes native calls (`native_calls`), past which no object keeps its shape.
 fn transfer(
@@ -223,7 +232,11 @@ fn transfer(
                     }
                 }
                 None if super::super::operations::NumberRelation::from_operator(operator).is_some() => {
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
+                    // An equality decides operands of any type (`lane_region::relation`) and
+                    // proves nothing of them; every other relation compares Numbers.
+                    if super::super::operations::equality_operator(operator).is_none() {
+                        prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
+                    }
                     if !instruction.returns_from_frame() {
                         set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
                     }
@@ -231,6 +244,9 @@ fn transfer(
                 None => {
                     for register in written(instruction) {
                         set(types, register, Type::ANY);
+                    }
+                    if boolean_binary(operator) && !instruction.returns_from_frame() {
+                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
                     }
                 }
             }
@@ -241,10 +257,17 @@ fn transfer(
             Flow::To(instruction.jump_target() as usize)
         }
         Op::JumpBinaryFalse => {
+            // An equality, loose or strict, and `instanceof` decide operands of any type
+            // (`lane_region::relation`: two objects compare by identity) and prove nothing of
+            // them; every other relation compares Numbers.
             let operands = [instruction.operand_b(), instruction.operand_c()];
-            let integer = operands.iter().all(|operand| operand_type(constants, *operand,
-                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_subtype(Type::INT32));
-            if integer { prove_int32(types, operands); } else { prove_number(types, operands); }
+            let operand_types = operands.map(|operand| operand_type(constants, operand,
+                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
+            let operator = instruction.binary_operator_field();
+            let numeric = super::super::operations::NumberRelation::from_operator(operator).is_some()
+                && super::super::operations::equality_operator(operator).is_none();
+            if operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_int32(types, operands); }
+            else if numeric { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
         }
         Op::Call if super::guarded_call_instruction(instruction) => {

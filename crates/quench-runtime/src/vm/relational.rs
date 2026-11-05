@@ -253,6 +253,11 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        // A primitive is no instance, decided before `prototype` is read
+        // (OrdinaryHasInstance step 3): a value outside the heap, or a string.
+        if value.direct_object_index().is_none() && (value.heap_index().is_none() || self.heap.is_string(value)) {
+            return Some(false);
+        }
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
         // never a dictionary's, so the slot exists.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
@@ -262,9 +267,6 @@ impl<H: Host> Vm<H> {
         let target = ProtoLink::object_record(prototype.direct_object_index()?);
         let mut object = match value.direct_object_index() {
             Some(record) => self.heap.object_record_by_id(record),
-            // A primitive has no prototype chain to hold the prototype: a value outside the
-            // heap, or a string.
-            None if value.heap_index().is_none() || self.heap.is_string(value) => return Some(false),
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
             // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
             None => self.ordinary_link_holder(value)?,

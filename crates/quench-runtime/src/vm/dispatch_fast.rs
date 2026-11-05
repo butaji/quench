@@ -625,8 +625,8 @@ impl LaneRecoverySpace {
 enum LaneBody {
     /// Counting its entries toward specialization; `recompiles` bodies before it left too
     /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
-    /// `stuck`, at that one leave only.
-    Unspecialized { entries: u16, recompiles: u8, stuck: Option<super::compiled::LaneExit> },
+    /// `stuck`, at those few leaves only.
+    Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -645,8 +645,8 @@ enum LaneBody {
         /// Whether any run of it completed, natively called ones included.
         completed: std::cell::Cell<bool>,
         recompiles: u8,
-        /// Its predecessor's one leave, where it left only there.
-        stuck: Option<super::compiled::LaneExit>,
+        /// Its predecessor's few leaves, where it left only there.
+        stuck: LaneLeaves,
     },
     /// A body whose runs mostly left: its function runs in the lane again, and its code stays
     /// for the direct callers that name it until they retire with it at a shape compaction.
@@ -654,21 +654,43 @@ enum LaneBody {
     Declined,
 }
 
-/// Where a specialized body's leaves went: nowhere yet, all at one exit, or scattered.
+/// The most distinct places a body's leaves may go for them to be its specialization's
+/// feedback; past them they are scattered.
+const LANE_LEAVE_SITES: usize = 4;
+
+/// Where a specialized body's leaves went: at few exits, each once named, or scattered.
 #[derive(Clone, Copy, PartialEq)]
 enum LaneLeaves {
-    None,
-    One(super::compiled::LaneExit),
+    Few([Option<super::compiled::LaneExit>; LANE_LEAVE_SITES]),
     Scattered,
 }
 
 impl LaneLeaves {
+    const NONE: Self = Self::Few([None; LANE_LEAVE_SITES]);
+
     fn with(self, exit: super::compiled::LaneExit) -> Self {
-        match self {
-            Self::None => Self::One(exit),
-            Self::One(at) if at == exit => self,
-            _ => Self::Scattered,
+        let Self::Few(mut exits) = self else { return self };
+        if exits.contains(&Some(exit)) { return self; }
+        match exits.iter_mut().find(|slot| slot.is_none()) {
+            Some(slot) => { *slot = Some(exit); Self::Few(exits) }
+            None => Self::Scattered,
         }
+    }
+
+    /// These and `other`'s exits together.
+    fn union(self, other: Self) -> Self {
+        other.exits().fold(self, Self::with)
+    }
+
+    /// Whether every exit these name is one of `other`'s: nothing new where they are few.
+    fn within(&self, other: &Self) -> bool {
+        matches!(self, Self::Few(_)) && self.exits().all(|exit| other.exits().any(|known| known == exit))
+    }
+
+    /// The exits these name: none where scattered.
+    fn exits(&self) -> impl Iterator<Item = super::compiled::LaneExit> + '_ {
+        let exits: &[_] = match self { Self::Few(exits) => exits, Self::Scattered => &[] };
+        exits.iter().flatten().copied()
     }
 }
 
@@ -685,6 +707,8 @@ pub(super) struct LaneBodyStats {
     ends: [std::cell::Cell<u32>; 5],
     /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
+    /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
+    refused: std::cell::Cell<u32>,
 }
 
 impl LaneBodyStats {
@@ -694,7 +718,8 @@ impl LaneBodyStats {
         self.frames.set(frames as u32);
     }
 
-    fn ended(&self, exit: super::compiled::LaneExit) {
+    /// `frames`, the body's inlined calls, name the function a leave inside one was in.
+    fn ended(&self, exit: super::compiled::LaneExit, frames: &[super::compiled::InlinedCall], line: u64) {
         let index = match exit {
             super::compiled::LaneExit::Returned { .. } => 0,
             super::compiled::LaneExit::At(_) => 1,
@@ -703,9 +728,18 @@ impl LaneBodyStats {
             super::compiled::LaneExit::Terminated => 4,
         };
         self.ends[index].set(self.ends[index].get() + 1);
+        // Prefixed by the compile that left there, the first being `c1`.
+        let compile = self.compiles.get();
+        // Each with the function it left in and its PC there, which the report names the
+        // instruction of: `#function@pc`.
+        // A guard's leave names the lowering line that made it (`JsStepDispatch::exit_line`).
+        let compile = if line == 0 { format!("c{compile}") } else { format!("c{compile} L{line}") };
         let at = match exit {
-            super::compiled::LaneExit::At(pc) => pc.to_string(),
-            super::compiled::LaneExit::Inlined { frame, pc } => format!("{frame}:{pc}"),
+            super::compiled::LaneExit::At(pc) => format!("{compile} {pc}#{}@{pc}", self.function.get()),
+            super::compiled::LaneExit::Inlined { frame, pc } => match frames.get(frame) {
+                Some(call) => format!("{compile} {frame}:{pc}#{}@{pc}", call.target.function),
+                None => format!("{compile} {frame}:{pc}"),
+            },
             _ => return,
         };
         let mut leaves = self.leaves.borrow_mut();
@@ -715,17 +749,27 @@ impl LaneBodyStats {
         }
     }
 
-    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`.
-    pub(super) fn report(&self, program: usize) -> Option<String> {
+    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`, with the
+    /// state its body ended the run in.
+    pub(super) fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>) -> Option<String> {
         (self.compiles.get() != 0).then(|| {
+            let function = self.function.get();
             let [completed, at, inlined, callee, terminated] = self.ends.each_ref().map(std::cell::Cell::get);
-            // Locations are generated decimal PCs or frame:PC pairs, never guest text.
-            let leaves = self.leaves.borrow().iter()
-                .map(|(pc, count)| format!("[\"{pc}\",{count}]"))
-                .collect::<Vec<_>>().join(",");
+            // A leave names the instruction it left at, in the function it left in. Places are
+            // generated compile, line and PC numbers and opcode names, never guest text.
+            let leaves = self.leaves.borrow().iter().map(|(at, count)| {
+                let place = match at.split_once('#') {
+                    Some((place, site)) => {
+                        let op = site.split_once('@').and_then(|(function, pc)| op_at(function.parse().ok()?, pc.parse().ok()?));
+                        format!("{place} f{site} {}", op.unwrap_or_default())
+                    }
+                    None => at.clone(),
+                };
+                format!("[\"{place}\",{count}]")
+            }).collect::<Vec<_>>().join(",");
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.function.get(), self.compiles.get(), self.frames.get(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                self.compiles.get(), self.frames.get(), self.refused.get(),
             )
         })
     }
@@ -749,6 +793,17 @@ const LANE_BODY_TRIAL_RUNS: u16 = 1024;
 const LANE_BODY_WARMUP_ENTRIES: u16 = 400;
 
 impl LaneView {
+    /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
+    pub(super) fn lane_body_state(&self) -> &'static str {
+        // SAFETY: as `lane_body`.
+        match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Unspecialized { .. } => "unspecialized",
+            LaneBody::Specialized { .. } => "specialized",
+            LaneBody::Retired { .. } => "retired",
+            LaneBody::Declined => "declined",
+        }
+    }
+
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
@@ -763,7 +818,7 @@ impl LaneView {
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
-    fn specialize_lane_body(&self, entry: Handler, specialize: impl FnOnce() -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) -> bool {
+    fn specialize_lane_body(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
@@ -771,7 +826,9 @@ impl LaneView {
             let (recompiles, stuck) = (*recompiles, *stuck);
             *entries += 1;
             if *entries >= LANE_BODY_WARMUP_ENTRIES {
-                *body = match specialize() {
+                // A predecessor's few leaves are the specialization's feedback (`stuck`).
+                let generic: Vec<_> = stuck.exits().collect();
+                *body = match specialize(&generic) {
                     Some(published) => {
                         let method = published.lease().expect("a body just published is live");
                         // A body whose entry would not pay for itself serves native callers
@@ -791,7 +848,7 @@ impl LaneView {
                             runs: std::cell::Cell::new(runs),
                             leaves: std::cell::Cell::new(0),
                             exits: std::cell::Cell::new(0),
-                            leaves_at: std::cell::Cell::new(LaneLeaves::None),
+                            leaves_at: std::cell::Cell::new(LaneLeaves::NONE),
                             completed: std::cell::Cell::new(false),
                             recompiles,
                             stuck,
@@ -825,13 +882,13 @@ impl LaneView {
         {
             // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
-            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: None };
+            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
         }
     }
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
-    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce() -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) {
+    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() } {
             *entries = LANE_BODY_WARMUP_ENTRIES - 1;
@@ -865,9 +922,11 @@ impl LaneView {
     /// `LANE_BODY_REOPTIMIZE_EXITS` it
     /// specializes again, from the feedback its sites hold now (`lane_specialize`), at most
     /// `LANE_BODY_MAX_RECOMPILES` times, its code kept for the direct callers that name it. A
-    /// body that left only where its predecessor did gained nothing from the feedback: it
-    /// retires, as the next would leave there too, and so does one no run of which completed:
-    /// its feedback did not reach the code it runs (DeltaBlue: 85 of 92 compiles).
+    /// body that left at few places specializes them generically next. One that left only
+    /// where its predecessor did gained nothing from the feedback and retires, as the next
+    /// would leave there too, where no run of it completed; one whose runs complete keeps its
+    /// code and reoptimizes no more. One that left from many places and no run of which
+    /// completed retires as well.
     fn note_lane_body_end(&self, exit: super::compiled::LaneExit, completed_region: bool) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
@@ -881,12 +940,24 @@ impl LaneView {
         if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES {
             return;
         }
-        let one = match leaves_at.get() { LaneLeaves::One(at) => Some(at), LaneLeaves::None | LaneLeaves::Scattered => None };
-        let unmoved = (one.is_some() && one == *stuck) || !completed.get();
+        // A body that left at few places takes them, and its predecessors', generically next
+        // (`specialize_lane_body`); one that left only where they did, or left from many
+        // places and never completed, gains nothing from another compile.
+        let leaves = leaves_at.get();
+        // A body whose runs complete and that left only where its predecessors did gains
+        // nothing from another compile, and loses nothing by keeping its code: it stays,
+        // and reoptimizes no more.
+        if completed.get() && leaves != LaneLeaves::NONE && leaves.within(stuck) {
+            *recompiles = LANE_BODY_MAX_RECOMPILES;
+            return;
+        }
+        let unmoved = (leaves != LaneLeaves::NONE && leaves.within(stuck))
+            || (leaves == LaneLeaves::Scattered && !completed.get());
+        let feedback = stuck.union(leaves);
         let recompiles = *recompiles + 1;
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let next = if unmoved { LaneBody::Declined } else { LaneBody::Unspecialized { entries: 0, recompiles, stuck: one } };
+        let next = if unmoved { LaneBody::Declined } else { LaneBody::Unspecialized { entries: 0, recompiles, stuck: feedback } };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         if unmoved {
             *body = LaneBody::Retired { _method: method };
@@ -894,6 +965,12 @@ impl LaneView {
         } else {
             self.retired.borrow_mut().push(method);
         }
+    }
+
+    /// Whether it has no body yet and counts entries toward one, its first or a next.
+    fn warming(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. })
     }
 
     /// Whether its body left too often and specializes again at its next entry.
@@ -917,7 +994,7 @@ impl LaneView {
                 (*self.prologue.get()).handler = *tier_prologue;
                 method.retire();
             }
-            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: None };
+            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
         }
         self.retired.borrow_mut().clear();
         // Its direct callers name shapes too, so they retire with this compaction.
@@ -1923,9 +2000,11 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
 /// usual frame stack. The register storage grows only between activations,
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
-    /// Per call record (by its `call_link`'s address), the callees it linked before its
-    /// latest, newest last, up to `CALL_SITE_TARGETS`: the targets a region inlines as a
-    /// guarded switch (`lane_unit::unit`). Recorded only where a link changes.
+    /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
+    /// newest last, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
+    /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
+    /// callee since; this record alone names the site's own. A collection drops the callees it
+    /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; CALL_SITE_TARGETS]>>>,
     values: Vec<Value>,
     activations: Vec<Activation>,
@@ -2125,6 +2204,28 @@ impl LaneStack {
         self.activation_limit.set(limit);
     }
 
+    /// Records `target` as a callee of the call record whose link is `link`, newest last.
+    fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
+        let mut sites = self.call_sites.borrow_mut();
+        let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
+        if site.last() != Some(&target) {
+            site.retain(|recorded| *recorded != target);
+            if site.len() == CALL_SITE_TARGETS {
+                site.remove(0);
+            }
+            site.push(target);
+        }
+    }
+
+    /// Drops the callees a collection swept from the sites' records before any allocation
+    /// reuses their records: a body inlining one would take another function for it.
+    pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
+        self.call_sites.get_mut().retain(|_, targets| {
+            targets.retain(|target| target.identity().is_none_or(&live));
+            !targets.is_empty()
+        });
+    }
+
     fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation = self.generation.wrapping_add(1);
@@ -2254,6 +2355,10 @@ struct LaneContext<H: Host> {
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
     /// one; a nested run retires them on entry, and they end with the run.
     proofs: crate::heap::ArrayStorageProofs,
+    /// Whether that callee left the lane because it has no body yet and is still warming
+    /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
+    /// specialization (`lane_leave_counts`).
+    callee_warming: bool,
 }
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
@@ -2435,7 +2540,7 @@ fn below_floor() -> bool {
 
 /// After a lane allocation, a due collection raises the floor.
 #[inline(always)]
-fn note_allocation<H: Host>(vm: &Vm<H>) {
+pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
     if vm.heap.should_collect() {
         lane_floor().store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
         vm.lane_stack.activation_limit.set(0);
@@ -5009,47 +5114,61 @@ script_handler! {
         {
             next!(cx, r, following(ip), view)
         }
-        let vm = unsafe { vm(cx) };
-        let env = unsafe { (*cx).env };
-        // A frame run's first depth-0 store finds its slots, tagged when they admit every
-        // store (reads leave them untagged: most frame runs store none), then stores through
-        // them.
-        if depth == 0
-            && env.is_deleted()
-            && let Some(capture) = lane_frame_capture(cx)
-        {
-            unsafe { (*cx).capture = capture };
-            if let Some(slots) = capture_stores(capture)
-                // SAFETY: as for the stores above.
-                && unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(ImmediateLayout::capture_slot(imm)), r.get(i.a)) }.is_some()
-            {
-                next!(cx, r, following(ip), view)
-            }
-        }
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let program = unsafe { (*cx).program };
-        // A frameless activation's function has no environment of its own: its depth-0
-        // capture is the environment it runs in, stored with one lookup.
-        if depth == 0
-            && !env.is_deleted()
-            && vm.direct_store_own_environment(code, program, env, ImmediateLayout::capture_slot(imm), r.get(i.a))
-        {
-            next!(cx, r, following(ip), view)
-        }
-        let target = if env.is_deleted() {
-            vm.capture_env(unsafe { (*cx).frame }, depth)
-        } else {
-            vm.environment_capture_env(env, false, depth)
-        };
-        let stored = target.is_some_and(|target| {
-            vm.direct_store_environment(code, program, target, ImmediateLayout::capture_slot(imm), r.get(i.a))
-        });
-        if !stored {
+        if !lane_capture_store(cx, depth, ImmediateLayout::capture_slot(imm), r.get(i.a)) {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
     }
+}
+
+/// The lane's store of `value` to the capture at `depth` and `slot` past the running
+/// function's dense slots (`lane_store_capture`): whether it stored, which a binding the
+/// direct store does not take (a `const`, an uninitialized `let`) does not.
+fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, value: Value) -> bool {
+    let vm = unsafe { vm(cx) };
+    let env = unsafe { (*cx).env };
+    // A frame run's first depth-0 store finds its slots, tagged when they admit every
+    // store (reads leave them untagged: most frame runs store none), then stores through
+    // them.
+    if depth == 0
+        && env.is_deleted()
+        && let Some(capture) = lane_frame_capture(cx)
+    {
+        unsafe { (*cx).capture = capture };
+        if let Some(slots) = capture_stores(capture)
+            // SAFETY: the running function's dense capture slots, which admit this write
+            // (`CAPTURE_STORES`); no collection runs in the lane.
+            && unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) }.is_some()
+        {
+            return true;
+        }
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let program = unsafe { (*cx).program };
+    // A frameless activation's function has no environment of its own: its depth-0
+    // capture is the environment it runs in, stored with one lookup.
+    if env.is_deleted() {
+        return vm.capture_env(unsafe { (*cx).frame }, depth)
+            .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value));
+    }
+    lane_environment_store(vm, code, program, env, depth, slot, value)
+}
+
+/// `lane_capture_store` of a function running in environment `env` without a frame: its
+/// depth-0 capture is `env` itself, stored with one lookup.
+fn lane_environment_store<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, program: ProgramId, env: Value, depth: u16, slot: u16, value: Value) -> bool {
+    if depth == 0 && vm.direct_store_own_environment(code, program, env, slot, value) {
+        return true;
+    }
+    vm.environment_capture_env(env, false, depth)
+        .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value))
+}
+
+/// The environment a running lane body's captures resolve in when it runs as a direct
+/// callee (`Vm::innermost_direct_callee`): its closure's, which no lane activation holds.
+fn lane_body_callee_env<H: Host>() -> Option<Value> {
+    Vm::<H>::innermost_direct_callee().map(|callee| callee.target.env)
 }
 
 script_handler! {
@@ -7624,7 +7743,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
-    let specialize = || {
+    let specialize = |generic: &[super::compiled::LaneExit]| {
         // Entry warm-up leaves closed loops to their admitted regions. A region that leaves
         // for calls still lets a lane body inline those callees into its typed unit, and an
         // explicit loop OSR request already determined it needs the shared body.
@@ -7634,7 +7753,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
             return None;
         }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-        let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header);
+        let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
         if diagnostics && let Some(method) = &method {
             own.body_stats.compiled(function, method.inlined.len());
         }
@@ -7732,7 +7851,9 @@ script_handler! {
         let resumed = lane_body_left(cx, r, own, &method, exit);
         drop(method);
         // Counted once nothing reads the body: a reoptimization moves it.
-        own.note_lane_body_end(exit, completed_region);
+        if lane_leave_counts(cx, exit) {
+            own.note_lane_body_end(exit, completed_region);
+        }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
@@ -11194,25 +11315,11 @@ impl<H: Host> Vm<H> {
             linked
         } else {
             let index = self.script_call_index(callee)?;
-            // A record that linked another callee is polymorphic: the callee it calls now joins
-            // its history (`LaneStack::call_sites`). The entry it linked may hold another
-            // site's callee since, so only the callee in hand is the site's own.
-            if let Some(previous) = self.lane_stack.script_targets.entries.get(linked)
-                && previous.callee != callee
-                && previous.generation == self.lane_stack.generation
-            {
-                let current = &self.lane_stack.script_targets.entries[index];
-                let mut sites = self.lane_stack.call_sites.borrow_mut();
-                let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
-                let target = super::compiled::CallTarget {
-                    callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function };
-                if !site.contains(&target) {
-                    if site.len() == CALL_SITE_TARGETS {
-                        site.remove(0);
-                    }
-                    site.push(target);
-                }
-            }
+            // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
+            // linked may hold another site's callee since, so only the record names its own.
+            let current = &self.lane_stack.script_targets.entries[index];
+            self.lane_stack.note_site_callee(link, super::compiled::CallTarget {
+                callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
@@ -12409,6 +12516,14 @@ script_handler! {
         let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             return lane_bound_arguments_call(cx, r, ip, i);
         };
+        // The function a call through `call` calls is the site's callee for a body that
+        // inlines it (`lane_unit::Planner::through_call`).
+        if matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
+            && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
+            && program == vm.active_program
+        {
+            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function });
+        }
         if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
             let kind = *kind;
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
@@ -13814,7 +13929,7 @@ fn lane_construct_keeping_activation<H: Host>(
     let finishes = lane_finishes_construction(cx, i);
     // A plan holding for `callee` fixes its function, so the plan alone answers before its
     // target is resolved.
-    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, r, i) {
+    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
         return Ok(KeepingConstruction::Finished(this));
@@ -13882,7 +13997,7 @@ fn lane_construct_keeping_activation<H: Host>(
 /// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
 /// body completes with `undefined`, as the forwarding body then does.
 #[inline(always)]
-fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
@@ -13892,7 +14007,7 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i
     {
         return None;
     }
-    let values = plan.values(vm, lane_construct_argument(r, i));
+    let values = plan.values(vm, argument);
     Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -14554,6 +14669,9 @@ script_handler! {
         if !method.supports_first_entry() || !lane_body_admits(cx, &method) {
             if method.supports_first_entry() && lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
+            if vm.programs.js_jit_diagnostics_enabled() {
+                own.body_stats.refused.set(own.body_stats.refused.get() + 1);
+            }
             next!(cx, r, base, Carried::script(cx))
         }
         // SAFETY: the activation just set the context to its own receiver.
@@ -14564,12 +14682,15 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
+        let counts = lane_leave_counts(cx, exit);
+        let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let resumed = lane_body_left(cx, r, own, &method, exit);
         drop(method);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
-        own.note_lane_body_end(exit, false);
+        if counts {
+            own.note_lane_body_end(exit, false);
+        }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
@@ -14652,8 +14773,12 @@ fn lane_tier_enter<H: Host>(
 fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super::compiled::CallTarget> {
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
     let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
+    let history = vm.lane_stack.call_sites.borrow();
+    // The callees the site resolved or memoized, newest last (`LaneStack::note_site_callee`).
+    let recorded = history.get(&std::ptr::from_ref(&record.call_link).addr());
     // A collection since the site linked retires its entry; the callee's own entry of this
-    // generation, where a call resolved it again, is the same target.
+    // generation, where a call resolved it again, is the same target. A linked entry another
+    // site's callee took since names no callee of this site.
     let latest = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).and_then(|linked| {
         if linked.generation == vm.lane_stack.generation {
             Some(linked)
@@ -14665,25 +14790,30 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
         target.program == vm.active_program
             && target.entry.activates_registers_only()
             && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict)
+            && recorded.is_none_or(|recorded| recorded.iter().any(|site| site.identity() == Some(target.callee)))
     });
-    // A site that runs only in its function's lane body links nothing: the body's own
-    // inlined calls name its targets (`lane_unit::Frame`).
-    let Some(latest) = latest else {
-        return view.lane_body().map_or_else(Vec::new, |method| {
-            method.inlined.iter()
-                .filter(|frame| frame.parent.is_none() && frame.call == pc)
-                .map(|frame| frame.target)
+    match latest {
+        Some(latest) => {
+            let latest = super::compiled::CallTarget {
+                callee: super::compiled::CalleeBinding::Identity(latest.callee), function: latest.function };
+            std::iter::once(latest)
+                .chain(recorded.into_iter().flatten().rev().copied().filter(|target| *target != latest))
+                .take(CALL_SITE_TARGETS)
                 .collect()
-        });
-    };
-    let latest = super::compiled::CallTarget {
-        callee: super::compiled::CalleeBinding::Identity(latest.callee), function: latest.function };
-    let history = vm.lane_stack.call_sites.borrow();
-    let earlier = history.get(&std::ptr::from_ref(&record.call_link).addr());
-    std::iter::once(latest)
-        .chain(earlier.into_iter().flatten().rev().copied().filter(|target| *target != latest))
-        .take(CALL_SITE_TARGETS)
-        .collect()
+        }
+        // A site that runs only in its function's lane body, or that a read memo answers,
+        // links nothing current: the callees it recorded, else the body's own inlined calls
+        // (`lane_unit::Frame`), are its targets.
+        None => match recorded {
+            Some(recorded) => recorded.iter().rev().copied().collect(),
+            None => view.lane_body().map_or_else(Vec::new, |method| {
+                method.inlined.iter()
+                    .filter(|frame| frame.parent.is_none() && frame.call == pc)
+                    .map(|frame| frame.target)
+                    .collect()
+            }),
+        },
+    }
 }
 
 /// `lane_site_targets` of any function of the running program, by its view.
@@ -14728,8 +14858,8 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
             let record = unsafe { &*view.records.get(pc)?.get() };
             let target = *vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
             let sloppy = match target.this_binding {
-                ThisBinding::Sloppy => true,
-                ThisBinding::Strict => false,
+                ThisBinding::Sloppy => Some(vm.realm.globals),
+                ThisBinding::Strict => None,
                 _ => return None,
             };
             (target.generation == vm.lane_stack.generation
@@ -14826,7 +14956,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert!(target.entry == CallEntry::Activates && !target.view.is_null());
     assert!(!root_target.view.is_null());
     let leaf_method = vm.compile_lane_method(&program, target.function,
-        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None).unwrap();
+        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
     assert!(!leaf_method.slot_dependencies.is_empty());
     let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap).unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
@@ -14841,11 +14971,11 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         target, method: leaf_publication.clone(), body: leaf_body.clone(),
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(),
         callee: leaf, registers: target.registers, reserve: leaf_body.recovery_space(),
-        sloppy: target.this_binding == ThisBinding::Sloppy,
+        sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
         capture_values, capture_len,
     });
     let root_method = vm.compile_lane_method(&program, root_target.function,
-        &|_, _| Vec::new(), &|_| (0, 0), direct, None).unwrap();
+        &|_, _| Vec::new(), &|_| (0, 0), direct, None, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
     let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap).unwrap();
@@ -14965,7 +15095,11 @@ fn lane_body_inlined_activation<H: Host>(
         let (target, record) = (&target, unsafe { records.add(call.call as usize) });
         let parent = call.parent_base(frames);
         let this = lane_call_this(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
-        let (callee, _) = lane_push_activation::<H, false, false>(cx, registers, record, target, call.window - parent, this, false);
+        // The frame's own window and count: a call through `call` passes past its receiver
+        // (`lane_unit::Frame::function_call`).
+        // SAFETY: the call's window of `registers` holds its values.
+        let passed = unsafe { registers.0.add(usize::from(call.window - parent)).cast_const() };
+        let (callee, _) = lane_push_passed::<H, false, false>(cx, registers, record, target, passed, call.arguments, this, false);
         // The frame's registers live where it stands, the leave's PC or its inner frame's
         // call; the exit wrote only those (`lane_region`), the rest keep the activation's.
         let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
@@ -15002,11 +15136,54 @@ fn lane_body_inlined_activation<H: Host>(
 /// # Safety
 /// `context` is the running lane's context, whose activation's registers hold the caller's
 /// state; nothing the call runs allocates or collects.
+/// A lane body's read of a capture `packed` names (depth in its high half, slot in its low),
+/// by the lane's own non-effectful lookup (`lane_capture_value`): its value, or
+/// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
+pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
+    // As `lane_body_call`: static regions recover captures through their semantic operation.
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return Value::DELETED.to_bits(); }
+    let cx = context as usize as *mut LaneContext<H>;
+    let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
+    let value = match lane_body_callee_env::<H>() {
+        Some(env) => {
+            let vm = unsafe { vm(cx) };
+            // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
+        }
+        None => lane_capture_value(cx, depth, slot),
+    };
+    value
+        .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
+        .unwrap_or(Value::DELETED)
+        .to_bits()
+}
+
+/// A lane body's store of `value` to the capture `packed` names (depth in its high half,
+/// slot in its low), by the lane's own store (`lane_capture_store`): 1 where it stored, else
+/// 0, which leaves the body at the store, before it.
+///
+/// # Safety
+/// As `lane_body_capture`.
+pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return 0; }
+    let cx = context as usize as *mut LaneContext<H>;
+    let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
+    let stored = match lane_body_callee_env::<H>() {
+        Some(env) => {
+            // SAFETY: the context's program outlives the lane run.
+            let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
+            lane_environment_store(unsafe { vm(cx) }, code, program, env, depth, slot, value)
+        }
+        None => lane_capture_store(cx, depth, slot, value),
+    };
+    u64::from(stored)
+}
+
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
-    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED};
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
@@ -15026,8 +15203,16 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let target = unsafe { &*target };
     let argc = ImmediateLayout::argument_count(i.imm());
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return LANE_CALL_MISSED };
-    if target.entry != CallEntry::Activates
-        || argc > target.params
+    // A target whose body is a read completes with the read's hit, as the lane's own call
+    // does (`lane_script_call`), its value in the call's register, which the body reads.
+    if target.entry != CallEntry::Activates {
+        let passed = ReadArguments { registers: r, base: ImmediateLayout::call_window_base(i.imm()), passed: argc };
+        // SAFETY: as `lane_call_read`.
+        let Some(value) = (unsafe { lane_answered_read(cx, ip, target, passed, this) }) else { return LANE_CALL_MISSED };
+        r.set(i.a & crate::bytecode::REGISTER_MASK, value);
+        return LANE_CALL_COMPLETED;
+    }
+    if argc > target.params
         || argc > FIXED_ARGUMENT_COPIES
         || !lane_activation_room(vm, target)
         || lane_crosses::<H, false>(cx, target)
@@ -15036,8 +15221,98 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     }
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, false);
-    let leave = |resume: Ip, acc: Value| {
+    lane_body_activate(cx, r, ip, target, passed, argc, this, false)
+}
+
+/// A lane body's `new`, as the lane's own construction does (`lane_script_construct`): the
+/// callee's plan, else the receiver its target allocates and, where its body does more
+/// than store fields, its activation, whose completion yields its returned object or the
+/// receiver. A returned construction takes the plan only. Its results are `lane_body_call`'s.
+pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    // As `lane_body_call`: static regions recover constructions through their semantic operation.
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
+    let cx = context as usize as *mut LaneContext<H>;
+    let vm = unsafe { vm(cx) };
+    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
+    let i = unsafe { &*ip };
+    let callee = r.get(i.b);
+    if Vm::<H>::lane_shadow_active()
+        || !unsafe { (*cx).script_calls && (*cx).script_constructs }
+        || vm.construct_target.is_some()
+        || vm.with_scope_entered
+        || vm.heap.should_collect()
+    {
+        return LANE_CALL_MISSED;
+    }
+    // The callee's plan first, the common `new C(…)`, which needs no call target; a returned
+    // construction completes by it alone.
+    if let Some(this) = lane_planned_construction(vm, callee, r, i) {
+        note_allocation(vm);
+        r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+        return LANE_CALL_COMPLETED;
+    }
+    // `new Array()` of the realm's own `Array`: ArrayCreate(0), an empty array of
+    // `Array.prototype`, which calls nothing.
+    let argc = ImmediateLayout::argument_count(i.imm());
+    if argc == 0 && vm.realm_array_constructor(callee) {
+        let array = vm.hole_array(0);
+        note_allocation(vm);
+        r.set(i.a & crate::bytecode::REGISTER_MASK, array);
+        return LANE_CALL_COMPLETED;
+    }
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        return LANE_CALL_MISSED;
+    }
+    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+    let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return LANE_CALL_MISSED };
+    if !target.constructs
+        || target.forwards()
+        || target.entry != CallEntry::Activates
+        || argc > target.params
+        || argc > FIXED_ARGUMENT_COPIES
+        || !lane_activation_room(vm, &target)
+        || lane_crosses::<H, false>(cx, &target)
+    {
+        return LANE_CALL_MISSED;
+    }
+    let built = if target.initializes {
+        // SAFETY: the context's program outlives the lane run.
+        lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i)
+    } else {
+        vm.inline_construct_receiver(callee).map(|this| (this, false))
+    };
+    let Some((this, initialized)) = built else { return LANE_CALL_MISSED };
+    // Allocating the receiver can make a collection due.
+    note_allocation(vm);
+    if initialized {
+        r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+        return LANE_CALL_COMPLETED;
+    }
+    // SAFETY: a construction passes its arguments from register `c` on.
+    let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
+    lane_body_activate(cx, r, ip, &target, passed, argc, this, true)
+}
+
+/// The activation of `target` a lane body's call (`constructs`: `new`) at `ip` makes, its
+/// `argc` arguments at `passed`, run by the target's own body where it has one: its
+/// completion writes the call's register (`LANE_CALL_COMPLETED`), and any other end leaves
+/// the lane in the activation (`LANE_CALL_LEFT`).
+#[allow(clippy::too_many_arguments)]
+fn lane_body_activate<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: *const Value,
+    argc: u16,
+    this: Value,
+    constructs: bool,
+) -> u64 {
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
+    let vm = unsafe { vm(cx) };
+    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
+    let leave = move |resume: Ip, acc: Value| {
         unsafe {
             (*cx).callee_resume = resume;
             (*cx).callee_acc = acc;
@@ -15047,10 +15322,15 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
+    // A target without a body warms toward one by these entries too, as by the lane's own
+    // (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
     if own.respecializes() {
         lane_specialize(cx, own, target.function, None, true);
+    } else if own.lane_body().is_none() {
+        lane_specialize(cx, own, target.function, None, false);
     }
     let Some(method) = own.lane_body().filter(|method| method.supports_first_entry() && lane_body_admits(cx, method)) else {
+        unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
@@ -15059,15 +15339,31 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, receiver, captures, cx.cast());
     let resumed = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
-    own.note_lane_body_end(exit, false);
+    if lane_leave_counts(cx, exit) {
+        own.note_lane_body_end(exit, false);
+    }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
+        // A construction's completion yields its returned object or the receiver.
+        LaneBodyLeft::Completed(_, value) if constructs => {
+            lane_complete_activation(cx, ip, value).expect("the construction made an activation");
+            LANE_CALL_COMPLETED
+        }
         LaneBodyLeft::Completed(_, value) => {
             lane_return_to_body(cx, value).expect("the call made a plain activation");
             LANE_CALL_COMPLETED
         }
     }
+}
+
+/// Whether a body's run that ended at `exit` counts toward its retirement and
+/// reoptimization: a leave into a callee that only lacked a body while warming toward one
+/// (`LaneContext::callee_warming`) does not, as the next run may find the callee's body.
+fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::LaneExit) -> bool {
+    // SAFETY: the running lane's context, read and reset by the run that ended.
+    let warming = unsafe { std::mem::take(&mut (*cx).callee_warming) };
+    !(warming && exit == super::compiled::LaneExit::Callee)
 }
 
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
@@ -15092,7 +15388,7 @@ fn lane_body_left<H: Host>(
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
-        own.body_stats.ended(exit);
+        own.body_stats.ended(exit, &method.inlined, super::compiled::take_lane_exit_line());
     }
     if exit == super::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
@@ -15603,14 +15899,41 @@ fn lane_planned_construction<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
+    planned_construction(vm, callee, lane_construct_argument(r, i))
+}
+
+/// `lane_planned_construction` from the parameters' values `argument` gives.
+#[inline(always)]
+fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
-        return lane_defaulted_construction(vm, index, r, i);
+        return lane_defaulted_construction(vm, index, argument);
     }
-    let argument = lane_construct_argument(r, i);
     Some(plan.allocate(&mut vm.heap, |field| argument(plan.parameters[field])))
+}
+
+/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, by the callee's
+/// construct plan (`planned_construction`): the finished receiver, or `None` (no plan, a
+/// construction the lane makes otherwise, or a collection due, which the lane runs) to
+/// leave the body at the construction, before any effect.
+///
+/// # Safety
+/// `context` is the running lane's context and `arguments` the body's `argc` registers.
+pub(super) unsafe fn lane_body_construction<H: Host>(context: *mut (), callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+    let cx = context.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() || vm.heap.should_collect() {
+        return None;
+    }
+    // SAFETY: the caller passes the body's argument registers.
+    let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
+    // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
+    let this = planned_construction(vm, callee, argument).or_else(|| lane_forwarded_fields(vm, callee, argument))?;
+    note_allocation(vm);
+    Some(this)
 }
 
 /// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
@@ -15618,12 +15941,12 @@ fn lane_planned_construction<H: Host>(
 /// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
 /// code.
 #[inline(never)]
-fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, r: Registers, i: &LaneInstruction) -> Option<Value> {
+fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let plan = vm.lane_stack.construct_plans[index];
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, lane_construct_argument(r, i));
+    let values = plan.values(vm, argument);
     Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -16930,6 +17253,11 @@ fn lane_memoize_read<H: Host>(
 ) {
     // SAFETY: the context's program outlives the lane run.
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
+    // The memo answers the site from now on, so no call of it links its record: its record
+    // names the callee for the bodies that inline it (`lane_site_targets`).
+    // SAFETY: `site` is a record of the running view.
+    vm.lane_stack.note_site_callee(unsafe { &(*site).call_link }, super::compiled::CallTarget {
+        callee: super::compiled::CalleeBinding::Identity(target.callee), function: target.function });
     if target.this_binding == ThisBinding::Lexical {
         return;
     }
@@ -19369,7 +19697,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: None }),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
         retired: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
@@ -20586,6 +20914,7 @@ impl<H: Host> Vm<H> {
             this: self.frame_lane_this(*frame),
             resumed_acc: Slot::of(Value::UNDEFINED),
             callee_resume: std::ptr::null(),
+            callee_warming: false,
             callee_acc: Value::UNDEFINED,
             backedges_left: self
                 .lane_credits_backedges(code, program)

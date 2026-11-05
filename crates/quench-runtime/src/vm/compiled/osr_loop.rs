@@ -276,9 +276,12 @@ impl LoopRegion {
         else { Type::ANY }
     }
 
-    /// An entry-pinned own Number field whose writes update its SSA cell.
+    /// An entry-pinned own Number field whose writes update its SSA cell. A field every read
+    /// of which loads from the heap (`dynamic_field_reads`) needs none: its reads see its stores
+    /// there, under the type its slots have held (`NativeFieldLoad::ty`).
     fn is_field_cell(&self, index: usize) -> bool {
         self.field_store_sites.iter().any(|store| store.matches(&self.fields[index]))
+            && self.field_reads.iter().any(|(offset, field)| *field == index && !self.dynamic_field_reads.contains_key(offset))
     }
 
     pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
@@ -5833,11 +5836,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, header.shape, i64::from(load.shape));
         self.guard(pc, wrong_shape);
         let base = self.word(heap_base + 1);
-        let length = self.word(heap_base + 2);
         let exit = self.exit_block(pc);
         let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
         let record = header.record.address(&mut self.body.builder);
-        let checked = CheckedObject::prove(&mut self.body.builder, record, header.inline, base, length,
+        let checked = CheckedObject::prove(&mut self.body.builder, record, header.inline, base,
             load, access, exit)?;
         let current = self.body.builder.current_block().expect("checked projection");
         self.chains.insert(current, chain);
@@ -5867,7 +5869,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let exit = self.exit_block(pc);
             let header = ObjectHeader::prove(&mut self.body.builder, receiver, records, None, exit);
             let base = self.word(heap_base + 1);
-            let length = self.word(heap_base + 2);
             let join = self.body.builder.create_block();
             let bits = self.body.builder.append_block_param(join, types::I64);
             for load in loads {
@@ -5880,7 +5881,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
                 let record = header.record.address(&mut self.body.builder);
                 let object = CheckedObject::prove(&mut self.body.builder, record, header.inline,
-                    base, length, *load, access, exit)?;
+                    base, *load, access, exit)?;
                 let value = object.read(&mut self.body.builder, load.slot);
                 self.body.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
                 self.body.builder.switch_to_block(next);
@@ -6996,8 +6997,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let index = *self.region.field_stores.get(&(pc - self.region.header))?;
                 let pointer = self.field_store_pointer(index);
                 let value = self.register(instruction.register_a());
-                if let Some(field) = self.region.fields.iter().position(|field|
-                    self.region.field_store_sites[index].matches(field))
+                if let Some(field) = (0..self.region.fields.len()).find(|field|
+                    self.region.field_store_sites[index].matches(&self.region.fields[*field]) && self.region.is_field_cell(*field))
                 {
                     let FieldValue::NumberCell(variable) = self.fields[field] else {
                         unreachable!("an admitted mutable field has an SSA cell")
@@ -7235,7 +7236,7 @@ mod tests {
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
             let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad { target_shape: None,
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
-                storage, ty: Type::ANY,
+                storage, ty: Type::ANY, inherited: None,
             }]).collect();
             let widened = Default::default();
             let observation = Observation {
