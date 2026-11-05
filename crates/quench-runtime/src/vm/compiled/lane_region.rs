@@ -145,9 +145,10 @@ impl State {
         self.proofs.headers.fill(None);
         self.proofs.layouts.clear();
         for fact in &mut self.values {
-            if fact.value.ty.object_shape().is_some() {
+            let unshaped = fact.value.ty.without_object_shape();
+            if unshaped != fact.value.ty {
                 *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(Type::DIRECT_OBJECT_FAMILY, fact.value.representation) };
+                    ..RegisterFact::definition(unshaped, fact.value.representation) };
             } else if fact.value.ty.body_index().is_some() {
                 *fact = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(Type::language(crate::ValueType::Function), fact.value.representation) };
@@ -3037,7 +3038,7 @@ impl Lowering<'_, '_> {
             let TaggedView::Value(value) = fact.tagged else { continue };
             if self.builder.func.dfg.resolve_aliases(value) == bits && !fact.value.ty.is_direct_object_family() {
                 *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(Type::DIRECT_OBJECT_FAMILY, Representation::Tagged) };
+                    ..RegisterFact::definition(fact.value.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY), Representation::Tagged) };
             }
         }
     }
@@ -3654,7 +3655,7 @@ impl Lowering<'_, '_> {
             let ty = fact.ty;
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(
-                    if ty.object_shape().is_some() { ty } else { Type::DIRECT_OBJECT_FAMILY },
+                    ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY),
                     Representation::Tagged) };
         }
         header
@@ -4170,6 +4171,17 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
+        use super::*;
+        let null = Type::language(crate::ValueType::Null);
+        let mut state = State::canonical(1);
+        state.values[0] = RegisterFact::definition(Type::direct_object(3).join(null), Representation::Tagged);
+        state.call_effect();
+        assert_eq!(state.values[0].value.ty, Type::DIRECT_OBJECT_FAMILY.join(null));
+        assert_eq!(state.values[0].value.ty.direct_object_part(), Some(Type::DIRECT_OBJECT_FAMILY));
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn typed_alternate_backedges_join_before_their_fault_poll() {
