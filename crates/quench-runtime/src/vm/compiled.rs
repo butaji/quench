@@ -2440,12 +2440,11 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     if isa.pointer_type() != types::I64 { return Vec::new(); }
     let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return Vec::new(); }
-    // Source-PC recovery materializes one callee frame. Static regions inline
-    // root calls of leaves; the same unit owns all origins and recovery masks.
-    let leaf = |function: u32| program.function_get(function as usize)
-        .is_some_and(|body| body.instructions().all(|instruction| instruction.op() != Op::Call));
+    // Source-PC recovery materializes one callee frame. Root calls may inline
+    // a non-leaf prefix: its residual call recovers that exact frame and PC.
+    // Nested calls are not spliced; the unit owns their origins and live homes.
     let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
-        .then(|| targets.get(pc as usize).copied().flatten()).flatten().filter(|callee| leaf(*callee))
+        .then(|| targets.get(pc as usize).copied().flatten()).flatten()
         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
@@ -19524,6 +19523,61 @@ mod tests {
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.execute_native_program(&native, true).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn nonleaf_inline_recovers_at_residual_call_without_replaying_effects() {
+        let source = r#"
+            let owner={count:0}, marker={}, keep={value:42};
+            owner.consume=function consume(input,callback){
+                this.count=this.count+1;
+                input=input.next;
+                let result=callback(input);
+                return result+this.count;
+            };
+            function run(owner,input,callback){let result=owner.consume(input,callback);return result+3;}
+            let leaf={value:7}, input={next:leaf};
+            function value(p){return p.value;}
+            for(let i=0;i<20;i++)run(owner,input,value);
+            function observe(p){
+                $262.gc();
+                if(p!==leaf||owner.consume.arguments[0]!==leaf||owner.consume.caller!==run)throw 'frame';
+                return keep.value;
+            }
+            if(run(owner,input,observe)!==66||owner.count!==21)throw 'prefix';
+            function fail(p){$262.gc();if(p!==leaf)throw 'argument';throw marker;}
+            try{run(owner,input,fail);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
+            if(owner.count!==22)throw 'replay';
+            throw keep.value;
+        "#;
+        for (typescript, terminal) in [false, true].into_iter()
+            .flat_map(|typescript| [false, true].map(|terminal| (typescript, terminal))) {
+            let source = if terminal {
+                source.replace("let result=callback(input);\n                return result+this.count;", "return callback(input);")
+                    .replace("!==66", "!==45")
+            } else { source.to_owned() };
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "nonleaf.cts") }
+                else { crate::Engine::specialize(&source, "nonleaf.cjs") }.unwrap();
+            let named = |name: &str| program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let (caller, consume) = (named("run"), named("consume"));
+            let call = program.function(consume).instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+            let targets = static_call_targets(&program);
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0)
+                .into_iter().next().expect("non-leaf prefix has exact one-frame recovery");
+            assert!(!region.function.sized_stack_slots.is_empty(), "callee state must have recovery homes");
+            let native = linked_optimized_test_program(program);
+            let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
+            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+            assert!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get) > before);
+            assert_eq!(INLINE_LAST_MATERIALIZATION.with(std::cell::Cell::get), Some((consume as u32, call as u32)),
+                "the nested call must resume after the committed prefix and parameter update");
         }
     }
 

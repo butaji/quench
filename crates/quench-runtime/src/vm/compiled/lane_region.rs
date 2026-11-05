@@ -2519,8 +2519,16 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
+                // A residual call in an admitted callee completes this native
+                // prefix through exact frame materialization. Its caller's
+                // effects and the callee's live argument homes cannot replay.
+                let materialized_call = self.completion == Completion::SourcePc
+                    && instruction.op() == Op::Call
+                    && matches!(self.unit.origins.get(pc),
+                        Some(super::lane_unit::Origin::Inlined { frame, .. })
+                            if self.unit.frames[*frame].recovery == super::lane_unit::CallRecovery::Materialize);
                 if self.coverage.full() && (self.completion == Completion::Number
-                    || !((instruction.op() == Op::Return && plain) || instruction.returns_from_frame())) {
+                    || !((instruction.op() == Op::Return && plain) || instruction.returns_from_frame() || materialized_call)) {
                     self.valid = false;
                 }
                 self.exit(state, pc32);
