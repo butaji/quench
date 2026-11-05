@@ -464,6 +464,10 @@ mod activation_primitives;
 #[path = "primitive_bench/commutative_reads.rs"]
 mod commutative_read_primitives;
 
+#[cfg(test)]
+#[path = "primitive_bench/indexed_forwarding.rs"]
+mod indexed_forwarding_primitives;
+
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "primitive_bench/indexed_compositions.rs"]
 mod indexed_compositions;
