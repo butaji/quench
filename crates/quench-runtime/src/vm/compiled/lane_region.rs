@@ -140,7 +140,8 @@ struct Lowering<'a, 'f> {
     entry: Option<Entry>,
     native: usize,
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
-    pending: Vec<(ir::Block, State, u32)>,
+    /// With the lowering line that made each guard, which a diagnostics build records.
+    pending: Vec<(ir::Block, State, u32, u32)>,
     /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
     /// so no read or store folds the receiver facts its entry proved.
     native_calls: bool,
@@ -340,10 +341,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// A guard's failure block: it leaves at `pc` from the state where the guard sits. It is
     /// filled after the region, since the current block is still open.
+    #[track_caller]
     fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
-        self.pending.push((block, state.clone(), pc));
+        self.pending.push((block, state.clone(), pc, std::panic::Location::caller().line()));
         block
     }
 
@@ -862,8 +864,12 @@ fn lower(
     if reachable {
         lowering.exit(&mut state, instructions.len() as u32);
     }
-    for (block, mut leaving, pc) in std::mem::take(&mut lowering.pending) {
+    for (block, mut leaving, pc, line) in std::mem::take(&mut lowering.pending) {
         lowering.builder.switch_to_block(block);
+        if lowering.vm.diagnostics {
+            let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
+            lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+        }
         lowering.exit(&mut leaving, pc);
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
@@ -2846,7 +2852,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -2871,7 +2877,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

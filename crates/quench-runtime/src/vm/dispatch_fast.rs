@@ -633,7 +633,7 @@ impl LaneBodyStats {
     }
 
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
-    fn ended(&self, exit: super::compiled::LaneExit, frames: &[super::compiled::InlinedCall]) {
+    fn ended(&self, exit: super::compiled::LaneExit, frames: &[super::compiled::InlinedCall], line: u64) {
         let index = match exit {
             super::compiled::LaneExit::Returned { .. } => 0,
             super::compiled::LaneExit::At(_) => 1,
@@ -645,11 +645,13 @@ impl LaneBodyStats {
         let compile = self.compiles.get();
         // Each with the function it left in and its PC there, which the report names the
         // instruction of: `#function@pc`.
+        // A guard's leave names the lowering line that made it (`JsStepDispatch::exit_line`).
+        let compile = if line == 0 { format!("c{compile}") } else { format!("c{compile} L{line}") };
         let at = match exit {
-            super::compiled::LaneExit::At(pc) => format!("c{compile} {pc}#{}@{pc}", self.function.get()),
+            super::compiled::LaneExit::At(pc) => format!("{compile} {pc}#{}@{pc}", self.function.get()),
             super::compiled::LaneExit::Inlined { frame, pc } => match frames.get(frame) {
-                Some(call) => format!("c{compile} {frame}:{pc}#{}@{pc}", call.target.function),
-                None => format!("c{compile} {frame}:{pc}"),
+                Some(call) => format!("{compile} {frame}:{pc}#{}@{pc}", call.target.function),
+                None => format!("{compile} {frame}:{pc}"),
             },
             _ => return,
         };
@@ -14839,7 +14841,7 @@ fn lane_body_left<H: Host>(
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
-        own.body_stats.ended(exit, &method.inlined);
+        own.body_stats.ended(exit, &method.inlined, super::compiled::take_lane_exit_line());
     }
     let frames = Vm::<H>::take_shadow_frames();
     let (r, own, method) = match lane_materialize_frames(cx, frames) {

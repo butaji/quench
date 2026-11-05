@@ -2153,12 +2153,14 @@ pub(super) struct VmFacts {
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
     /// it, loosely only `null` and `undefined` equal `null`.
     pub(super) html_dda: bool,
+    /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
+    pub(super) diagnostics: bool,
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { length: self.length_atom, html_dda }
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled() }
     }
 }
 
@@ -6794,6 +6796,9 @@ struct JsStepDispatch {
     /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     inlined: usize,
+    /// The lowering line of the guard a lane body last left at, where its code was compiled
+    /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
+    exit_line: u64,
     /// A lane body's running lane context, which its native calls make activations in.
     lane_context: usize,
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
@@ -7593,6 +7598,7 @@ impl LaneFrame {
                 vm: 0,
                 residual: 0,
                 inlined: 0,
+                exit_line: 0,
                 lane_context: 0,
                 returned_pc: 0,
                 native_top: 0,
@@ -7617,6 +7623,13 @@ thread_local! {
 }
 
 /// This thread's lane frame, made at its first lane body run.
+/// The lowering line of the guard the lane body that just ran left at, reset; zero where it
+/// recorded none (`VmFacts::diagnostics`).
+pub(super) fn take_lane_exit_line() -> u64 {
+    // SAFETY: as `lane_frame`.
+    unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
+}
+
 fn lane_frame() -> *mut LaneFrame {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -7719,6 +7732,7 @@ impl JsStepDispatch {
             vm: 0,
             residual: 0,
             inlined: 0,
+            exit_line: 0,
             lane_context: 0,
             returned_pc: 0,
             native_top: 0,
