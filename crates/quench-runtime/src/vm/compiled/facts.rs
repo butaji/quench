@@ -20,6 +20,11 @@ use std::num::NonZeroUsize;
 /// Scratch storage spills for larger functions without limiting region size.
 const INLINE_ANALYSIS_ITEMS: usize = 16;
 
+/// A guarded block input contract the fixed point keeps: the register holds the type on
+/// entry to the leader, which every native edge into it proves (`Lowering::conform`) and
+/// every in-loop definition preserves (`loop_int32`).
+pub(super) type Contract = (usize, Register, Type);
+
 /// The registers' types on entry to each block leader; `None` at a PC that leads no block or
 /// that no path from the entry reaches.
 #[derive(Default)]
@@ -30,6 +35,7 @@ pub(super) struct Facts {
     reached: CompoundBitSet,
     /// Join of the entry's backedge inputs, without the unknown external input.
     backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
+    contracts: Vec<Contract>,
 }
 
 impl Facts {
@@ -92,17 +98,29 @@ impl Facts {
 
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
         let Some(slot) = self.offsets.get_mut(pc) else { return false };
-        let Some(offset) = *slot else {
-            *slot = NonZeroUsize::new(self.types.len() + 1);
-            self.types.extend_from_slice(incoming);
-            return true;
+        let (start, mut changed) = match *slot {
+            None => {
+                *slot = NonZeroUsize::new(self.types.len() + 1);
+                self.types.extend_from_slice(incoming);
+                (self.types.len() - incoming.len(), true)
+            }
+            Some(offset) => {
+                let start = offset.get() - 1;
+                let mut changed = false;
+                for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
+                    let joined = known.join(*incoming);
+                    changed |= joined != *known;
+                    *known = joined;
+                }
+                (start, changed)
+            }
         };
-        let start = offset.get() - 1;
-        let mut changed = false;
-        for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
-            let joined = known.join(*incoming);
-            changed |= joined != *known;
-            *known = joined;
+        for &(_, register, required) in self.contracts.iter().filter(|(at, _, _)| *at == pc) {
+            let known = &mut self.types[start + usize::from(register)];
+            if !known.is_subtype(required) {
+                *known = required;
+                changed = true;
+            }
         }
         changed
     }
@@ -285,9 +303,11 @@ pub(super) fn analyze(
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
     native_calls: bool,
+    contracts: &[Contract],
 ) -> Facts {
     let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len(),
-        reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new() };
+        reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new(),
+        contracts: contracts.to_vec() };
     let mut pending = smallvec::SmallVec::<[usize; INLINE_ANALYSIS_ITEMS]>::new();
     let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
     if entry < instructions.len() && facts.merge(entry, initial) {
@@ -346,7 +366,7 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = Type::INT32; }
-        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls);
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, &[]);
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
             if facts.backedge().get(register) != Some(&Type::INT32) { rejected.insert(register); }
@@ -360,6 +380,30 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
             return Some(facts);
         }
         for register in rejected.iter() { candidates.remove(register); }
+    }
+    None
+}
+
+/// Prove int32 header contracts of inner loops by induction: each candidate (a loop header
+/// and a register) holds an int32 there when every definition in its loop's body yields one
+/// under all the contracts. Rejecting one removes it from the next iteration's hypothesis.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
+    instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
+    written: &dyn Fn(WideInstruction) -> Vec<Register>, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
+    native_calls: bool) -> Option<Facts> {
+    while !candidates.is_empty() {
+        let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
+        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, &contracts);
+        let mut rejected = vec![false; candidates.len()];
+        facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
+            for (index, ((_, candidate, required), body)) in candidates.iter().enumerate() {
+                if *candidate == register && body.contains(&pc) && !ty.is_subtype(*required) { rejected[index] = true; }
+            }
+        });
+        if !rejected.contains(&true) { return Some(facts); }
+        let mut index = 0;
+        candidates.retain(|_| { index += 1; !rejected[index - 1] });
     }
     None
 }

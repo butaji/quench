@@ -37,6 +37,8 @@ const INLINE_FIELD_BINDINGS: usize = 4;
 const INLINE_EFFECT_EDGES: usize = 4;
 /// Most blocks project only a few numbers; larger blocks spill without a limit.
 const INLINE_NUMBER_PROJECTIONS: usize = 4;
+/// A loop body usually indexes only a few arrays; more spill without a limit.
+const INLINE_ARRAY_VIEWS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
 const INLINE_LOOP_INPUTS: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
@@ -123,6 +125,9 @@ struct LocalProofs {
     fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
     /// Pure ToInt32 results, separate from each source value's semantic type.
     int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
+    /// Dense array views by the tagged base they prove, until an instruction that could
+    /// change an array's storage (`retains_array_views`).
+    arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
 }
 
 impl LocalProofs {
@@ -137,7 +142,8 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
             headers: vec![None; registers + 1], layouts: BTreeMap::new(), receivers: BTreeSet::new(),
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new() } }
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(),
+            arrays: smallvec::SmallVec::new() } }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -150,6 +156,7 @@ impl State {
     fn call_effect(&mut self) {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
+        self.proofs.arrays.clear();
         self.proofs.headers.fill(None);
         self.proofs.layouts.clear();
         for fact in &mut self.values {
@@ -630,6 +637,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.fields.contains(field))).collect();
         state.proofs.int32_projections = first.int32_projections.iter().copied().filter(|projection| rest.iter()
             .all(|other| other.int32_projections.contains(projection))).collect();
+        state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
+            .all(|other| other.arrays.contains(view))).collect();
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -817,6 +826,7 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         Op::IncDec => instruction.numeric_local_target().is_none(),
         Op::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         Op::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+        Op::GetIndex => instruction.result_flags() == 0,
         op => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
@@ -828,8 +838,26 @@ fn stores_own(instruction: WideInstruction) -> bool {
         && !instruction.returns_from_frame()
 }
 
+/// Whether `instruction` is an element store natively: into a record array, whose elements
+/// no named field read, capture or object shape observes (`Lowering::set_index`); anything
+/// else leaves first.
+fn stores_element(instruction: WideInstruction) -> bool {
+    instruction.op() == Op::SetIndex && !instruction.returns_from_frame()
+}
+
+/// Whether an array view (`LocalProofs::arrays`) survives `instruction`: it reads no heap
+/// value but an element, or replaces one in place (`Lowering::set_index` retires the views
+/// itself on its general path), so no array's storage changes.
+fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
+    match instruction.op() {
+        Op::GetField | Op::LoadCapture => false,
+        Op::SetIndex => true,
+        _ => reads_only(constants, instruction),
+    }
+}
+
 /// Loops with one external entry and no interior entry, whose native operations
-/// only read or replace existing own fields. Misses leave before guest effects.
+/// only read or replace existing own fields and array elements. Misses leave before guest effects.
 /// A sole native entry at the header can supply the same entry proofs.
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], starts: &[usize])
     -> Vec<(usize, usize)> {
@@ -850,7 +878,8 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || starts.iter().any(|start| (header + 1..=back).contains(start))
-            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)) { continue }
+            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)
+                || stores_element(*candidate)) { continue }
         loops.push((header, back));
     }
     loops
@@ -1301,7 +1330,7 @@ pub(super) fn lower(
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
         field.holder.is_none().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
     let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
     let loops = local_loops(unit, &program.constants, &starts);
     // An entry query earns its extra helper call only when it replaces a
@@ -1350,10 +1379,11 @@ pub(super) fn lower(
             }
         }
         if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls);
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
+    lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
     lowering.require_object_latches(&instructions, &leaders, &loops);
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry, &loops, &leaders)); }
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
@@ -2237,6 +2267,9 @@ impl Lowering<'_, '_> {
         if self.consumed.contains(pc) {
             return true;
         }
+        if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
+            state.proofs.arrays.clear();
+        }
         if let Some(LoopRead { value: variable, ty, representation, receiver, header }) = self.hoisted.get(&pc).copied() {
             if let Some((owner, ty)) = receiver {
                 let owner = match instruction.field_lookup() {
@@ -2401,28 +2434,17 @@ impl Lowering<'_, '_> {
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`).
                 let exit = self.guard_exit(state, pc32);
-                let operands = (self.operand_tagged(state, instruction.operand_b()), self.operand_tagged(state, instruction.operand_c()));
-                operands.0.zip(operands.1).map(|(base, key)| {
-                    let payload = self.payload;
-                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, key, exit);
+                let base = self.operand_tagged(state, instruction.operand_b());
+                let index = self.operand_int(state, instruction.operand_c(), exit);
+                base.zip(index).map(|(base, index)| {
+                    let view = self.array_view(state, base, false, exit);
+                    let (_, value) = super::emit_dense_element(&mut self.builder, view, index, exit);
                     self.set_tagged(state, instruction.result_register(), value);
                     true
                 })
             }
             Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
-                .iter().all(|register| *register < self.unit.registers) => {
-                state.proofs.fields.clear();
-                // The lane's in-place element replacement; a miss leaves at the store.
-                let exit = self.guard_exit(state, pc32);
-                let value = self.tagged(state, instruction.register_a());
-                let base = self.tagged(state, instruction.register_b());
-                let key = self.tagged(state, instruction.register_c());
-                let helper = self.helpers.address(self.builder.ins(), LaneHelper::IndexSet);
-                let stored = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[base, key, value]);
-                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-                emit_js_guard(&mut self.builder, hit, exit);
-                Some(true)
-            }
+                .iter().all(|register| *register < self.unit.registers) => Some(self.set_index(state, pc32, instruction)),
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction)
@@ -3202,6 +3224,32 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// An inner loop's counters and indices carried as int32s: a register its header joins as
+    /// a Number (an index computed before the loop, say) while every definition in the loop
+    /// yields an int32 takes an int32 header contract. The edge entering the loop proves it
+    /// once (`conform`), instead of each use re-proving an exact int32 of a double.
+    fn refine_loop_inputs(&mut self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
+        boundaries: &CompoundBitSet, loops: &[(usize, usize)],
+        own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) {
+        let mut candidates = Vec::new();
+        for &(header, back) in loops.iter().filter(|(header, _)| *header != self.coverage.entry()) {
+            let Some(types) = self.facts.at(header) else { continue };
+            let mut defined: CompoundBitSet = CompoundBitSet::with_capacity(types.len());
+            for instruction in &instructions[header..=back] {
+                for register in writes(*instruction) { defined.insert(usize::from(register)); }
+            }
+            for (index, ty) in types.iter().enumerate() {
+                if *ty == Type::NUMBER && defined.contains(index) && self.is_live(header, index as Register) {
+                    candidates.push(((header, index as Register, Type::INT32), header..=back));
+                }
+            }
+        }
+        if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
+            &self.program.constants, &writes, own_shape, self.native_calls) {
+            self.facts = facts;
+        }
+    }
+
     /// The type already proved for an operand at a use. Feedback is not enough:
     /// an admitted field read carries its actual loop-entry contract, even when
     /// the general analysis has no field feedback (as in linked AOT).
@@ -3409,6 +3457,58 @@ impl Lowering<'_, '_> {
                 }
             }
         }
+    }
+
+    /// The view of the array `base` holds, proved once until a storage change retires it;
+    /// a `writable` request upgrades a read view.
+    fn array_view(&mut self, state: &mut State, base: ir::Value, writable: bool, exit: ir::Block) -> super::DenseArrayView {
+        if let Some((_, view)) = state.proofs.arrays.iter().find(|(known, view)| *known == base && (view.writable || !writable)) {
+            return *view;
+        }
+        let view = super::emit_dense_array_view(&mut self.builder, self.payload, base, writable, exit);
+        state.proofs.arrays.retain(|(known, _)| *known != base);
+        state.proofs.arrays.push((base, view));
+        view
+    }
+
+    /// An element store. A Number replacing a present element of a writable array is
+    /// native, through the array's view, and keeps every view; anything else takes the
+    /// lane's helper (`lane_index_set`), which may also add the element and so retires the
+    /// views, and leaves at the store when that misses too. Every operand's tagged view is
+    /// made before the paths split, so the join sees only values both paths dominate.
+    fn set_index(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
+        let exit = self.guard_exit(state, pc);
+        let value = self.tagged(state, instruction.register_a());
+        let base = self.tagged(state, instruction.register_b());
+        let key = self.tagged(state, instruction.register_c());
+        let general = |lowering: &mut Self| {
+            let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::IndexSet);
+            let stored = emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[base, key, value]);
+            let hit = lowering.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+            emit_js_guard(&mut lowering.builder, hit, exit);
+        };
+        if state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER) {
+            // The helper stores only at an int32 key; any other leaves at the store either way.
+            let index = self.int(state, instruction.register_c(), exit);
+            let slow = self.builder.create_block();
+            self.builder.set_cold_block(slow);
+            let done = self.builder.create_block();
+            let view = self.array_view(state, base, true, slow);
+            let (address, old) = super::emit_dense_element(&mut self.builder, view, index, slow);
+            super::emit_dense_element_replace(&mut self.builder, view, address, old, value);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(slow);
+            self.builder.seal_block(slow);
+            general(self);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(done);
+            self.builder.seal_block(done);
+        } else {
+            general(self);
+        }
+        state.proofs.arrays.clear();
+        state.proofs.fields.clear();
+        true
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {

@@ -1368,6 +1368,127 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
     builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
 }
 
+/// A dense own array's elements as one access proved them: the backing's first value and
+/// its length. Holds until something changes the array's storage (`ArrayElements`): only
+/// element reads and in-place replacements may run in between.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct DenseArrayView {
+    pub(super) values: ir::Value,
+    /// The backing's `u32` length, as `i32`.
+    pub(super) length: ir::Value,
+    /// Whether a store may replace a present element in place: the array owns its backing
+    /// alone, is not frozen and has no extras (indexed descriptors, an arguments map or a
+    /// prototype watch), as `Vm::try_replace_record_element` requires.
+    pub(super) writable: bool,
+}
+
+/// The view of the dense own array `base` (tagged); `writable` also proves in-place
+/// replacement. Any other base leaves through `fallback`, with nothing read.
+pub(super) fn emit_dense_array_view(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    base: ir::Value,
+    writable: bool,
+    fallback: ir::Block,
+) -> DenseArrayView {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    use crate::value::ValueLayout;
+
+    let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let is_array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+    emit_js_guard(builder, is_array, fallback);
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_in_bounds = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, ARRAY.record_capacity as i64);
+    emit_js_guard(builder, record_in_bounds, fallback);
+    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
+    let base_is_present = builder.ins().icmp_imm_u(IntCC::NotEqual, record_base, 0);
+    emit_js_guard(builder, base_is_present, fallback);
+    let record_offset = builder.ins().imul_imm_u(record_id, ARRAY.record_size as i64);
+    let record = builder.ins().iadd(record_base, record_offset);
+    let header = builder.ins().load(types::I64, MemFlagsData::trusted(), record,
+        (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let header_is_present = builder.ins().icmp_imm_u(IntCC::NotEqual, header, 0);
+    emit_js_guard(builder, header_is_present, fallback);
+    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    if writable {
+        let owners = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_owners_offset as i32);
+        let unique = builder.ins().icmp_imm_u(IntCC::Equal, owners, 1);
+        emit_js_guard(builder, unique, fallback);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record,
+            (ARRAY.object_offset + OBJECT.meta_offset) as i32);
+        let frozen = builder.ins().band_imm_u(meta, i64::from(ARRAY.frozen_mask));
+        let unfrozen = builder.ins().icmp_imm_u(IntCC::Equal, frozen, 0);
+        emit_js_guard(builder, unfrozen, fallback);
+        let object_payload = builder.ins().load(types::I64, MemFlagsData::trusted(), record,
+            (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+        let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
+        let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+        emit_js_guard(builder, plain, fallback);
+    }
+    let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
+    DenseArrayView { values, length, writable }
+}
+
+/// The `i32` index a tagged `key` names; any other key leaves through `fallback`.
+pub(super) fn emit_int_key(builder: &mut FunctionBuilder<'_>, key: ir::Value, fallback: ir::Block) -> ir::Value {
+    use crate::value::ValueLayout;
+    let key_tag = builder.ins().band_imm_u(key, ValueLayout::TAG_MASK as i64);
+    let is_integer = builder.ins().icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
+    emit_js_guard(builder, is_integer, fallback);
+    builder.ins().ireduce(types::I32, key)
+}
+
+/// The address of `view`'s present element `index` (`i32`) and its value; an index outside
+/// the view or a hole leaves through `fallback`.
+pub(super) fn emit_dense_element(
+    builder: &mut FunctionBuilder<'_>,
+    view: DenseArrayView,
+    index: ir::Value,
+    fallback: ir::Block,
+) -> (ir::Value, ir::Value) {
+    let nonnegative = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
+    emit_js_guard(builder, nonnegative, fallback);
+    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, index, view.length);
+    emit_js_guard(builder, in_bounds, fallback);
+    let value_offset = emit_value_index_offset(builder, index);
+    let address = builder.ins().iadd(view.values, value_offset);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let is_present = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    emit_js_guard(builder, is_present, fallback);
+    (address, value)
+}
+
+/// Replace the present element at `address`, whose value was `old`, with the non-heap
+/// `value` through a writable view, as `ArrayElements::replace_through` does: the backing's
+/// count of non-int32 values (`OTHERS_FROM_VALUES`) follows the write, and an unknown count
+/// stays unknown. A non-heap value needs no generational log (`RecordSpace::store_logs`).
+pub(super) fn emit_dense_element_replace(
+    builder: &mut FunctionBuilder<'_>,
+    view: DenseArrayView,
+    address: ir::Value,
+    old: ir::Value,
+    value: ir::Value,
+) {
+    use crate::value::ValueLayout;
+    debug_assert!(view.writable, "an in-place replacement needs a writable view");
+    let other = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+        let other = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
+        builder.ins().uextend(types::I32, other)
+    };
+    let added = other(builder, value);
+    let removed = other(builder, old);
+    let others = builder.ins().load(types::I32, MemFlagsData::trusted(), view.values, crate::heap::OTHERS_FROM_VALUES);
+    let delta = builder.ins().isub(added, removed);
+    let recounted = builder.ins().iadd(others, delta);
+    let unknown = builder.ins().icmp_imm_u(IntCC::Equal, others, i64::from(crate::heap::OTHERS_UNKNOWN));
+    let others = builder.ins().select(unknown, others, recounted);
+    builder.ins().store(MemFlagsData::trusted(), others, view.values, crate::heap::OTHERS_FROM_VALUES);
+    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+}
+
 /// The present element `key` of the dense own-array `base`, both tagged: the record and
 /// its current backing reloaded per access, so receiver changes and copy-on-write writes are
 /// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
@@ -1378,106 +1499,9 @@ pub(super) fn emit_dense_element_read(
     key: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    use crate::value::ValueLayout;
-
-    let family = builder
-        .ins()
-        .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let is_array = builder.ins().icmp_imm_u(
-        IntCC::Equal,
-        family,
-        ValueLayout::DIRECT_ARRAY_TAG as i64,
-    );
-    emit_js_guard(builder, is_array, fallback);
-
-    let index = builder.ins().ireduce(types::I32, key);
-    let key_tag = builder
-        .ins()
-        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
-    let is_integer = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
-    emit_js_guard(builder, is_integer, fallback);
-    let nonnegative = builder
-        .ins()
-        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
-    emit_js_guard(builder, nonnegative, fallback);
-
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let record_in_bounds = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThan,
-        record_id,
-        i64::try_from(ARRAY.record_capacity).expect("array record capacity fits i64"),
-    );
-    emit_js_guard(builder, record_in_bounds, fallback);
-
-    let record_base_address = builder.ins().iadd_imm_s(
-        payload,
-        i64::try_from(std::mem::offset_of!(JsStepDispatch, array_record_base))
-            .expect("JS dispatch offset fits i64"),
-    );
-    let record_base = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record_base_address,
-        0,
-    );
-    let base_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, record_base, 0);
-    emit_js_guard(builder, base_is_present, fallback);
-
-    let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
-    let record_offset = builder.ins().imul_imm_u(record_id, record_size);
-    let record = builder.ins().iadd(record_base, record_offset);
-    let elements = builder.ins().iadd_imm_s(
-        record,
-        i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
-    );
-    let header = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        elements,
-        i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
-    );
-    let header_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, header, 0);
-    emit_js_guard(builder, header_is_present, fallback);
-
-    let length = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        header,
-        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
-    );
-    let index_is_present = builder
-        .ins()
-        .icmp(IntCC::UnsignedLessThan, index, length);
-    emit_js_guard(builder, index_is_present, fallback);
-
-    let value_offset = emit_value_index_offset(builder, index);
-    let values = builder.ins().iadd_imm_s(
-        header,
-        i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
-    );
-    let value_address = builder.ins().iadd(values, value_offset);
-    let value = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        value_address,
-        0,
-    );
-    let is_present = builder.ins().icmp_imm_u(
-        IntCC::NotEqual,
-        value,
-        Value::DELETED.to_bits() as i64,
-    );
-    emit_js_guard(builder, is_present, fallback);
-
-    value
+    let index = emit_int_key(builder, key, fallback);
+    let view = emit_dense_array_view(builder, payload, base, false, fallback);
+    emit_dense_element(builder, view, index, fallback).1
 }
 
 /// Lower a present dense own-array read. The receiver and key come from the
