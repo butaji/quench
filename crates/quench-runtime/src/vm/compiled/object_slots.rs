@@ -219,6 +219,8 @@ mod tests {
             (Some(Type::language(crate::ValueType::Object)), 3),
             (Some(Type::DIRECT_OBJECT_FAMILY), 2),
             (Some(Type::direct_object(0)), 0),
+            (Some(Type::direct_object(0).join(Type::language(crate::ValueType::Null))), 3),
+            (Some(Type::direct_object(0).join(Type::NULLISH)), 3),
         ] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 2]);
@@ -262,6 +264,7 @@ mod tests {
             assert_eq!(unsafe { run(base, outside) }, Value::DELETED.to_bits(), "{ty:?}");
             if ty != Some(Type::DIRECT_OBJECT_FAMILY) {
                 assert_eq!(unsafe { run(base, Value::NULL.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
+                assert_eq!(unsafe { run(base, Value::UNDEFINED.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
             }
         }
     }

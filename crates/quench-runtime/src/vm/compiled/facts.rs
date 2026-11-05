@@ -252,8 +252,8 @@ fn transfer(
             Flow::Next
         }
         Op::Call if native_calls => {
-            for ty in types.iter_mut().filter(|ty| ty.object_shape().is_some()) {
-                *ty = Type::language(crate::ValueType::Object);
+            for ty in types.iter_mut() {
+                *ty = ty.without_object_shape();
             }
             set(types, instruction.result_register(), Type::ANY);
             Flow::Next
@@ -367,6 +367,27 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_call_retires_conditional_shapes_in_cfg_facts() {
+        let program = crate::Engine::specialize(
+            "function caller(f, value) { f(value); return value; }", "shape-call.js").unwrap();
+        let function = program.function(1);
+        let call = function.instructions().find(|instruction| instruction.op() == Op::Call).unwrap();
+        assert!(!super::super::guarded_call_instruction(call));
+        let null = Type::language(crate::ValueType::Null);
+        for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
+            Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
+            let mut types = vec![ty; usize::from(function.registers)];
+            assert!(matches!(transfer(&mut types, call, &program.constants,
+                &super::super::lane_region::writes, true), Flow::Next));
+            for (register, actual) in types.into_iter().enumerate() {
+                let expected = if register == usize::from(call.result_register()) { Type::ANY }
+                    else { ty.without_object_shape() };
+                assert_eq!(actual, expected, "{ty:?}, register {register}");
+            }
+        }
+    }
 
     fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
         let program = crate::Engine::specialize(&format!("function loop(n,flag,seed){{{body}}}"), "inductive.js").unwrap();
