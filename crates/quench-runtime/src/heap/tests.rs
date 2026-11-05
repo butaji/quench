@@ -1599,3 +1599,62 @@ fn object_publication_admits_preinitialized_slots_after_census() {
         }
     }
 }
+
+#[test]
+fn named_property_publication_retires_readers_for_every_record_family() {
+    use crate::{code_dependencies::{DependentCode, SlotDependency}, typed_ir::Type};
+    struct Reader(std::cell::Cell<bool>);
+    impl DependentCode for Reader {
+        fn is_published(&self) -> bool { self.0.get() }
+        fn retire(&self) { self.0.set(false); }
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum Family { Array, Function, Promise, Iterator, Date }
+    for family in [Family::Array, Family::Function, Family::Promise, Family::Iterator, Family::Date] {
+        for generic in [false, true] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None)]);
+            heap.alloc_object_with_properties(Value::NULL, 1, &[Value::integer(1)]);
+            let reader: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
+            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32 }, &reader));
+            // Construct storage without publishing it: the publication boundary
+            // must admit its contents, regardless of the allocator's fast path.
+            let value = Value::number(0.5);
+            let (properties, inline) = heap.initial_object_storage(1, &[value], false);
+            let object = Object::with_property_storage(Value::NULL, properties, inline);
+            let cell = match family {
+                Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },
+                Family::Function => Cell::Function(Box::new(FunctionRecord {
+                    object, realm: Value::NULL, env: Value::NULL,
+                    kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
+                })),
+                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord {
+                    state: PromiseState::Pending, result: Value::UNDEFINED,
+                    reactions: Default::default(), rejection: PromiseRejectionState::Unobserved,
+                    rejection_id: None, host_context: None.into(), module_evaluation: false,
+                } })),
+                Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
+                    object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
+                    ext: IteratorExt { position_high: 0, next_method: None, helper: None,
+                        helper_running: false, helper_started: false, generator: None },
+                })),
+                Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
+            };
+            let published = if generic { heap.alloc_cell(cell) } else {
+                match cell {
+                    Cell::Array { object } => heap.alloc_array(object),
+                    Cell::Function(function) => heap.alloc_function(*function),
+                    Cell::Promise(promise) => heap.alloc_promise(*promise),
+                    Cell::Iterator(iterator) => heap.alloc_iterator(*iterator),
+                    cell => heap.alloc(cell),
+                }
+            };
+            assert!(!reader.is_published(), "{family:?}, generic={generic}");
+            assert_eq!(heap.slot_type(1, 0), Type::NUMBER);
+            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+            assert_eq!(heap.unrepresented_slots(), 0);
+            heap.track_slot_representations(&[(0, None), (1, None)]);
+            assert_eq!(heap.slot_type(1, 0), Type::NUMBER, "census includes {family:?}");
+        }
+    }
+}

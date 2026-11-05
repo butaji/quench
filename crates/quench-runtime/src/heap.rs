@@ -1160,6 +1160,7 @@ impl Heap {
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
     /// allocation (`charge_allocation`) for its element storage.
     fn alloc_array(&mut self, object: ArrayObject) -> Value {
+        self.admit_object_contents(&object);
         self.mark_prototype(object.proto());
         self.charge_allocation(array_payload_bytes(&object), 0);
         match self.array_records.try_insert(object) {
@@ -1186,7 +1187,10 @@ impl Heap {
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
-        if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
+        if let Some(object) = cell.object() {
+            self.admit_object_contents(object);
+            self.mark_prototype(object.proto());
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = Self::cell_kind(&cell) as usize;
@@ -1202,7 +1206,7 @@ impl Heap {
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
         let cell = match cell {
-            Cell::Object(object) => match self.try_publish_object_record(object) {
+            Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
                     let value = Value::direct_object(record_id);
                     #[cfg(feature = "profile-memory")]
@@ -1368,7 +1372,8 @@ impl Heap {
     fn insert_object_record(&mut self, object: Object) -> Value {
         self.allocated += 1;
         self.total_allocations += 1;
-        match self.try_publish_object_record(object) {
+        self.admit_object_contents(&object);
+        match self.object_records.try_insert(object) {
             Ok(record_id) => {
                 let value = Value::direct_object(record_id);
                 #[cfg(feature = "profile-memory")]
@@ -1379,14 +1384,13 @@ impl Heap {
         }
     }
 
-    /// Admit initial contents before a new record becomes visible to native readers.
-    /// Planned constructors and generic Object/Cell publication share this boundary.
+    /// Admit initial named properties before any object-bearing cell or record
+    /// becomes visible. Generic and dedicated publishers share the live-slot reader.
     #[inline(always)]
-    fn try_publish_object_record(&mut self, object: Object) -> Result<u32, Object> {
+    fn admit_object_contents(&mut self, object: &Object) {
         if self.properties.tracks() {
-            join_object_slot_values(&object, &mut self.properties);
+            join_object_slot_values(object, &mut self.properties);
         }
-        self.object_records.try_insert(object)
     }
 
     /// `alloc(Cell::Function(..))` without boxing the function first: a function record
@@ -1413,6 +1417,7 @@ impl Heap {
     /// external bytes.
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
+        self.admit_object_contents(&function.object);
         self.allocated += 1;
         self.total_allocations += 1;
         match self.function_records.try_insert(function) {
@@ -1509,6 +1514,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Iterator(Box::new(iterator)));
         }
+        self.admit_object_contents(&iterator.object);
         self.mark_prototype(iterator.object.proto());
         // An iterator's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
@@ -1536,6 +1542,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Promise(Box::new(promise)));
         }
+        self.admit_object_contents(&promise.object);
         self.mark_prototype(promise.object.proto());
         // A promise's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
@@ -1640,7 +1647,6 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        self.properties.note_shape_values(shape, values);
         let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
         let previous = array.replace_property_storage(properties, inline_properties);
         self.properties.release(previous);
@@ -1753,13 +1759,22 @@ impl Heap {
         self.register_shape_layouts(layouts);
     }
 
-    /// Joins each live object record's slot values into its owners' representations.
+    /// Joins named properties across every live object-bearing record and legacy cell.
     fn join_live_slot_values(&mut self) {
         if !self.properties.tracks() { return; }
         let properties = &mut self.properties;
         self.object_records.for_each_live(|_, object| {
             join_object_slot_values(object, properties);
         });
+        self.array_records.for_each_live(|_, object| join_object_slot_values(object, properties));
+        self.function_records.for_each_live(|_, function| join_object_slot_values(&function.object, properties));
+        self.promise_records.for_each_live(|_, promise| join_object_slot_values(&promise.object, properties));
+        self.iterator_records.for_each_live(|_, iterator| join_object_slot_values(&iterator.object, properties));
+        for slot in self.slots.iter() {
+            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
+                join_object_slot_values(object, properties);
+            }
+        }
     }
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
