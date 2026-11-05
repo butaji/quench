@@ -219,7 +219,7 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
     let constant_names: Vec<_> = {
         let mut names: Vec<_> = program.atoms.iter().enumerate().map(|(atom, name)|
             (name, crate::bytecode::Atom::try_from(atom).expect("validated atom index"))).collect();
-        names.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        names.sort_unstable_by_key(|&(name, _)| name);
         program.constants.iter().map(|constant| match constant {
             crate::bytecode::Constant::String(name) => names.binary_search_by(|(candidate, _)|
                 candidate.cmp(&name.as_ref())).ok().map(|index| names[index].1),

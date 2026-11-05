@@ -4696,6 +4696,7 @@ mod tests {
             for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
                 let mut vm = Vm::new(crate::test_host::TestHost::default());
                 vm.set_execution_mode(mode);
+                #[cfg(not(quench_profiled))]
                 vm.programs.enable_js_jit_diagnostics();
                 vm.programs.enable_js_lane_methods();
                 let error = vm.execute(&program).unwrap_err();

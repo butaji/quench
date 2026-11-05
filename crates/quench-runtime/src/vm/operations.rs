@@ -186,6 +186,13 @@ impl NumberArithmetic {
     }
 }
 
+/// Whether swapping two already-evaluated operands preserves the canonical Number
+/// result. This is not a law for evaluating/coercing guest operands or string addition.
+#[inline(always)]
+pub(super) fn number_result_is_commutative(operator: u32) -> bool {
+    matches!(NumberArithmetic::from_operator(operator), Some(NumberArithmetic::Add | NumberArithmetic::Multiply))
+}
+
 /// Sign of a non-overflowing zero product: at least one factor is zero, so
 /// the result is -0 exactly when either factor is negative. The caller must
 /// establish zero before interpreting this predicate; views supply primitives.
@@ -987,15 +994,21 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
-            let receiver = vm.string_method_receiver(p, native, this)?;
-            if receiver == this {
-                return vm.call_native_dispatch(p, native, receiver, args);
-            }
-            vm.with_call_roots([receiver], |vm| {
-                vm.call_native_dispatch(p, native, receiver, args)
+        // A Number-only unary Math call neither allocates nor enters guest code. Its
+        // ignored receiver and trailing arguments need no roots on that path.
+        let result = if let Some(value) = super::number::math_unary_call(native, args) {
+            Ok(value)
+        } else {
+            self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+                let receiver = vm.string_method_receiver(p, native, this)?;
+                if receiver == this {
+                    return vm.call_native_dispatch(p, native, receiver, args);
+                }
+                vm.with_call_roots([receiver], |vm| {
+                    vm.call_native_dispatch(p, native, receiver, args)
+                })
             })
-        });
+        };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
         result

@@ -2265,11 +2265,10 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
             &mut *(payload as *mut JsStepDispatch),
             std::slice::from_raw_parts(entries as *const InlineRecoveryFrame, count as usize))
     };
-    let mut caller = dispatch.frame;
     let mut recovered = super::dispatch_frame::RecoveredCalls {
         calls: Vec::with_capacity(entries.len()), failure: None,
     };
-    for entry in entries {
+    for (caller, entry) in (dispatch.frame..).zip(entries) {
         let body = program.function(vm.frames[caller].function as usize);
         let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
         let callee = vm.read(caller, instruction.register_b());
@@ -2296,7 +2295,6 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
             destination: instruction.result_register(), completion: super::CallCompletion::Value,
             returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
         });
-        caller += 1;
         #[cfg(test)] {
             INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
             INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((entry.function, entry.source_pc))));
@@ -7872,13 +7870,12 @@ impl<H: Host> Vm<H> {
         residual: &ResidualProgram,
         registers: *mut Value,
         receiver: Value,
-        captures: *const crate::heap::EnvironmentSlots,
+        captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
         let frame = lane_frame();
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { captures.as_ref() }
-            .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
             .unwrap_or((std::ptr::null(), 0));
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
@@ -7984,7 +7981,7 @@ impl<H: Host> Vm<H> {
         residual: &ResidualProgram,
         registers: *mut Value,
         receiver: Value,
-        captures: *const crate::heap::EnvironmentSlots,
+        captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
         let frame = lane_frame();
@@ -17800,8 +17797,8 @@ mod tests {
                     let bytes = compiled.buffer.data();
                     if width >= u32::BITS && count == 17 {
                         let kind = if signed { ASR_KIND } else { LSR_KIND };
-                        assert!(bytes.chunks_exact(std::mem::size_of::<u32>()).any(|bytes| {
-                            let word = u32::from_le_bytes(bytes.try_into().unwrap());
+                        assert!(bytes.as_chunks::<{ std::mem::size_of::<u32>() }>().0.iter().any(|bytes| {
+                            let word = u32::from_le_bytes(*bytes);
                             word & LOGICAL_CLASS_MASK == LOGICAL_CLASS && word & SHIFT_KIND_MASK == kind
                         }), "right shift must fold: {ty} operation{operation:?} signed{signed} reversed{reversed}");
                     }
@@ -17869,7 +17866,7 @@ mod tests {
         let mut recorded = code.bb_edges.clone();
         recorded.sort_unstable(); recorded.dedup();
         assert_eq!(recorded, actual, "machine CFG must follow physical blocks: starts{:?}, bytes{:x?}, {:?}",
-            code.bb_starts, bytes.chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect::<Vec<_>>(), code.vcode);
+            code.bb_starts, bytes.as_chunks::<{ std::mem::size_of::<u32>() }>().0.iter().map(|word| u32::from_le_bytes(*word)).collect::<Vec<_>>(), code.vcode);
     }
 
     #[cfg(feature = "aot")]
@@ -20841,11 +20838,8 @@ mod tests {
         core.seal_all_blocks();
         core.into_builder().finalize(isa.frontend_config());
         cranelift_codegen::verify_function(&native, &*isa).unwrap();
-        let owners: Vec<_> = native.layout.block_insts(entry).filter_map(|inst| {
-            matches!(native.dfg.insts[inst], ir::InstructionData::Load { arg, offset, .. }
-                if arg == activation && i32::from(offset) == std::mem::offset_of!(CallContext, poll_start) as i32)
-                .then(|| native.dfg.inst_results(inst)[0])
-        }).collect();
+        let owners: Vec<_> = native.layout.block_insts(entry).filter(|&inst| matches!(native.dfg.insts[inst], ir::InstructionData::Load { arg, offset, .. }
+                if arg == activation && i32::from(offset) == std::mem::offset_of!(CallContext, poll_start) as i32)).map(|inst| native.dfg.inst_results(inst)[0]).collect();
         assert_eq!(owners.len(), 1, "bind the activation's pointer once before the loop");
         let polls: Vec<_> = native.layout.block_insts(header).filter(|&inst|
             native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad).collect();

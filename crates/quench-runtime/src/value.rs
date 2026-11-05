@@ -9,6 +9,10 @@ const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+
+#[cfg(all(test, feature = "bench-primitives"))]
+#[path = "value/encoding_bench.rs"]
+mod encoding_bench;
 /// The tags occupy one contiguous range of tag-field values, so a tag test
 /// is one range comparison.
 const FIRST_TAG: u64 = TAG_UNDEFINED;

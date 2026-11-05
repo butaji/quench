@@ -249,10 +249,16 @@ const SNAPSHOT_ON: &str = "on";
 const SNAPSHOT_TRACE: &str = "trace";
 const SNAPSHOT_OFF: &str = "off";
 
+/// On macOS ARM64 the bootstrap-only image avoids more initialization code than
+/// restoring it faults in. Matched M4 startup probes (TOD-123, 2026-11-03) reduce
+/// RSS for both self-contained and console entries; retain other platforms' policy.
+const BOOTSTRAP_SMALL_ENTRIES: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+
 /// Whether an eligible process boots from a snapshot (`SNAPSHOT_ENV`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SnapshotUse {
-    /// For an inline entry, always; for a file, when it loads modules
+    /// For an inline entry, always; for a file, when BOOTSTRAP_SMALL_ENTRIES applies
+    /// or it loads modules. The prior non-ARM64-macOS policy remains below.
     /// (`EntryLoading::Modules`). A program that loads modules
     /// spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
     /// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
@@ -288,7 +294,7 @@ impl SnapshotUse {
     ) -> bool {
         match self {
             Self::Auto => {
-                (matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
+                (BOOTSTRAP_SMALL_ENTRIES || matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
                     && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
             }
             Self::Always => true,
@@ -558,13 +564,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn by_default_inline_entries_and_files_that_load_modules_restore() {
+    fn automatic_restores_follow_entry_loading_and_platform_policy() {
         use entry_graph::EntryLoading;
         let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
         let inline = SnapshotEntry::Inline("console.log(42)");
         for loading in [EntryLoading::SelfContained, EntryLoading::Console, EntryLoading::Modules] {
             assert!(SnapshotUse::Auto.restores(&inline, loading, None));
-            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), loading == EntryLoading::Modules);
+            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), BOOTSTRAP_SMALL_ENTRIES || loading == EntryLoading::Modules);
             assert!(SnapshotUse::Always.restores(&file, loading, None));
             assert!(!SnapshotUse::Never.restores(&inline, loading, None));
         }
@@ -579,7 +585,7 @@ mod tests {
         assert!(SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
         assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
         assert!(!SnapshotUse::Auto.restores(&inline, EntryLoading::Console, Some(MemoryPolicy::MemoryFirst)));
-        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)));
+        assert_eq!(SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)), BOOTSTRAP_SMALL_ENTRIES);
         assert!(SnapshotUse::Always.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
         assert!(!SnapshotUse::Never.restores(&inline, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
     }

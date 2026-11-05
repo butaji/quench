@@ -14,34 +14,6 @@ pub(super) struct ShapeTransitionIndex {
     children: hashbrown::HashTable<u32>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::vm::{DictionaryTrigger, DEFAULT_SHAPE_ATTRIBUTES, property_key::PropertyKey};
-
-    #[test]
-    fn restored_transition_admission_preserves_dictionary_origins() {
-        let mut shapes = Shape::table();
-        let parent = 0;
-        let key = PropertyKey::string(0);
-        let attributes = DEFAULT_SHAPE_ATTRIBUTES.data().unwrap();
-        let added = shapes.len() as u32;
-        shapes.push(Shape::child(Some(parent), ShapeTransition::Add { key, slot: 0, attributes },
-            1, None, shapes[parent as usize].facts));
-        let dictionary = shapes.len() as u32;
-        shapes.push(Shape::child(Some(added), ShapeTransition::Dictionary { trigger: DictionaryTrigger::PropertyCount },
-            1, Some(DictionaryTrigger::PropertyCount), shapes[added as usize].facts));
-        for child in [added, dictionary] {
-            let mut index = ShapeTransitionIndex::default();
-            assert!(!index.try_insert_child(&shapes, u32::MAX));
-            assert!(!index.try_insert_child(&shapes, parent));
-            assert!(index.try_insert_child(&shapes, child));
-            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::Add(key, attributes)), Some(child));
-            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::FunctionName(0)), None);
-        }
-    }
-}
-
 /// The shape whose parent and transition a cached child stands for: the child itself, or the
 /// add shape below it when a property-count dictionary transition followed that add.
 fn origin<'a>(shapes: &'a [Shape], shape: &'a Shape) -> &'a Shape {
@@ -143,5 +115,33 @@ impl ShapeTransitionIndex {
     #[cfg(feature = "profile-memory")]
     pub(super) fn bytes(&self) -> usize {
         self.children.capacity() * (size_of::<u32>() + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vm::{DictionaryTrigger, DEFAULT_SHAPE_ATTRIBUTES, property_key::PropertyKey};
+
+    #[test]
+    fn restored_transition_admission_preserves_dictionary_origins() {
+        let mut shapes = Shape::table();
+        let parent = 0;
+        let key = PropertyKey::string(0);
+        let attributes = DEFAULT_SHAPE_ATTRIBUTES.data().unwrap();
+        let added = shapes.len() as u32;
+        shapes.push(Shape::child(Some(parent), ShapeTransition::Add { key, slot: 0, attributes },
+            1, None, shapes[parent as usize].facts));
+        let dictionary = shapes.len() as u32;
+        shapes.push(Shape::child(Some(added), ShapeTransition::Dictionary { trigger: DictionaryTrigger::PropertyCount },
+            1, Some(DictionaryTrigger::PropertyCount), shapes[added as usize].facts));
+        for child in [added, dictionary] {
+            let mut index = ShapeTransitionIndex::default();
+            assert!(!index.try_insert_child(&shapes, u32::MAX));
+            assert!(!index.try_insert_child(&shapes, parent));
+            assert!(index.try_insert_child(&shapes, child));
+            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::Add(key, attributes)), Some(child));
+            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::FunctionName(0)), None);
+        }
     }
 }

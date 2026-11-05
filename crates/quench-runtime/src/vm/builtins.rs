@@ -717,6 +717,8 @@ impl<H: Host> Vm<H> {
         // Error intrinsics must exist before any guarded initialization step.
         self.install_error_intrinsics(program)?;
         self.install_throw_type_error_for_realm(self.realm.globals)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_core_errors");
         if scope == RealmScope::Core {
             return Ok(());
         }
@@ -724,11 +726,17 @@ impl<H: Host> Vm<H> {
         self.install_console(program)?;
         self.install_array(program)?;
         self.install_array_buffer(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_object_arrays");
         self.install_typed_array(program)?;
         self.install_data_view(program)?;
         self.install_atomics(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_typed_memory");
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_collections");
         self.install_iterators(program)?;
         let native_iterator_close = self.native_value(Native::IteratorClose);
         self.global(
@@ -774,6 +782,8 @@ impl<H: Host> Vm<H> {
         self.install_errors(program)?;
         self.install_regexp(program)?;
         self.install_shadow_realm(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_date_regexp_realms");
         let symbol = self.native_value(Native::Symbol);
         self.set_builtin_function_name(symbol, "Symbol")?;
         self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
@@ -910,6 +920,8 @@ impl<H: Host> Vm<H> {
             native_async_disposable_stack,
         )?;
         let string = self.native_value(Native::String);
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_symbols_disposal");
         self.install_string(program, string)?;
         self.set_builtin_named(program, string, "fromCharCode", Native::StringFromCharCode)?;
         self.set_builtin_named(
@@ -953,6 +965,8 @@ impl<H: Host> Vm<H> {
         self.install_reflect(program)?;
         self.install_lazy_builtin_namespace(program, "Math", Native::MathInitialize)?;
         self.install_promise(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_before_webassembly");
         self.install_webassembly(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
@@ -1200,6 +1214,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
+        #[cfg(feature = "profile-memory")]
+        self.name_atom_memo.profile_query(name, |atom| self.atom_units_equal_str(atom, name));
         if let Some(atom) = self.name_atom_memo.candidate(name)
             && self.atom_units_equal_str(atom, name)
         {

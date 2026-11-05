@@ -9,6 +9,9 @@
 //! Faults on these mappings map only the touched page (`map_touched_pages_only`), so what stays
 //! resident is what bootstrap, compilation and the run touch, without their cached neighbours.
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod darwin;
+
 /// Marks the point where the entry has compiled and its run begins. It does nothing: profiling
 /// splits there (`valgrind --tool=callgrind --dump-before=quench_entry_compiled`), so the trained
 /// link order can lay the functions a run executes together, ahead of start-up code.
@@ -669,6 +672,20 @@ pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The main entry is compiled; its execution can refault only the code it uses.
+pub fn release_after_entry_compile() {
+    release_read_only_code_and_data();
+    release_main_text_at_phase_boundary();
+}
+
+/// Retire the previous phase's resident main-image translations. Code needed by
+/// the next phase refaults at the same addresses from the same backing object.
+/// Other platforms retain their existing phase-specific release policy.
+pub fn release_main_text_at_phase_boundary() {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    darwin::release_main_text();
 }
 
 /// The entry compilation's boundaries still due to release, in order (`ENTRY_COMPILE`). The

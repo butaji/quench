@@ -149,6 +149,119 @@ fn shape_slot_index_is_derived_from_immutable_shape_keys() {
     assert_eq!(vm.shape_slot(shape, missing), None);
 }
 
+#[cfg(feature = "profile-field-primitives")]
+#[test]
+fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
+    use crate::profile::field_primitives::Path;
+    let program = Engine::specialize(
+        "var receiver = {value: 0}; var other = {different: 0, value: 0};
+         var third = {third: 0, different: 0, value: 0}; var child = Object.create(receiver);
+         function write(o, v) { o.value = v; } write(receiver, 0);",
+        "field-primitive-census.js",
+    ).unwrap();
+    program.compile_released();
+    let instruction = program.functions.iter().flat_map(|f| f.instructions())
+        .find(|i| i.op() == Op::SetField).unwrap();
+    let (atom, site) = (instruction.atom_index(), instruction.cache_site_index());
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+    vm.execute(&program).unwrap();
+    let receiver = vm.own_property(vm.realm.globals, vm.lookup_atom("receiver").unwrap()).unwrap();
+    let other = vm.own_property(vm.realm.globals, vm.lookup_atom("other").unwrap()).unwrap();
+    let child = vm.own_property(vm.realm.globals, vm.lookup_atom("child").unwrap()).unwrap();
+    let third = vm.own_property(vm.realm.globals, vm.lookup_atom("third").unwrap()).unwrap();
+    let hint = vm.field_cache_entry(site);
+    vm.profile.field_primitives = Default::default();
+    assert_eq!(vm.record_field_entry_hit(hint, receiver), Some(Value::integer(0)));
+    assert_eq!(vm.record_field_entry_hit(hint, other), None);
+    assert_eq!(vm.profile.field_primitives.count(Path::HintOwnRead), 1);
+    // The child inherits exactly the own data slot the warmed entry proves.
+    let holder_hint = FieldCache {
+        receiver: vm.heap.object(child).unwrap().exact_shape(),
+        holder: hint.receiver,
+        slot: hint.slot,
+    };
+    assert_eq!(vm.record_field_entry_hit(holder_hint, child), Some(Value::integer(0)));
+    assert_eq!(vm.record_field_entry_hit(holder_hint, other), None);
+    assert_eq!(vm.profile.field_primitives.count(Path::HintHolderRead), 1);
+    assert_eq!(vm.primary_own_field_hit(&program, receiver, site), Some(Value::integer(0)));
+    assert_eq!(vm.primary_own_field_hit(&program, other, site), None);
+    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryOwnRead), 1);
+    assert!(vm.primary_own_field_store_hit::<false>(&program, receiver, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
+    assert!(!vm.primary_own_field_store_hit::<false>(&program, other, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
+    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreNoLog), 1);
+    assert!(vm.primary_own_field_store_hit::<true>(&program, receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
+    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreLogged), 1);
+    assert!(vm.hinted_primary_field_store_hit(hint, receiver, atom, Value::integer(2)));
+    assert!(!vm.hinted_primary_field_store_hit(hint, other, atom, Value::integer(2)));
+    assert_eq!(vm.profile.field_primitives.count(Path::HintedPrimaryStore), 1);
+    assert!(vm.hinted_own_field_store_hit(hint, receiver, atom, Value::integer(3)));
+    assert!(!vm.hinted_own_field_store_hit(hint, other, atom, Value::integer(3)));
+    assert_eq!(vm.profile.field_primitives.count(Path::HintedStore), 1);
+    assert!(vm.cached_field_store_hit(&program, receiver, atom, Value::integer(4), site));
+    assert_eq!(vm.profile.field_primitives.count(Path::CachedStore), 1);
+    assert!(vm.set_field_cache_hit(&program, receiver, atom, Value::integer(5), site));
+    assert_eq!(vm.profile.field_primitives.count(Path::GeneralStore), 1);
+    assert_eq!(vm.own_property(receiver, atom), Some(Value::integer(5)));
+    assert_eq!(vm.own_property(other, atom), Some(Value::integer(0)));
+    // Real reads install the other two shape/slot pairs at this same site.
+    assert_eq!(vm.get_field_cached(&program, other, atom, site).unwrap(), Value::integer(0));
+    assert_eq!(vm.get_field_cached(&program, third, atom, site).unwrap(), Value::integer(0));
+    assert!(vm.polymorphic_own_field_store_hit(&program, other, atom, Value::integer(6), site).is_some());
+    assert_eq!(vm.profile.field_primitives.count(Path::PolymorphicStore), 1);
+    assert_eq!(vm.own_property(other, atom), Some(Value::integer(6)));
+}
+
+#[cfg(all(feature = "profile-field-primitives", not(any(feature = "profile-aggregate", feature = "profile-memory"))))]
+#[test]
+fn field_primitive_census_keeps_warmed_lane_reads() {
+    use crate::profile::field_primitives::Path;
+    const ITERATIONS: i32 = 1024;
+    const FIELD_VALUE: i32 = 3;
+    let source = format!(
+        "function sum(o, n) {{ var s = 0; for (var i = 0; i < n; i++) s += o.value; return s; }}
+         var result = sum({{value: {FIELD_VALUE}}}, {ITERATIONS});"
+    );
+    let program = Engine::specialize(&source, "field-primitive-lanes.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+    vm.execute(&program).unwrap();
+    let result = vm.lookup_atom("result").unwrap();
+    assert_eq!(vm.own_property(vm.realm.globals, result), Some(Value::integer(ITERATIONS * FIELD_VALUE)));
+    assert!(vm.profile.field_primitives.count(Path::HintOwnRead) > 0);
+}
+
+#[test]
+fn warmed_field_stores_follow_descriptor_transitions() {
+    let source = r#"
+      function write(o, v) { o.value = v; }
+      function strictWrite(o, v) { 'use strict'; o.value = v; }
+      function warm(o) { for (var i = 0; i < 200; i++) { write(o, i); strictWrite(o, i); } }
+      var frozen = {value: 0}; warm(frozen); Object.freeze(frozen);
+      write(frozen, 900); print(frozen.value);
+      try { strictWrite(frozen, 901); } catch (e) { print(e.name); }
+      var readonly = {value: 0}; warm(readonly);
+      Object.defineProperty(readonly, 'value', {writable: false});
+      write(readonly, 900); print(readonly.value);
+      try { strictWrite(readonly, 901); } catch (e) { print(e.name); }
+      var accessor = {value: 0}, seen = 0; warm(accessor);
+      Object.defineProperty(accessor, 'value', {set: function(v) { seen += v; }, get: function() { return seen; }});
+      write(accessor, 3); strictWrite(accessor, 5); print(accessor.value);
+      var sealed = {value: 0}; warm(sealed); Object.seal(sealed);
+      write(sealed, 7); strictWrite(sealed, 8); print(sealed.value);
+      var changed = {value: 0}; warm(changed); delete changed.value;
+      changed.padding = 1; changed.value = 2; write(changed, 9); print(changed.value);
+    "#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+        let program = compile(source, "store-descriptor-transitions.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["199", "TypeError", "199", "TypeError", "8", "8", "9"]);
+    }
+}
+
 #[test]
 fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let program = Engine::specialize(
@@ -186,7 +299,10 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
     }
     assert_eq!(vm.heap.unrepresented_slots(), 0);
+    let hint = vm.field_cache_entry(site);
     let child = vm.object();
+    assert!(!vm.hinted_primary_field_store_hit(hint, receiver, atom, child),
+        "the hinted no-log store must defer a reference barrier");
     let record = receiver.direct_object_index().unwrap();
     // SAFETY: the same exact own-data shape still proves this initialized slot.
     assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child, crate::heap::PropertyStoreLayout::Preserve) },

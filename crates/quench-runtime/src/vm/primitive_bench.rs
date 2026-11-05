@@ -16,11 +16,171 @@ use std::hash::{Hash, Hasher};
 use std::hint::black_box;
 use test::Bencher;
 
-#[path = "../../benches/support/number_inputs.rs"]
-mod number_inputs;
-use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
+use crate::number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
+mod fields;
+mod field_reads;
+mod captures;
+mod strings;
+mod updates;
+#[cfg(feature = "bench-alloc-routes")]
+mod growth;
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
+
+fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(b: &mut Bencher) {
+    let compile = if SPECIALIZED {
+        crate::Engine::specialize
+    } else {
+        crate::Engine::specialize_unspecialized
+    };
+    let program = compile(
+        "function identity(x) { return x; } var nativeAbs = Math.abs;",
+        "primitive-call.js",
+    ).unwrap();
+    let mut vm = super::Vm::new(crate::test_host::TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+    vm.execute(&program).unwrap();
+    let name = vm.lookup_atom(if NATIVE { "nativeAbs" } else { "identity" }).unwrap();
+    let callee = vm.own_property(vm.realm.globals, name).unwrap();
+    let inputs: [Value; BATCH_VALUES] = std::array::from_fn(|index| {
+        Value::integer(-(index as i32) - 1)
+    });
+    let call = |vm: &mut super::Vm<crate::test_host::TestHost>, input| {
+        if BODY {
+            vm.call_native(&program, black_box(crate::heap::Native::MathAbs), Value::UNDEFINED, &[input])
+        } else {
+            vm.call_value(&program, black_box(callee), Value::UNDEFINED, &[input])
+        }.unwrap()
+    };
+    let validate = |vm: &mut super::Vm<crate::test_host::TestHost>| {
+        for (index, input) in inputs.iter().copied().enumerate() {
+            let expected = if NATIVE { Value::integer(index as i32 + 1) } else { input };
+            assert_eq!(call(vm, input), expected);
+        }
+        assert!(vm.active_call_roots.is_empty());
+        assert!(vm.frames.is_empty());
+        assert!(vm.realm.promise.active_native.is_empty());
+    };
+    validate(&mut vm);
+    b.iter(|| {
+        for input in inputs {
+            black_box(call(black_box(&mut vm), black_box(input)));
+        }
+    });
+    validate(&mut vm);
+}
+
+// The native body includes its rooting policy and interrupt check. It omits
+// callee lookup, realm/native activation and stack guarding of the full call.
+#[bench]
+fn primitive_call_native_abs_batch(b: &mut Bencher) { call_boundary::<true, false, false>(b); }
+#[bench]
+fn primitive_call_native_abs_body_batch(b: &mut Bencher) { call_boundary::<true, true, false>(b); }
+#[bench]
+fn primitive_call_user_identity_general_batch(b: &mut Bencher) { call_boundary::<false, false, false>(b); }
+#[bench]
+fn primitive_call_user_identity_specialized_batch(b: &mut Bencher) { call_boundary::<false, false, true>(b); }
+
+fn native_arity<const DERIVED: bool>(b: &mut Bencher) {
+    use crate::heap::Native;
+    let natives: Vec<_> = (0..Native::COUNT)
+        .map(|index| Native::from_discriminant(index).unwrap())
+        .collect();
+    b.iter(|| {
+        for &native in &natives {
+            let native = black_box(native);
+            black_box(if DERIVED {
+                super::promise::native_length(native)
+            } else {
+                super::promise::native_length_definition(native)
+            });
+        }
+    });
+}
+
+// Each iteration visits every Native once, including kinds with no own length.
+#[bench]
+fn primitive_native_arity_derived_all(b: &mut Bencher) { native_arity::<true>(b); }
+
+#[bench]
+fn primitive_native_arity_definition_all(b: &mut Bencher) { native_arity::<false>(b); }
+
+fn capture_read<const REMEMBERED: bool>(b: &mut Bencher, depth: u16) {
+    let mut vm = super::Vm::new(crate::test_host::TestHost::default());
+    let expected = Value::integer(42);
+    let mut env = Value::NULL;
+    for _ in 0..=depth {
+        env = vm.heap.alloc_environment(
+            env, 1, vec![expected].into(),
+            crate::heap::EnvironmentScopeRef::of_program(0),
+        ).0;
+    }
+    vm.walked_capture_slots(env, false, depth).unwrap();
+    let read = |vm: &super::Vm<crate::test_host::TestHost>, env, depth| {
+        if REMEMBERED {
+            vm.remembered_capture(env, false, depth, 0)
+        } else {
+            vm.environment_capture_slots(env, false, depth)
+                .and_then(|(slots, root)| {
+                    assert!(root.is_none());
+                    slots.dense()?.dense_plain(0)
+                })
+        }
+    };
+    assert_eq!(read(&vm, env, depth), Some(expected));
+    b.iter(|| {
+        for _ in 0..BATCH_VALUES {
+            black_box(read(black_box(&vm), black_box(env), black_box(depth)));
+        }
+    });
+    assert_eq!(read(&vm, env, depth), Some(expected));
+}
+
+#[bench]
+fn primitive_capture_walk_depth_one_batch(b: &mut Bencher) { capture_read::<false>(b, 1); }
+#[bench]
+fn primitive_capture_walk_depth_four_batch(b: &mut Bencher) { capture_read::<false>(b, 4); }
+#[bench]
+fn primitive_capture_remembered_depth_one_batch(b: &mut Bencher) { capture_read::<true>(b, 1); }
+#[bench]
+fn primitive_capture_remembered_depth_four_batch(b: &mut Bencher) { capture_read::<true>(b, 4); }
+
+fn property_store(b: &mut Bencher, tracking: bool, initial: Value) {
+    let mut arena = crate::value_vec::ValueArena::default();
+    if tracking { arena.track(); }
+    const SHAPE: u32 = 1;
+    arena.register_derived_shape(SHAPE, BATCH_VALUES, None);
+    let values = [initial; BATCH_VALUES];
+    let vector = arena.with_values(SHAPE, &values);
+    arena.note_shape_values(SHAPE, &values);
+    b.iter(|| {
+        for slot in 0..BATCH_VALUES {
+            let value = black_box(Value::integer(slot as i32));
+            let arena = black_box(&mut arena);
+            arena.note_shape_value(SHAPE, slot, value);
+            // SAFETY: setup allocated all BATCH_VALUES slots in this flat vector.
+            unsafe { arena.set_flat_unchecked(vector, slot, value) };
+        }
+    });
+    for slot in 0..BATCH_VALUES {
+        assert_eq!(arena.get(vector, slot), Some(Value::integer(slot as i32)));
+    }
+}
+
+#[bench]
+fn primitive_property_store_untracked_batch(b: &mut Bencher) {
+    property_store(b, false, Value::integer(0));
+}
+
+#[bench]
+fn primitive_property_store_integer_tracked_batch(b: &mut Bencher) {
+    property_store(b, true, Value::integer(0));
+}
+
+#[bench]
+fn primitive_property_store_tagged_tracked_batch(b: &mut Bencher) {
+    property_store(b, true, Value::UNDEFINED);
+}
 
 fn attribute_hash<const FIELDS: bool, const DEPENDENT: bool>(b: &mut Bencher) {
     const FLAG_STATES: [bool; 2] = [false, true];
@@ -395,6 +555,86 @@ fn primitive_array_proved_store_batch(b: &mut Bencher) {
             ));
         }
     });
+}
+
+#[derive(Clone, Copy)]
+enum ArrayStoreKinds {
+    Integers,
+    Fractions,
+    Alternating,
+}
+
+/// Two complete passes per iteration: 128 stores, plus 128 reads in the chain cases.
+/// Every element encodes its successor, so the dependent cases traverse the same cycle
+/// regardless of kind. Alternating passes change every element's kind in both directions;
+/// stable passes use the same traversal, payloads and proof checks without kind changes.
+fn array_proved_store_pattern<const DEPENDENT: bool, const INTEGER_INDEX: bool>(b: &mut Bencher, kinds: ArrayStoreKinds) {
+    assert!(!INTEGER_INDEX || matches!(kinds, ArrayStoreKinds::Integers));
+    let successors = std::array::from_fn::<_, BATCH_VALUES, _>(|index| (index + 1) % BATCH_VALUES);
+    let integers = successors.map(|index| Value::integer(index as i32));
+    let fractions = successors.map(|index| Value::number(index as f64 + 0.5));
+    let writes = match kinds {
+        ArrayStoreKinds::Integers => [integers, integers],
+        ArrayStoreKinds::Fractions => [fractions, fractions],
+        ArrayStoreKinds::Alternating => [integers, fractions],
+    };
+    let mut heap = Heap::new();
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(Object::new(Value::NULL), writes[1]),
+    });
+    let mut proofs = Box::new(ArrayStorageProofs::new());
+    let _scope = LaneProofScope::enter();
+    assert!(heap.prove_array_storage(&mut proofs, 0, array));
+    let mut cursor = 0;
+    b.iter(|| {
+        for values in &writes {
+            for position in 0..BATCH_VALUES {
+                let index = if DEPENDENT { cursor } else { position };
+                if DEPENDENT {
+                    // Setup encodes a nonnegative successor index with an optional half.
+                    // Truncation decodes that link; this is part of the composed cost.
+                    let next = black_box(&*proofs)
+                        .element(0, black_box(array), black_box(index))
+                        .unwrap();
+                    cursor = if INTEGER_INDEX {
+                        super::dispatch_fast::proof_index(next).unwrap()
+                    } else {
+                        next.as_number().unwrap() as usize
+                    };
+                }
+                assert!(black_box(&mut *proofs).replace(
+                    0, black_box(array), black_box(index), black_box(values[index]),
+                ));
+            }
+        }
+    });
+    assert_eq!(cursor, 0);
+    let record = heap.record_array(array).unwrap();
+    assert_eq!(&**record.elements(), &writes[1]);
+    assert_eq!(record.elements().holds_only_int32(), matches!(kinds, ArrayStoreKinds::Integers));
+}
+
+macro_rules! array_store_patterns {
+    ($($name:ident: $dependent:literal, $kinds:ident;)*) => {$(
+        #[bench]
+        fn $name(b: &mut Bencher) {
+            array_proved_store_pattern::<$dependent, false>(b, ArrayStoreKinds::$kinds);
+        }
+    )*};
+}
+
+array_store_patterns! {
+    primitive_array_proved_store_integer_pair_batch: false, Integers;
+    primitive_array_proved_store_fraction_pair_batch: false, Fractions;
+    primitive_array_proved_store_kind_transition_pair_batch: false, Alternating;
+    primitive_array_proved_read_store_integer_chain_pair_batch: true, Integers;
+    primitive_array_proved_read_store_fraction_chain_pair_batch: true, Fractions;
+    primitive_array_proved_read_store_kind_transition_chain_pair_batch: true, Alternating;
+}
+
+#[bench]
+fn primitive_array_proved_read_store_exact_index_chain_pair_batch(b: &mut Bencher) {
+    array_proved_store_pattern::<true, true>(b, ArrayStoreKinds::Integers);
 }
 
 #[bench]

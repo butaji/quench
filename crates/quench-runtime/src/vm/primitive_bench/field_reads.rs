@@ -1,0 +1,215 @@
+//! Copied entries and primary nested reads, including reference traversal and rejection.
+
+use super::{BATCH_VALUES, Bencher, black_box};
+use crate::{Engine, ExecutionMode, Value, bytecode::{FieldLookup, FieldSite, Op}, test_host::TestHost};
+
+const HIT: u8 = 0;
+const DEPENDENT: u8 = 1;
+const RECEIVER_MISS: u8 = 2;
+const HOLDER_MISS: u8 = 3;
+const PAIR: u8 = 4;
+const PAIR_NON_OBJECT: u8 = 5;
+const PAIR_SECOND_MISS: u8 = 6;
+
+fn entry_reads<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIMARY: bool>(b: &mut Bencher) {
+    entry_reads_at::<HOLDER, ARENA, CASE, PRIMARY, 0, false>(b);
+}
+
+fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const PRIMARY: bool, const SLOT: usize, const FIXED: bool>(b: &mut Bencher) {
+    let prefix = (0..SLOT).map(|index| format!("leading{index}: 0, ")).collect::<String>();
+    let padding = if ARENA {
+        (0..crate::value_vec::INLINE_PROPERTY_COUNT)
+            .map(|index| format!(", pad{index}: 0"))
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+    let bases = if HOLDER {
+        "var first = Object.create(firstOwner), second = Object.create(secondOwner);"
+    } else {
+        "var first = firstOwner, second = secondOwner;"
+    };
+    let read_body = if PRIMARY { "this.next.next" } else { "o.next" };
+    let call = if PRIMARY { "read.call(first)" } else { "read(first)" };
+    let source = format!(
+        "var firstOwner = {{ {prefix}next: null{padding} }}, secondOwner = {{ {prefix}next: null{padding} }};
+         {bases}
+         firstOwner.next = second; secondOwner.next = first;
+         var differentOwner = {{ different: 0, next: first{padding} }};
+         var differentReceiver = {{ different: 0, next: first }};
+         var differentHolder = Object.create(differentOwner);
+         function read(o) {{ return {read_body}; }} {call};"
+    );
+    let program = Engine::specialize(&source, "primitive-field-entry.js").unwrap();
+    program.compile_released();
+    let mut vm = super::super::Vm::new(TestHost::default());
+    vm.set_execution_mode(ExecutionMode::Interpreted);
+    vm.execute(&program).unwrap();
+    let read_name = vm.lookup_atom("read").unwrap();
+    let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
+    let instruction = function.instructions().find(|i| i.op() == Op::GetField).unwrap();
+    let field = match instruction.field_lookup().unwrap() {
+        FieldLookup::Atom { atom, base, cache_site } => FieldSite {
+            base, first: (atom, cache_site), second: None,
+            sink: None, sources: std::array::from_fn(|_| None),
+        },
+        FieldLookup::Site(index) => *program.field_sites.get(index).unwrap(),
+    };
+    assert_eq!(field.second.is_some(), PRIMARY);
+    let (atom, site) = field.first;
+    let global = |name| vm.own_property(vm.realm.globals, vm.lookup_atom(name).unwrap()).unwrap();
+    let (first, second) = (global("first"), global("second"));
+    let owners = [global("firstOwner"), global("secondOwner")];
+    let different_receiver = global("differentReceiver");
+    let probe = match CASE {
+        RECEIVER_MISS => global("differentReceiver"),
+        HOLDER_MISS => global("differentHolder"),
+        _ => first,
+    };
+    for owner in owners {
+        assert_eq!(vm.heap.object(owner).unwrap().inline_properties().is_none(), ARENA);
+    }
+    assert_eq!(vm.get_field_cached(&program, first, atom, site).unwrap(), second);
+    if PRIMARY {
+        assert!(!HOLDER, "the primary nested helper only admits own data fields");
+        let (second_atom, second_site) = field.second.unwrap();
+        assert_ne!(site, second_site, "both compiler-emitted cache sites must be exercised");
+        assert_eq!(vm.get_field_cached(&program, second, second_atom, second_site).unwrap(), first);
+    }
+    let entry = vm.field_cache_entry(site);
+    assert_eq!(usize::from(entry.slot), SLOT);
+    assert_eq!(entry.holder != super::super::NO_FIELD_HOLDER, HOLDER);
+    assert_eq!(vm.record_field_entry_hit(entry, first), Some(second));
+    assert_eq!(vm.record_field_entry_hit(entry, second), Some(first));
+    let expected = if CASE == RECEIVER_MISS || CASE == HOLDER_MISS { None } else { Some(second) };
+    assert_eq!(vm.record_field_entry_hit(entry, probe), expected);
+    if CASE == HOLDER_MISS {
+        assert!(HOLDER);
+        assert_eq!(vm.heap.object(probe).unwrap().exact_shape(), entry.receiver,
+            "holder rejection must pass the receiver shape guard");
+    }
+    match CASE {
+        PAIR_NON_OBJECT => vm.heap.property_set(owners[0], entry.slot as usize, Value::integer(0)),
+        PAIR_SECOND_MISS => {
+            assert_ne!(vm.heap.object(different_receiver).unwrap().exact_shape(), entry.receiver);
+            vm.heap.property_set(owners[0], entry.slot as usize, different_receiver);
+        }
+        _ => {}
+    }
+    let is_pair = PRIMARY || matches!(CASE, PAIR | PAIR_NON_OBJECT | PAIR_SECOND_MISS);
+    let read = |vm: &super::super::Vm<TestHost>, first_entry, second_entry, object| {
+        let value = vm.record_field_entry_hit(first_entry, object)?;
+        if is_pair { vm.record_field_entry_hit(second_entry, value) } else { Some(value) }
+    };
+    let expected = match CASE {
+        PAIR => Some(first),
+        PAIR_NON_OBJECT | PAIR_SECOND_MISS => {
+            assert!(vm.record_field_entry_hit(entry, probe).is_some());
+            None
+        }
+        _ => expected,
+    };
+    assert_eq!(read(&vm, entry, entry, probe), expected);
+    if PRIMARY {
+        assert_eq!(super::super::dispatch_fast::nested_own_field_hit(&mut vm, &program, &field, probe), expected);
+    }
+    let hint = || super::super::FieldCache {
+        receiver: black_box(entry.receiver),
+        holder: if HOLDER { black_box(entry.holder) } else { super::super::NO_FIELD_HOLDER },
+        slot: if FIXED { SLOT as u16 } else { black_box(entry.slot) },
+    };
+    let mut cursor = first;
+    b.iter(|| {
+        for _ in 0..BATCH_VALUES {
+            if PRIMARY {
+                black_box(super::super::dispatch_fast::nested_own_field_hit(
+                    black_box(&mut vm), black_box(&program), black_box(&field), black_box(probe)));
+                continue;
+            }
+            let vm = black_box(&vm);
+            if CASE == DEPENDENT {
+                cursor = vm.record_field_entry_hit(hint(), black_box(cursor)).unwrap();
+            } else if is_pair {
+                // A batch is 64 pairs; successful pairs perform 128 field reads.
+                black_box(read(vm, hint(), hint(), black_box(probe)));
+            } else {
+                black_box(vm.record_field_entry_hit(hint(), black_box(probe)));
+            }
+        }
+    });
+    assert_eq!(BATCH_VALUES % owners.len(), 0, "a batch must finish the object cycle");
+    assert_eq!(cursor, first);
+    assert_eq!(read(&vm, entry, entry, probe), expected);
+    if PRIMARY {
+        assert_eq!(super::super::dispatch_fast::nested_own_field_hit(&mut vm, &program, &field, probe), expected);
+    }
+    for owner in owners {
+        assert_eq!(vm.heap.object(owner).unwrap().inline_properties().is_none(), ARENA);
+    }
+}
+
+#[bench]
+fn primitive_field_entry_own_inline(b: &mut Bencher) { entry_reads::<false, false, HIT, false>(b); }
+#[bench]
+fn primitive_field_entry_own_arena(b: &mut Bencher) { entry_reads::<false, true, HIT, false>(b); }
+#[bench]
+fn primitive_field_entry_holder_inline(b: &mut Bencher) { entry_reads::<true, false, HIT, false>(b); }
+#[bench]
+fn primitive_field_entry_holder_arena(b: &mut Bencher) { entry_reads::<true, true, HIT, false>(b); }
+#[bench]
+fn primitive_field_entry_own_dependent(b: &mut Bencher) { entry_reads::<false, false, DEPENDENT, false>(b); }
+#[bench]
+fn primitive_field_entry_holder_dependent(b: &mut Bencher) { entry_reads::<true, false, DEPENDENT, false>(b); }
+#[bench]
+fn primitive_field_entry_receiver_shape_miss(b: &mut Bencher) { entry_reads::<false, false, RECEIVER_MISS, false>(b); }
+#[bench]
+fn primitive_field_entry_holder_shape_miss(b: &mut Bencher) { entry_reads::<true, false, HOLDER_MISS, false>(b); }
+
+#[bench]
+fn primitive_field_entry_pair_own_inline(b: &mut Bencher) { entry_reads::<false, false, PAIR, false>(b); }
+#[bench]
+fn primitive_field_entry_pair_own_arena(b: &mut Bencher) { entry_reads::<false, true, PAIR, false>(b); }
+#[bench]
+fn primitive_field_entry_pair_holder_inline(b: &mut Bencher) { entry_reads::<true, false, PAIR, false>(b); }
+#[bench]
+fn primitive_field_entry_pair_holder_arena(b: &mut Bencher) { entry_reads::<true, true, PAIR, false>(b); }
+#[bench]
+fn primitive_field_entry_pair_non_object(b: &mut Bencher) { entry_reads::<false, false, PAIR_NON_OBJECT, false>(b); }
+#[bench]
+fn primitive_field_entry_pair_second_shape_miss(b: &mut Bencher) { entry_reads::<false, false, PAIR_SECOND_MISS, false>(b); }
+
+#[bench]
+fn primitive_field_entry_primary_pair_inline(b: &mut Bencher) { entry_reads::<false, false, PAIR, true>(b); }
+#[bench]
+fn primitive_field_entry_primary_pair_arena(b: &mut Bencher) { entry_reads::<false, true, PAIR, true>(b); }
+#[bench]
+fn primitive_field_entry_primary_pair_first_shape_miss(b: &mut Bencher) { entry_reads::<false, false, RECEIVER_MISS, true>(b); }
+#[bench]
+fn primitive_field_entry_primary_pair_non_object(b: &mut Bencher) { entry_reads::<false, false, PAIR_NON_OBJECT, true>(b); }
+#[bench]
+fn primitive_field_entry_primary_pair_second_shape_miss(b: &mut Bencher) { entry_reads::<false, false, PAIR_SECOND_MISS, true>(b); }
+
+#[bench]
+fn primitive_field_slot_inline_first_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 0, false>(b); }
+#[bench]
+fn primitive_field_slot_inline_first_fixed(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 0, true>(b); }
+#[bench]
+fn primitive_field_slot_inline_second_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 1, false>(b); }
+#[bench]
+fn primitive_field_slot_inline_second_fixed(b: &mut Bencher) { entry_reads_at::<false, false, HIT, false, 1, true>(b); }
+#[bench]
+fn primitive_field_slot_arena_first_dynamic(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 0, false>(b); }
+#[bench]
+fn primitive_field_slot_arena_first_fixed(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 0, true>(b); }
+#[bench]
+fn primitive_field_slot_arena_second_dynamic(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 1, false>(b); }
+#[bench]
+fn primitive_field_slot_arena_second_fixed(b: &mut Bencher) { entry_reads_at::<false, true, HIT, false, 1, true>(b); }
+#[bench]
+fn primitive_field_slot_dependent_first_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 0, false>(b); }
+#[bench]
+fn primitive_field_slot_dependent_first_fixed(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 0, true>(b); }
+#[bench]
+fn primitive_field_slot_dependent_second_dynamic(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 1, false>(b); }
+#[bench]
+fn primitive_field_slot_dependent_second_fixed(b: &mut Bencher) { entry_reads_at::<false, false, DEPENDENT, false, 1, true>(b); }

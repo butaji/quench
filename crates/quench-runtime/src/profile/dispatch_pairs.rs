@@ -102,101 +102,32 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{AtomTable, Function, Instr};
+    use crate::bytecode::Instr;
     use rustc_hash::FxHashMap;
-
-    fn function(dispatch: DispatchClass, ops: &[Op]) -> Function {
-        Function {
-            parent: None,
-            name: None,
-            inferred_name: None,
-            is_arrow: false,
-            self_binding_slot: None,
-            source_span: None,
-            params: 0,
-            length: 0,
-            parameter_end_pc: 0,
-            parameter_atoms: vec![],
-            rest: false,
-            is_async: false,
-            is_generator: false,
-            is_class_constructor: false,
-            derived_constructor: false,
-            instance_initializer: None,
-            super_home_atom: None,
-            class_initializer: false,
-            locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
-            selective_capture_slots: None,
-            local_registers: Vec::new(),
-            inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_declarations: None,
-            name_bindings: Default::default(),
-            binding_sites: vec![],
-            source_positions: Default::default(),
-            environment_clones: vec![],
-            constructible: true,
-            parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
-            prototype_unobservable: false,
-            arguments_slot: None,
-            simple_parameters: true,
-            strict: false,
-            code: ops.iter().map(|op| Instr::new(*op, 0, 0, 0, 0)).collect(),
-            wide: Vec::new(),
-            registers: 1,
-            dispatch,
-            decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
-            call_plan: Default::default(),
-            initializer: Default::default(),
-            handlers: Vec::new(),
-            register_roots: Default::default(),
-            undefined_register: None,
-            parameter_registers: None,
-            initial_register: Default::default(),
-        }
-    }
 
     #[test]
     fn partitions_pairs_and_nonsequential_boundaries_by_dispatch_class() {
-        let program = ResidualProgram {
-            specialized: true,
-            kind: crate::bytecode::ProgramKind::Script,
-            module_requests: Vec::new(),
-            module_imports: Vec::new(),
-            module_link_plan: None,
-            source_name: String::new(),
-            source: None,
-            atoms: AtomTable::default(),
-            constants: Vec::new(),
-            functions: vec![
-                function(
-                    DispatchClass::General,
-                    &[Op::LoadLocal, Op::StoreLocal, Op::Return],
-                ),
-                function(
-                    DispatchClass::Numeric,
-                    &[Op::LoadLocal, Op::LoadLocal, Op::Return],
-                ),
-            ],
-            cache_sites: 0,
-            method_sites: Vec::new(),
-            method_arguments: Vec::new(),
-            field_sites: Vec::new(),
-            object_sites: Vec::new(),
-            regexp_literal_sites: Vec::new(),
-            literal_templates: Vec::new(),
-            superinstructions: Vec::new(),
-        };
+        let mut program =
+            crate::Engine::specialize("function second() {}", "dispatch-pair-census.js").unwrap();
+        let cases = [
+            (
+                DispatchClass::General,
+                [Op::LoadLocal, Op::StoreLocal, Op::Return],
+            ),
+            (
+                DispatchClass::Numeric,
+                [Op::LoadLocal, Op::LoadLocal, Op::Return],
+            ),
+        ];
+        assert_eq!(program.functions.len(), cases.len());
+        for (index, (dispatch, ops)) in cases.into_iter().enumerate() {
+            // Resolve a lazy body before replacing this census-only instruction fixture.
+            program.function(index);
+            let function = &mut program.functions[index];
+            function.dispatch = dispatch;
+            function.code = ops.into_iter().map(|op| Instr::new(op, 0, 0, 0, 0)).collect();
+            function.wide.clear();
+        }
         let mut pairs = vec![0; PAIRS];
         pairs[Op::LoadLocal as usize * Op::COUNT + Op::StoreLocal as usize] = 4;
         pairs[Op::StoreLocal as usize * Op::COUNT + Op::Return as usize] = 4;

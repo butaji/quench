@@ -138,19 +138,24 @@ const STRING_METHOD_ALIASES: &[(&str, &str)] =
 const HTML_ATTRIBUTE_QUOTE: u16 = b'"' as u16;
 const HTML_QUOTE_ENTITY: &str = "&quot;";
 
-pub(super) fn string_native_length(native: Native) -> Option<f64> {
-    STRING_METHODS
-        .iter()
-        .find_map(|(_, candidate, length)| (*candidate == native).then_some(*length))
-        .or_else(|| {
-            STRING_HTML_METHODS.iter().find_map(|method| {
-                (method.native == native).then_some(if method.attribute.is_some() {
-                    1.0
-                } else {
-                    0.0
-                })
-            })
-        })
+pub(super) const fn string_native_length(native: Native) -> Option<f64> {
+    let mut index = 0;
+    while index < STRING_METHODS.len() {
+        let (_, candidate, length) = STRING_METHODS[index];
+        if candidate as u16 == native as u16 {
+            return Some(length);
+        }
+        index += 1;
+    }
+    let mut index = 0;
+    while index < STRING_HTML_METHODS.len() {
+        let method = &STRING_HTML_METHODS[index];
+        if method.native as u16 == native as u16 {
+            return Some(if method.attribute.is_some() { 1.0 } else { 0.0 });
+        }
+        index += 1;
+    }
+    None
 }
 
 /// What a native does with its receiver before it runs (`Vm::string_method_receiver`).

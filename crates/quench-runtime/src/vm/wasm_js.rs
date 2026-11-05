@@ -400,7 +400,7 @@ pub(super) fn is_wasm_js_constructor(native: Native) -> bool {
     )
 }
 
-pub(super) fn wasm_js_native_length(native: Native) -> Option<f64> {
+pub(super) const fn wasm_js_native_length(native: Native) -> Option<f64> {
     Some(match native {
         Native::WebAssemblyValidate
         | Native::WebAssemblyCompile

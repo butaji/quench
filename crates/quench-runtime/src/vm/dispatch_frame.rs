@@ -1450,15 +1450,15 @@ impl<H: Host> Vm<H> {
         // A nested loop leaves the caller's register file active again.
         let caller_registers = self.active_registers;
         let mut pending_calls = self.pending_call_stacks.pop().unwrap_or_default();
-        let outcome = self.run_general_loop::<STOPS>(
-            p,
-            frame,
-            stop_pc,
-            initial_error,
-            allow_inline_calls,
-            &mut pending_calls,
-            None,
-        );
+        let outcome = if STOPS {
+            self.run_general_loop::<true>(
+                p, frame, stop_pc, initial_error, allow_inline_calls, &mut pending_calls, None,
+            )
+        } else {
+            self.run_general_loop_without_stop(
+                p, frame, initial_error, allow_inline_calls, &mut pending_calls, None,
+            )
+        };
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
         self.active_registers = caller_registers;
@@ -1479,7 +1479,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<FrameOutcome, JsError> {
         let previous_global = self.realm.globals;
         let caller_registers = self.active_registers;
-        let outcome = self.run_general_loop::<false>(entry_program, frame, None, None, true, pending_calls, Some(exit));
+        let outcome = self.run_general_loop_without_stop(entry_program, frame, None, true, pending_calls, Some(exit));
         self.active_registers = caller_registers;
         self.switch_realm_global(previous_global);
         outcome
@@ -1579,6 +1579,23 @@ impl<H: Host> Vm<H> {
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
         Some(FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
+    }
+
+    /// Share the ordinary loop across direct entry and lane exits. Parameter initialization
+    /// retains its separately specialized stopping loop.
+    #[inline(never)]
+    fn run_general_loop_without_stop(
+        &mut self,
+        entry_program: &ResidualProgram,
+        frame: usize,
+        initial_error: Option<JsError>,
+        allow_inline_calls: bool,
+        pending_calls: &mut Vec<PendingGeneralCall>,
+        exit: Option<LaneExit>,
+    ) -> Result<FrameOutcome, JsError> {
+        self.run_general_loop::<false>(
+            entry_program, frame, None, initial_error, allow_inline_calls, pending_calls, exit,
+        )
     }
 
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active

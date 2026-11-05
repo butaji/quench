@@ -470,10 +470,14 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_warning_policy");
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
     context.scoped(initialize_cluster_worker)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_process_channels");
     let interactive = context.host_mut().commonjs_entry.is_none()
         && context
             .host_mut()
@@ -491,6 +495,8 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // user preloads inspect globalThis. Node 26 also provides navigator by
     // default; retain the standard getter shape even when the engine lacks it.
     context.scoped(install_global_descriptors)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_global_descriptors");
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -505,9 +511,15 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         let filename = context.host_mut().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         #[cfg(not(feature = "native-execution"))]
         let filename = std::fs::canonicalize(entry.path).map_err(|error| RootedError::host(error.to_string()))?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_filename_ready");
         let module = cached_builtin(context, BuiltinModule::Module)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_module_ready");
         let run_main = get(context, module, "runMain")?;
         let filename = context.string_rooted(&filename.to_string_lossy());
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_run_main_ready");
         context.call_rooted(run_main, module, &[filename])?;
     } else {
         let filename = inline_directory(context)?.join(context.host_mut().inline_source.label());
@@ -3139,7 +3151,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                 }
             };
             if parent.is_none() {
-                crate::host::resident_pages::release_read_only_code_and_data();
+                crate::host::resident_pages::release_after_entry_compile();
                 crate::host::resident_pages::release_free_heap_pages();
                 crate::host::resident_pages::quench_entry_compiled();
             }

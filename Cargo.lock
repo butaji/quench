@@ -1707,6 +1707,7 @@ dependencies = [
  "oxc_span",
  "oxc_syntax",
  "phf 0.14.0",
+ "quench-alloc",
  "quench-intl",
  "quench-macros",
  "quench-regexp",

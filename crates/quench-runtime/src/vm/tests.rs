@@ -102,8 +102,8 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}\n{}",
-                program.function(id).plain_activation(&program), program.disassemble()));
+            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}; osr={:?}; answers={answers:?}\n{}",
+                program.function(id).plain_activation(&program), view.osr_diagnostics(), program.disassemble()));
             assert!(report.contains("\"frames\":1"), "numeric calls must share the caller's typed unit: {report}");
             assert!(report.contains("\"compiles\":1,"), "fresh pure closures and completed loop exits must retain their definition: {report}");
         }
@@ -251,6 +251,52 @@ fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
 }
 
 #[test]
+fn default_osr_keeps_self_contained_loop_regions() {
+    let source = r#"
+        const invocations=96;
+        globalThis.effects=0;
+        function pipe(){
+            globalThis.effects++;
+            let value=7;
+            for(let i=0;i<4000;i=(i+1)|0)value=(value+i)|0;
+            globalThis.effects++;
+            return value;
+        }
+        let result;
+        for(let pass=0;pass<invocations;pass++)result=pipe();
+        globalThis.answer=result;
+        globalThis.expectedEffects=2*invocations;
+    "#;
+    let program = Engine::specialize(source, "default-osr-region-priority.js").unwrap();
+    #[cfg(not(quench_profiled))]
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let answer = vm.intern_atom("answer");
+        let effects = vm.intern_atom("effects");
+        let expected = vm.intern_atom("expectedEffects");
+        answers.push(vm.own_property(global, answer).unwrap());
+        assert_eq!(vm.own_property(global, effects), vm.own_property(global, expected));
+        #[cfg(not(quench_profiled))]
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            let osr = view.osr_diagnostics();
+            assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
+            assert!(view.body_stats.report(0).is_none(), "a self-contained region keeps priority over its lane body");
+        }
+    }
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
 fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
     let source = r#"(function(){
         function fraction(x){for(let k=0;k<1;k=(k+1)|0)x=x+1.5;return x|0;}
@@ -374,8 +420,10 @@ fn native_countdown_keeps_dynamic_starts_and_exit_values_exact() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
                 .and_then(super::program_store::derived_lane_view).unwrap();
@@ -1018,43 +1066,58 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 #[cfg(not(quench_profiled))]
 #[test]
 fn shape_compaction_clears_own_field_hints() {
-    // Read sites warmed on one layout hold its shape id as their own-field hint. A full
+    // Read and store sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
     // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
-    let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
-    let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
-    let source = format!(
-        r#"
-      {reads}
-      var sites = [{calls}], sum = 0;
-      function T(a, b) {{ this.a = a; this.b = b; }}
-      function drive(read, o, n) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o); return s; }}
-      for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50);
-      // Layouts no object keeps, so the next full collection compacts the table.
-      for (var k = 0; k < 20000; k++) {{ var o = {{}}; o['junk' + k] = k; }}
-      print(String(sum));
-    "#
-    );
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = Engine::specialize(&source, "field-hints-compaction.js").unwrap();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), [(50 * (0..SITES).sum::<usize>()).to_string()]);
-    let held = |vm: &Vm<TestHost>| {
-        vm.programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .into_iter()
-            .flatten()
-            .filter_map(super::program_store::derived_lane_view)
-            .map(|view| view.held_field_hints())
-            .sum::<usize>()
-    };
-    assert!(held(&vm) >= SITES);
-    let shapes = vm.shapes.len();
-    vm.collect_now(&program);
-    assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
-    assert_eq!(held(&vm), 0);
+    for body in ["return o.a + 0;", "o.a = v; return v;"] {
+        let reads: String = (0..SITES).map(|k| format!("function read{k}(o, v) {{ {body} }}\n")).collect();
+        let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
+        let source = format!(
+            r#"
+          {reads}
+          var sites = [{calls}], sum = 0;
+          function T(a, b) {{ this.a = a; this.b = b; }}
+          function drive(read, o, n, v) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o, v); return s; }}
+          function resume() {{
+            var result = 0;
+            for (var k = 0; k < sites.length; k++) result += drive(sites[k], {{ before: -1, a: k }}, 50, k);
+            return result;
+          }}
+          for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50, k);
+          // Layouts no object keeps, so the next full collection compacts the table.
+          for (var k = 0; k < 20000; k++) {{ var o = {{}}; o['junk' + k] = k; }}
+          print(String(sum));
+        "#
+        );
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(&source, "field-hints-compaction.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [(50 * (0..SITES).sum::<usize>()).to_string()]);
+        let held = |vm: &Vm<TestHost>| {
+            vm.programs
+                .lane_views(super::program_store::ProgramId::MAIN)
+                .into_iter()
+                .flatten()
+                .filter_map(super::program_store::derived_lane_view)
+                .map(|view| view.held_field_hints())
+                .sum::<usize>()
+        };
+        assert!(held(&vm) >= SITES);
+        let shapes = vm.shapes.len();
+        vm.collect_now(&program);
+        assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
+        assert_eq!(held(&vm), 0);
+        // Re-enter the same read sites with `a` in the second slot. A derived slot reader
+        // must not keep using its pre-compaction first-slot position.
+        let resume = vm.lookup_atom("resume").unwrap();
+        let resume = vm.own_property(vm.realm.globals, resume).unwrap();
+        assert_eq!(
+            vm.call_value(&program, resume, Value::UNDEFINED, &[]).unwrap(),
+            Value::integer((50 * (0..SITES).sum::<usize>()) as i32),
+        );
+    }
 }
 
 #[test]
@@ -21964,7 +22027,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         registers[usize::from(parameter)] = Value::number(5.0);
         let env = vm.heap.function(caller).unwrap().env;
         let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
-        let slots = std::ptr::from_ref(slots);
+        let slots = slots.dense_storage().unwrap();
         let exit = vm.run_lane_method(&method, super::compiled::LaneStart::First, false, super::program_store::ProgramId::MAIN,
             &program, registers.as_mut_ptr(), receiver, slots, std::ptr::null_mut());
         assert_eq!(registers[usize::from(parameter)], Value::number(6.0), "suspended caller retains its reflected parameter");
@@ -22134,7 +22197,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let expected_total = if expected_total > 1000.0 { expected_total - 1000.0 } else { expected_total };
         let env = vm.heap.function(caller).unwrap().env;
         let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
-        let slots = std::ptr::from_ref(slots);
+        let slots = slots.dense_storage().unwrap();
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
         registers[usize::from(parameter)] = Value::number(3.0);

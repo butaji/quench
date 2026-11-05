@@ -90,7 +90,7 @@ fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right:
 fn result(state: &State, program: &ResidualProgram, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
     if instruction.op() == Op::LoadConst {
-        return program.constants.get(instruction.constant_index() as usize)
+        return program.constants.get(instruction.constant_index())
             .and_then(super::super::facts::immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
     if instruction.op().js_denotation() != crate::bytecode::JsDenotation::NumericBinary { return None; }

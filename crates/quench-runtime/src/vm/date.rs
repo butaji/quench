@@ -127,25 +127,24 @@ const DATE_MONTHS: [&str; 12] = [
 const DEFAULT_DATE_COMPONENTS: [f64; DATE_COMPONENT_COUNT] =
     [0.0, 0.0, FIRST_DAY_OF_MONTH, 0.0, 0.0, 0.0, 0.0];
 
-pub(super) fn date_native_length(native: Native) -> Option<f64> {
+pub(super) const fn date_native_length(native: Native) -> Option<f64> {
     match native {
         Native::Date | Native::DateUTC => Some(DATE_COMPONENT_COUNT as f64),
         Native::DateParse | Native::DateSetTime | Native::DateToPrimitive => Some(1.0),
         Native::DateNow => Some(0.0),
-        _ => DateSetter::from_native(native)
-            .map(|setter| setter.maximum_arguments as f64)
-            .or_else(|| {
-                DATE_PROTOTYPE_METHODS
-                    .iter()
-                    .find_map(|(_, method)| (*method == native).then_some(native))
-                    .map(|method| {
-                        if method == Native::DateToJSON {
-                            1.0
-                        } else {
-                            0.0
-                        }
-                    })
-            }),
+        _ => {
+            if let Some(setter) = DateSetter::from_native(native) {
+                return Some(setter.maximum_arguments as f64);
+            }
+            let mut index = 0;
+            while index < DATE_PROTOTYPE_METHODS.len() {
+                if DATE_PROTOTYPE_METHODS[index].1 as u16 == native as u16 {
+                    return Some(if matches!(native, Native::DateToJSON) { 1.0 } else { 0.0 });
+                }
+                index += 1;
+            }
+            None
+        }
     }
 }
 
@@ -792,7 +791,7 @@ struct DateSetter {
 }
 
 impl DateSetter {
-    fn from_native(native: Native) -> Option<Self> {
+    const fn from_native(native: Native) -> Option<Self> {
         let (utc, start_component, maximum_arguments, recovers_invalid_date, legacy_year) =
             match native {
                 Native::DateSetFullYear => (

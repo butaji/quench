@@ -62,10 +62,22 @@ pub struct HeapMemoryComposition {
     pub array_buffer_store_bytes: usize,
     pub cell_payload_bytes: usize,
     pub other_cell_payload_bytes: usize,
+    /// Diagnostic backing census, overlapping the existing environment payload estimate.
+    pub environment_logical_slots: usize,
+    pub environment_storage_bytes: usize,
+    pub environment_sparse_count: usize,
     pub profile_instrumentation_bytes: usize,
 }
 
 impl Heap {
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_record_pages(&self, phase: &str) {
+        self.object_records.report_pages("object", phase);
+        self.array_records.report_pages("array", phase);
+        self.function_records.report_pages("function", phase);
+        self.string_records.report_pages("string", phase);
+    }
+
     pub(crate) fn memory_composition(&self) -> HeapMemoryComposition {
         let mut occupied_slots = 0;
         let mut direct_records = 0;
@@ -85,6 +97,9 @@ impl Heap {
         let mut string_buffers_bytes = 0;
         let mut string_buffer_count = 0;
         let mut other_cell_payload_bytes = 0;
+        let mut environment_logical_slots = 0;
+        let mut environment_storage_bytes = 0;
+        let mut environment_sparse_count = 0;
         let mut array_identities = HashSet::new();
         let mut string_identities = HashSet::new();
         let mut array_buffer_bytes = 0;
@@ -95,6 +110,12 @@ impl Heap {
             let object_record = self.object_record(identity);
             let direct_array = identity.direct_array_index().is_some();
             let cell = self.get(identity);
+            if let Some(Cell::Environment { slots, .. }) = cell {
+                environment_logical_slots += slots.len();
+                environment_storage_bytes += slots.0.allocated_bytes();
+                environment_sparse_count += usize::from(slots.dense().is_none());
+            }
+            let array = self.array(identity);
             let direct_object = identity.direct_object_index().is_some();
             let direct_function = identity.direct_function_index().is_some();
             let direct_promise = identity.direct_promise_index().is_some();
@@ -190,9 +211,7 @@ impl Heap {
             }
             let payload_bytes = if direct_object {
                 object_record.map_or(0, Object::allocated_extra_bytes)
-            } else if let Some(array) = self.array(identity)
-                && direct_array
-            {
+            } else if let Some(array) = array {
                 array.allocated_extra_bytes() + array.elements().capacity() * size_of::<Value>()
             } else if direct_function {
                 self.function(identity)
@@ -222,44 +241,25 @@ impl Heap {
                     string_buffers_bytes += host.1;
                     string_buffer_count += 1;
                 }
-            } else if direct_array {
-                let elements = self
-                    .array_elements(identity)
-                    .expect("live direct array record");
+            } else if let Some(array) = array {
+                let elements = array.elements();
                 let element_bytes = elements.capacity() * size_of::<Value>();
                 other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
                 let identity = elements.as_ptr() as usize;
-                if array_identities.insert(identity) {
-                    const RC_HEADER_WORDS: usize = 2;
+                let allocated_bytes = elements.allocated_bytes();
+                if allocated_bytes != 0 && array_identities.insert(identity) {
                     dense_array_elements_bytes += element_bytes;
-                    dense_array_headers_bytes +=
-                        size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
+                    dense_array_headers_bytes += allocated_bytes - element_bytes;
                     dense_array_backing_count += 1;
                 }
-            } else {
-                match cell {
-                    Some(Cell::Array { object }) => {
-                        let elements = object.elements();
-                        let element_bytes = elements.capacity() * size_of::<Value>();
-                        other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
-                        let identity = elements.as_ptr() as usize;
-                        if array_identities.insert(identity) {
-                            const RC_HEADER_WORDS: usize = 2;
-                            dense_array_elements_bytes += element_bytes;
-                            dense_array_headers_bytes +=
-                                size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
-                            dense_array_backing_count += 1;
-                        }
-                    }
-                    Some(Cell::ArrayBuffer { bytes, .. }) => {
-                        other_cell_payload_bytes += payload_bytes.saturating_sub(bytes.capacity());
-                        if buffer_identities.insert(bytes.as_ptr() as usize) {
-                            array_buffer_bytes += bytes.len();
-                            array_buffer_store_bytes += bytes.capacity();
-                        }
-                    }
-                    _ => other_cell_payload_bytes += payload_bytes,
+            } else if let Some(Cell::ArrayBuffer { bytes, .. }) = cell {
+                other_cell_payload_bytes += payload_bytes.saturating_sub(bytes.capacity());
+                if buffer_identities.insert(bytes.as_ptr() as usize) {
+                    array_buffer_bytes += bytes.len();
+                    array_buffer_store_bytes += bytes.capacity();
                 }
+            } else {
+                other_cell_payload_bytes += payload_bytes;
             }
         });
         let cell_payload_bytes = other_cell_payload_bytes
@@ -329,6 +329,9 @@ impl Heap {
             array_buffer_store_bytes,
             cell_payload_bytes,
             other_cell_payload_bytes,
+            environment_logical_slots,
+            environment_storage_bytes,
+            environment_sparse_count,
             profile_instrumentation_bytes: {
                 #[cfg(feature = "profile-memory")]
                 {

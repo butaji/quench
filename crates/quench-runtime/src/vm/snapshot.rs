@@ -533,7 +533,11 @@ impl<H: Host> Vm<H> {
     ) -> SnapshotResult<ResidualProgram> {
         self.restore_snapshot_state(bytes, None, read_host)?;
         let main = self.rebased_entry(entry)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_entry");
         self.install_restored_main(Rc::new(main.clone()));
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_ready");
         Ok(main)
     }
 
@@ -543,13 +547,19 @@ impl<H: Host> Vm<H> {
         native: Option<&ResidualProgram>,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<()> {
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_restore_begin");
         let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
         self.specialized = reader.bool()?;
         if native.is_some_and(|program| program.specialized != self.specialized) {
             return Err(SnapshotError("native script specialization does not match runtime".into()));
         }
         self.read_atoms(&mut reader, native.map(|program| &program.atoms))?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_atoms");
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_heap");
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
@@ -567,8 +577,14 @@ impl<H: Host> Vm<H> {
         self.atom_strings = Snap::unsnap(&mut reader)?;
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_realm");
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_programs");
         self.read_shapes(&mut reader)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_shapes");
         self.symbol_registry = Snap::unsnap(&mut reader)?;
         self.well_known_symbols = Snap::unsnap(&mut reader)?;
         self.length_atom = reader.u32()?;
@@ -598,6 +614,8 @@ impl<H: Host> Vm<H> {
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_host");
         Ok(())
     }
 

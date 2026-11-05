@@ -1133,6 +1133,45 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
 }
 
 #[test]
+fn dense_storage_reads_writes_and_native_views_share_the_owner_checks() {
+    let mut slots = EnvironmentSlots::from(vec![Value::UNDEFINED, Value::DELETED, Value::integer(42)]);
+    let storage = slots.dense_storage().unwrap();
+    // SAFETY: all owners below stay live; operations borrow only for their duration.
+    // Writes contain no heap references and no guest or collection can run here.
+    unsafe {
+        assert_eq!(EnvironmentSlots::read_storage(storage, 0), Some(Value::UNDEFINED));
+        assert_eq!(EnvironmentSlots::read_storage(storage, 1), None);
+        assert_eq!(EnvironmentSlots::read_storage(storage, slots.len()), None);
+        assert_eq!(EnvironmentSlots::read_storage(std::ptr::null(), 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(storage, 0, Value::integer(7)), Some(()));
+        assert_eq!(EnvironmentSlots::write_storage(storage, 1, Value::integer(7)), None);
+        assert_eq!(EnvironmentSlots::write_storage(storage, slots.len(), Value::integer(7)), None);
+        assert_eq!(EnvironmentSlots::write_storage(std::ptr::null(), 0, Value::integer(7)), None);
+        assert_eq!(slots.owned(0), Some(Value::integer(7)));
+        *slots.owned_mut(2).unwrap() = Value::integer(99);
+        assert_eq!(EnvironmentSlots::read_storage(storage, 2), Some(Value::integer(99)));
+        assert_eq!(EnvironmentSlots::native_storage_view(storage), slots.native_dense_view());
+        assert_eq!(EnvironmentSlots::native_storage_view(std::ptr::null()), None);
+        let empty = EnvironmentSlots::from(Vec::new());
+        let empty_storage = empty.dense_storage().unwrap();
+        assert_eq!(EnvironmentSlots::read_storage(empty_storage, 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(empty_storage, 0, Value::TRUE), None);
+        assert_eq!(EnvironmentSlots::native_storage_view(empty_storage), empty.native_dense_view());
+        let mut heap = Heap::new();
+        let owner = heap.alloc_environment(Value::NULL, 1, slots.clone(), EnvironmentScopeRef::of_program(0)).0;
+        let shared = slots.iteration_copy(owner, &[], &[], |_, _| unreachable!()).unwrap();
+        let shared_storage = shared.dense_storage().unwrap();
+        assert_eq!(EnvironmentSlots::read_storage(shared_storage, 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(shared_storage, 0, Value::TRUE), None);
+        assert!(matches!(shared.state(0), Some(EnvironmentSlotState::Shared(value)) if value == owner));
+    }
+    // Scoped descriptors did not consume the owner or leave it marked/uninitialized.
+    assert_eq!(slots.dense_plain(0), Some(Value::integer(7)));
+    assert_eq!(slots.dense_plain(1), None);
+    assert_eq!(slots.dense_plain(2), Some(Value::integer(99)));
+}
+
+#[test]
 fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let mut heap = Heap::new();
     let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
@@ -1157,6 +1196,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
     // A length and owner, then the fresh and reset slots, each with its index.
     assert_eq!((first.len(), first.0.len()), (width, 6));
+    assert!(first.dense_storage().is_none());
     let first = environment(&mut heap, first);
     assert_eq!(heap.environment_slot(first, 3), Some(Value::number(3.0)));
     assert_eq!(heap.environment_slot(first, 5), Some(Value::UNDEFINED));
@@ -1490,6 +1530,67 @@ fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
 
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
+fn memory_census_counts_array_allocations_once_across_storage_and_collection() {
+    let mut heap = Heap::new();
+    let empty_direct = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), ArrayElements::new()),
+    });
+    let empty_legacy = heap.alloc_in_slot(Cell::Array {
+        object: ArrayObject::new(plain_object(), ArrayElements::new()),
+    }, false);
+    let empty = heap.memory_composition();
+    assert_eq!(empty.dense_array_backing_count, 0);
+    assert_eq!(empty.dense_array_elements_bytes, 0);
+    assert_eq!(empty.dense_array_headers_bytes, 0);
+
+    let source = ArrayElements::from([Value::integer(1), Value::integer(2), Value::integer(3)]);
+    let source_payload_bytes = source.capacity() * size_of::<Value>();
+    let header_bytes = source.allocated_bytes() - source_payload_bytes;
+    let direct = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), source.clone()),
+    });
+    let legacy = heap.alloc_in_slot(Cell::Array {
+        object: ArrayObject::new(plain_object(), source.clone()),
+    }, false);
+    assert!(direct.direct_array_index().is_some());
+    assert!(legacy.direct_array_index().is_none());
+    let shared = heap.memory_composition();
+    assert_eq!(shared.dense_array_backing_count, 1);
+    assert_eq!(shared.dense_array_elements_bytes, source_payload_bytes);
+    assert_eq!(shared.dense_array_headers_bytes, header_bytes);
+
+    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::integer(4));
+    let grown = heap.array_elements(direct).unwrap();
+    assert!(grown.capacity() > source.capacity());
+    let grown_payload_bytes = grown.capacity() * size_of::<Value>();
+    assert_eq!(source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
+    heap.collect([empty_direct, empty_legacy, direct, legacy]);
+    let detached = heap.memory_composition();
+    assert_eq!(detached.dense_array_backing_count, 2);
+    assert_eq!(detached.dense_array_elements_bytes, source_payload_bytes + grown_payload_bytes);
+    assert_eq!(detached.dense_array_headers_bytes, 2 * header_bytes);
+
+    heap.array_elements_mut(direct).unwrap().make_mut().truncate(0);
+    assert!(heap.array_elements(direct).unwrap().is_empty());
+    let reserved_empty = heap.memory_composition();
+    assert_eq!(reserved_empty.dense_array_backing_count, 2);
+    assert_eq!(reserved_empty.dense_array_elements_bytes, source_payload_bytes + grown_payload_bytes);
+    assert_eq!(reserved_empty.dense_array_headers_bytes, 2 * header_bytes);
+
+    heap.collect([legacy]);
+    let survivor = heap.memory_composition();
+    assert_eq!(survivor.dense_array_backing_count, 1);
+    assert_eq!(survivor.dense_array_elements_bytes, source_payload_bytes);
+    assert_eq!(survivor.dense_array_headers_bytes, header_bytes);
+    heap.collect([]);
+    let collected = heap.memory_composition();
+    assert_eq!(collected.dense_array_backing_count, 0);
+    assert_eq!(collected.dense_array_elements_bytes, 0);
+    assert_eq!(collected.dense_array_headers_bytes, 0);
+}
+
+#[test]
+#[cfg(not(feature = "profile-aggregate"))]
 fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
     let mut heap = Heap::new();
     let before = heap.memory_composition();
@@ -1757,4 +1858,27 @@ fn linked_target_self_reference_is_observed_before_mutable_access() {
     let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
     heap.property_set(object, 0, object);
     assert_eq!(heap.slot_target_shape(1, 0), Some(1));
+}
+
+#[test]
+fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
+    let mut heap = Heap::new();
+    let width = super::cell::SPARSE_CLONE_MIN_SLOTS;
+    let slots = EnvironmentSlots::from_values(std::iter::repeat_n(Value::UNDEFINED, width));
+    let (owner, _) = heap.alloc_environment(Value::UNDEFINED, 0, slots, EnvironmentScopeRef::of_program(0));
+    let Some(Cell::Environment { slots, .. }) = heap.get(owner) else { unreachable!() };
+    let sparse = slots.iteration_copy(owner, &[], &[], |_, _| None).unwrap();
+    assert!(sparse.dense().is_none());
+    let sparse_bytes = sparse.0.allocated_bytes();
+    let (copy, _) = heap.alloc_environment(owner, 0, sparse, EnvironmentScopeRef::of_program(0));
+    let census = heap.memory_composition();
+    assert_eq!(census.environment_logical_slots, 2 * width);
+    assert_eq!(census.environment_sparse_count, 1);
+    assert_eq!(census.environment_storage_bytes,
+        size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
+    assert!(sparse_bytes < width * size_of::<EnvironmentSlot>());
+    heap.collect([copy]);
+    assert_eq!(heap.memory_composition().environment_storage_bytes, census.environment_storage_bytes);
+    heap.collect([]);
+    assert_eq!(heap.memory_composition().environment_storage_bytes, 0);
 }

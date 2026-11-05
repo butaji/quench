@@ -12,7 +12,7 @@
 //! The heap is the authority over those facts, and it retires every proof of the running
 //! lane at each change that could falsify one (`retire_array_storage_proofs`): structural
 //! access to an array's elements (`ArrayObject::elements_mut`, the only path that can
-//! replace, grow, shrink or detach a record array's backing), a backing gaining an owner
+//! replace, grow, shrink or detach a record array's backing), a unique backing gaining an owner
 //! (`ArrayElements::clone`), an object becoming frozen (`Object::set_frozen`, the only
 //! writer of the frozen bit), a prototype (`Object::mark_as_prototype`) or gaining indexed
 //! descriptors or an arguments map, and every
@@ -245,6 +245,33 @@ mod tests {
         assert_eq!(copy[0], Value::integer(3));
         assert!(copy.holds_only_int32());
         assert!(!proofs.holds(0, base));
+    }
+
+    #[test]
+    fn further_shared_owners_preserve_read_proofs_until_detachment() {
+        let mut heap = Heap::new();
+        let base = array(&mut heap);
+        let mut proofs = Box::new(ArrayStorageProofs::new());
+        let _scope = LaneProofScope::enter();
+        let first = heap.array(base).unwrap().elements().clone();
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        let second = first.clone();
+        assert!(proofs.holds(0, base));
+        assert_eq!(proofs.element(0, base, 0), Some(Value::integer(1)));
+        assert!(!proofs.replace(0, base, 0, Value::integer(9)));
+        drop(first);
+        drop(second);
+        // Becoming unique cannot upgrade an existing read-only proof to writable.
+        assert!(!proofs.replace(0, base, 0, Value::integer(9)));
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        assert!(proofs.replace(0, base, 0, Value::integer(9)));
+        let copy = heap.array(base).unwrap().elements().clone();
+        assert!(!proofs.holds(0, base));
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        heap.array_mut(base).unwrap().elements_mut().make_mut().set(0, Value::integer(4));
+        assert!(!proofs.holds(0, base));
+        assert_eq!(copy[0], Value::integer(9));
+        assert_eq!(heap.array(base).unwrap().elements()[0], Value::integer(4));
     }
 
     #[test]

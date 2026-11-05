@@ -612,12 +612,23 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
 
 /// The value of a Math function of one Number argument (`Math.sqrt` and its kin); `None`
 /// for any other native. Such a function reads only its first argument.
+pub(super) fn math_unary_call(native: Native, args: &[Value]) -> Option<Value> {
+    math_unary(native, args.first()?.as_number()?).map(Value::number)
+}
+
+/// The shared numeric operation after argument conversion or a Number-only guard.
 pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
+    math_unary_operation(native).map(|operation| operation(value))
+}
+
+/// Select the numeric operation before entering its implementation, so rejection
+/// and simple operations do not pay the stack setup of more complex operations.
+fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
     Some(match native {
-        Native::MathFloor => value.floor(),
-        Native::MathAbs => value.abs(),
-        Native::MathCeil => value.ceil(),
-        Native::MathRound => {
+        Native::MathFloor => f64::floor,
+        Native::MathAbs => f64::abs,
+        Native::MathCeil => f64::ceil,
+        Native::MathRound => |value| {
             if value.is_nan() || value == 0.0 || value.is_infinite() {
                 value
             } else if (-0.5..0.0).contains(&value) {
@@ -630,31 +641,31 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
                     floor + 1.0
                 }
             }
-        }
-        Native::MathTrunc => value.trunc(),
-        Native::MathSqrt => value.sqrt(),
-        Native::MathAcos => value.acos(),
-        Native::MathAsin => value.asin(),
-        Native::MathAtan => super::fdlibm_math::atan(value),
-        Native::MathCos => value.cos(),
-        Native::MathExp => value.exp(),
-        Native::MathSin => value.sin(),
-        Native::MathTan => value.tan(),
-        Native::MathAcosh => value.acosh(),
-        Native::MathAsinh => value.asinh(),
-        Native::MathAtanh => math_atanh(value),
-        Native::MathCbrt => super::fdlibm_math::cbrt(value),
-        Native::MathCosh => value.cosh(),
-        Native::MathExpm1 => value.exp_m1(),
-        Native::MathFround => f64::from(value as f32),
-        Native::MathLog10 => value.log10(),
-        Native::MathLog1p => value.ln_1p(),
-        Native::MathLog2 => value.log2(),
-        Native::MathSinh => value.sinh(),
-        Native::MathTanh => value.tanh(),
-        Native::MathClz32 => f64::from(crate::value::number_to_u32(value).leading_zeros()),
-        Native::MathF16Round => f16_round(value),
-        Native::MathSign => {
+        },
+        Native::MathTrunc => f64::trunc,
+        Native::MathSqrt => f64::sqrt,
+        Native::MathAcos => f64::acos,
+        Native::MathAsin => f64::asin,
+        Native::MathAtan => super::fdlibm_math::atan,
+        Native::MathCos => f64::cos,
+        Native::MathExp => f64::exp,
+        Native::MathSin => f64::sin,
+        Native::MathTan => f64::tan,
+        Native::MathAcosh => f64::acosh,
+        Native::MathAsinh => f64::asinh,
+        Native::MathAtanh => math_atanh,
+        Native::MathCbrt => super::fdlibm_math::cbrt,
+        Native::MathCosh => f64::cosh,
+        Native::MathExpm1 => f64::exp_m1,
+        Native::MathFround => |value| f64::from(value as f32),
+        Native::MathLog10 => f64::log10,
+        Native::MathLog1p => f64::ln_1p,
+        Native::MathLog2 => f64::log2,
+        Native::MathSinh => f64::sinh,
+        Native::MathTanh => f64::tanh,
+        Native::MathClz32 => |value| f64::from(crate::value::number_to_u32(value).leading_zeros()),
+        Native::MathF16Round => f16_round,
+        Native::MathSign => |value| {
             if value.is_nan() || value == 0.0 {
                 value
             } else if value.is_sign_negative() {
@@ -662,7 +673,7 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
             } else {
                 1.0
             }
-        }
+        },
         _ => return None,
     })
 }

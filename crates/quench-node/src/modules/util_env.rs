@@ -83,9 +83,6 @@ pub(crate) fn load_startup_env_files(
         .unwrap_or_default();
     options.extend(arguments.iter().cloned());
 
-    let inherited: std::collections::HashSet<String> = std::env::vars_os()
-        .filter_map(|(key, _)| key.into_string().ok())
-        .collect();
     let mut loaded = BTreeMap::new();
     let mut index = 0;
     while index < options.len() {
@@ -118,6 +115,14 @@ pub(crate) fn load_startup_env_files(
         index += 1;
     }
 
+    if loaded.is_empty() {
+        return;
+    }
+    // Reading files does not mutate the environment. Snapshot inherited names only
+    // when there are values to apply, before the first environment write.
+    let inherited: std::collections::HashSet<String> = std::env::vars_os()
+        .filter_map(|(key, _)| key.into_string().ok())
+        .collect();
     for (key, value) in loaded {
         if inherited.contains(&key) {
             continue;

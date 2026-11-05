@@ -19,6 +19,9 @@ mod host;
 mod memory_edge;
 mod module_identity;
 mod number_to_string;
+#[cfg(all(test, feature = "bench-primitives"))]
+#[path = "../benches/support/number_inputs.rs"]
+mod number_inputs;
 mod profile;
 mod snapshot;
 mod typed_ir;
