@@ -1203,28 +1203,9 @@ impl Lowering<'_, '_> {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
             },
-            Op::LoadConst if plain => {
-                let value = self.program.constants.get(instruction.constant_index()).and_then(super::facts::immediate);
-                value.map(|value| {
-                    let ty = Type::immediate(value);
-                    let (representation, native) = if let Some(int) = value.as_int() {
-                        (Representation::Int32, self.ins().iconst(types::I32, i64::from(int)))
-                    } else if let Some(number) = value.as_number() {
-                        (Representation::Float64, self.ins().f64const(number))
-                    } else {
-                        (Representation::Tagged, self.ins().iconst(types::I64, value.to_bits() as i64))
-                    };
-                    let mut fact = RegisterFact::definition(ty, representation);
-                    fact.value.binding = BindingTime::Static;
-                    fact.value.proof = Proof::Static;
-                    self.define(state, instruction.result_register(), native, fact);
-                    true
-                })
-            }
-            Op::Move if plain => {
-                self.copy(state, instruction.result_register(), instruction.register_b());
-                Some(true)
-            }
+            // The interpreter's own semantics, run on the register state (`staged::step`).
+            Op::LoadConst | Op::Move if plain => super::lane_operation(&self.program.constants, instruction)
+                .map(|operation| crate::vm::staged::step(&mut LaneMachine { lowering: self, state }, operation) == crate::vm::staged::Flow::Next),
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -2888,4 +2869,87 @@ mod tests {
         }
         assert_eq!(arithmetic, 3, "{native}");
     }
+}
+
+/// The specializer's machine (`staged::Machine`): the lowering's register state, on which the
+/// interpreter's semantics (`staged::step`) emits the residual, a register's facts folded.
+struct LaneMachine<'l, 'a, 'f> {
+    lowering: &'l mut Lowering<'a, 'f>,
+    state: &'l mut State,
+}
+
+impl<'f> LaneMachine<'_, '_, 'f> {
+    fn emit(&mut self) -> super::object_slots::Emit<'_, 'f> {
+        super::object_slots::Emit { builder: &mut self.lowering.builder, property_base: None }
+    }
+}
+
+macro_rules! delegate_stage {
+    ($($name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {
+        $(fn $name(&mut self, $($arg: $ty),*) $(-> $ret)? { crate::vm::staged::Stage::$name(&mut self.emit(), $($arg),*) })*
+    };
+}
+
+impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
+    type Word = ir::Value;
+    type Cond = ir::Value;
+    type Miss = ir::Block;
+    delegate_stage! {
+        constant(bits: u64) -> ir::Value;
+        load_u32(base: ir::Value, offset: i32) -> ir::Value;
+        load_u64(base: ir::Value, offset: i32) -> ir::Value;
+        store_u32(base: ir::Value, offset: i32, value: ir::Value);
+        store_u64(base: ir::Value, offset: i32, value: ir::Value);
+        load_table(address: ir::Value) -> ir::Value;
+        add(a: ir::Value, b: ir::Value) -> ir::Value;
+        or(a: ir::Value, b: ir::Value) -> ir::Value;
+        add_imm(a: ir::Value, imm: u64) -> ir::Value;
+        mul_imm(a: ir::Value, imm: u64) -> ir::Value;
+        and_imm(a: ir::Value, imm: u64) -> ir::Value;
+        or_imm(a: ir::Value, imm: u64) -> ir::Value;
+        shr_imm(a: ir::Value, shift: u32) -> ir::Value;
+        sar32_imm(a: ir::Value, shift: u32) -> ir::Value;
+        eq_imm(a: ir::Value, imm: u64) -> ir::Value;
+        below_imm(a: ir::Value, imm: u64) -> ir::Value;
+        guard(cond: ir::Value, miss: ir::Block) -> Option<()>;
+    }
+    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value, otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        let (then_block, otherwise_block, join) = (self.lowering.builder.create_block(), self.lowering.builder.create_block(), self.lowering.builder.create_block());
+        let result = self.lowering.builder.append_block_param(join, types::I64);
+        self.lowering.builder.ins().brif(cond, then_block, &[], otherwise_block, &[]);
+        self.lowering.builder.switch_to_block(then_block);
+        let value = then(self);
+        self.lowering.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+        self.lowering.builder.switch_to_block(otherwise_block);
+        let value = otherwise(self);
+        self.lowering.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+        self.lowering.builder.switch_to_block(join);
+        result
+    }
+    fn property_base(&mut self) -> ir::Value {
+        let entry = self.lowering.entry.as_ref().expect("entry facts");
+        self.lowering.builder.use_var(entry.receiver.properties)
+    }
+}
+
+impl crate::vm::staged::Machine for LaneMachine<'_, '_, '_> {
+    fn register(&mut self, register: Register) -> ir::Value { self.lowering.tagged(self.state, register) }
+    fn set_register(&mut self, register: Register, value: ir::Value) { self.lowering.set_tagged(self.state, register, value) }
+    fn set_static(&mut self, register: Register, value: Value) {
+        // A known value takes its narrowest representation, a static fact the residual folds.
+        let ty = Type::immediate(value);
+        let (representation, native) = if let Some(int) = value.as_int() {
+            (Representation::Int32, self.lowering.ins().iconst(types::I32, i64::from(int)))
+        } else if let Some(number) = value.as_number() {
+            (Representation::Float64, self.lowering.ins().f64const(number))
+        } else {
+            (Representation::Tagged, self.lowering.ins().iconst(types::I64, value.to_bits() as i64))
+        };
+        let mut fact = RegisterFact::definition(ty, representation);
+        fact.value.binding = BindingTime::Static;
+        fact.value.proof = Proof::Static;
+        self.lowering.define(self.state, register, native, fact);
+    }
+    /// A copy keeps every fact of the source: its representation and proofs.
+    fn copy_register(&mut self, destination: Register, source: Register) { self.lowering.copy(self.state, destination, source) }
 }

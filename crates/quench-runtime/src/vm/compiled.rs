@@ -7479,6 +7479,21 @@ impl ShadowFrame {
     const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
 }
 
+/// The meaning `staged::step` interprets (`staged::Operation`) of a bytecode `instruction`, for
+/// the operations it covers; `None` for any other instruction, or a `LoadConst` of a value with
+/// a heap cell.
+pub(super) fn lane_operation(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<super::staged::Operation> {
+    use super::staged::Operation;
+    Some(match instruction.op() {
+        Op::Move => Operation::Move { destination: instruction.result_register(), source: instruction.register_b() },
+        Op::LoadConst => Operation::LoadConst {
+            destination: instruction.result_register(),
+            constant: constants.get(instruction.constant_index()).and_then(facts::immediate)?,
+        },
+        _ => return None,
+    })
+}
+
 /// What an inlined frame's captures read (`Lowering::frame_captures`): its closure
 /// environment's dense slots, where they have them (`EnvironmentSlots::native_dense_view`),
 /// and the environment itself, which the frame's call guard fixes with its callee and which

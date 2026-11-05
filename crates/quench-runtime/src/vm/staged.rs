@@ -257,3 +257,110 @@ pub(crate) fn store_own_field(arena: &mut crate::value_vec::ValueArena, object: 
         .and_then(|layout| store_slot(&mut stage, layout, slot, value.to_bits(), false, ()))
         .is_some()
 }
+
+/// A stage with a register file: the frame an instruction's semantics reads and writes. The
+/// interpreter's is the activation's registers; the specializer's is its register state, whose
+/// facts (a value known, a representation proved) it keeps and folds on.
+pub(crate) trait Machine: Stage {
+    /// The value of `register`, as a tagged word.
+    fn register(&mut self, register: crate::bytecode::Register) -> Self::Word;
+    /// Writes the tagged word `value` to `register`.
+    fn set_register(&mut self, register: crate::bytecode::Register, value: Self::Word);
+    /// Writes `value`, which the semantics knows, to `register`: the interpreter stores its
+    /// bits, the specializer takes it as a fact and folds on it.
+    fn set_static(&mut self, register: crate::bytecode::Register, value: crate::Value);
+    /// Copies `source` to `destination`, with everything known of it.
+    fn copy_register(&mut self, destination: crate::bytecode::Register, source: crate::bytecode::Register) {
+        let value = self.register(source);
+        self.set_register(destination, value);
+    }
+}
+
+/// The interpreter's register file, as words: the activation's registers and whatever the
+/// interpreter keeps of them outside memory (`dispatch_fast`'s accumulator).
+pub(crate) trait RegisterFile {
+    fn get(&mut self, register: crate::bytecode::Register) -> u64;
+    fn set(&mut self, register: crate::bytecode::Register, value: u64);
+}
+
+/// The interpreter's machine: the concrete stage over a register file.
+pub(crate) struct ConcreteFrame<R> {
+    pub(crate) stage: Concrete,
+    pub(crate) registers: R,
+}
+
+macro_rules! delegate_concrete {
+    ($($name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {
+        $(#[inline(always)] fn $name(&mut self, $($arg: $ty),*) $(-> $ret)? { self.stage.$name($($arg),*) })*
+    };
+}
+
+impl<R: RegisterFile> Stage for ConcreteFrame<R> {
+    type Word = u64;
+    type Cond = bool;
+    type Miss = ();
+    delegate_concrete! {
+        constant(bits: u64) -> u64;
+        load_u32(base: u64, offset: i32) -> u64;
+        load_u64(base: u64, offset: i32) -> u64;
+        store_u32(base: u64, offset: i32, value: u64);
+        store_u64(base: u64, offset: i32, value: u64);
+        load_table(address: u64) -> u64;
+        add(a: u64, b: u64) -> u64;
+        or(a: u64, b: u64) -> u64;
+        add_imm(a: u64, imm: u64) -> u64;
+        mul_imm(a: u64, imm: u64) -> u64;
+        and_imm(a: u64, imm: u64) -> u64;
+        or_imm(a: u64, imm: u64) -> u64;
+        shr_imm(a: u64, shift: u32) -> u64;
+        sar32_imm(a: u64, shift: u32) -> u64;
+        eq_imm(a: u64, imm: u64) -> bool;
+        below_imm(a: u64, imm: u64) -> bool;
+        guard(cond: bool, miss: ()) -> Option<()>;
+        property_base() -> u64;
+    }
+    #[inline(always)]
+    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
+        if cond { then(self) } else { otherwise(self) }
+    }
+}
+
+impl<R: RegisterFile> Machine for ConcreteFrame<R> {
+    #[inline(always)]
+    fn register(&mut self, register: crate::bytecode::Register) -> u64 { self.registers.get(register) }
+    #[inline(always)]
+    fn set_register(&mut self, register: crate::bytecode::Register, value: u64) { self.registers.set(register, value) }
+    #[inline(always)]
+    fn set_static(&mut self, register: crate::bytecode::Register, value: crate::Value) { self.registers.set(register, value.to_bits()) }
+}
+
+/// An instruction's meaning as data: what `step` interprets, decoded once from whichever
+/// record carries it (a bytecode instruction, a lane record). Operands the instruction names
+/// statically (registers, constants) are plain values, which every stage folds.
+#[derive(Clone, Copy)]
+pub(crate) enum Operation {
+    /// `destination = source`.
+    Move { destination: crate::bytecode::Register, source: crate::bytecode::Register },
+    /// `destination = constant`, a value that needs no heap cell (`facts::immediate`).
+    LoadConst { destination: crate::bytecode::Register, constant: crate::Value },
+}
+
+/// Where control goes after `step`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Flow {
+    /// The next instruction.
+    Next,
+}
+
+/// The interpreter: each operation's semantics, over any machine (`Machine`). The lane runs
+/// it on the activation's registers; the specializer runs it on its register state, which
+/// emits the residual (Futamura's first projection), and `step` for the emitting machine is
+/// the compiler (the second).
+#[inline(always)]
+pub(crate) fn step<M: Machine>(machine: &mut M, operation: Operation) -> Flow {
+    match operation {
+        Operation::Move { destination, source } => machine.copy_register(destination, source),
+        Operation::LoadConst { destination, constant } => machine.set_static(destination, constant),
+    }
+    Flow::Next
+}
