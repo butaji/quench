@@ -42,7 +42,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use super::typed_ir::{BindingTime, Fact as ValueFact, Projection, Proof, Representation, Type, VerifiedFact};
-use super::{NativeFieldLoad, object_slots::{CheckedObject, ObjectHeader, PackedAccess}};
+use super::{NativeFieldLoad, object_slots::{CheckedObject, CheckedObjectTable, ObjectHeader, PackedAccess}};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 /// The most iterations an innermost nested counted loop's proved copy runs between its
@@ -4355,6 +4355,9 @@ struct Lowering<'a, 'b> {
     /// The entry words' address, which hot reads use; a cold path reloads it
     /// (`cold_word`), so a loop holds a register for it only where a hot read needs it.
     entry: ir::Value,
+    /// The entry record fixes this reservation for the run; admit it once before
+    /// any effects. Individual receivers still require range and layout proofs.
+    object_table: Option<CheckedObjectTable>,
     /// Count the region's taken backedges only for the opt-in shared-tier admission path.
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
@@ -4664,6 +4667,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             registers,
             scratch: None,
             entry,
+            object_table: None,
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
             elements: std::collections::BTreeMap::new(),
@@ -5210,6 +5214,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Unboxes every Number register and capture in its representation, entering only when
     /// all hold such values.
     fn enter(&mut self) -> Option<()> {
+        if self.observation.native_field_loads.iter().any(|loads| !loads.is_empty()) {
+            let base = self.word(self.region.native_heap_word());
+            let otherwise = self.not_entered(None);
+            self.object_table = Some(CheckedObjectTable::prove(&mut self.body.builder, base, otherwise));
+        }
         let fields_start = ENTRY_CAPTURES + self.region.captures.len();
         let arrays_start = fields_start + self.region.fields.len();
         self.resident = Resident::of(self.region, &self.counted, arrays_start);
@@ -5817,7 +5826,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             return Some(object);
         }
         let heap_base = self.region.native_heap_word();
-        let object_base = self.word(heap_base);
+        let object_base = self.object_table?;
         let exit = self.exit_block(pc);
         let header = ObjectHeader::prove(&mut self.body.builder, receiver, object_base, None, exit);
         self.chains.insert(self.body.builder.current_block().expect("object header"), chain);
@@ -5854,7 +5863,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             if loads.iter().any(|load| !load.valid()) { return None; }
             let chain = self.chain(self.body.builder.current_block().expect("field projection"));
             let heap_base = self.region.native_heap_word();
-            let records = self.word(heap_base);
+            let records = self.object_table?;
             let exit = self.exit_block(pc);
             let header = ObjectHeader::prove(&mut self.body.builder, receiver, records, None, exit);
             let base = self.word(heap_base + 1);
@@ -7243,6 +7252,22 @@ mod tests {
                         && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32
                 }).count();
             assert_eq!(shape_loads, 1, "two fields of one receiver must share the layout proof:\n{native}");
+            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
+            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&native, &cfg);
+            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+            loops.compute(&native, &cfg, &dom);
+            let entry = native.dfg.block_params(native.layout.entry_block().unwrap())[3];
+            let mut table_loads = 0;
+            for block in native.layout.blocks() {
+                for instruction in native.layout.block_insts(block) {
+                    if let ir::InstructionData::Load { arg, offset, .. } = native.dfg.insts[instruction]
+                        && arg == entry && i32::from(offset) == region.native_heap_word() as i32 * WORD_BYTES {
+                        table_loads += 1;
+                        assert!(loops.innermost_loop(block).is_none(), "table admission must precede the loop: {native}");
+                    }
+                }
+            }
+            assert_eq!(table_loads, 1, "one table reservation admission per run: {native}");
         }
     }
 
