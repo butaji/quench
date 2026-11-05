@@ -1872,9 +1872,11 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
 /// usual frame stack. The register storage grows only between activations,
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
-    /// Per call record (by its `call_link`'s address), the callees it linked before its
-    /// latest, newest last, up to `CALL_SITE_TARGETS`: the targets a region inlines as a
-    /// guarded switch (`lane_unit::unit`). Recorded only where a link changes.
+    /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
+    /// newest last, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
+    /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
+    /// callee since; this record alone names the site's own. A collection drops the callees it
+    /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; CALL_SITE_TARGETS]>>>,
     values: Vec<Value>,
     activations: Vec<Activation>,
@@ -2072,6 +2074,28 @@ impl LaneStack {
             self.activations.capacity().min(admitted)
         };
         self.activation_limit.set(limit);
+    }
+
+    /// Records `target` as a callee of the call record whose link is `link`, newest last.
+    fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
+        let mut sites = self.call_sites.borrow_mut();
+        let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
+        if site.last() != Some(&target) {
+            site.retain(|recorded| *recorded != target);
+            if site.len() == CALL_SITE_TARGETS {
+                site.remove(0);
+            }
+            site.push(target);
+        }
+    }
+
+    /// Drops the callees a collection swept from the sites' records before any allocation
+    /// reuses their records: a body inlining one would take another function for it.
+    pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
+        self.call_sites.get_mut().retain(|_, targets| {
+            targets.retain(|target| live(target.callee));
+            !targets.is_empty()
+        });
     }
 
     fn enter_generation(&mut self, key: (u64, Value)) {
@@ -10896,24 +10920,10 @@ impl<H: Host> Vm<H> {
             linked
         } else {
             let index = self.script_call_index(callee)?;
-            // A record that linked another callee is polymorphic: the callee it calls now joins
-            // its history (`LaneStack::call_sites`). The entry it linked may hold another
-            // site's callee since, so only the callee in hand is the site's own.
-            if let Some(previous) = self.lane_stack.script_targets.entries.get(linked)
-                && previous.callee != callee
-                && previous.generation == self.lane_stack.generation
-            {
-                let current = &self.lane_stack.script_targets.entries[index];
-                let mut sites = self.lane_stack.call_sites.borrow_mut();
-                let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
-                let target = super::compiled::CallTarget { callee: current.callee, function: current.function };
-                if !site.contains(&target) {
-                    if site.len() == CALL_SITE_TARGETS {
-                        site.remove(0);
-                    }
-                    site.push(target);
-                }
-            }
+            // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
+            // linked may hold another site's callee since, so only the record names its own.
+            let current = &self.lane_stack.script_targets.entries[index];
+            self.lane_stack.note_site_callee(link, super::compiled::CallTarget { callee: current.callee, function: current.function });
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
@@ -14340,8 +14350,12 @@ fn lane_tier_enter<H: Host>(
 fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super::compiled::CallTarget> {
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
     let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
+    let history = vm.lane_stack.call_sites.borrow();
+    // The callees the site resolved or memoized, newest last (`LaneStack::note_site_callee`).
+    let recorded = history.get(&std::ptr::from_ref(&record.call_link).addr());
     // A collection since the site linked retires its entry; the callee's own entry of this
-    // generation, where a call resolved it again, is the same target.
+    // generation, where a call resolved it again, is the same target. A linked entry another
+    // site's callee took since names no callee of this site.
     let latest = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).and_then(|linked| {
         if linked.generation == vm.lane_stack.generation {
             Some(linked)
@@ -14353,24 +14367,29 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
         target.program == vm.active_program
             && target.entry.activates_registers_only()
             && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict)
+            && recorded.is_none_or(|recorded| recorded.iter().any(|site| site.callee == target.callee))
     });
-    // A site that runs only in its function's lane body links nothing: the body's own
-    // inlined calls name its targets (`lane_unit::Frame`).
-    let Some(latest) = latest else {
-        return view.lane_body().map_or_else(Vec::new, |method| {
-            method.inlined.iter()
-                .filter(|frame| frame.parent.is_none() && frame.call == pc)
-                .map(|frame| frame.target)
+    match latest {
+        Some(latest) => {
+            let latest = super::compiled::CallTarget { callee: latest.callee, function: latest.function };
+            std::iter::once(latest)
+                .chain(recorded.into_iter().flatten().rev().copied().filter(|target| *target != latest))
+                .take(CALL_SITE_TARGETS)
                 .collect()
-        });
-    };
-    let latest = super::compiled::CallTarget { callee: latest.callee, function: latest.function };
-    let history = vm.lane_stack.call_sites.borrow();
-    let earlier = history.get(&std::ptr::from_ref(&record.call_link).addr());
-    std::iter::once(latest)
-        .chain(earlier.into_iter().flatten().rev().copied().filter(|target| *target != latest))
-        .take(CALL_SITE_TARGETS)
-        .collect()
+        }
+        // A site that runs only in its function's lane body, or that a read memo answers,
+        // links nothing current: the callees it recorded, else the body's own inlined calls
+        // (`lane_unit::Frame`), are its targets.
+        None => match recorded {
+            Some(recorded) => recorded.iter().rev().copied().collect(),
+            None => view.lane_body().map_or_else(Vec::new, |method| {
+                method.inlined.iter()
+                    .filter(|frame| frame.parent.is_none() && frame.call == pc)
+                    .map(|frame| frame.target)
+                    .collect()
+            }),
+        },
+    }
 }
 
 /// `lane_site_targets` of any function of the running program, by its view.
@@ -16669,6 +16688,10 @@ fn lane_memoize_read<H: Host>(
 ) {
     // SAFETY: the context's program outlives the lane run.
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
+    // The memo answers the site from now on, so no call of it links its record: its record
+    // names the callee for the bodies that inline it (`lane_site_targets`).
+    // SAFETY: `site` is a record of the running view.
+    vm.lane_stack.note_site_callee(unsafe { &(*site).call_link }, super::compiled::CallTarget { callee: target.callee, function: target.function });
     if target.this_binding == ThisBinding::Lexical {
         return;
     }
