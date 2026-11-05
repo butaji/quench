@@ -6836,10 +6836,6 @@ pub(super) struct LaneMethod {
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     _direct: Vec<Box<DirectCallee>>,
-    /// Whether every call it makes is inlined or direct: under a direct caller's native
-    /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
-    /// a body is called directly.
-    closed: bool,
 }
 
 impl LaneMethod {
@@ -6866,11 +6862,6 @@ impl LaneMethod {
     /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.amortizes
-    }
-
-    /// Whether a direct caller may call it (`LaneMethod::closed`).
-    pub(super) fn calls_only_natively(&self) -> bool {
-        self.closed
     }
 }
 
@@ -7307,14 +7298,12 @@ impl<H: Host> Vm<H> {
         let names_shapes = !fields.is_empty() || !_direct.is_empty();
         let scratch_width = usize::from(unit.registers - unit.caller_registers);
         let caller_registers = unit.caller_registers;
-        let closed = unit.instructions.iter().enumerate()
-            .all(|(pc, instruction)| instruction.op() != Op::Call || sites.contains_key(&pc));
         for callee in unit.frames.iter().map(|frame| frame.target.callee).chain(_direct.iter().map(|callee| callee.callee)) {
             if !self.lane_code_roots.contains(&callee) {
                 self.lane_code_roots.push(callee);
             }
         }
-        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed });
+        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct });
         method.bind_self_calls();
         Some(method)
     }
