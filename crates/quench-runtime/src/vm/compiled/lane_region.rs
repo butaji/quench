@@ -2504,10 +2504,37 @@ impl Lowering<'_, '_> {
             None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
             Some(register) => self.tagged(state, register),
         };
-        let field = self.fields.get(&site).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
-        let Some(field) = field else {
-            self.store_helper(state, object_bits, atom, site, value, exit);
-            return Some(());
+        let shapes: Vec<NativeFieldLoad> = self.fields.get(&site).map(|shapes| shapes.iter()
+            .filter(|field| field.holder.is_none()).copied().collect()).unwrap_or_default();
+        let field = match shapes.as_slice() {
+            [field] => *field,
+            [] => {
+                self.store_helper(state, object_bits, atom, site, value, exit);
+                return Some(());
+            }
+            // A shape switch, as a read's (`shape_switch_read`): each own shape stores directly,
+            // any other takes the VM's hit.
+            _ => {
+                let (object, shape, inline) = self.object_record(state, register, false, exit);
+                let admitted = self.emit_store_atom_admitted(atom);
+                let properties = { let entry = self.entry.as_ref().expect("entry facts"); self.builder.use_var(entry.receiver.properties) };
+                let (general, done) = (self.builder.create_block(), self.builder.create_block());
+                for field in shapes {
+                    let (matched, next) = (self.builder.create_block(), self.builder.create_block());
+                    let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+                    let ok = self.ins().band(same, admitted);
+                    self.ins().brif(ok, matched, &[], next, &[]);
+                    self.builder.switch_to_block(matched);
+                    self.store_direct(field, object_bits, object, inline, properties, None, value, ty, done, general)?;
+                    self.builder.switch_to_block(next);
+                }
+                self.ins().jump(general, &[]);
+                self.builder.switch_to_block(general);
+                self.store_helper(state, object_bits, atom, site, value, exit);
+                self.ins().jump(done, &[]);
+                self.builder.switch_to_block(done);
+                return Some(());
+            }
         };
         let header = (!receiver).then(|| self.object_record(state, register, false, exit));
         // A run that calls may meet a method cache that names the atom only after a call;
@@ -2535,6 +2562,20 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
+        self.store_direct(field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
+        self.builder.switch_to_block(general);
+        self.store_helper(state, object_bits, atom, site, value, exit);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        Some(())
+    }
+
+    /// The store of `value`, of type `ty`, into `field`'s slot of the object `object` whose
+    /// shape the caller proved `field.shape`, continuing at `done`; one the slot's
+    /// representation, the barrier or the storage does not admit continues at `general`.
+    #[allow(clippy::too_many_arguments)]
+    fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
+        properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block, general: ir::Block) -> Option<()> {
         self.represented(field.representation, ty, value, general);
         if !ty.is_subtype(Type::NUMBER) {
             let record_id = self.ins().ireduce(types::I32, object_bits);
@@ -2558,10 +2599,6 @@ impl Lowering<'_, '_> {
         let address = projection.arena_address(&mut self.builder, field.slot, general)?;
         self.ins().store(MemFlagsData::trusted(), value, address, 0);
         self.ins().jump(done, &[]);
-        self.builder.switch_to_block(general);
-        self.store_helper(state, object_bits, atom, site, value, exit);
-        self.ins().jump(done, &[]);
-        self.builder.switch_to_block(done);
         Some(())
     }
 
