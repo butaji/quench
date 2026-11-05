@@ -3657,6 +3657,15 @@ impl<H: Host> Vm<H> {
         site: u16,
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
+        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        // SAFETY: the shared admission proves the own data slot; the caller
+        // owns the raw writer's type and storage lifetime obligations.
+        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
+    }
+
+    /// Admit an own data slot once for a no-reentry operation. Its physical
+    /// encoding is independent of the shape/descriptor permission to write it.
+    fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
         if !(self.specialized && p.specialized)
             || self.is_private_name(atom)
             || !self.field_cache_atom_eligible(atom)
@@ -3666,7 +3675,7 @@ impl<H: Host> Vm<H> {
         }
         let data = self.heap.object(object)?;
         let properties = data.properties();
-        if properties.has_inline_property_storage() || properties.is_dictionary() {
+        if properties.is_dictionary() {
             return None;
         }
         let cache = self.field_cache_entry(site);
@@ -3684,10 +3693,29 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
-        // pointer does not outlive the no-allocation native operation, every write
-        // fits its admitted type, and reference writes have a collector barrier.
-        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
+        Some(slot)
+    }
+
+    /// One admitted Number store/update across packed and arena layouts. A
+    /// representation or dependency change declines before any value is stored.
+    pub(super) fn cached_number_field_update(
+        &mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16,
+        value: Value, update: Option<(super::operations::NumberBitwise, i32)>,
+    ) -> Option<()> {
+        debug_assert!(value.as_number().is_some());
+        let record = object.direct_object_index()?;
+        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        let value = if let Some((operation, right)) = update {
+            // SAFETY: the admitted own slot exists outside dictionary storage.
+            // No guest operation, allocation or collection intervenes.
+            let left = unsafe { self.heap.property_get_flat(self.heap.object_record_by_id(record), slot) }.as_int()?;
+            super::operations::number_bitwise_result(operation, left, right)
+        } else { value };
+        // SAFETY: the same admission owns this write. Numbers need no reference
+        // barrier; PreserveNative retires changed dependencies and declines
+        // before a value write or physical widening, using the shared store rule.
+        unsafe { self.heap.record_property_set_flat::<false>(record, slot, value,
+            crate::heap::PropertyStoreLayout::PreserveNative) }.then_some(())
     }
 
     /// Increment or decrement a cached own writable Number field without

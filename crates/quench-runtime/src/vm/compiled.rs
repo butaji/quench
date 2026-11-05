@@ -7537,8 +7537,8 @@ unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, pro
     let vm = unsafe { &*(vm as *const Vm<H>) };
     let matches = !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
         .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function);
-    // The admitted body is a leaf. Check its guest-call/interrupt permission
-    // here; no nested guest call occurs anywhere in the admitted native body.
+    // Admit the prefix's call/interrupt permission. A residual guest call
+    // materializes its activation before reentry; no-frame helpers cannot reenter.
     u64::from(matches && vm.enter_guarded_call().is_some())
 }
 
@@ -14891,19 +14891,7 @@ impl<H: Host> Vm<H> {
             Some(operation) => Some((operation, value.as_int()?)),
             None => { value.as_number()?; None },
         };
-        // SAFETY: receiver and capture remain rooted by the active call. This
-        // proof may log the owner but cannot collect or invoke guest code.
-        let pointer = unsafe { self.cached_field_store_pointer(program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }?;
-        let value = if let Some((operation, right)) = update {
-            // The writable own-data proof identifies the same named slot the
-            // source Get reads. No getter, proxy or second cache is involved.
-            let left = unsafe { pointer.read() }.as_int()?;
-            super::operations::number_bitwise_result(operation, left, right)
-        } else { value };
-        // SAFETY: the exact writable own-data slot was proved above. Only a
-        // non-reference Number is written, before any allocation or guest call.
-        unsafe { pointer.write(value); }
-        Some(())
+        self.cached_number_field_update(program, receiver, atom, site, value, update)
     }
 
     /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
@@ -19523,6 +19511,48 @@ mod tests {
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.execute_native_program(&native, true).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn guarded_captured_updates_keep_packed_fields_native() {
+        for typescript in [false, true] {
+            let source = r#"
+                (function(){
+                    let mask=4;
+                    function Node(link,state){this.link=link;this.state=state;}
+                    Node.prototype.mark=function(){'use strict';this.state=this.state|mask;};
+                    function Owner(node){this.count=0;this.current=node;}
+                    Owner.prototype.advance=function(){this.count++;this.current.mark();return this.current.link;};
+                    function walk(owner,count){for(let i=0;i<count;i=(i+1)|0)owner.current=owner.advance();}
+                    let a=new Node(null,0),b=new Node(a,1);a.link=b;
+                    let owner=new Owner(a);walk(owner,1000);
+                    if(owner.current!==a||owner.count!==1000||a.state!==4||b.state!==5)throw 'state';
+                    throw owner;
+                })();
+            "#;
+            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-captured.cts") }
+                else { crate::Engine::specialize(source, "packed-captured.cjs") }.unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "walk")).unwrap();
+            let targets = static_call_targets(&program);
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            assert!(!lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).is_empty());
+            let native = linked_optimized_test_program(program);
+            let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
+            let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let owner = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
+            assert!(owner.direct_object_index().is_some(), "guest state checks must succeed");
+            assert!(FUNCTION_BINDING_CALLS.with(std::cell::Cell::get) > bindings, "the inlined prefix must execute");
+            assert_eq!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get), before,
+                "packed captured stores must not materialize a frame on every call");
+            let current = vm.intern_atom("current");
+            let node = vm.own_property(owner, current).unwrap();
+            assert!(vm.heap.object(node).unwrap().properties().has_inline_property_storage(),
+                "the shared operation must preserve packed storage");
         }
     }
 
