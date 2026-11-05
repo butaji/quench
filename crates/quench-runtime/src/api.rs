@@ -9,7 +9,7 @@ mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
     CollectionContext,
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
@@ -179,6 +179,19 @@ impl<H: Host> Runtime<H> {
     #[cfg(feature = "native-execution")]
     pub fn execute_native_deferred_jobs(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
         self.vm.execute_native_program(program, false).map(drop)
+    }
+
+    /// Resume canonical bootstrap state for this native program's exact atom namespace,
+    /// then run through the shared installed-entry and host-resume path, leaving jobs queued.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_from_snapshot(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        program: &crate::NativeJsProgram<H>,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), JsError> {
+        self.vm.restore_native_snapshot(snapshot, program, read_host)?;
+        self.vm.execute_restored(program.residual()).map(drop)
     }
 
     /// Run precompiled global Scripts before a native entry in the same realm.

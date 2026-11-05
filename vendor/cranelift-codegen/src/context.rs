@@ -376,12 +376,24 @@ impl Context {
         pass.run();
         log::debug!("egraph stats: {:?}", pass.stats);
         trace!("After egraph optimization:\n{}", self.func.display());
+        crate::conditional_xor::run(&mut self.func);
+
+        if crate::loop_rotate::run(&mut self.func) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.remove_constant_phis(fisa)?;
+            self.func.dfg.resolve_all_aliases();
+        }
 
         // Branch optimizations can invalidate these; recompute them.
         self.compute_cfg();
         self.compute_domtree();
         self.compute_loop_analysis();
-        crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis);
+        if crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.compute_loop_analysis();
+        }
         if crate::poll_unswitch::run(&mut self.func) {
             self.compute_cfg();
             self.compute_domtree();
@@ -391,8 +403,22 @@ impl Context {
             self.compute_cfg();
             self.compute_domtree();
             self.compute_loop_analysis();
+            // Splitting and phi repair expose additional induction proofs.
+            // Retain the pre-split conversion above: coupled-loop bounds can
+            // lose their common definition when the graph is duplicated.
+            if crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis) {
+                self.compute_cfg();
+                self.compute_domtree();
+                self.compute_loop_analysis();
+            }
         }
 
+        if crate::poll_unswitch::sink_stores(&mut self.func) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.compute_loop_analysis();
+        }
+        crate::loop_constants::run(&mut self.func, &self.domtree, &self.loop_analysis);
         self.verify_if(fisa)?;
 
         Ok(())

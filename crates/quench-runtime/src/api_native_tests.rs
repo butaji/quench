@@ -4,6 +4,49 @@ use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
+fn split_host_catalog_preserves_descriptors_and_dispatch_indices() {
+    struct SplitHost(Rc<std::cell::Cell<usize>>);
+    fn probe(c: &mut NativeContext<'_, SplitHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        Ok(c.number(42.0))
+    }
+    impl crate::Host for SplitHost {
+        fn write_line(&mut self, _: &str) { panic!("unexpected output") }
+        fn clock_millis(&mut self) -> f64 { 0.0 }
+        fn functions(&self) -> &[HostFunction<Self>] { panic!("combined catalog must not be read") }
+        fn function_count(&self) -> usize { 2 }
+        fn function_descriptor(&self, index: usize) -> Option<HostFunctionDescriptor> {
+            crate::host_functions![@descriptors;
+                method "hidden" (0) => probe,
+                global "catalogProbe" (2) => probe,
+            ].get(index).copied()
+        }
+        fn function_callback(&self, index: usize) -> Option<HostCallback<Self>> {
+            assert_eq!(index, 1, "metadata reads must not resolve callback addresses");
+            self.0.set(self.0.get() + 1);
+            Some(probe)
+        }
+    }
+    let source = "if (catalogProbe.name !== 'catalogProbe' || catalogProbe.length !== 2 || typeof hidden !== 'undefined') throw new Error('descriptor'); if (catalogProbe(1, 2) !== 42) throw new Error('dispatch');";
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "split-host-catalog.js").unwrap();
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let mut runtime = Runtime::new(SplitHost(calls.clone()));
+        runtime.execute(&program).unwrap();
+        assert_eq!(calls.get(), 1);
+        #[cfg(feature = "aot")]
+        {
+            let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+            let calls = Rc::new(std::cell::Cell::new(0));
+            let mut runtime = Runtime::new(SplitHost(calls.clone()));
+            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+            runtime.execute_native(&native).unwrap();
+            assert_eq!(calls.get(), 1);
+            assert_eq!(runtime.native_execution_rejections(), 0);
+        }
+    }
+}
+
+#[test]
 fn guest_catch_does_not_hide_unavailable_native_host_operations() {
     fn unavailable(c: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
         Err(c.native_execution_unavailable("native operation is not linked"))
@@ -953,6 +996,56 @@ fn snapshot_metadata_host() -> TestHost {
         .with_natives(crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata, global "nativeCollectionPreview" (1) => native_collection_preview])
         .with_install(|context: &mut NativeContext<'_, TestHost>| { context.seal_startup_intrinsics(); Ok(()) })
 }
+
+fn captured_slots_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "capturedSlots" (1) => captured_slots])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            context.evaluate_script_rooted(r#"
+                globalThis.holder = { gone: 0, first: 1, tail: 2, void: undefined };
+                delete holder.gone;
+                Object.defineProperty(holder, 'first', { value: 3 });
+                Object.defineProperty(holder, 'access', { get() { throw Error('captured getter ran'); }, configurable: true });
+            "#, "captured-slots-bootstrap.js")?;
+            context.seal_startup_intrinsics();
+            Ok(())
+        })
+}
+
+fn captured_slots(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let mut values = Vec::new();
+    for name in ["first", "tail", "gone", "access", "absent", "void"] {
+        let captured = context.startup_data_property_rooted(args[0], name);
+        values.push(context.boolean(captured.is_some()));
+        values.push(captured.unwrap_or_else(|| context.undefined()));
+    }
+    context.array_rooted(&values)
+}
+
+#[test]
+fn startup_captured_slots_preserve_deleted_keys_accessors_and_original_values_after_restore() {
+    let source = r#"
+        Object.defineProperty(holder, 'first', { get() { throw Error('replacement getter ran'); } });
+        delete holder.tail; holder.tail = 99;
+        Object.defineProperty(holder, 'access', { value: 77 });
+        const values = capturedSlots(holder);
+        if (JSON.stringify(values) !== '[true,3,true,2,false,null,false,null,false,null,true,null]') throw Error('captured slots changed');
+    "#;
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let program = Engine::specialize(source, "captured-slots.js").unwrap();
+        let mut runtime = Runtime::new(captured_slots_host());
+        runtime.set_execution_mode(mode);
+        runtime.execute(&program).unwrap();
+        let mut builder = Runtime::new(captured_slots_host());
+        let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+        let mut restored = Runtime::new(captured_slots_host());
+        restored.set_execution_mode(mode);
+        restored.restore_snapshot(std::rc::Rc::new(bytes), &program, |_, _| Ok(())).unwrap();
+        restored.execute_restored(&program).unwrap();
+    }
+}
+
 fn native_collection_preview(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(preview) = context.collection_preview_rooted(value)? else { return Ok(context.undefined()); };

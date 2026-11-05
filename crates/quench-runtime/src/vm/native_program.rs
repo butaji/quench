@@ -406,21 +406,40 @@ impl<H: Host> Vm<H> {
     pub(super) fn prepare_native_script(
         &self, native: NativeJsProgram<H>,
     ) -> Result<crate::PreparedScript, JsError> {
-        if native.program.specialized != self.specialized {
-            return Err(JsError::validation("native script specialization does not match runtime".into()));
-        }
-        if native.program.atoms.len() > self.atom_sequence.len()
-            || native.program.atoms.iter().enumerate().any(|(id, name)| {
-                !self.atom_units_equal_str(id as u32, name)
-            })
-        {
-            return Err(JsError::validation("native script atom IDs do not match runtime namespace".into()));
-        }
+        self.validate_native_namespace(&native)?;
         let mut program = Rc::unwrap_or_clone(native.program);
         program.atoms = crate::bytecode::AtomTable::shared(
             self.atom_sequence.clone(), program.atoms.len(),
         );
         Ok(crate::PreparedScript { program: Rc::new(program), native: Some(native.code) })
+    }
+
+    fn validate_native_namespace(&self, native: &NativeJsProgram<H>) -> Result<(), JsError> {
+        if native.program.specialized != self.specialized {
+            return Err(JsError::validation("native script specialization does not match runtime".into()));
+        }
+        if !self.atom_sequence.proves_prefix(&native.program.atoms)
+            && (native.program.atoms.len() > self.atom_sequence.len()
+            || native.program.atoms.iter().enumerate().any(|(id, name)| {
+                !self.atom_units_equal_str(id as u32, name)
+            }))
+        {
+            return Err(JsError::validation("native script atom IDs do not match runtime namespace".into()));
+        }
+        Ok(())
+    }
+
+    /// Establish the native namespace before publishing code; its operands cannot rebase.
+    pub(crate) fn restore_native_snapshot(
+        &mut self,
+        bytes: crate::KeptBytes,
+        native: &NativeJsProgram<H>,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), JsError> {
+        self.check_execution_interrupt()?;
+        self.restore_snapshot_state(bytes, Some(&native.program), read_host).map_err(|error| JsError::validation(error.0))?;
+        self.install_restored_main(native.program.clone());
+        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)
     }
 
     pub(crate) fn execute_native_program(

@@ -5,6 +5,24 @@ use std::{collections::HashMap, sync::{Mutex, Once, atomic::{AtomicU64, Ordering
 
 static COUNTS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static REPORT: Once = Once::new();
+pub(super) enum StoreStorage { Arena, Inline, OtherRecord, NonRecord }
+impl StoreStorage {
+    const NAMES: [&str; 4] = ["arena", "inline", "other-record", "non-record"];
+}
+static STORES: [[AtomicU64; 2]; StoreStorage::NAMES.len()] =
+    [const { [const { AtomicU64::new(0) }; 2] }; StoreStorage::NAMES.len()];
+
+fn register_report() {
+    REPORT.call_once(|| {
+        // SAFETY: the report function and counters live until process exit.
+        unsafe { libc::atexit(report) };
+    });
+}
+
+pub(super) fn record_store(storage: StoreStorage, hit: bool) {
+    register_report();
+    STORES[storage as usize][usize::from(hit)].fetch_add(1, Ordering::Relaxed);
+}
 const SITE_SAMPLE_INTERVAL: u64 = 4096;
 const REPORTED_SITES: usize = 50;
 static SAMPLE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -13,10 +31,7 @@ static SITES: Mutex<Option<HashMap<SiteKey, (u64, String)>>> = Mutex::new(None);
 
 pub(super) fn record(opcode: usize) {
     if let Some(counter) = COUNTS.get(opcode) {
-        REPORT.call_once(|| {
-            // SAFETY: the report function and counters live until process exit.
-            unsafe { libc::atexit(report) };
-        });
+        register_report();
         counter.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -38,6 +53,14 @@ pub(super) fn record_site(
 }
 
 extern "C" fn report() {
+    for (name, outcomes) in StoreStorage::NAMES.iter().zip(&STORES) {
+        for (outcome, counter) in ["miss", "hit"].into_iter().zip(outcomes) {
+            let count = counter.load(Ordering::Relaxed);
+            if count != 0 {
+                eprintln!("QUENCH_NATIVE_STORE {name} {outcome} {count}");
+            }
+        }
+    }
     let mut counts: Vec<_> = COUNTS.iter().enumerate()
         .map(|(opcode, count)| (opcode, count.load(Ordering::Relaxed)))
         .filter(|(_, count)| *count != 0)

@@ -57,18 +57,23 @@ impl Native {
     /// One past the last native's discriminant.
     pub(crate) const COUNT: u16 = Native::MathInitialize as u16 + 1;
 
+    pub(crate) const fn from_discriminant(index: u16) -> Option<Self> {
+        if index >= Self::COUNT {
+            return None;
+        }
+        // SAFETY: Native is a fieldless repr(u16) enum with consecutive implicit
+        // discriminants from zero to COUNT - 1.
+        Some(unsafe { std::mem::transmute::<u16, Native>(index) })
+    }
+
     pub(crate) fn write_snapshot(self, writer: &mut Writer) {
         writer.u16(self as u16);
     }
 
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let index = reader.u16()?;
-        if index >= Self::COUNT {
-            return Err(SnapshotError("invalid snapshot native".into()));
-        }
-        // SAFETY: `Native` is a fieldless `repr(u16)` enum whose discriminants run from zero
-        // to `COUNT - 1` without gaps, as it declares no explicit discriminant.
-        Ok(unsafe { std::mem::transmute::<u16, Native>(index) })
+        Self::from_discriminant(index)
+            .ok_or_else(|| SnapshotError("invalid snapshot native".into()))
     }
 }
 

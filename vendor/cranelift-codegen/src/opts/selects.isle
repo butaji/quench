@@ -102,6 +102,24 @@
 (rule (simplify (select ty d a (select ty d _ y))) (select ty d a y))
 (rule (simplify (select ty d (select ty d x _) a)) (select ty d x a))
 
+;; Factor common alternatives before projecting the selected value. Conditions
+;; must have the same type; selecting a condition preserves its nonzero truth.
+(rule (simplify (select ty cond
+                       (select ty x @ (value_type cty) a b)
+                       (select ty y @ (value_type cty) a b)))
+      (select ty (select cty cond x y) a b))
+
+;; A scalar comparison's complement is known on the selected edge. Scalar
+;; comparisons produce 0/1; arbitrary nonzero conditions do not carry this fact.
+(rule (simplify (select $I8 cond @ (icmp $I8 cc x y)
+                       a (icmp $I8 inverse x y)))
+      (if-let inverse (intcc_complement cc))
+      (select $I8 cond a (iconst_u $I8 1)))
+(rule (simplify (select $I8 cond @ (icmp $I8 cc x y)
+                       (icmp $I8 inverse x y) b))
+      (if-let inverse (intcc_complement cc))
+      (select $I8 cond (iconst_u $I8 0) b))
+
 ;; min x y < x => false and its commutative versions
 (rule (simplify (sgt (fits_in_64 ty) (smin _ x y) x)) (iconst_u ty 0))
 (rule (simplify (sgt (fits_in_64 ty) (smin _ x y) y)) (iconst_u ty 0))

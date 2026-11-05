@@ -157,6 +157,17 @@ pub struct EffectSpecialization {
     pub gates: alloc::vec::Vec<(Inst, bool)>,
 }
 
+impl EffectSpecialization {
+    /// Project instruction identities through an IR rebuild. A removed proof
+    /// cannot authorize specialization; removed gates need no annotation.
+    pub fn remap_instructions(&self, map: impl Fn(Inst) -> Option<Inst>) -> Option<Self> {
+        Some(Self {
+            proof: map(self.proof)?,
+            gates: self.gates.iter().filter_map(|&(inst, truth)| map(inst).map(|inst| (inst, truth))).collect(),
+        })
+    }
+}
+
 /// Function fields needed when compiling a function.
 ///
 /// Additionally, these fields can be the same for two functions that would be compiled the same
@@ -222,6 +233,11 @@ pub struct FunctionStencil {
     #[cfg_attr(feature = "enable-serde", serde(default))]
     /// Frontend-proved effects to specialize, or retain when loop versioning is inapplicable.
     pub effect_specializations: alloc::vec::Vec<EffectSpecialization>,
+    /// Stores into thread-private language state. The frontend guarantees that
+    /// observation requires an explicit IR effect (including an interrupt poll).
+    /// Unlike `notrap`, this permits deferring writes across pure computation.
+    #[cfg_attr(feature = "enable-serde", serde(default))]
+    pub private_stores: alloc::vec::Vec<Inst>,
 }
 
 impl FunctionStencil {
@@ -236,6 +252,7 @@ impl FunctionStencil {
         self.debug_tags.clear();
         self.stack_limit = None;
         self.effect_specializations.clear();
+        self.private_stores.clear();
     }
 
     /// Create a `ReplaceBuilder` that will replace `inst` with a new
@@ -437,6 +454,7 @@ impl Function {
                 stack_limit: None,
                 debug_tags: DebugTags::default(),
                 effect_specializations: alloc::vec::Vec::new(),
+                private_stores: alloc::vec::Vec::new(),
             },
             params: FunctionParameters::new(),
         }

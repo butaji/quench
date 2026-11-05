@@ -2,6 +2,8 @@ mod dependencies;
 mod dispatch_opcodes;
 #[cfg(feature = "profile-aggregate")]
 mod dispatch_pairs;
+#[cfg(feature = "profile-field-primitives")]
+pub(crate) mod field_primitives;
 #[cfg(feature = "profile-aggregate")]
 mod instruction_words;
 #[cfg(feature = "profile-aggregate")]
@@ -96,6 +98,8 @@ pub(crate) struct Profile {
     pub field_cache_misses: u64,
     pub field_cache_tiers: [u64; 3],
     pub field_cache_depths: [u64; 3],
+    #[cfg(feature = "profile-field-primitives")]
+    pub field_primitives: field_primitives::Census,
     pub method_cache_hits: u64,
     pub method_cache_misses: u64,
     pub method_cache_tiers: [u64; 3],
@@ -197,9 +201,15 @@ fn object_literal_site_executions(
     sites
 }
 
-#[cfg(not(feature = "profile-aggregate"))]
+#[cfg(not(any(feature = "profile-aggregate", feature = "profile-field-primitives")))]
 #[derive(Default)]
 pub(crate) struct Profile;
+
+#[cfg(all(feature = "profile-field-primitives", not(feature = "profile-aggregate")))]
+#[derive(Default)]
+pub(crate) struct Profile {
+    pub field_primitives: field_primitives::Census,
+}
 
 impl Profile {
     #[cfg(not(feature = "profile-aggregate"))]

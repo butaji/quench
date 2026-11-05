@@ -10,6 +10,9 @@
 
 mod entry_graph;
 
+/// Bump when the serialized host state or its bootstrap/resume invariants change.
+pub(crate) const BOOTSTRAP_SCHEMA_VERSION: u64 = 2;
+
 use quench_runtime::{HostWeakRoot, RootId, SnapshotReader, SnapshotWriter};
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -208,16 +211,37 @@ pub(crate) use host_snap_state;
 /// Environment variables that give the process a channel of its own (an IPC descriptor): a
 /// process that sets any boots without a snapshot.
 const REFUSED_VARIABLES: &[&str] = &["NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE"];
+/// Process inputs rebound by `Host::resume`, rather than captured in the image.
+#[cfg(feature = "aot")]
+const REBOUND_VARIABLES: &[&str] = &["HOME"];
 /// Environment variables the bootstrap reads before the snapshot point: they key the
 /// snapshot, which a builder started with this process's environment bootstraps under.
 const KEYED_VARIABLES: &[&str] = &[
-    "HOME",
     "NODE_OPTIONS",
     "NODE_PENDING_DEPRECATION",
     "NODE_DEBUG",
     "NODE_PATH",
     "QUENCH_PLATFORM",
 ];
+
+/// The compiler's canonical bootstrap has no process-specific configuration. The same
+/// dependency lists select that input; restoration permits inputs rebound on resume.
+#[cfg(feature = "aot")]
+pub(crate) fn native_bootstrap_environment_is_neutral() -> bool {
+    REBOUND_VARIABLES.iter().all(|name| std::env::var_os(name).is_none())
+        && native_bootstrap_environment_is_compatible()
+}
+
+#[cfg(feature = "native-execution")]
+/// Configuration still captured by the image must match at the restoration edge.
+pub(crate) fn native_bootstrap_environment_is_compatible() -> bool {
+    KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES).all(|name| std::env::var_os(name).is_none())
+}
+
+#[cfg(feature = "aot")]
+pub(crate) fn neutralize_native_bootstrap_environment(command: &mut std::process::Command) {
+    for name in KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES).chain(REBOUND_VARIABLES) { command.env_remove(name); }
+}
 /// How eligible processes use a snapshot (`SnapshotUse`): `on` always, `trace` always and
 /// reporting why one was not used, `off` never; otherwise by what the entry loads.
 pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";
@@ -225,10 +249,16 @@ const SNAPSHOT_ON: &str = "on";
 const SNAPSHOT_TRACE: &str = "trace";
 const SNAPSHOT_OFF: &str = "off";
 
+/// On macOS ARM64 the bootstrap-only image avoids more initialization code than
+/// restoring it faults in. Matched M4 startup probes (TOD-123, 2026-11-03) reduce
+/// RSS for both self-contained and console entries; retain other platforms' policy.
+const BOOTSTRAP_SMALL_ENTRIES: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+
 /// Whether an eligible process boots from a snapshot (`SNAPSHOT_ENV`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SnapshotUse {
-    /// For an inline entry, always; for a file, when it loads modules
+    /// For an inline entry, always; for a file, when BOOTSTRAP_SMALL_ENTRIES applies
+    /// or it loads modules. The prior non-ARM64-macOS policy remains below.
     /// (`EntryLoading::Modules`). A program that loads modules
     /// spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
     /// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
@@ -264,7 +294,7 @@ impl SnapshotUse {
     ) -> bool {
         match self {
             Self::Auto => {
-                (matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
+                (BOOTSTRAP_SMALL_ENTRIES || matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
                     && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
             }
             Self::Always => true,
@@ -534,13 +564,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn by_default_inline_entries_and_files_that_load_modules_restore() {
+    fn automatic_restores_follow_entry_loading_and_platform_policy() {
         use entry_graph::EntryLoading;
         let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
         let inline = SnapshotEntry::Inline("console.log(42)");
         for loading in [EntryLoading::SelfContained, EntryLoading::Console, EntryLoading::Modules] {
             assert!(SnapshotUse::Auto.restores(&inline, loading, None));
-            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), loading == EntryLoading::Modules);
+            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), BOOTSTRAP_SMALL_ENTRIES || loading == EntryLoading::Modules);
             assert!(SnapshotUse::Always.restores(&file, loading, None));
             assert!(!SnapshotUse::Never.restores(&inline, loading, None));
         }
@@ -555,7 +585,7 @@ mod tests {
         assert!(SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
         assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
         assert!(!SnapshotUse::Auto.restores(&inline, EntryLoading::Console, Some(MemoryPolicy::MemoryFirst)));
-        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)));
+        assert_eq!(SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)), BOOTSTRAP_SMALL_ENTRIES);
         assert!(SnapshotUse::Always.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
         assert!(!SnapshotUse::Never.restores(&inline, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
     }

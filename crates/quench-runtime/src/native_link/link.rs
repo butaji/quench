@@ -13,6 +13,7 @@ use std::{
 #[derive(Serialize)]
 pub struct NativeLinkAudit {
     pub dynamic_interface: super::exports::DynamicInterface,
+    pub footprint: super::NativeImageFootprint,
 }
 
 impl NativeLinkAudit {
@@ -219,9 +220,20 @@ impl NativeSupport {
         if self.support.allows_dynamic_source() {
             command.args(["--cfg", "quench_native_dynamic_source"]);
         }
+        if let Some(bootstrap) = &inputs.bootstrap {
+            command.args(["--cfg", "quench_native_bootstrap"])
+                .env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
+        }
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
+        // Apple Silicon's macOS floor already supports chained fixups. Request
+        // them explicitly: rustc's default deployment target otherwise selects
+        // classic relocations, dirtying every pointer-bearing constant page at
+        // launch. Newer kernels can apply chains on page-in instead. Leave the
+        // deployment target and older x86-64 platform behavior unchanged.
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        command.args(["-C", "link-arg=-Wl,-fixup_chains"]);
         for path in &self.native_paths {
             command.arg("-L").arg(path);
         }
@@ -262,9 +274,10 @@ impl NativeSupport {
             .arg(format!("link-arg={}", map.display()));
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
-        audit(inputs, executable, self.support)?;
+        let symbols = audit(inputs, executable, self.support)?;
+        let footprint = super::footprint::read(executable, &symbols)?;
         let dynamic_interface = interface.verify(executable)?;
-        Ok(NativeLinkAudit { dynamic_interface })
+        Ok(NativeLinkAudit { dynamic_interface, footprint })
     }
 }
 
@@ -431,7 +444,7 @@ fn retained_execution_support(symbols: &str) -> BTreeMap<&'static str, &str> {
     retained
 }
 
-fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<(), String> {
+fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<String, String> {
     let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     // Inspect whole demangled names: Rust types may contain spaces, and a
@@ -466,7 +479,7 @@ fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupp
     if exports != expected {
         return Err("native semantic helper exports do not match object imports".into());
     }
-    Ok(())
+    Ok(symbols)
 }
 
 #[cfg(test)]

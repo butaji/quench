@@ -558,14 +558,26 @@ impl Heap {
         Some((object, properties))
     }
 
+    /// Changes a published object's shape, retiring target-shape readers first.
+    pub(crate) fn set_object_shape(&mut self, value: Value, shape: u32) {
+        let (object, arena) = self.object_and_arena_mut(value).expect("shape owner is an object");
+        object.set_shape(shape, arena);
+    }
+
+    /// A detached object may be a clone of a published one; notify conservatively.
+    pub(crate) fn set_detached_object_shape(&mut self, object: &mut Object, shape: u32) {
+        object.set_shape(shape, &mut self.properties);
+    }
+
     /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
     /// Two objects never share arena storage: sweeping either would free the other's values.
     pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
+        self.admit_object_contents(source);
         let Some((object, properties)) = self.object_and_arena_mut(target) else {
             return false;
         };
         let storage = properties.duplicate(source.properties());
-        let previous = object.copy_property_storage_from(source, storage);
+        let previous = object.copy_property_storage_from(source, storage, properties);
         properties.release(previous);
         true
     }
@@ -740,17 +752,39 @@ impl Heap {
         }
     }
 
-    /// The type every value `slot` of `shape`'s objects has held; `Type::ANY` where
-    /// representations are not kept or the shape does not register the slot.
+    /// Admit a generated writer's domain before execution. Widening retires readers
+    /// and declines the writer before its raw stores; the next admission sees the wider domain.
+    pub(crate) fn admit_slot_writes(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type) -> bool {
+        if slot >= self.properties.shape_length(shape) { return false; }
+        !self.properties.note_slot_type(shape, slot, writes)
+    }
+
+    /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.
+    /// Native raw writes can bypass recording. Readers must check observations;
+    /// this is not a write-maintained contract.
     pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> crate::typed_ir::Type {
         if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
             return crate::typed_ir::Type::ANY;
         }
-        self.properties.slot_representation(shape, slot).ty()
+        self.properties.slot_observation(shape, slot).ty()
+    }
+
+    pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
+        self.properties.slot_target_shape(shape, slot)
+    }
+
+    pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        self.properties.subscribe_slot(dependency, code)
+    }
+
+    pub(crate) fn subscribe_shape(&mut self, shape: u32,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        self.properties.subscribe_shape(shape, code)
     }
 
     /// The slots of live object records whose value its owner's representation does not hold
-    /// (`ValueArena::slot_representation`): zero while every write joins its value's class;
+    /// (`ValueArena::slot_observation`): zero while every write joins its value's class;
     /// zero too where representations are not kept.
     pub(crate) fn unrepresented_slots(&self) -> usize {
         if !self.properties.tracks() { return 0; }
@@ -762,7 +796,7 @@ impl Heap {
                 // SAFETY: an exact, non-dictionary shape holds its registered slots.
                 let value = unsafe { self.property_get_flat(object, slot) };
                 if !value.is_deleted()
-                    && crate::value_vec::SlotRepresentation::of(value) > self.properties.slot_representation(shape, slot) {
+                    && !crate::typed_ir::Type::immediate(value).is_subtype(self.properties.slot_observation(shape, slot).ty()) {
                     unrepresented += 1;
                 }
             }

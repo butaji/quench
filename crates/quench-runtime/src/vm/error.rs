@@ -35,7 +35,7 @@ const ERROR_CONSTRUCTORS: &[(&str, Native)] = &[
     ("URIError", Native::URIError),
 ];
 
-pub(super) fn error_native_length(native: Native) -> Option<f64> {
+pub(super) const fn error_native_length(native: Native) -> Option<f64> {
     Some(match native {
         Native::ErrorIsError => 1.0,
         Native::ErrorCaptureStackTrace => 2.0,

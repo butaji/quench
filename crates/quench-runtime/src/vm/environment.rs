@@ -1707,9 +1707,22 @@ impl<H: Host> Vm<H> {
             && walk.cache.epoch == epoch
             && !walk.cache.slots.is_null()
         {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::capture(super::lane_exits::CaptureEvent::WalkHit);
             return Some((walk.cache.slots, walk.cache.root));
         }
+        #[cfg(feature = "profile-lane-exits")]
+        {
+            super::lane_exits::capture(super::lane_exits::CaptureEvent::WalkMiss);
+            super::lane_exits::record_detail(format!(
+                "capture miss empty={} same_epoch={} same_env={} same_depth={} same_captured={} requested_depth={depth}",
+                walk.cache.slots.is_null(), walk.cache.epoch == epoch,
+                walk.cache.env == env, walk.depth == depth, walk.cache.captured == captured,
+            ));
+        }
         let (slots, root) = self.environment_capture_slots(env, captured, depth)?;
+        #[cfg(feature = "profile-lane-exits")]
+        eprintln!("capture-resolved {:p} {epoch} {} {depth} {captured}", self.capture_walks.as_ptr(), env.to_bits());
         let slots: *const crate::heap::EnvironmentSlots = slots;
         self.capture_walks[index] = CaptureWalk {
             depth,

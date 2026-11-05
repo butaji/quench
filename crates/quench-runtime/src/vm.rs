@@ -1722,6 +1722,7 @@ enum CallTarget {
 pub(super) enum StepResult {
     Continue,
     TailCall,
+    ResumeFrames(Box<dispatch_frame::RecoveredCalls>),
     PushFrame {
         destination: Register,
         call_guard: crate::stack::GuestCallGuard,
@@ -1961,8 +1962,6 @@ pub(crate) struct Vm<H> {
     /// name, and resolving it again after a collection read its file anew. typescript.js
     /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
-    /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
-    host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.
@@ -2204,7 +2203,7 @@ impl<H: Host> Vm<H> {
             .filter(|row| row.1 > crate::compile::liveness::ROOT_MAP_REGISTERS)
             .map(|row| row.0)
             .sum();
-        rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.0));
         eprintln!("register-width: dispatches {all}, in functions over the root mask {wide}");
         for (total, registers, locals, program, function) in rows.iter().take(15) {
             eprintln!("  {total:>12} registers={registers} locals={locals} program={program} function={function}");
@@ -2587,6 +2586,10 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.report();
+        #[cfg(feature = "profile-memory")]
+        self.name_atom_memo.report_queries();
         #[cfg(feature = "profile-allocator")]
         self.report_allocator_if_enabled("complete");
         #[cfg(feature = "profile-gc-time")]
@@ -2792,6 +2795,7 @@ impl<H: Host> Vm<H> {
 
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_snapshot(&self, phase: &str) {
+        self.heap.report_record_pages(phase);
         let heap = self.heap.memory_composition();
         let page_size = std::env::var("QUENCH_MEMORY_PAGE_SIZE")
             .ok()
@@ -2846,6 +2850,13 @@ impl<H: Host> Vm<H> {
             + frame_bytes;
         let v128_record_reserved_bytes = heap.v128_record_reserved_bytes;
         let v128_record_used_bytes = heap.v128_record_used_bytes;
+        eprintln!(
+            "{{\"kind\":\"quench-environment-storage\",\"phase\":\"{phase}\",\"collection\":{},\"logical_slots\":{},\"storage_bytes\":{},\"sparse_count\":{}}}",
+            self.heap.collection_count(),
+            heap.environment_logical_slots,
+            heap.environment_storage_bytes,
+            heap.environment_sparse_count,
+        );
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
             + heap.object_record_reserved_bytes
             + heap.array_record_reserved_bytes
@@ -2963,6 +2974,8 @@ impl<H: Host> Vm<H> {
         // Reset reuses environment locators and collection counters. Retire raw
         // capture views at this boundary before either identity can appear again.
         self.capture_walks.fill(CaptureWalk::default());
+        #[cfg(feature = "profile-lane-exits")]
+        eprintln!("capture-reset {:p}", self.capture_walks.as_ptr());
         // SAFETY: initialization runs outside any native body, before reuse.
         unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();

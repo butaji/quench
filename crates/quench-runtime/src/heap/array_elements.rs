@@ -19,8 +19,8 @@ struct Header {
     others: u32,
 }
 
-/// The `others` count native code stores when it may write values it does not count: above
-/// any length, so the backing stays `Tagged`, and saturating arithmetic keeps it so.
+/// The conservative `others` marker native code stores for uncounted writes. Incremental
+/// updates preserve it until the backing's values are counted again.
 pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
 
 /// Whether `value` counts among a backing's others.
@@ -34,10 +34,16 @@ fn others(values: &[Value]) -> u32 {
 }
 
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
-/// `OTHERS_UNKNOWN` saturates and stays.
+/// `OTHERS_UNKNOWN` stays unknown. For an exact count, the overwritten values are already
+/// counted, and the resulting count fits the backing's u32 length. Subtract first so an
+/// intermediate sum cannot overflow even when the resulting count fits.
 #[inline(always)]
 fn recounted(others: u32, added: u32, removed: u32) -> u32 {
-    others.saturating_add(added).saturating_sub(removed)
+    if others == OTHERS_UNKNOWN {
+        OTHERS_UNKNOWN
+    } else {
+        others - removed + added
+    }
 }
 
 /// The values start right after the header, at their own alignment.
@@ -194,6 +200,14 @@ impl ArrayElements {
         self.header().capacity as usize
     }
 
+    /// Requested allocation extent; the shared static empty header owns no allocation.
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        match self.capacity() {
+            0 => 0,
+            capacity => Self::layout(capacity).size(),
+        }
+    }
+
     /// Whether every value is an int32 (so none is a hole).
     pub(crate) fn holds_only_int32(&self) -> bool {
         self.header().others == 0
@@ -299,8 +313,12 @@ impl From<Vec<Value>> for ArrayElements {
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
         if self.capacity() != 0 {
-            // An owner more makes in-place replacement reach another array.
-            super::array_proofs::retire_array_storage_proofs();
+            // Only losing unique ownership can falsify a writable proof. A shared
+            // backing already admits reads only; another owner changes neither its
+            // address nor its bounds.
+            if self.is_unique() {
+                super::array_proofs::retire_array_storage_proofs();
+            }
             let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
             // SAFETY: arrays are single-threaded; the header is live and only owners write it.
             unsafe { (*self.header.as_ptr()).owners = owners };
@@ -551,6 +569,57 @@ impl Extend<Value> for UniqueElements {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn array_counter_unknown_is_sticky() {
+        for (added, removed) in [(0, 0), (1, 0), (0, 1), (1, 1), (OTHERS_UNKNOWN - 1, OTHERS_UNKNOWN - 1)] {
+            assert_eq!(recounted(OTHERS_UNKNOWN, added, removed), OTHERS_UNKNOWN);
+        }
+    }
+
+    #[test]
+    fn array_counter_exact_updates_do_not_saturate_intermediate_sums() {
+        for (before, added, removed) in [
+            (0, 3, 0),
+            (5, 1, 3),
+            (OTHERS_UNKNOWN - 2, 3, 2),
+            (OTHERS_UNKNOWN - 1, OTHERS_UNKNOWN - 1, OTHERS_UNKNOWN - 1),
+        ] {
+            let expected = u32::try_from(u64::from(before) - u64::from(removed) + u64::from(added)).unwrap();
+            assert_eq!(recounted(before, added, removed), expected);
+        }
+    }
+
+    #[test]
+    fn array_counter_unknown_survives_proved_replacements() {
+        let mut elements = ArrayElements::from([Value::integer(1), Value::number(0.5)]);
+        elements.make_mut().set_others(OTHERS_UNKNOWN);
+        let values = elements.unique_values().unwrap();
+        for value in [Value::number(1.5), Value::integer(2)] {
+            // SAFETY: the backing remains unique and the index is below its length.
+            unsafe { ArrayElements::replace_through(values, 1, value) };
+            assert_eq!(elements[1], value);
+            assert_eq!(elements.header().others, OTHERS_UNKNOWN);
+            assert!(!elements.holds_only_int32());
+        }
+    }
+
+    #[test]
+    fn array_counter_unknown_survives_unique_mutations() {
+        let mutations: [(&str, fn(&mut UniqueElements)); 4] = [
+            ("set", |elements| elements.set(0, Value::integer(3))),
+            ("fill", |elements| elements.fill(0..2, Value::integer(0))),
+            ("copy", |elements| elements.copy_from(0, &[Value::integer(0), Value::number(2.5)])),
+            ("truncate", |elements| elements.truncate(0)),
+        ];
+        for (name, mutate) in mutations {
+            let mut elements = ArrayElements::from([Value::number(0.5), Value::number(1.5)]);
+            let unique = elements.make_mut();
+            unique.set_others(OTHERS_UNKNOWN);
+            mutate(unique);
+            assert_eq!(elements.header().others, OTHERS_UNKNOWN, "{name}");
+        }
+    }
 
     #[test]
     fn native_layout_matches_header_and_dense_backing() {

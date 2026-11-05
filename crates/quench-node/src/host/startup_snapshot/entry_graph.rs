@@ -49,6 +49,7 @@ impl EntryLoading {
     pub(super) fn snapshot_kind(self) -> SnapshotKind {
         match self {
             Self::SelfContained => SnapshotKind::Bootstrap,
+            Self::Console if super::BOOTSTRAP_SMALL_ENTRIES => SnapshotKind::Bootstrap,
             Self::Console | Self::Modules => SnapshotKind::Preloaded,
         }
     }
@@ -258,7 +259,7 @@ mod tests {
         assert_eq!(entry_loading(&root.join("script.js")), EntryLoading::Console);
         assert_eq!(entry_loading(&root.join("main.mjs")), EntryLoading::Console);
         assert_eq!(entry_loading(&root.join("quiet.mjs")), EntryLoading::SelfContained);
-        assert_eq!(EntryLoading::Console.snapshot_kind(), SnapshotKind::Preloaded);
+        assert_eq!(EntryLoading::Console.snapshot_kind(), if super::super::BOOTSTRAP_SMALL_ENTRIES { SnapshotKind::Bootstrap } else { SnapshotKind::Preloaded });
         assert_eq!(inline_entry_loading("console.log(42)"), EntryLoading::Console);
         assert_eq!(inline_entry_loading("1 + 1"), EntryLoading::SelfContained);
         assert_eq!(inline_entry_loading("require('fs')"), EntryLoading::Modules);

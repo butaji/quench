@@ -378,10 +378,11 @@ pub(crate) fn enc_adrp(off: i32, rd: Writable<Reg>) -> u32 {
     enc_adr_inst(opcode, off, rd)
 }
 
-fn enc_csel(rd: Writable<Reg>, rn: Reg, rm: Reg, cond: Cond, op: u32, o2: u32) -> u32 {
+fn enc_csel(rd: Writable<Reg>, rn: Reg, rm: Reg, cond: Cond, op: u32, o2: u32, size: OperandSize) -> u32 {
     debug_assert_eq!(op & 0b1, op);
     debug_assert_eq!(o2 & 0b1, o2);
-    0b100_11010100_00000_0000_00_00000_00000
+    0b000_11010100_00000_0000_00_00000_00000
+        | ((size.is64() as u32) << 31)
         | (op << 30)
         | (machreg_to_gpr(rm) << 16)
         | (cond.bits() << 12)
@@ -1417,16 +1418,19 @@ impl MachInstEmit for Inst {
                 sink.put4(enc_movk(rd, imm, size));
             }
             &Inst::CSel { rd, rn, rm, cond } => {
-                sink.put4(enc_csel(rd, rn, rm, cond, 0, 0));
+                sink.put4(enc_csel(rd, rn, rm, cond, 0, 0, OperandSize::Size64));
+            }
+            &Inst::CSInc { size, rd, rn, rm, cond } => {
+                sink.put4(enc_csel(rd, rn, rm, cond, 0, 1, size));
             }
             &Inst::CSNeg { rd, rn, rm, cond } => {
-                sink.put4(enc_csel(rd, rn, rm, cond, 1, 1));
+                sink.put4(enc_csel(rd, rn, rm, cond, 1, 1, OperandSize::Size64));
             }
             &Inst::CSet { rd, cond } => {
-                sink.put4(enc_csel(rd, zero_reg(), zero_reg(), cond.invert(), 0, 1));
+                sink.put4(enc_csel(rd, zero_reg(), zero_reg(), cond.invert(), 0, 1, OperandSize::Size64));
             }
             &Inst::CSetm { rd, cond } => {
-                sink.put4(enc_csel(rd, zero_reg(), zero_reg(), cond.invert(), 1, 0));
+                sink.put4(enc_csel(rd, zero_reg(), zero_reg(), cond.invert(), 1, 0, OperandSize::Size64));
             }
             &Inst::CCmp {
                 size,

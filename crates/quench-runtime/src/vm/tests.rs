@@ -102,14 +102,198 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}\n{}",
-                program.function(id).plain_activation(&program), program.disassemble()));
+            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}; osr={:?}; answers={answers:?}\n{}",
+                program.function(id).plain_activation(&program), view.osr_diagnostics(), program.disassemble()));
             assert!(report.contains("\"frames\":1"), "numeric calls must share the caller's typed unit: {report}");
             assert!(report.contains("\"compiles\":1,"), "fresh pure closures and completed loop exits must retain their definition: {report}");
         }
     }
     assert_eq!(answers[0], answers[1]);
     assert_eq!(answers[1].1, Value::integer(192), "initialization and post-loop effect each run once per call");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_field_call_compiles_with_observed_target() {
+    let source = r#"(function() {
+        function advance(state) {
+            state.count = (state.count - 1) | 0;
+            state.control = (state.control >> 1) ^ ((state.control & 1) ? 0xD008 : 0);
+        }
+        function run(iterations, seed) {
+            const state = { count: iterations | 0, control: seed | 0 };
+            while (state.count > 0) advance(state);
+            return state.control | 0;
+        }
+        globalThis.advance = advance;
+        globalThis.run = run;
+        globalThis.answer = run(4000, 7);
+    })();"#;
+    // Keep both VMs alive so the TLS lane payload must switch between distinct
+    // cache tables, with the same site numbers naming opposite physical slots.
+    let mut owners = Vec::new();
+    for fields in ["count: iterations | 0, control: seed | 0", "control: seed | 0, count: iterations | 0"] {
+        let source = source.replace("count: iterations | 0, control: seed | 0", fields);
+        let program = Engine::specialize(&source, "typed-field-target.js").unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let id = |name: &str| program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
+        let caller = id("run");
+        let callee_id = id("advance");
+        let advance = vm.intern_atom("advance");
+        let callee = vm.own_property(vm.realm.globals, advance).unwrap();
+        let captures = vm.lane_callee_captures(callee);
+        let body = program.function(caller as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap() as u32;
+        let header = body.instructions().filter(|instruction| instruction.op() == crate::bytecode::Op::Jump)
+            .map(|instruction| instruction.jump_target()).min().unwrap();
+        let method = vm.compile_lane_method(&program, caller, &|function, pc| {
+            if function == caller && pc == call {
+                vec![super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id }]
+            } else { Vec::new() }
+        }, &|_| captures, Vec::new(), Some(header)).expect("observed field target must lower");
+        assert_eq!(method.inlined.len(), 1, "the effectful call must share the typed unit");
+        assert!(method.recovery_space().activations > 0, "effectful recovery needs a callee activation");
+        let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(caller as usize)
+            .and_then(super::program_store::derived_lane_view).unwrap();
+        let report = view.body_stats.report(0).expect("field call must enter the typed unit");
+        let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
+        assert!(report.contains(&format!("\"leaves\":[[\"{exit}\",1]]")),
+            "the native loop must leave once at its successor, never at the call: {report}");
+        let expected = (0..4000).fold(7i32, |control, _|
+            (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
+        let answer = vm.intern_atom("answer");
+        assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(expected)));
+        owners.push(vm);
+    }
+}
+
+#[test]
+fn typed_field_call_materializes_after_effects_once() {
+    let source = r#"(function() {
+        function advance(state, replacement) {
+            state.count = (state.count - 1) | 0;
+            if (state.count === 1500) state.control = replacement;
+            state.control = (state.control >> 1) ^ ((state.control & 1) ? 0xD008 : 0);
+        }
+        function run(state, replacement) {
+            while (state.count > 0) advance(state, replacement);
+        }
+        run({count: 4000, control: 7}, 7);
+        const state = {count: 4000, control: 7};
+        let calls = 0;
+        const marker = {};
+        try { run(state, {valueOf() { calls++; throw marker; }}); }
+        catch (error) { if (error !== marker) throw error; }
+        if (state.count !== 1500 || calls !== 1) throw 'replayed callee effects';
+        print(state.count + ':' + calls);
+    })();"#;
+    let program = Engine::specialize(source, "typed-call-recovery.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1500:1"]);
+    }
+}
+
+#[test]
+fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
+    for operator in ["&", "|", "^", "<<", ">>", ">>>"] {
+        let source = format!(r#"
+            function step(state, value, shift) {{
+                state.writes = (state.writes + 1) | 0;
+                if (value {operator} shift) state.hits = (state.hits + 1) | 0;
+            }}
+            function run(value, shift) {{
+                const state = {{ writes: 0, hits: 0 }};
+                for (let i = 0; i < 4000; i++) step(state, value, shift);
+                return state.writes + ':' + state.hits;
+            }}
+            let calls = 0;
+            const object = {{ valueOf() {{ calls++; return 7; }} }};
+            for (const value of [0, -1, 7, 2147483648, 4294967296, 1.5, -0,
+                    NaN, Infinity, 1e100, '7', null, undefined, object]) {{
+                for (const shift of [0, 1, 31, 32, -1, 1.5]) print(run(value, shift));
+            }}
+            print(calls);
+            const marker = {{}};
+            let writes = 0, coercions = 0;
+            function throws(value) {{
+                for (let i = 0; i < 4000; i++) {{
+                    writes++;
+                    if (value {operator} 1) continue;
+                }}
+            }}
+            throws(7);
+            try {{ throws({{ valueOf() {{ coercions++; throw marker; }} }}); }}
+            catch (error) {{ print(error === marker); }}
+            print(writes + ':' + coercions);
+            try {{ throws(7n); }} catch (error) {{ print(error instanceof TypeError); }}
+            print(writes);
+        "#);
+        let program = Engine::specialize(&source, "typed-bitwise-branch.js").unwrap();
+        let mut results = Vec::new();
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let output = Rc::new(RefCell::new(Vec::new()));
+            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            results.push(output.borrow().clone());
+        }
+        assert_eq!(results[0], results[1], "operator {operator}");
+        assert_eq!(&results[1][results[1].len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
+    }
+}
+
+#[test]
+fn default_osr_keeps_self_contained_loop_regions() {
+    let source = r#"
+        const invocations=96;
+        globalThis.effects=0;
+        function pipe(){
+            globalThis.effects++;
+            let value=7;
+            for(let i=0;i<4000;i=(i+1)|0)value=(value+i)|0;
+            globalThis.effects++;
+            return value;
+        }
+        let result;
+        for(let pass=0;pass<invocations;pass++)result=pipe();
+        globalThis.answer=result;
+        globalThis.expectedEffects=2*invocations;
+    "#;
+    let program = Engine::specialize(source, "default-osr-region-priority.js").unwrap();
+    #[cfg(not(quench_profiled))]
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let answer = vm.intern_atom("answer");
+        let effects = vm.intern_atom("effects");
+        let expected = vm.intern_atom("expectedEffects");
+        answers.push(vm.own_property(global, answer).unwrap());
+        assert_eq!(vm.own_property(global, effects), vm.own_property(global, expected));
+        #[cfg(not(quench_profiled))]
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            let osr = view.osr_diagnostics();
+            assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
+            assert!(view.body_stats.report(0).is_none(), "a self-contained region keeps priority over its lane body");
+        }
+    }
+    assert_eq!(answers[0], answers[1]);
 }
 
 #[test]
@@ -236,8 +420,10 @@ fn native_countdown_keeps_dynamic_starts_and_exit_values_exact() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
                 .and_then(super::program_store::derived_lane_view).unwrap();
@@ -880,43 +1066,58 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 #[cfg(not(quench_profiled))]
 #[test]
 fn shape_compaction_clears_own_field_hints() {
-    // Read sites warmed on one layout hold its shape id as their own-field hint. A full
+    // Read and store sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
     // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
-    let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
-    let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
-    let source = format!(
-        r#"
-      {reads}
-      var sites = [{calls}], sum = 0;
-      function T(a, b) {{ this.a = a; this.b = b; }}
-      function drive(read, o, n) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o); return s; }}
-      for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50);
-      // Layouts no object keeps, so the next full collection compacts the table.
-      for (var k = 0; k < 20000; k++) {{ var o = {{}}; o['junk' + k] = k; }}
-      print(String(sum));
-    "#
-    );
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = Engine::specialize(&source, "field-hints-compaction.js").unwrap();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), [(50 * (0..SITES).sum::<usize>()).to_string()]);
-    let held = |vm: &Vm<TestHost>| {
-        vm.programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .into_iter()
-            .flatten()
-            .filter_map(super::program_store::derived_lane_view)
-            .map(|view| view.held_field_hints())
-            .sum::<usize>()
-    };
-    assert!(held(&vm) >= SITES);
-    let shapes = vm.shapes.len();
-    vm.collect_now(&program);
-    assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
-    assert_eq!(held(&vm), 0);
+    for body in ["return o.a + 0;", "o.a = v; return v;"] {
+        let reads: String = (0..SITES).map(|k| format!("function read{k}(o, v) {{ {body} }}\n")).collect();
+        let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
+        let source = format!(
+            r#"
+          {reads}
+          var sites = [{calls}], sum = 0;
+          function T(a, b) {{ this.a = a; this.b = b; }}
+          function drive(read, o, n, v) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o, v); return s; }}
+          function resume() {{
+            var result = 0;
+            for (var k = 0; k < sites.length; k++) result += drive(sites[k], {{ before: -1, a: k }}, 50, k);
+            return result;
+          }}
+          for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50, k);
+          // Layouts no object keeps, so the next full collection compacts the table.
+          for (var k = 0; k < 20000; k++) {{ var o = {{}}; o['junk' + k] = k; }}
+          print(String(sum));
+        "#
+        );
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(&source, "field-hints-compaction.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [(50 * (0..SITES).sum::<usize>()).to_string()]);
+        let held = |vm: &Vm<TestHost>| {
+            vm.programs
+                .lane_views(super::program_store::ProgramId::MAIN)
+                .into_iter()
+                .flatten()
+                .filter_map(super::program_store::derived_lane_view)
+                .map(|view| view.held_field_hints())
+                .sum::<usize>()
+        };
+        assert!(held(&vm) >= SITES);
+        let shapes = vm.shapes.len();
+        vm.collect_now(&program);
+        assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
+        assert_eq!(held(&vm), 0);
+        // Re-enter the same read sites with `a` in the second slot. A derived slot reader
+        // must not keep using its pre-compaction first-slot position.
+        let resume = vm.lookup_atom("resume").unwrap();
+        let resume = vm.own_property(vm.realm.globals, resume).unwrap();
+        assert_eq!(
+            vm.call_value(&program, resume, Value::UNDEFINED, &[]).unwrap(),
+            Value::integer((50 * (0..SITES).sum::<usize>()) as i32),
+        );
+    }
 }
 
 #[test]
@@ -14253,6 +14454,97 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
 }
 
 #[test]
+#[cfg(all(feature = "aot", not(quench_profiled)))]
+fn inlined_nested_field_uses_callee_register_coordinates() {
+    // GetField + SetThisField fuses into a site whose register zero belongs to read.
+    // The caller's register zero is the numeric count, never an object entry input.
+    let source = r#"
+        function Owner(){this.scratch=0;}
+        Owner.prototype.read=function(node){this.scratch=node.value;return this.scratch;};
+        Owner.prototype.sum=function sum(count,node){let total=0;for(let i=0;i<count;i=(i+1)|0)total+=this.read(node);return total;};
+        let owner=new Owner();
+        let node={value:3};
+        print(owner.sum(10000,node));
+        node.value=7;print(owner.sum(10,node));
+        let marker={},effects=0;
+        Object.defineProperty(node,'value',{get(){effects++;throw marker;}});
+        try{owner.sum(10,node);}catch(error){print(error===marker);}
+        print(effects);
+    "#;
+    let program = Engine::specialize(source, "inlined-nested-field.js").unwrap();
+    let function = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum")).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["30000", "70", "true", "1"]);
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function).and_then(super::program_store::derived_lane_view).unwrap();
+    let report = view.body_stats.report(1).expect("nested field must admit a native body");
+    let stats: serde_json::Value = serde_json::from_str(report.strip_prefix("QUENCH_LANE_BODY ").unwrap()).unwrap();
+    assert!(stats["frames"].as_u64().unwrap() > 0, "{report}");
+    assert!(stats["completed"].as_u64().unwrap() > 0, "{report}");
+}
+
+#[test]
+#[cfg(all(feature = "aot", not(quench_profiled)))]
+fn shared_nested_captured_store_loop_reaches_native_body() {
+    for global in [false, true] {
+    for deep in [false, true] {
+    let source = r#"
+        let mask=4;
+        function Link(next,state){this.next=next;this.state=state;}
+        Link.prototype.mark=function(){'use strict';this.state=this.state|mask;};
+        function Owner(current){this.count=0;this.current=current;}
+        Owner.prototype.step=function(){this.count++;this.current.mark();return this.current.next;};
+        function walk(owner,count){for(let i=0;i<count;i=(i+1)|0)owner.current=owner.step();}
+        let a=new Link(null,0),b=new Link(a,1);a.next=b;
+        let owner=new Owner(a);walk(owner,10000);
+        print(owner.count+' '+(owner.current===a)+' '+a.state+' '+b.state);
+        mask=8;walk(owner,20);
+        print(owner.count+' '+a.state+' '+b.state);
+        Object.defineProperty(b,'state',{writable:false});
+        try{walk(owner,2);}catch(error){print(error instanceof TypeError);}
+        print(owner.count+' '+(owner.current===b)+' '+b.state);
+        Object.defineProperty(b,'state',{writable:true});
+        let marker={},effects=0;
+        mask={valueOf(){effects++;$262.gc();throw marker;}};
+        try{walk(owner,2);}catch(error){print(error===marker);}
+        print(owner.count+' '+effects+' '+(owner.current===b));
+        Link.prototype.mark=function(){this.state=31;};
+        walk(owner,2);
+        print(owner.count+' '+a.state+' '+b.state+' '+(owner.current===b));
+    "#;
+    let source = if deep { source.replace(
+        "Link.prototype.mark=function(){'use strict';this.state=this.state|mask;};",
+        "Link.prototype.mark=function(){this.first();};\nLink.prototype.first=function(){this.second();};\nLink.prototype.second=function(){this.third();};\nLink.prototype.third=function(){'use strict';this.state=this.state|mask;};") }
+        else { source.to_owned() };
+    let source = if global { source.replace("let mask=4;", "var mask=4;") } else { source };
+    let program = Engine::specialize(&source, "nested-captured-store.js").unwrap();
+    let function = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["10000 true 4 5", "10020 12 13", "true",
+        "10022 true 13", "true", "10023 1 true", "10025 31 31 true"]);
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function).and_then(super::program_store::derived_lane_view).unwrap();
+    let report = view.body_stats.report(1).expect("nested captured store must admit a native body");
+    let stats: serde_json::Value = serde_json::from_str(report.strip_prefix("QUENCH_LANE_BODY ").unwrap()).unwrap();
+    assert!(stats["frames"].as_u64().unwrap() >= if deep { 5 } else { 2 }, "{report}");
+    assert!(stats["completed"].as_u64().unwrap() > 0, "{report}");
+    }
+    }
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
     for strict in [false, true] {
@@ -21740,7 +22032,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         registers[usize::from(parameter)] = Value::number(5.0);
         let env = vm.heap.function(caller).unwrap().env;
         let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
-        let slots = std::ptr::from_ref(slots);
+        let slots = slots.dense_storage().unwrap();
         let exit = vm.run_lane_method(&method, super::compiled::LaneStart::First, false, super::program_store::ProgramId::MAIN,
             &program, registers.as_mut_ptr(), receiver, slots, std::ptr::null_mut());
         assert_eq!(registers[usize::from(parameter)], Value::number(6.0), "suspended caller retains its reflected parameter");
@@ -21793,9 +22085,9 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None).unwrap();
         assert_eq!(method.inlined.len(), 1);
-        let published = vm.programs.publish_lane_method(method);
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
         vm.collect_now(&program);
-        assert!(published.method().is_some(), "a live callee binding survives collection");
+        assert!(published.lease().is_some(), "a live callee binding survives collection");
         match transition {
             "collection" => {
                 // A second publication names an unrooted function clone. It must
@@ -21803,23 +22095,23 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None).unwrap();
-                let dead = vm.programs.publish_lane_method(method);
+                let dead = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
                 vm.collect_now(&program);
                 assert!(!vm.heap.is_live(orphan));
-                assert!(dead.method().is_none(), "retire before the function locator can be reused");
-                assert!(published.method().is_some(), "unrelated live binding is retained");
+                assert!(dead.lease().is_none(), "retire before the function locator can be reused");
+                assert!(published.lease().is_some(), "unrelated live binding is retained");
                 let replacement = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 assert_eq!(replacement, orphan);
-                assert!(dead.method().is_none());
+                assert!(dead.lease().is_none());
             }
             "realm" => {
                 let foreign = vm.create_realm_global(&program).unwrap();
                 vm.switch_realm_global(foreign);
-                assert!(published.method().is_none());
+                assert!(published.lease().is_none());
             }
             "reset" => {
                 vm.initialize(&program).unwrap();
-                assert!(published.method().is_none());
+                assert!(published.lease().is_none());
             }
             _ => unreachable!(),
         }
@@ -21910,7 +22202,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let expected_total = if expected_total > 1000.0 { expected_total - 1000.0 } else { expected_total };
         let env = vm.heap.function(caller).unwrap().env;
         let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
-        let slots = std::ptr::from_ref(slots);
+        let slots = slots.dense_storage().unwrap();
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
         registers[usize::from(parameter)] = Value::number(3.0);
@@ -22884,7 +23176,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
             let function = global(&mut vm, name);
-            let run = |vm: &mut Vm<TestHost>, method: &super::compiled::LaneMethod, object, value| {
+            let run = |vm: &mut Vm<TestHost>, body: &crate::bytecode::Function, method: &super::compiled::LaneMethod, object, value| {
                 let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
                 for (index, value) in [object, value].into_iter().enumerate() {
                     let register = body.parameter_registers.map(|base| base + index as u16)
@@ -22902,7 +23194,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                 let before = vm.own_property(object, left).unwrap().as_number().unwrap();
                 let right = vm.intern_atom("right");
                 let other = vm.own_property(object, right).unwrap().as_number().unwrap();
-                let (pc, registers) = run(&mut vm, &method, object, Value::integer(7));
+                let (pc, registers) = run(&mut vm, body, &method, object, Value::integer(7));
                 assert_eq!(instructions[pc].op(), Op::Return, "{name}({object_name}) left at {pc}");
                 assert_eq!(vm.own_property(object, left), Some(Value::integer(7)));
                 let expected = if name == "updateAlias" { Value::number(before + 7.0 + other) } else { Value::integer(7) };
@@ -22912,7 +23204,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             for object_name in ["accessor", "readonly", "proxy"] {
                 let object = global(&mut vm, object_name);
                 let before = vm.own_property(vm.realm.globals, effects).unwrap();
-                let (pc, _) = run(&mut vm, &method, object, Value::integer(3));
+                let (pc, _) = run(&mut vm, body, &method, object, Value::integer(3));
                 assert!(matches!(instructions[pc].op(), Op::SetField | Op::SetFieldStrict), "{object_name} leaves before writing");
                 assert_eq!(vm.own_property(vm.realm.globals, effects), Some(before));
                 let result = vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(3)]);
@@ -22942,8 +23234,25 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                 word & (1 << (within % layout.mark_word_bits)) != 0
             };
             assert!(marked(&vm, object), "the first heap write must require logging");
+            let numeric = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "writeNumber")).unwrap();
+            let numeric_function = global(&mut vm, "writeNumber");
+            vm.call_value(&program, numeric_function, Value::UNDEFINED, &[object, Value::number(1.5)]).unwrap();
+            let numeric_body = program.function(numeric);
+            let numeric_method = vm.compile_lane_method(&program, numeric as u32, &|_, _| Vec::new(),
+                &|_| (0, 0), Vec::new(), None).unwrap();
+            for value in [Value::integer(7), Value::number(1.5), Value::number(-0.0),
+                Value::number(f64::NAN), Value::number(f64::INFINITY)] {
+                let (pc, _) = run(&mut vm, numeric_body, &numeric_method, object, value);
+                assert_eq!(numeric_body.instructions().nth(pc).unwrap().op(), Op::Return,
+                    "verified Number store must remain native");
+                let stored = vm.own_property(object, left).unwrap().as_number().unwrap();
+                let expected = value.as_number().unwrap();
+                assert!(stored.to_bits() == expected.to_bits() || (stored.is_nan() && expected.is_nan()));
+                assert!(marked(&vm, object), "Number stores must not consume the reference barrier");
+            }
             let child = vm.heap.alloc_object(crate::heap::Object::new(Value::NULL));
-            let (pc, registers) = run(&mut vm, &method, object, child);
+            let (pc, registers) = run(&mut vm, body, &method, object, child);
             assert_eq!(instructions[pc].op(), Op::Return, "a heap write remains native with the logged helper");
             assert_eq!(registers[usize::from(instructions[pc].register_a())], child);
             assert_eq!(vm.own_property(object, left), Some(child));

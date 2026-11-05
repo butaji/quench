@@ -286,6 +286,8 @@ fn set_option_bit(words: &mut [u64], index: usize, value: bool) {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CliOptions {
+    /// V8 startup state; unlike Node booleans this is absent from internal/options.
+    pub(crate) expose_gc: bool,
     booleans: [u64; BOOLEAN_WORDS],
     /// Only explicit text values are owned; unchanged defaults stay in the schema.
     strings: [Option<String>; STRING_OPTIONS.len()],
@@ -298,6 +300,7 @@ pub(crate) struct CliOptions {
 impl Default for CliOptions {
     fn default() -> Self {
         Self {
+            expose_gc: false,
             booleans: DEFAULT_BOOLEANS,
             strings: [const { None }; STRING_OPTIONS.len()],
             numbers: [const { None }; NUMBER_OPTIONS.len()],
@@ -435,6 +438,13 @@ impl CliOptions {
                 continue;
             }
             match flag {
+                "--expose-gc" | "--expose_gc" | "--no-expose-gc" | "--no-expose_gc"
+                | "--no_expose-gc" | "--no_expose_gc" | "--noexpose-gc" | "--noexpose_gc" => {
+                    if argument.contains('=') {
+                        return Err(format!("illegal value for flag {argument} of type bool"));
+                    }
+                    self.expose_gc = matches!(flag, "--expose-gc" | "--expose_gc");
+                }
                 "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require"
                     if !argument.contains('=') =>
                 {

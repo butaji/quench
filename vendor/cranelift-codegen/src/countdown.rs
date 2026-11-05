@@ -1,5 +1,5 @@
 //! Unit-stride integer induction, derived from verified SSA edge conditions.
-//! The source counter remains `bound - remaining` modulo its word width, so
+//! The source counter remains `bound ± remaining` modulo its word width, so
 //! exits keep exact values while the repeating path carries only the distance.
 
 use crate::cursor::{Cursor, FuncCursor};
@@ -123,7 +123,25 @@ fn proves_less(f: &Function, cfg: &ControlFlowGraph, dom: &DominatorTree,
 #[derive(Clone, Copy)]
 struct Edge { inst: Inst, index: usize, back: bool }
 
+#[derive(Clone, Copy)]
+enum Direction { Increasing, Decreasing }
+
+impl Direction {
+    fn ordered(self, value: Value, bound: Value) -> (Value, Value) {
+        match self { Self::Increasing => (value, bound), Self::Decreasing => (bound, value) }
+    }
+
+    fn project(self, cursor: &mut FuncCursor<'_>, bound: Value, distance: Value, reuse: Option<Value>) -> Value {
+        let builder = cursor.ins().with_results([reuse]);
+        match self {
+            Self::Increasing => builder.isub(bound, distance),
+            Self::Decreasing => builder.iadd(bound, distance),
+        }
+    }
+}
+
 struct Plan {
+    direction: Direction,
     header: Block,
     parameter: Value,
     slot: usize,
@@ -132,6 +150,7 @@ struct Plan {
     update: Inst,
     comparisons: SmallVec<[(Inst, bool); INLINE_EDGES]>,
     edges: SmallVec<[Edge; INLINE_EDGES]>,
+    exits: SmallVec<[(Inst, usize); INLINE_EDGES]>,
 }
 
 impl Plan {
@@ -161,19 +180,28 @@ impl Plan {
         }
         let (start, next) = (start?, next?);
         let ValueDef::Result(update, _) = f.dfg.value_def(next) else { return None; };
-        let InstructionData::Binary { opcode: Opcode::Iadd, args } = f.dfg.insts[update] else { return None; };
-        if !((same(f, args[0], parameter) && integer(f, args[1]) == Some((ty, 1)))
-            || (same(f, args[1], parameter) && integer(f, args[0]) == Some((ty, 1)))) { return None; }
+        let InstructionData::Binary { opcode, args } = f.dfg.insts[update] else { return None; };
+        let direction = match opcode {
+            Opcode::Iadd => {
+                let constant = if same(f, args[0], parameter) { integer(f, args[1]) }
+                    else if same(f, args[1], parameter) { integer(f, args[0]) } else { None }?;
+                let negative_one = u64::MAX >> (u64::BITS - ty.bits());
+                if constant == (ty, 1) { Direction::Increasing }
+                else if constant == (ty, negative_one) { Direction::Decreasing }
+                else { return None; }
+            }
+            Opcode::Isub if same(f, args[0], parameter) && integer(f, args[1]) == Some((ty, 1)) => Direction::Decreasing,
+            _ => return None,
+        };
         let bound = uses.at(next).iter().find_map(|inst| {
             let block = f.layout.inst_block(*inst)?;
             if !loops.is_in_loop(block, lp) { return None; }
-            match f.dfg.insts[*inst] {
-                InstructionData::IntCompare { cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual, args, .. }
-                    if same(f, args[0], next) => Some(f.dfg.resolve_aliases(args[1])),
-                InstructionData::IntCompare { cond: IntCC::SignedGreaterThan | IntCC::SignedLessThanOrEqual, args, .. }
-                    if same(f, args[1], next) => Some(f.dfg.resolve_aliases(args[0])),
-                _ => None,
-            }
+            let InstructionData::IntCompare { args, .. } = f.dfg.insts[*inst] else { return None; };
+            let bound = if same(f, args[0], next) { args[1] }
+                else if same(f, args[1], next) { args[0] } else { return None; };
+            let (left, right) = direction.ordered(next, bound);
+            less_condition(f, f.dfg.first_result(*inst), left, right)
+                .map(|_| f.dfg.resolve_aliases(bound))
         })?;
         if f.dfg.value_type(bound) != ty { return None; }
         for invariant in [start, bound] {
@@ -187,16 +215,19 @@ impl Plan {
         }
         for edge in &edges {
             let pred = f.layout.inst_block(edge.inst)?;
-            let left = if edge.back { next } else { start };
-            if !proves_less(f, cfg, dom, pred, header, left, bound) { return None; }
+            let value = if edge.back { next } else { start };
+            let (left, right) = direction.ordered(value, bound);
+            if !proves_less(f, cfg, dom, pred, header, left, right) { return None; }
         }
         let mut comparisons = SmallVec::new();
+        let mut exits = SmallVec::new();
         for (value, advancing) in [(parameter, false), (next, true)] {
             for &inst in uses.at(value) {
                 let block = f.layout.inst_block(inst)?;
                 if !loops.is_in_loop(block, lp) || inst == update { continue; }
+                let (left, right) = direction.ordered(next, bound);
                 if advancing && let Some(&test) = f.dfg.inst_results(inst).first()
-                    && let Some(truth) = less_condition(f, test, next, bound) {
+                    && let Some(truth) = less_condition(f, test, left, right) {
                     if !comparisons.iter().any(|(old, _)| *old == inst) { comparisons.push((inst, truth)); }
                     continue;
                 }
@@ -204,10 +235,15 @@ impl Plan {
                 // Other hot uses would require computing the source counter.
                 if f.dfg.inst_args(inst).iter().any(|arg| same(f, *arg, value)) { return None; }
                 let mut carried = false;
-                for branch in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables) {
+                for (edge_index, branch) in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables).iter().enumerate() {
                     for (index, arg) in branch.args(&f.dfg.value_lists).enumerate() {
                         if arg.as_value().is_some_and(|arg| same(f, arg, value)) {
-                            if !advancing || index != slot || branch.block(&f.dfg.value_lists) != header { return None; }
+                            let target = branch.block(&f.dfg.value_lists);
+                            if !loops.is_in_loop(target, lp) {
+                                if f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty())
+                                    || branch.args(&f.dfg.value_lists).any(|arg| arg.as_value().is_none()) { return None; }
+                                if !exits.contains(&(inst, edge_index)) { exits.push((inst, edge_index)); }
+                            } else if !advancing || index != slot || target != header { return None; }
                             carried = true;
                         }
                     }
@@ -215,15 +251,13 @@ impl Plan {
                 if !carried { return None; }
             }
         }
-        Some(Self { header, parameter, slot, start, bound, update, comparisons, edges })
+        Some(Self { direction, header, parameter, slot, start, bound, update, comparisons, edges, exits })
     }
 
     fn apply(self, f: &mut Function, uses: &Uses, loops: &LoopAnalysis) {
         let ty = f.dfg.value_type(self.parameter);
         let lp = loops.is_loop_header(self.header).expect("verified counted loop");
         let source_next = f.dfg.first_result(self.update);
-        let one = f.dfg.inst_args(self.update).iter().copied()
-            .find(|value| integer(f, *value) == Some((ty, 1))).expect("unit stride");
         // Constants can be materialized before every entry without a guard.
         for value in [self.start, self.bound] {
             if integer(f, value).is_none() { continue; }
@@ -233,22 +267,23 @@ impl Plan {
             f.layout.insert_inst(inst, first);
         }
         let remaining = f.dfg.replace_block_param(self.parameter, ty);
-        // Reuse the update's machine value, after redirecting its semantic
-        // source-counter uses below. It now denotes the remaining distance.
-        f.dfg.insts[self.update] = InstructionData::Binary { opcode: Opcode::Isub, args: [remaining, one] };
         let mut cursor = FuncCursor::new(f);
         cursor.goto_inst(self.update);
+        let one = cursor.ins().iconst(ty, 1);
+        // Reuse the update's machine value, after redirecting its semantic
+        // source-counter uses below. It now denotes the remaining distance.
+        cursor.func.dfg.insts[self.update] = InstructionData::Binary { opcode: Opcode::Isub, args: [remaining, one] };
         let zero = cursor.ins().iconst(ty, 0);
         for (inst, truth) in self.comparisons {
             cursor.func.dfg.insts[inst] = InstructionData::IntCompare {
                 opcode: Opcode::Icmp, cond: if truth { IntCC::NotEqual } else { IntCC::Equal }, args: [source_next, zero] };
         }
         for edge in self.edges {
-            let argument = if edge.back { source_next } else if integer(cursor.func, self.start).is_some_and(|(_, bits)| bits == 0) {
-                self.bound
-            } else {
+            let argument = if edge.back { source_next } else {
                 cursor.goto_inst(edge.inst);
-                cursor.ins().isub(self.bound, self.start)
+                let (left, right) = self.direction.ordered(self.start, self.bound);
+                if integer(cursor.func, left).is_some_and(|(_, bits)| bits == 0) { right }
+                else { cursor.ins().isub(right, left) }
             };
             let dfg = &mut cursor.func.dfg;
             let branch = &mut dfg.insts[edge.inst].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables)[edge.index];
@@ -258,6 +293,31 @@ impl Plan {
                 index += 1;
                 value
             });
+        }
+        // Exit phi arguments also need semantic projections. Split only those
+        // edges, so reconstruction never executes on the repeating path.
+        for (inst, index) in self.exits {
+            let branch = cursor.func.dfg.insts[inst].branch_destination(&cursor.func.dfg.jump_tables, &cursor.func.dfg.exception_tables)[index];
+            let target = branch.block(&cursor.func.dfg.value_lists);
+            let args: Vec<_> = branch.args(&cursor.func.dfg.value_lists).map(|arg| arg.as_value().expect("verified value edge")).collect();
+            let bridge = cursor.func.dfg.make_block();
+            cursor.func.layout.append_block(bridge);
+            let parameters: Vec<_> = args.iter().map(|&value| {
+                let ty = cursor.func.dfg.value_type(value);
+                cursor.func.dfg.append_block_param(bridge, ty)
+            }).collect();
+            let dfg = &mut cursor.func.dfg;
+            let edge = &mut dfg.insts[inst].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables)[index];
+            edge.set_block(bridge, &mut dfg.value_lists);
+            edge.update_args(&mut dfg.value_lists, |arg| {
+                if arg.as_value() == Some(self.parameter) { remaining.into() } else { arg }
+            });
+            cursor.goto_bottom(bridge);
+            let forwarded: Vec<BlockArg> = args.iter().zip(parameters).map(|(&source, parameter)| {
+                if source == self.parameter || source == source_next { self.direction.project(&mut cursor, self.bound, parameter, None).into() }
+                else { parameter.into() }
+            }).collect();
+            cursor.ins().jump(target, &forwarded);
         }
         // Emit semantic projections only in exit blocks that actually use
         // them. Labels follow those exact values, never the countdown bits.
@@ -282,10 +342,11 @@ impl Plan {
                     Some(value) => value,
                     None => {
                         cursor.goto_first_inst(block);
-                        let value = if source == self.parameter && !reused_parameter {
+                        let reuse = if source == self.parameter && !reused_parameter {
                             reused_parameter = true;
-                            cursor.ins().with_result(self.parameter).isub(self.bound, distance)
-                        } else { cursor.ins().isub(self.bound, distance) };
+                            Some(self.parameter)
+                        } else { None };
+                        let value = self.direction.project(&mut cursor, self.bound, distance, reuse);
                         if let Some(assignment) = &assignment {
                             cursor.func.dfg.values_labels.as_mut().expect("source labels").insert(value, assignment.clone());
                         }
@@ -299,8 +360,10 @@ impl Plan {
     }
 }
 
-pub(crate) fn run(f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis) {
-    if loops.loops().next().is_none() { return; }
+/// Returns whether exit reconstruction added control-flow edges.
+pub(crate) fn run(f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis) -> bool {
+    if loops.loops().next().is_none() { return false; }
+    let mut changed_cfg = false;
     let uses = Uses::new(f);
     let mut plans = Vec::new();
     for lp in loops.loops() {
@@ -319,9 +382,11 @@ pub(crate) fn run(f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree,
                 || inputs.contains(plan.parameter.index()) || inputs.contains(next.index()) { continue; }
             outputs.insert(plan.parameter.index()); outputs.insert(next.index());
             inputs.insert(plan.bound.index()); inputs.insert(plan.start.index());
+            changed_cfg |= !plan.exits.is_empty();
             plan.apply(f, &uses, loops);
         }
     }
+    changed_cfg
 }
 
 #[cfg(test)]
@@ -332,7 +397,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Shape { Guarded, Unchecked, Reconverged, EntrySelf, Bypassed, StepTwo, NonStrict, HotUse, StaticBound }
 
-    fn candidate(shape: Shape, dynamic_start: bool) -> bool {
+    fn candidate(shape: Shape, dynamic_start: bool, descending: bool) -> bool {
         let mut signature = Signature::new(crate::isa::CallConv::SystemV);
         signature.params.extend([AbiParam::new(types::I32), AbiParam::new(types::I64), AbiParam::new(types::I32)]);
         signature.returns.push(AbiParam::new(types::I32));
@@ -351,11 +416,12 @@ mod tests {
         let mut cursor = FuncCursor::new(&mut f);
         cursor.insert_block(entry);
         let start = if dynamic_start { start } else { cursor.ins().iconst(types::I32, 0) };
-        let bound = if matches!(shape, Shape::StaticBound) { cursor.ins().iconst(types::I32, 17) } else { bound };
+        let bound = if matches!(shape, Shape::StaticBound) { cursor.ins().iconst(types::I32, if descending { -17 } else { 17 }) } else { bound };
+        let strict = if descending { IntCC::SignedGreaterThan } else { IntCC::SignedLessThan };
         if matches!(shape, Shape::Unchecked | Shape::StaticBound) {
             cursor.ins().jump(preheader, &[]);
         } else {
-            let condition = cursor.ins().icmp(IntCC::SignedLessThan, start, bound);
+            let condition = cursor.ins().icmp(strict, start, bound);
             let inverted = cursor.ins().icmp_imm(IntCC::Equal, condition, 0);
             if matches!(shape, Shape::EntrySelf) { cursor.ins().brif(condition, entry, &[], preheader, &[]); }
             else { cursor.ins().brif(inverted, fail, &[], preheader, &[]); }
@@ -367,11 +433,13 @@ mod tests {
         cursor.ins().jump(header, &[start.into()]);
         cursor.insert_block(header);
         if matches!(shape, Shape::HotUse) { cursor.ins().store(MemFlagsData::trusted(), counter, pointer, 0); }
-        let next = cursor.ins().iadd_imm(counter, if matches!(shape, Shape::StepTwo) { 2 } else { 1 });
+        let step = if matches!(shape, Shape::StepTwo) { 2 } else { 1 };
+        let next = cursor.ins().iadd_imm(counter, if descending { -step } else { step });
         cursor.ins().jump(compare, &[]);
         cursor.insert_block(compare);
-        let condition = cursor.ins().icmp(if matches!(shape, Shape::NonStrict) { IntCC::SignedLessThanOrEqual }
-            else { IntCC::SignedLessThan }, next, bound);
+        let condition = cursor.ins().icmp(if matches!(shape, Shape::NonStrict) {
+            if descending { IntCC::SignedGreaterThanOrEqual } else { IntCC::SignedLessThanOrEqual }
+        } else { strict }, next, bound);
         cursor.ins().brif(condition, latch, &[], exit, &[]);
         cursor.insert_block(latch);
         cursor.ins().jump(header, &[next.into()]);
@@ -388,11 +456,11 @@ mod tests {
 
     #[test]
     fn entry_and_every_backedge_need_strict_unit_stride_proofs() {
-        for dynamic in [false, true] {
-            assert!(candidate(Shape::Guarded, dynamic));
-            assert_eq!(candidate(Shape::StaticBound, dynamic), !dynamic);
+        for dynamic in [false, true] { for descending in [false, true] {
+            assert!(candidate(Shape::Guarded, dynamic, descending));
+            assert_eq!(candidate(Shape::StaticBound, dynamic, descending), !dynamic);
             for shape in [Shape::Unchecked, Shape::Reconverged, Shape::EntrySelf, Shape::Bypassed,
-                Shape::StepTwo, Shape::NonStrict, Shape::HotUse] { assert!(!candidate(shape, dynamic)); }
-        }
+                Shape::StepTwo, Shape::NonStrict, Shape::HotUse] { assert!(!candidate(shape, dynamic, descending)); }
+        }}
     }
 }

@@ -9,11 +9,17 @@ const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+
+#[cfg(all(test, feature = "bench-primitives"))]
+#[path = "value/encoding_bench.rs"]
+mod encoding_bench;
 /// The tags occupy one contiguous range of tag-field values, so a tag test
 /// is one range comparison.
 const FIRST_TAG: u64 = TAG_UNDEFINED;
 /// The tag field's position: above the payload.
 const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
+/// ECMAScript Word32 shifts use the low log2(Word32::BITS) count bits.
+pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 const LAST_TAG: u64 = TAG_DELETED;
 const _: () = {
     let tags = [
@@ -110,6 +116,15 @@ impl NarrowLayout {
     pub(crate) const CODE_SHIFT: u32 = NARROW_CODE_SHIFT;
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
+    pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
+    pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
+    pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
+
+    /// Only codes selected by the decoder belong in a native image.
+    #[cfg(feature = "aot")]
+    pub(crate) fn decode_words() -> &'static [u64] {
+        &NARROW_UPPER_WORD_TABLE[..=Self::CODE_MASK as usize]
+    }
 
     /// The address of the upper words by code, which lives as long as the process.
     pub(crate) fn upper_words() -> *const u64 {

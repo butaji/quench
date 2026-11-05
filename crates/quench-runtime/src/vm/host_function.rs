@@ -22,11 +22,11 @@ const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
 
 impl<H: Host> Vm<H> {
     /// A native function's private environment: traced slots outside any scope chain.
-    pub(super) fn native_environment(&mut self, slots: Vec<Value>) -> Value {
+    pub(super) fn native_environment(&mut self, slots: &[Value]) -> Value {
         self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
             function: NATIVE_ENVIRONMENT_FUNCTION,
-            slots: slots.into(),
+            slots: crate::heap::EnvironmentSlots::from_values(slots.iter().copied()),
             scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,
@@ -105,8 +105,7 @@ impl<H: Host> Vm<H> {
         self.embedding_program()?;
         let (name, length) = self
             .host
-            .functions()
-            .get(id.0 as usize)
+            .function_descriptor(id.0 as usize)
             .map(|binding| (binding.name, binding.length))
             .ok_or_else(|| JsError("unknown host function index".into()))?;
         let name = name_override.unwrap_or(name);
@@ -120,13 +119,13 @@ impl<H: Host> Vm<H> {
                 } else {
                     HostEnvironmentSlot::COUNT
                 };
-                let mut slots = vec![Value::UNDEFINED; count];
+                let mut slots = [Value::UNDEFINED; HostEnvironmentSlot::CONSTRUCTOR_COUNT];
                 slots[HostEnvironmentSlot::Operation as usize] = Value::number(f64::from(id.0));
                 slots[HostEnvironmentSlot::Data as usize] = data.unwrap_or(Value::UNDEFINED);
                 if constructible {
                     slots[HostEnvironmentSlot::Constructible as usize] = Value::TRUE;
                 }
-                self.native_environment(slots)
+                self.native_environment(&slots[..count])
             }
         };
         let function = self.native_with_env(Native::HostFunction, environment);
@@ -205,8 +204,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn initialize_host(&mut self) -> Result<(), JsError> {
-        for index in 0..self.host.functions().len() {
-            let Some(name) = self.host.functions()[index].global else {
+        for index in 0..self.host.function_count() {
+            let Some(name) = self.host.function_descriptor(index)
+                .ok_or_else(|| JsError("unknown host function index".into()))?.global else {
                 continue;
             };
             let id = u32::try_from(index)
@@ -287,7 +287,7 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-lane-exits")]
     pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
         let index = self.host_operation_index(self.heap.function(function)?.env)?;
-        self.host.functions().get(index as usize).map(|binding| binding.name)
+        self.host.function_descriptor(index as usize).map(|binding| binding.name)
     }
 
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
@@ -297,9 +297,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid host function environment".into()))?;
         let callback = self
             .host
-            .functions()
-            .get(index as usize)
-            .map(|binding| binding.call)
+            .function_callback(index as usize)
             .ok_or_else(|| JsError("unknown host function index".into()))?;
         let callee = self.active_native_callable();
         let new_target = self

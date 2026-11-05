@@ -285,12 +285,33 @@ fn same_static_module_binding(left: &StaticModuleValue, right: &StaticModuleValu
     }
 }
 
-fn native_length(kind: Native) -> Option<f64> {
-    if let Some((_, _, array_native)) = super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS
-        .iter()
-        .find(|(_, typed_native, _)| *typed_native == kind)
-    {
-        return native_length(*array_native);
+/// Immutable arities derived from the same builtin definitions used for installation.
+const NATIVE_LENGTHS: [Option<f64>; Native::COUNT as usize] = {
+    let mut lengths = [None; Native::COUNT as usize];
+    let mut index = 0;
+    while index < lengths.len() {
+        let Some(native) = Native::from_discriminant(index as u16) else {
+            panic!("native discriminant");
+        };
+        lengths[index] = native_length_definition(native);
+        index += 1;
+    }
+    lengths
+};
+
+pub(super) fn native_length(kind: Native) -> Option<f64> {
+    NATIVE_LENGTHS[kind as usize]
+}
+
+pub(super) const fn native_length_definition(kind: Native) -> Option<f64> {
+    let callbacks = super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
+    let mut index = 0;
+    while index < callbacks.len() {
+        let (_, typed_native, array_native) = callbacks[index];
+        if typed_native as u16 == kind as u16 {
+            return native_length_definition(array_native);
+        }
+        index += 1;
     }
     if let Some(length) = super::string::string_native_length(kind) {
         return Some(length);

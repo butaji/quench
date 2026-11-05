@@ -4283,6 +4283,7 @@ impl ResidualProgram {
         crate::compile::lower_settled(
             &mut function,
             &crate::compile::LoweringTables {
+                object_sites: &self.object_sites,
                 methods: self,
                 field_sites: &self.field_sites,
                 superinstructions: &self.superinstructions,
@@ -4379,7 +4380,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 117;
+    pub const FORMAT_VERSION: u8 = 131;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

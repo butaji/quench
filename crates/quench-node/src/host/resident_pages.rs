@@ -9,6 +9,9 @@
 //! Faults on these mappings map only the touched page (`map_touched_pages_only`), so what stays
 //! resident is what bootstrap, compilation and the run touch, without their cached neighbours.
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod darwin;
+
 /// Marks the point where the entry has compiled and its run begins. It does nothing: profiling
 /// splits there (`valgrind --tool=callgrind --dump-before=quench_entry_compiled`), so the trained
 /// link order can lay the functions a run executes together, ahead of start-up code.
@@ -23,9 +26,8 @@ pub extern "C" fn quench_entry_compiled() {
 #[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
 
-/// Names the diagnostic that reports, at each start-up phase boundary, the peak resident set
-/// since the previous one (`phase_peak`).
-#[cfg(target_os = "linux")]
+/// Opts into platform-specific resident-memory readings at start-up phase boundaries.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const RSS_PHASES_ENV: &str = "QUENCH_RSS_PHASES";
 
 /// The kernel's per-process status, for `phase_peak`.
@@ -60,7 +62,31 @@ pub fn phase_peak(phase: &str) {
     let _ = std::fs::write(CLEAR_REFS_PATH, RESET_PEAK);
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS exposes current resident bytes and cumulative fault counts. These are
+/// boundary samples, not Linux's resettable per-phase peak or anonymous/file split.
+#[cfg(target_os = "macos")]
+pub fn phase_peak(phase: &str) {
+    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+        return;
+    }
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+    let bytes = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: the kernel writes at most `bytes` to the correctly sized output.
+    let written = unsafe {
+        libc::proc_pidinfo(libc::getpid(), libc::PROC_PIDTASKINFO, 0,
+            info.as_mut_ptr().cast(), bytes)
+    };
+    if written != bytes {
+        eprintln!("quench: rss phase {phase:<20} unavailable");
+        return;
+    }
+    // SAFETY: the API returned the complete initialized structure.
+    let info = unsafe { info.assume_init() };
+    eprintln!("quench: rss phase {phase:<20} resident_bytes {} cumulative_faults {} cumulative_pageins {}",
+        info.pti_resident_size, info.pti_faults, info.pti_pageins);
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn phase_peak(_phase: &str) {}
 
 /// The process's own mapping table.
@@ -646,6 +672,20 @@ pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The main entry is compiled; its execution can refault only the code it uses.
+pub fn release_after_entry_compile() {
+    release_read_only_code_and_data();
+    release_main_text_at_phase_boundary();
+}
+
+/// Retire the previous phase's resident main-image translations. Code needed by
+/// the next phase refaults at the same addresses from the same backing object.
+/// Other platforms retain their existing phase-specific release policy.
+pub fn release_main_text_at_phase_boundary() {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    darwin::release_main_text();
 }
 
 /// The entry compilation's boundaries still due to release, in order (`ENTRY_COMPILE`). The

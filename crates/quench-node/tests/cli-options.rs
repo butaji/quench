@@ -3,6 +3,44 @@ use std::process::Command;
 const SOURCE: &str = include_str!("fixtures/internal-options.cjs");
 
 #[test]
+fn gc_startup_options_match_node_at_environment_and_invocation_edges() {
+    let source = "const d = Object.getOwnPropertyDescriptor(globalThis, 'gc'); console.log(JSON.stringify([typeof gc, d && [d.writable, d.enumerable, d.configurable, d.value === gc], require('internal/options').getOptionValue('--expose-gc')]));";
+    for (environment, arguments) in [
+        ("", vec![]),
+        ("--expose-gc", vec![]),
+        ("--expose_gc", vec![]),
+        ("--expose-gc", vec!["--no-expose-gc"]),
+        ("--expose-gc", vec!["--noexpose_gc"]),
+        ("--no-expose-gc", vec!["--expose_gc"]),
+        ("", vec!["--expose-gc", "--no_expose_gc"]),
+        ("", vec!["--no-expose_gc", "--expose_gc"]),
+    ] {
+        let expected = Command::new("node")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("NODE_OPTIONS", environment)
+            .arg("--expose-internals")
+            .args(&arguments)
+            .args(["-e", source])
+            .output().unwrap();
+        assert!(expected.status.success(), "{environment} {arguments:?}: {}", String::from_utf8_lossy(&expected.stderr));
+        for mode in [None, Some("--jit")] {
+            let actual = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+                .env_clear()
+                .env("NODE_OPTIONS", environment)
+                .args(mode)
+                .arg("--expose-internals")
+                .args(&arguments)
+                .args(["-e", source])
+                .output().unwrap();
+            assert_eq!(actual.status.code(), expected.status.code(), "{mode:?}: {}", String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(actual.stdout, expected.stdout, "{mode:?} {environment} {arguments:?}");
+            assert_eq!(actual.stderr, expected.stderr);
+        }
+    }
+}
+
+#[test]
 fn internal_options_matches_node_in_interpreter_and_jit() {
     for arguments in [
         vec![],

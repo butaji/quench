@@ -609,9 +609,7 @@ impl<H: Host> Vm<H> {
         let storage_len = self.shapes[shape as usize].storage_len();
         let dictionary_shape =
             self.append_shape(shape, ShapeTransition::Dictionary { trigger }, storage_len);
-        self.object_data_mut(object)
-            .expect("object survived dictionary transition")
-            .set_shape(dictionary_shape);
+        self.heap.set_object_shape(object, dictionary_shape);
         self.profile.dictionary_transition(trigger);
     }
     #[inline(always)]
@@ -935,9 +933,7 @@ impl<H: Host> Vm<H> {
                     attributes: recorded,
                 },
             );
-            self.object_data_mut(object)
-                .expect("object survived descriptor transition")
-                .set_shape(next_id);
+            self.heap.set_object_shape(object, next_id);
             self.store_accessor_slot(object, slot, current, attributes, recorded);
             self.invalidate_method_caches_for_key(key);
             return;
@@ -1001,9 +997,7 @@ impl<H: Host> Vm<H> {
             self.invalidate_field_caches();
         }
         if shape != original {
-            self.object_data_mut(object)
-                .expect("object survived descriptor transitions")
-                .set_shape(shape);
+            self.heap.set_object_shape(object, shape);
         }
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
@@ -1017,9 +1011,7 @@ impl<H: Host> Vm<H> {
                     attributes: DEFAULT_SHAPE_ATTRIBUTES,
                 },
             );
-            self.object_data_mut(object)
-                .expect("object survived descriptor transition")
-                .set_shape(next_id);
+            self.heap.set_object_shape(object, next_id);
             self.invalidate_method_caches_for_key(key);
             return;
         }
@@ -1527,6 +1519,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let value = self.own_field_entry_hit(cache, receiver)?;
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
         Some(value)
     }
@@ -1567,6 +1561,7 @@ impl<H: Host> Vm<H> {
         Some(super::compiled::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
             ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
+            target_shape: self.heap.slot_target_shape(cache.receiver, usize::from(cache.slot)),
         })
     }
 
@@ -1615,6 +1610,7 @@ impl<H: Host> Vm<H> {
         (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
             ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
+            target_shape: self.heap.slot_target_shape(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
         })
     }
 
@@ -1627,12 +1623,19 @@ impl<H: Host> Vm<H> {
     pub(super) fn record_field_entry_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         if cache.holder == NO_FIELD_HOLDER {
-            return self.own_field_entry_hit(cache, receiver);
+            let value = self.own_field_entry_hit(cache, receiver);
+            #[cfg(feature = "profile-field-primitives")]
+            if value.is_some() {
+                self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintOwnRead);
+            }
+            return value;
         }
         let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
         if cache.receiver != receiver.exact_shape() || !cached_holder_matches(holder, cache.holder) {
             return None;
         }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintHolderRead);
         // SAFETY: as `cached_ordinary_holder_field_value`.
         Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
     }
@@ -1658,17 +1661,51 @@ impl<H: Host> Vm<H> {
             // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
             return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
-        let receiver = self.heap.object_record_by_id(record_id);
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
+        if !self.store_record_field_entry::<LOGS>(record_id, cache, value, layout) {
+            return false;
+        }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(if LOGS {
+            crate::profile::field_primitives::Path::PrimaryStoreLogged
+        } else {
+            crate::profile::field_primitives::Path::PrimaryStoreNoLog
+        });
+        self.profile.field_cache_hit(0, 0);
+        true
+    }
+
+    /// Store through an own-data entry's exact shape/slot proof. Both table entries and
+    /// instruction hints use this operation; the caller has excluded method-observable writes.
+    #[inline(always)]
+    fn store_record_field_entry<const LOGS: bool>(
+        &mut self, record_id: u32, cache: FieldCache, value: Value,
+        layout: crate::heap::PropertyStoreLayout,
+    ) -> bool {
+        let receiver = self.heap.object_record_by_id(record_id);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
-        // SAFETY: a matching exact shape proves the cached slot layout outside dictionary
-        // storage (`Object::exact_shape`).
-        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value, layout) } {
+        // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
+        unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
+    }
+
+    /// A monomorphic store's copied entry, with the same no-log/preserve-layout admission
+    /// as `primary_own_field_store_hit::<false>`. Refusal leaves the logged path to the caller.
+    #[inline(always)]
+    pub(super) fn hinted_primary_field_store_hit(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
+        if self.method_caches_may_name(atom) {
             return false;
         }
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        if !self.store_record_field_entry::<false>(record_id, hint, value, crate::heap::PropertyStoreLayout::Preserve) {
+            return false;
+        }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintedPrimaryStore);
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -1716,6 +1753,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.profile.field_cache_hit(2, 0);
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PolymorphicStore);
         Some(FieldCache::own(shape, slot))
     }
 
@@ -1730,14 +1769,11 @@ impl<H: Host> Vm<H> {
         let Some(record_id) = object.direct_object_index() else {
             return false;
         };
-        let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.exact_shape() != hint.receiver {
+        if !self.store_record_field_entry::<true>(record_id, hint, value, crate::heap::PropertyStoreLayout::MayWiden) {
             return false;
         }
-        // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
-            return false;
-        }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::HintedStore);
         self.profile.field_cache_hit(2, 0);
         true
     }
@@ -3642,18 +3678,20 @@ impl<H: Host> Vm<H> {
             self.heap
                 .property_set_unchecked(object, slot as usize, value)
         };
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::CachedStore);
         self.profile.field_cache_hit(0, 0);
         true
     }
 
     /// The raw address for a warmed, own-data store site whose exact receiver shape still
-    /// matches. Shared native execution uses this only for Numbers, without allocation,
+    /// matches. Shared native execution admits `writes` once, without allocation,
     /// collection, or guest calls; misses stay on the ordinary path before the store.
     ///
     /// # Safety
     /// The caller must keep `object` rooted and must use the returned pointer only during the
-    /// current no-allocation native operation. It may write only non-reference values;
-    /// heap references require the collector's write barrier.
+    /// current no-allocation native operation, without reentry or type re-admission.
+    /// Every stored value must fit `writes`; references require the collector's write barrier.
     #[inline(always)]
     pub(super) unsafe fn cached_field_store_pointer(
         &mut self,
@@ -3661,7 +3699,17 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
         site: u16,
+        writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
+        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        // SAFETY: the shared admission proves the own data slot; the caller
+        // owns the raw writer's type and storage lifetime obligations.
+        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
+    }
+
+    /// Admit an own data slot once for a no-reentry operation. Its physical
+    /// encoding is independent of the shape/descriptor permission to write it.
+    fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
         if !(self.specialized && p.specialized)
             || self.is_private_name(atom)
             || !self.field_cache_atom_eligible(atom)
@@ -3671,7 +3719,7 @@ impl<H: Host> Vm<H> {
         }
         let data = self.heap.object(object)?;
         let properties = data.properties();
-        if properties.has_inline_property_storage() || properties.is_dictionary() {
+        if properties.is_dictionary() {
             return None;
         }
         let cache = self.field_cache_entry(site);
@@ -3689,10 +3737,29 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
-        // pointer does not outlive the no-allocation native operation and writes only
-        // non-reference Numbers, which cannot add a collector edge to this owner.
-        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }
+        Some(slot)
+    }
+
+    /// One admitted Number store/update across packed and arena layouts. A
+    /// representation or dependency change declines before any value is stored.
+    pub(super) fn cached_number_field_update(
+        &mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16,
+        value: Value, update: Option<(super::operations::NumberBitwise, i32)>,
+    ) -> Option<()> {
+        debug_assert!(value.as_number().is_some());
+        let record = object.direct_object_index()?;
+        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        let value = if let Some((operation, right)) = update {
+            // SAFETY: the admitted own slot exists outside dictionary storage.
+            // No guest operation, allocation or collection intervenes.
+            let left = unsafe { self.heap.property_get_flat(self.heap.object_record_by_id(record), slot) }.as_int()?;
+            super::operations::number_bitwise_result(operation, left, right)
+        } else { value };
+        // SAFETY: the same admission owns this write. Numbers need no reference
+        // barrier; PreserveNative retires changed dependencies and declines
+        // before a value write or physical widening, using the shared store rule.
+        unsafe { self.heap.record_property_set_flat::<false>(record, slot, value,
+            crate::heap::PropertyStoreLayout::PreserveNative) }.then_some(())
     }
 
     /// Increment or decrement a cached own writable Number field without
@@ -4313,6 +4380,8 @@ impl<H: Host> Vm<H> {
         if invalidates_method {
             self.invalidate_method_caches_for_atom(atom);
         }
+        #[cfg(feature = "profile-field-primitives")]
+        self.profile.field_primitives.hit(crate::profile::field_primitives::Path::GeneralStore);
         self.profile.field_cache_hit(kind, 0);
         true
     }
@@ -4616,9 +4685,7 @@ impl<H: Host> Vm<H> {
                     .collect::<Vec<_>>();
                 self.heap.initialize_object_properties(object, parent, &values);
             }
-            self.object_data_mut(object)
-                .expect("object survived property deletion")
-                .set_shape(parent);
+            self.heap.set_object_shape(object, parent);
             self.reconfigure_function_name(object, key);
             self.invalidate_method_caches_for_key(key);
             return;
@@ -4651,9 +4718,7 @@ impl<H: Host> Vm<H> {
         } else {
             next_id
         };
-        self.object_data_mut(object)
-            .expect("object survived property deletion")
-            .set_shape(next_id);
+        self.heap.set_object_shape(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
     }
@@ -4707,9 +4772,9 @@ impl<H> Vm<H> {
             }
         }
         // The representation each own field a cache entry names holds across the live objects
-        // of its shape, the join of their values' classes (`SlotRepresentation`).
-        use crate::value_vec::SlotRepresentation;
-        let mut classes: std::collections::HashMap<(u32, u16), SlotRepresentation> = std::collections::HashMap::new();
+        // of its shape, the join of their values' classes (`SlotType`).
+        use crate::typed_ir::SlotType;
+        let mut classes: std::collections::HashMap<(u32, u16), SlotType> = std::collections::HashMap::new();
         self.heap.for_each_live_object_record(|object| {
             let shape = object.exact_shape();
             if shape != object.shape() { return; }
@@ -4718,22 +4783,20 @@ impl<H> Vm<H> {
                 // SAFETY: an exact, non-dictionary shape holds `len` slots.
                 let value = unsafe { self.heap.property_get_flat(object, slot) };
                 if value.is_deleted() { continue; }
-                let class = SlotRepresentation::of(value);
+                let class = SlotType::of(value);
                 let joined = classes.entry((shape, slot as u16)).or_insert(class);
-                *joined = (*joined).max(class);
+                *joined = joined.join(class);
             }
         });
-        let mut reps = [0_usize; 4];
+        let mut reps = [0_usize; SlotType::ALL.len()];
         let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
             .filter(|cache| cache.receiver != NO_FIELD_RECEIVER && cache.holder == NO_FIELD_HOLDER);
         for cache in own_entries {
-            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotRepresentation::None) as usize] += 1;
+            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotType::None) as usize] += 1;
         }
-        let reps = format!(
-            "QUENCH_FIELD_REPS {{\"no_live_object\":{},\"int32\":{},\"number\":{},\"tagged\":{},\"unrepresented_slots\":{}}}",
-            reps[SlotRepresentation::None as usize], reps[SlotRepresentation::Int32 as usize],
-            reps[SlotRepresentation::Number as usize], reps[SlotRepresentation::Tagged as usize], self.heap.unrepresented_slots(),
-        );
+        let classes = SlotType::ALL.iter().map(|class|
+            format!("\"{}\":{}", class.label(), reps[*class as usize])).collect::<Vec<_>>().join(",");
+        let reps = format!("QUENCH_FIELD_REPS {{{classes},\"unrepresented_slots\":{}}}", self.heap.unrepresented_slots());
         reps + "\n" + &format!(
             "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],

@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
 
     fn append_function_name(&mut self, function: Value, shape: u32, name: Atom) {
         let named = self.function_name_shape(shape, name);
-        self.object_data_mut(function).expect("function object").set_shape(named);
+        self.heap.set_object_shape(function, named);
     }
 
     /// `shape` with the original function name `name` recorded (`ShapeTransition::FunctionName`),
@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
             _ => return,
         };
         let shape = self.append_cached_shape_transition(object.shape(), transition);
-        self.object_data_mut(function).expect("function object").set_shape(shape);
+        self.heap.set_object_shape(function, shape);
     }
 
     /// V8's named native-info load enters prototype lookup mode, whereas
@@ -343,7 +343,8 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         new_target_is_base: bool,
     ) {
-        object.set_shape(self.constructed_shape(object.shape(), constructor, new_target_is_base));
+        let shape = self.constructed_shape(object.shape(), constructor, new_target_is_base);
+        self.heap.set_detached_object_shape(object, shape);
     }
 
     pub(super) fn capture_constructed_value(
@@ -356,9 +357,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         let shape = self.constructed_shape(shape, constructor, new_target_is_base);
-        self.object_data_mut(value)
-            .expect("constructed object")
-            .set_shape(shape);
+        self.heap.set_object_shape(value, shape);
     }
 
     pub(crate) fn embedding_original_function_name(

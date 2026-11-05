@@ -1,8 +1,10 @@
 use crate::Value;
-use crate::typed_ir::Type;
+use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
 
 mod buffer;
+mod target_shapes;
+pub(crate) use target_shapes::TargetShape;
 use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
@@ -188,36 +190,6 @@ impl Default for ValueVec {
     }
 }
 
-/// The type every value a slot has held has, as the heap keeps it per slot owner: a byte code
-/// of the chain `Type::NEVER` ⊑ `Type::INT32` ⊑ `Type::NUMBER` ⊑ `Type::ANY` of the typed IR,
-/// the one authority on types, joined by `max`. Integral numbers are stored in int form
-/// (`Value::number`), so each class keeps the same encoding and a slot widens in place.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum SlotRepresentation {
-    None,
-    Int32,
-    Number,
-    Tagged,
-}
-
-impl SlotRepresentation {
-    /// The least class whose type holds `value`'s (`Type::immediate`).
-    pub(crate) fn of(value: Value) -> Self {
-        let ty = Type::immediate(value);
-        if ty.is_subtype(Type::INT32) { Self::Int32 } else if ty.is_subtype(Type::NUMBER) { Self::Number } else { Self::Tagged }
-    }
-
-    /// The typed IR type this class codes.
-    pub(crate) fn ty(self) -> Type {
-        match self {
-            Self::None => Type::NEVER,
-            Self::Int32 => Type::INT32,
-            Self::Number => Type::NUMBER,
-            Self::Tagged => Type::ANY,
-        }
-    }
-}
-
 pub(crate) struct ValueArena {
     values: PropertyBuffer,
     free: [Vec<u32>; BUCKETS],
@@ -229,9 +201,14 @@ pub(crate) struct ValueArena {
     /// it. A child that appends a slot at its parent's chain end shares that chain.
     shape_chains: Vec<u32>,
     chain_owners: Vec<u32>,
-    /// Per owner shape, the representation every value its slot has held fits
-    /// (`SlotRepresentation`), joined on each write.
-    owner_reps: Vec<SlotRepresentation>,
+    /// Per owner shape, compact observed content types. Recording writes joins
+    /// them; native raw writes can bypass recording, so this is not a proof.
+    owner_types: Vec<SlotType>,
+    slot_readers: crate::code_dependencies::CodeReaders,
+    targets: target_shapes::TargetShapes,
+    /// Numeric shape departures only; heap admission, exotic access and physical
+    /// storage remain separate proof obligations.
+    shape_readers: crate::code_dependencies::CodeReaders,
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
@@ -249,7 +226,10 @@ impl Default for ValueArena {
             shape_lengths: vec![0],
             shape_chains: Vec::new(),
             chain_owners: Vec::new(),
-            owner_reps: Vec::new(),
+            owner_types: Vec::new(),
+            slot_readers: crate::code_dependencies::CodeReaders::default(),
+            targets: target_shapes::TargetShapes::default(),
+            shape_readers: crate::code_dependencies::CodeReaders::default(),
             tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -273,7 +253,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_reps: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, targets: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -321,6 +301,8 @@ impl ValueArena {
     }
 
     pub(crate) fn reset(&mut self) {
+        self.targets.reset();
+        self.shape_readers.reset();
         self.values.clear();
         for bucket in &mut self.free {
             bucket.clear();
@@ -334,6 +316,8 @@ impl ValueArena {
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
+        self.targets.depart(shape, |owner| self.slot_readers.retire(owner));
+        self.shape_readers.retire(shape);
         assert!(shape <= SHAPE_MASK, "object shape table exhausted");
         assert!(
             length <= u32::MAX as usize,
@@ -347,12 +331,15 @@ impl ValueArena {
     }
 
     pub(crate) fn reset_shapes(&mut self) {
+        self.targets.reset();
+        self.shape_readers.reset();
+        self.slot_readers.reset();
         self.tracking = false;
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
         self.shape_chains.clear();
         self.chain_owners.clear();
-        self.owner_reps.clear();
+        self.owner_types.clear();
     }
 
     /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
@@ -365,9 +352,11 @@ impl ValueArena {
         let index = shape as usize;
         if self.shape_chains.len() <= index {
             self.shape_chains.resize(index + 1, 0);
-            self.owner_reps.resize(index + 1, SlotRepresentation::None);
+            self.owner_types.resize(index + 1, SlotType::None);
         }
-        self.owner_reps[index] = SlotRepresentation::None;
+        self.slot_readers.retire(shape);
+        self.targets.reset_owner(shape);
+        self.owner_types[index] = SlotType::None;
         // A parent's chain covers its length once registered; one that does not (a parent the
         // heap never registered at that length) lends no owners, and the child owns its slots.
         let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
@@ -395,27 +384,29 @@ impl ValueArena {
         self.shape_chains[index] = u32::try_from(chain).expect("slot owner chains fit u32");
     }
 
-    /// `note_slot_value` of a write of `value` to `slot` of an object of `shape`, where the
+    /// Observes a write of `value` to `slot` of an object of `shape`, where the
     /// shape holds the slot (an ordinary shape's; a dictionary's holds none of its own).
     #[inline(always)]
-    pub(crate) fn note_shape_value(&mut self, shape: u32, slot: usize, value: Value) {
+    pub(crate) fn note_shape_target(&mut self, shape: u32, slot: usize, value: Value, target: TargetShape) {
         if self.tracking && slot < self.shape_length(shape) && !value.is_deleted() {
-            self.note_slot_value(shape, slot, value);
+            self.note_slot_target(shape, slot, value, target);
         }
     }
 
-    /// `note_shape_value` of an object's initial `values`, slot by slot.
-    pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
+    /// Observes an object's initial values and pointee shapes, slot by slot.
+    pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value], target: impl Fn(Value) -> TargetShape) {
         if !self.tracking { return; }
         for (slot, value) in values.iter().copied().enumerate() {
-            self.note_shape_value(shape, slot, value);
+            self.note_shape_target(shape, slot, value, target(value));
         }
     }
 
     /// Starts joining writes' classes from none: the caller joins what live objects hold.
     pub(crate) fn track(&mut self) {
+        self.targets.reset();
+        self.slot_readers.reset();
         self.tracking = true;
-        self.owner_reps.fill(SlotRepresentation::None);
+        self.owner_types.fill(SlotType::None);
     }
 
     /// Whether writes join their values' classes.
@@ -434,31 +425,86 @@ impl ValueArena {
         self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
     }
 
-    /// The representation `slot` of `shape` has held.
+    /// The recorded type of `slot` of `shape`, not a write-maintained invariant.
     #[inline(always)]
-    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> SlotRepresentation {
-        self.owner_reps[self.slot_owner(shape, slot) as usize]
+    pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
+        self.owner_types[self.slot_owner(shape, slot) as usize]
+    }
+
+    pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        let crate::code_dependencies::SlotDependency { shape, slot, ty, target_shape } = dependency;
+        let slot = usize::from(slot);
+        if !self.tracking || slot >= self.shape_length(shape)
+            || self.slot_observation(shape, slot).ty() != ty
+            || target_shape.is_some_and(|target| self.slot_target_shape(shape, slot) != Some(target)) { return false; }
+        self.subscribe_shape(shape, code)
+            && self.slot_readers.subscribe(self.slot_owner(shape, slot), code)
+    }
+
+    /// Observe the next departure from this shape, not the contents of its slots.
+    /// The caller must establish its target-shape assumption before subscribing.
+    pub(crate) fn subscribe_shape(&mut self, shape: u32,
+        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        if shape as usize >= self.shape_lengths.len() { return false; }
+        self.shape_readers.subscribe(shape, code)
+    }
+
+    pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
+        if previous != next {
+            self.targets.depart(previous, |owner| self.slot_readers.retire(owner));
+            self.shape_readers.retire(previous);
+        }
+    }
+
+    /// Shape identifiers will be remapped; retire assumptions before any object moves.
+    pub(crate) fn retire_shape_readers(&mut self) {
+        self.shape_readers.reset();
     }
 
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
-        if !self.tracking { return false; }
-        self.join_slot_value(shape, slot, value)
+        self.note_slot_target(shape, slot, value, TargetShape::unclassified(value))
     }
 
-    /// `note_slot_value` where representations are kept, out of line: the interpreter's
-    /// store handlers keep only the tracking test, so their own code does not change.
+    pub(crate) fn note_slot_target(&mut self, shape: u32, slot: usize, value: Value, target: TargetShape) -> bool {
+        if !self.tracking { return false; }
+        let owner = self.slot_owner(shape, slot);
+        let changed = self.targets.join(owner, target);
+        if changed { self.slot_readers.retire(owner); }
+        self.join_slot_type(shape, slot, SlotType::of(value)) || changed
+    }
+
+    pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
+        if !self.tracking || slot >= self.shape_length(shape) { return None; }
+        self.targets.get(self.slot_owner(shape, slot)).shape()
+    }
+
+    /// Admits the possible writes of a no-reentry raw slot capability before exposing it.
+    pub(crate) fn note_slot_type(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type) -> bool {
+        if !self.tracking { return false; }
+        let owner = self.slot_owner(shape, slot);
+        let target = if ty.is_subtype(crate::typed_ir::Type::NULLISH) { TargetShape::NONE } else { TargetShape::ANY };
+        let changed = self.targets.join(owner, target);
+        if changed { self.slot_readers.retire(owner); }
+        self.join_slot_type(shape, slot, SlotType::from_type(ty)) || changed
+    }
+
     #[cold]
     #[inline(never)]
-    fn join_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+    fn join_slot_type(&mut self, shape: u32, slot: usize, incoming: SlotType) -> bool {
         let owner = self.slot_owner(shape, slot) as usize;
-        let held = self.owner_reps[owner];
+        let held = self.owner_types[owner];
         // A slot that has held any value holds every value: the common case pays one compare.
-        if held == SlotRepresentation::Tagged { return false; }
-        let class = SlotRepresentation::of(value);
-        let widened = class > held;
-        if widened { self.owner_reps[owner] = class; }
+        if held == SlotType::Tagged { return false; }
+        let class = held.join(incoming);
+        let widened = class != held;
+        if widened {
+            self.slot_readers.retire(owner as u32);
+            self.owner_types[owner] = class;
+        }
         widened
     }
 
@@ -794,6 +840,9 @@ impl ValueArena {
                 .map(|values| values.capacity() * size_of::<(u32, Value)>())
                 .sum::<usize>()
             + self.free_dictionaries.capacity() * size_of::<u32>()
+            + self.slot_readers.memory_bytes()
+            + self.targets.memory_bytes()
+            + self.shape_readers.memory_bytes()
     }
 
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {
@@ -955,6 +1004,30 @@ impl ValueArena {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn slot_observations_share_owners_and_widen_semantically() {
+        let mut arena = ValueArena::default();
+        assert!(!arena.note_slot_value(u32::MAX, usize::MAX, Value::NULL));
+        arena.track();
+        arena.register_derived_shape(1, 1, None);
+        arena.register_derived_shape(2, 2, Some((1, 1)));
+        assert_eq!(arena.slot_owner(1, 0), arena.slot_owner(2, 0));
+        assert!(arena.note_slot_value(1, 0, Value::NULL));
+        assert!(arena.note_slot_value(2, 0, Value::direct_object(7)));
+        assert_eq!(arena.slot_observation(1, 0), SlotType::DirectObjectOrNull);
+        assert!(!arena.note_slot_value(2, 0, Value::direct_object(8)));
+        assert!(arena.note_slot_value(2, 1, Value::number(0.5)));
+        assert_eq!(arena.slot_observation(2, 1), SlotType::Number);
+        assert!(arena.note_slot_value(1, 0, Value::UNDEFINED));
+        assert_eq!(arena.slot_observation(2, 0), SlotType::DirectObjectOrNullish);
+        assert!(arena.note_slot_value(2, 0, Value::integer(1)));
+        assert_eq!(arena.slot_observation(1, 0), SlotType::Tagged);
+        assert_eq!(arena.slot_observation(2, 1), SlotType::Number);
+        arena.track();
+        assert_eq!(arena.slot_observation(2, 0), SlotType::None);
+        assert_eq!(arena.slot_observation(2, 1), SlotType::None);
+    }
     use super::*;
 
     #[test]

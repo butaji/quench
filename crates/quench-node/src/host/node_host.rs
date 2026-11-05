@@ -436,7 +436,17 @@ impl SharedNodeState {
 }
 
 impl NodeHost {
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn accepts_native_bootstrap(&self) -> bool {
+        let state = self.shared_state.borrow();
+        state.exec_argv.is_empty() && state.initial_node_options.is_none()
+            && !state.initial_pending_deprecation
+            && crate::host::startup_snapshot::native_bootstrap_environment_is_compatible()
+    }
+
     pub fn new(argv: Vec<String>) -> Self {
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_begin");
         // The Node test common/tmpdir helper exposes a per-process host path.
         // Under the test runner, materialize that parent at host construction so
         // fixtures can create files there even when the helper's JS-side refresh
@@ -449,8 +459,14 @@ impl NodeHost {
         let fs = crate::modules::fs_state::FsState::new();
         let argv = crate::modules::process_state::ProcessArgs::new(argv);
         let async_identity = crate::modules::async_hooks_state::AsyncIdentity::new();
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_arguments_ready");
         let process_control = crate::modules::process_state::ProcessControl::new();
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_process_control_ready");
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_cwd_ready");
         Self {
             #[cfg(feature = "native-execution")]
             module_assets: Default::default(),

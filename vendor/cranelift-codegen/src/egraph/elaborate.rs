@@ -14,7 +14,7 @@ use crate::trace;
 use crate::{FxHashMap, FxHashSet};
 use alloc::vec::Vec;
 use cranelift_control::ControlPlane;
-use cranelift_entity::{EntitySet, SecondaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntitySet, SecondaryMap, packed_option::{PackedOption, ReservedValue}};
 use smallvec::{SmallVec, smallvec};
 
 pub(crate) struct Elaborator<'a> {
@@ -62,6 +62,8 @@ pub(crate) struct Elaborator<'a> {
     /// Quench: recurrence results already needed at the next loop header.
     /// Recomputing these in a successor does not shorten the carried lifetime.
     loop_carried_values: EntitySet<Value>,
+    /// Recurrence producers scheduled at their common skeleton use point.
+    recurrence_placements: Vec<(Inst, Value)>,
     /// Explicitly-unrolled value elaboration stack.
     elab_stack: Vec<ElabStackEntry>,
     /// Results from the elab stack.
@@ -206,6 +208,7 @@ impl<'a> Elaborator<'a> {
             cur_block: Block::reserved_value(),
             remat_values,
             loop_carried_values: EntitySet::new(),
+            recurrence_placements: Vec::new(),
             elab_stack: vec![],
             elab_result_stack: vec![],
             block_stack: vec![],
@@ -329,7 +332,7 @@ impl<'a> Elaborator<'a> {
         sorted
     }
 
-    fn compute_best_values(&mut self) {
+    fn compute_best_values(&mut self) -> Vec<Value> {
         let sorted_values = self.topo_sorted_values();
 
         let best = &mut self.value_to_best_value;
@@ -435,6 +438,7 @@ impl<'a> Elaborator<'a> {
             // *any* e-node in the e-class. At worst we will produce suboptimal
             // code, but never an incorrectness.
         }
+        sorted_values
     }
 
     /// Elaborate use of an eclass, inserting any needed new
@@ -879,6 +883,11 @@ impl<'a> Elaborator<'a> {
             let before = first_branch.unwrap_or(inst);
             trace!(" -> inserting before {}", before);
 
+            let start = self.recurrence_placements.partition_point(|(point, _)| *point < inst);
+            let end = start + self.recurrence_placements[start..].partition_point(|(point, _)| *point == inst);
+            for index in start..end {
+                self.elaborate_eclass_use(self.recurrence_placements[index].1, before);
+            }
             elab_values.extend(self.func.dfg.inst_values(inst));
             for arg in elab_values.iter_mut() {
                 trace!(" -> arg {}", *arg);
@@ -999,29 +1008,98 @@ impl<'a> Elaborator<'a> {
         }
     }
 
-    /// Quench: identify scalar recurrences from SSA backedge bindings once.
-    /// Constants and unrelated address expressions retain the normal policy.
-    fn retain_loop_carried_values(&mut self) {
+    /// The latest skeleton point dominating both uses. When the uses are
+    /// siblings, computation belongs before their common ancestor's branch.
+    fn common_use(&self, a: Inst, b: Inst) -> Inst {
+        if self.domtree.dominates(a, b, &self.func.layout) { return a; }
+        if self.domtree.dominates(b, a, &self.func.layout) { return b; }
+        let mut block = self.func.layout.inst_block(a).unwrap();
+        let other = self.func.layout.inst_block(b).unwrap();
+        while !self.domtree.block_dominates(block, other) {
+            block = self.domtree.idom(block).expect("reachable uses share the entry dominator");
+        }
+        self.func.layout.block_insts(block)
+            .find(|inst| self.func.dfg.insts[*inst].opcode().is_branch())
+            .unwrap_or_else(|| self.func.layout.last_inst(block).unwrap())
+    }
+
+    /// Propagate skeleton demand through the selected pure DAG once. A result's
+    /// placement serves all its users, including encoding trees around stores.
+    fn common_uses(&self, sorted_values: &[Value]) -> SecondaryMap<Value, PackedOption<Inst>> {
+        let mut uses = SecondaryMap::<Value, PackedOption<Inst>>::new();
+        let add = |uses: &mut SecondaryMap<Value, PackedOption<Inst>>, value: Value, point: Inst| {
+            let best = self.value_to_best_value[value].1;
+            uses[best] = Some(uses[best].expand().map_or(point, |known| self.common_use(known, point))).into();
+        };
+        for block in self.func.layout.blocks().filter(|block| self.domtree.is_reachable(*block)) {
+            let mut first_branch = None;
+            for inst in self.func.layout.block_insts(block) {
+                if self.func.dfg.insts[inst].opcode().is_branch() { first_branch.get_or_insert(inst); }
+                let point = first_branch.unwrap_or(inst);
+                for value in self.func.dfg.inst_values(inst) { add(&mut uses, value, point); }
+            }
+        }
+        for &value in sorted_values.iter().rev() {
+            let best = self.value_to_best_value[value].1;
+            let Some(point) = uses[best].expand() else { continue; };
+            if let ValueDef::Result(inst, _) = self.func.dfg.value_def(best)
+                && self.func.layout.inst_block(inst).is_none() {
+                for input in self.func.dfg.inst_values(inst) { add(&mut uses, input, point); }
+            }
+        }
+        uses
+    }
+
+    /// Retain a scalar update at the common use of its store and backedge,
+    /// rather than cloning it in sibling dominator scopes. Its pure DAG may
+    /// depend on loop-local inputs, including join parameters; every opaque input must
+    /// already exist at the proposed point. No effect or trapping operation moves.
+    fn retain_loop_carried_values(&mut self, sorted_values: &[Value]) {
+        if self.loop_analysis.loops().next().is_none() { return; }
+        let uses = self.common_uses(sorted_values);
+        let mut seen = EntitySet::<Value>::new();
+        let mut pending = SmallVec::<[Value; 8]>::new();
         for block in self.func.layout.blocks() {
             let Some(terminator) = self.func.layout.last_inst(block) else { continue; };
             for edge in self.func.dfg.insts[terminator].branch_destination(
                 &self.func.dfg.jump_tables, &self.func.dfg.exception_tables,
             ) {
                 let header = edge.block(&self.func.dfg.value_lists);
-                if self.loop_analysis.is_loop_header(header).is_none()
-                    || !self.domtree.block_dominates(header, block) {
-                    continue;
-                }
-                for (&parameter, argument) in self.func.dfg.block_params(header).iter()
-                    .zip(edge.args(&self.func.dfg.value_lists)) {
+                let Some(lp) = self.loop_analysis.is_loop_header(header) else { continue; };
+                if !self.domtree.block_dominates(header, block) { continue; }
+                for argument in edge.args(&self.func.dfg.value_lists) {
                     let Some(argument) = argument.as_value() else { continue; };
-                    if !is_rematerialized(self.remat_values, &self.loop_carried_values,
-                        &self.value_to_best_value, argument) { continue; }
                     let best = self.value_to_best_value[argument].1;
                     let ValueDef::Result(inst, _) = self.func.dfg.value_def(best) else { continue; };
-                    if self.func.dfg.inst_values(inst)
-                        .any(|input| self.value_to_best_value[input].1 == parameter) {
-                        self.loop_carried_values.insert(best);
+                    if !is_pure_for_egraph(self.func, inst) { continue; }
+                    let Some(point) = uses[best].expand() else { continue; };
+                    let point_block = self.func.layout.inst_block(point).unwrap();
+                    seen.clear();
+                    pending.clear();
+                    pending.push(best);
+                    let mut depends_on_loop = false;
+                    let mut available = true;
+                    while let Some(value) = pending.pop() {
+                        let value = self.value_to_best_value[value].1;
+                        if !seen.insert(value) { continue; }
+                        match self.func.dfg.value_def(value) {
+                            ValueDef::Param(owner, _) => {
+                                depends_on_loop |= self.loop_analysis.is_in_loop(owner, lp);
+                                available &= self.domtree.block_dominates(owner, point_block);
+                            }
+                            ValueDef::Result(input, _) if self.func.layout.inst_block(input).is_none() => {
+                                pending.extend(self.func.dfg.inst_values(input));
+                            }
+                            ValueDef::Result(input, _) => {
+                                depends_on_loop |= self.loop_analysis.is_in_loop(self.func.layout.inst_block(input).unwrap(), lp);
+                                available &= input != point && self.domtree.dominates(input, point, &self.func.layout);
+                            }
+                            ValueDef::Union(..) => unreachable!("best values are not unions"),
+                        }
+                        if !available { break; }
+                    }
+                    if available && depends_on_loop && self.loop_carried_values.insert(best) {
+                        self.recurrence_placements.push((point, best));
                     }
                 }
             }
@@ -1031,8 +1109,9 @@ impl<'a> Elaborator<'a> {
     pub(crate) fn elaborate(&mut self) {
         self.stats.elaborate_func += 1;
         self.stats.elaborate_func_pre_insts += self.func.dfg.num_insts() as u64;
-        self.compute_best_values();
-        self.retain_loop_carried_values();
+        let sorted_values = self.compute_best_values();
+        self.retain_loop_carried_values(&sorted_values);
+        self.recurrence_placements.sort_unstable();
         self.compute_heights();
         self.elaborate_domtree(&self.domtree);
         self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;

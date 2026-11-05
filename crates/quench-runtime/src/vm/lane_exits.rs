@@ -6,6 +6,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static EXITS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static REPORT: std::sync::Once = std::sync::Once::new();
+
+pub(super) enum CaptureEvent { LaneHit, LaneMiss, WalkHit, WalkMiss }
+
+impl CaptureEvent {
+    fn counter(&self) -> (&'static str, &'static AtomicU64) {
+        static LANE_HIT: AtomicU64 = AtomicU64::new(0);
+        static LANE_MISS: AtomicU64 = AtomicU64::new(0);
+        static WALK_HIT: AtomicU64 = AtomicU64::new(0);
+        static WALK_MISS: AtomicU64 = AtomicU64::new(0);
+        match self {
+            Self::LaneHit => ("lane_outer_hit", &LANE_HIT),
+            Self::LaneMiss => ("lane_outer_miss", &LANE_MISS),
+            Self::WalkHit => ("vm_walk_hit", &WALK_HIT),
+            Self::WalkMiss => ("vm_walk_miss", &WALK_MISS),
+        }
+    }
+}
+
+pub(super) fn capture(event: CaptureEvent) {
+    event.counter().1.fetch_add(1, Ordering::Relaxed);
+    REPORT.call_once(|| {
+        // SAFETY: report has process lifetime and the C atexit signature.
+        unsafe { libc::atexit(report) };
+    });
+}
 /// Opcodes the report lists, most frequent first.
 const REPORTED_OPCODES: usize = 30;
 /// Detail lines reported, most frequent first.
@@ -124,6 +149,10 @@ pub(super) fn record(op: Op) {
 }
 
 extern "C" fn report() {
+    for event in [CaptureEvent::LaneHit, CaptureEvent::LaneMiss, CaptureEvent::WalkHit, CaptureEvent::WalkMiss] {
+        let (name, counter) = event.counter();
+        eprintln!("capture {name}: {}", counter.load(Ordering::Relaxed));
+    }
     const CALL_ELIGIBILITY_NAMES: [&str; 6] = [
         "positive_cache_hit",
         "positive_resolution",

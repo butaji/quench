@@ -175,11 +175,32 @@ macro_rules! layout_accessors {
             }
 
             /// The register this instruction writes, for an op whose A field is a result
-            /// register; `None` for an op whose A field holds something else.
+            /// register; `None` when A holds something else, including a numeric
+            /// result stored directly into a local rather than a register.
             #[allow(dead_code)]
             pub(crate) fn defined_register(self) -> Option<Register> {
-                (self.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister)
+                (self.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
+                    && !self.writes_numeric_local())
                     .then(|| self.a() & REGISTER_MASK)
+            }
+
+            /// Register outputs described by the operand layout. Numeric-local
+            /// results live in a different index space; optional outputs use
+            /// their decoded register, not the biased field encoding.
+            #[allow(dead_code)]
+            pub(crate) fn written_registers(self) -> impl Iterator<Item = Register> {
+                InstructionField::ALL.iter().copied().filter_map(move |field| {
+                    let layout = self.op().field_layout(field);
+                    match layout {
+                        FieldLayout::ResultRegister => self.defined_register(),
+                        FieldLayout::OptionalRegister => {
+                            debug_assert_eq!(field, InstructionField::B, "optional outputs use field B's biased encoding");
+                            self.optional_register_b()
+                        }
+                        _ if layout.writes_register() => Some(self.field_value(field)),
+                        _ => None,
+                    }
+                })
             }
 
             pub(crate) fn result_flags(self) -> Register {

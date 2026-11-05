@@ -3,8 +3,8 @@
 //! user code runs, so a script's mutation of an intrinsic never reaches builtin loading and a
 //! builtin can be built on first use instead of at startup.
 //!
-//! Properties are read from their shape slots, so recording and comparing allocate nothing; a
-//! key becomes a JavaScript value only when a property actually has to be redefined. A holder is
+//! Properties are read from their shape slots; single-property queries use the canonical layout
+//! lookup. A key becomes a JavaScript value only when a property has to be redefined. A holder is
 //! recorded as its shape and slot values: the shape already names each property's key, slot and
 //! attributes, so the snapshot costs one value per property, and a holder still in that shape
 //! with those values compares without lookups.
@@ -80,16 +80,14 @@ impl<H: Host> Vm<H> {
     /// This also works after a script makes its replacement non-configurable.
     pub(crate) fn startup_data_property(&self, holder: Value, name: &str) -> Option<Value> {
         let key = PropertyKey::string(self.lookup_atom(name)?);
-        let index = self
+        let sealed = self
             .startup_intrinsics
             .holders
             .iter()
-            .position(|sealed| sealed.holder == holder)?;
-        let (_, original) = self
-            .sealed_properties(index)
-            .into_iter()
-            .find(|(sealed_key, _)| *sealed_key == key)?;
-        (!original.attributes.accessor).then_some(original.value)
+            .find(|sealed| sealed.holder == holder)?;
+        let slot = self.property_shape_slot(sealed.shape, key)?;
+        let attributes = self.shape_slot_attributes(sealed.shape, slot)?;
+        (!attributes.accessor).then(|| sealed.values.get(slot).copied().unwrap_or(Value::UNDEFINED))
     }
 
     pub(crate) fn has_startup_global_name(&self, name: &str) -> bool {
@@ -99,13 +97,8 @@ impl<H: Host> Vm<H> {
         self.startup_intrinsics
             .holders
             .iter()
-            .filter(|holder| holder.holder == self.realm.globals)
-            .any(|holder| {
-                super::gc::active_shape_attributes(&self.shapes, holder.shape)
-                    .into_iter()
-                    .flatten()
-                    .any(|(key, _)| key == PropertyKey::string(atom))
-            })
+            .find(|holder| holder.holder == self.realm.globals)
+            .is_some_and(|holder| self.shape_slot(holder.shape, atom).is_some())
     }
 
     /// Values the snapshot keeps alive: holders, their sealed values, the symbol keys and

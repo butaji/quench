@@ -255,6 +255,7 @@ pub use lower::*;
 pub mod vcode;
 pub use vcode::*;
 pub mod compile;
+mod spill_copies;
 pub use compile::*;
 pub mod blockorder;
 pub use blockorder::*;

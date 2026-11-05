@@ -42,7 +42,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use super::typed_ir::{BindingTime, Fact as ValueFact, Projection, Proof, Representation, Type, VerifiedFact};
-use super::{NativeFieldLoad, object_slots::{CheckedObject, ObjectHeader, PackedAccess}};
+use super::{NativeFieldLoad, object_slots::{CheckedObject, CheckedObjectTable, ObjectHeader, PackedAccess}};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 /// The most iterations an innermost nested counted loop's proved copy runs between its
@@ -268,6 +268,12 @@ impl LoopRegion {
 
     pub(crate) fn writes_fields(&self) -> bool {
         !self.field_store_sites.is_empty() || !self.dynamic_field_stores.is_empty()
+    }
+
+    /// The write contract checked by typed verification and admitted before pointer exposure.
+    pub(crate) fn field_store_type(&self, store: &FieldStore) -> Type {
+        if self.fields.iter().any(|field| store.matches(field)) { Type::NUMBER }
+        else { Type::ANY }
     }
 
     /// An entry-pinned own Number field whose writes update its SSA cell.
@@ -2805,9 +2811,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     }
     if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField) {
         let store = region.field_stores.get(&(offset as u32)).map(|index| &region.field_store_sites[*index]);
-        let expected = if store.is_some_and(|store| region.fields.iter().any(|field| store.matches(field))) {
-            Type::NUMBER
-        } else { Type::ANY };
+        let expected = store.map_or(Type::ANY, |store| region.field_store_type(store));
         reads.push((instruction.register_a(), expected));
     }
     reads
@@ -4351,6 +4355,9 @@ struct Lowering<'a, 'b> {
     /// The entry words' address, which hot reads use; a cold path reloads it
     /// (`cold_word`), so a loop holds a register for it only where a hot read needs it.
     entry: ir::Value,
+    /// The entry record fixes this reservation for the run; admit it once before
+    /// any effects. Individual receivers still require range and layout proofs.
+    object_table: Option<CheckedObjectTable>,
     /// Count the region's taken backedges only for the opt-in shared-tier admission path.
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
@@ -4660,6 +4667,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             registers,
             scratch: None,
             entry,
+            object_table: None,
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
             elements: std::collections::BTreeMap::new(),
@@ -5206,6 +5214,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Unboxes every Number register and capture in its representation, entering only when
     /// all hold such values.
     fn enter(&mut self) -> Option<()> {
+        if self.observation.native_field_loads.iter().any(|loads| !loads.is_empty()) {
+            let base = self.word(self.region.native_heap_word());
+            let otherwise = self.not_entered(None);
+            self.object_table = Some(CheckedObjectTable::prove(&mut self.body.builder, base, otherwise));
+        }
         let fields_start = ENTRY_CAPTURES + self.region.captures.len();
         let arrays_start = fields_start + self.region.fields.len();
         self.resident = Resident::of(self.region, &self.counted, arrays_start);
@@ -5813,7 +5826,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             return Some(object);
         }
         let heap_base = self.region.native_heap_word();
-        let object_base = self.word(heap_base);
+        let object_base = self.object_table?;
         let exit = self.exit_block(pc);
         let header = ObjectHeader::prove(&mut self.body.builder, receiver, object_base, None, exit);
         self.chains.insert(self.body.builder.current_block().expect("object header"), chain);
@@ -5823,7 +5836,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let length = self.word(heap_base + 2);
         let exit = self.exit_block(pc);
         let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-        let checked = CheckedObject::prove(&mut self.body.builder, header.record, header.inline, base, length,
+        let record = header.record.address(&mut self.body.builder);
+        let checked = CheckedObject::prove(&mut self.body.builder, record, header.inline, base, length,
             load, access, exit)?;
         let current = self.body.builder.current_block().expect("checked projection");
         self.chains.insert(current, chain);
@@ -5849,7 +5863,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             if loads.iter().any(|load| !load.valid()) { return None; }
             let chain = self.chain(self.body.builder.current_block().expect("field projection"));
             let heap_base = self.region.native_heap_word();
-            let records = self.word(heap_base);
+            let records = self.object_table?;
             let exit = self.exit_block(pc);
             let header = ObjectHeader::prove(&mut self.body.builder, receiver, records, None, exit);
             let base = self.word(heap_base + 1);
@@ -5864,7 +5878,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(matched);
                 self.body.builder.seal_block(matched);
                 let access = if self.region.dynamic_field_stores.is_empty() { PackedAccess::Snapshot } else { PackedAccess::Reload };
-                let object = CheckedObject::prove(&mut self.body.builder, header.record, header.inline,
+                let record = header.record.address(&mut self.body.builder);
+                let object = CheckedObject::prove(&mut self.body.builder, record, header.inline,
                     base, length, *load, access, exit)?;
                 let value = object.read(&mut self.body.builder, load.slot);
                 self.body.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
@@ -6457,8 +6472,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// The exact `i32` sum or difference of `left` and `right`, computed on their sign
-    /// extensions: its 64 bits are the result's own sign extension, which the views it is
-    /// written to store (`Body::read`) and an element access keyed by it scales.
+    /// extensions: its 64 bits are the result's own sign extension, reusable by
+    /// an immediate element access without widening the stored arithmetic view.
     fn exact_int32(&mut self, operator: NumberArithmetic, left: ir::Value, right: ir::Value) -> ir::Value {
         let (left, right) = (self.sign_extended(left), self.sign_extended(right));
         let wide = match operator {
@@ -7218,7 +7233,7 @@ mod tests {
         assert_eq!(region.fields.len(), 2);
         for storage in [Some(crate::heap::PlainPropertyStorage::Arena),
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
-            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
+            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad { target_shape: None,
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
                 storage, ty: Type::ANY,
             }]).collect();
@@ -7237,6 +7252,54 @@ mod tests {
                         && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32
                 }).count();
             assert_eq!(shape_loads, 1, "two fields of one receiver must share the layout proof:\n{native}");
+            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
+            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&native, &cfg);
+            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+            loops.compute(&native, &cfg, &dom);
+            let entry = native.dfg.block_params(native.layout.entry_block().unwrap())[3];
+            let mut table_loads = 0;
+            for block in native.layout.blocks() {
+                for instruction in native.layout.block_insts(block) {
+                    if let ir::InstructionData::Load { arg, offset, .. } = native.dfg.insts[instruction]
+                        && arg == entry && i32::from(offset) == region.native_heap_word() as i32 * WORD_BYTES {
+                        table_loads += 1;
+                        assert!(loops.innermost_loop(block).is_none(), "table admission must precede the loop: {native}");
+                    }
+                }
+            }
+            assert_eq!(table_loads, 1, "one table reservation admission per run: {native}");
+        }
+    }
+
+    #[test]
+    fn field_pointer_domains_follow_verified_mutable_cell_contracts() {
+        for (source, expected) in [
+            ("function subject(box,n,value) { for(let i=0;i<n;i++) box.value += value; }", Type::NUMBER),
+            ("function subject(box,n,value) { for(let i=0;i<n;i++) box.value = value; }", Type::ANY),
+        ] {
+            let program = crate::Engine::specialize(source, "field-write-domain.js").unwrap();
+            let function = program.function(1);
+            let instructions: Vec<_> = function.instructions().collect();
+            let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
+                (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
+                    .then(|| (pc as u32, instruction.jump_target()))).unwrap();
+            let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
+                crate::bytecode::Constant::Number(value) => Value::number(*value),
+                _ => Value::UNDEFINED,
+            }).collect();
+            let region = region(function, &instructions, &constants, &program.field_sites,
+                program.shared_register_root_masks(1), header, backedge).unwrap();
+            let verified = verify_unprofiled(&region).unwrap();
+            assert_eq!(region.field_store_sites.len(), 1);
+            assert_eq!(region.field_store_type(&region.field_store_sites[0]), expected);
+            for (&offset, &index) in &region.field_stores {
+                let instruction = region.instructions[offset as usize];
+                let definition = verified.webs.checked_read(&region, header + offset, instruction.register_a()).unwrap();
+                let fact = verified.values[definition].unwrap();
+                assert!(fact.ty.is_subtype(region.field_store_type(&region.field_store_sites[index])));
+                if expected == Type::NUMBER { assert_ne!(fact.representation, Representation::Tagged); }
+                else { assert_eq!(fact.ty, Type::ANY); }
+            }
         }
     }
 

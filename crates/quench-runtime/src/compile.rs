@@ -64,6 +64,7 @@ pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
+mod object_registers;
 pub(crate) mod regexp;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
@@ -2196,6 +2197,7 @@ fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: im
 /// The program tables a function's lowering reads, final once every function's rewrites
 /// have added their sites: at load the compiler's, after it the finished program's.
 pub(crate) struct LoweringTables<'t> {
+    pub(crate) object_sites: &'t [ObjectSite],
     pub(crate) methods: &'t dyn liveness::MethodArguments,
     pub(crate) field_sites: &'t [FieldSite],
     pub(crate) superinstructions: &'t [crate::bytecode::Superinstruction],
@@ -2211,7 +2213,7 @@ pub(crate) fn lower_settled<'a>(
     tables: &LoweringTables<'_>,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
-    let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant } = *tables;
+    let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
         let live = liveness::analyze(function, methods, field_sites, superinstructions);
         numeric::apply(function, live.as_deref());
@@ -2223,6 +2225,7 @@ pub(crate) fn lower_settled<'a>(
     frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
     if specialized {
         rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+        object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
     if function
         .code
@@ -3404,6 +3407,7 @@ impl<'a> Compiler<'a> {
                         lower_settled(
                             &mut function,
                             &LoweringTables {
+                                object_sites: self.object_sites.as_slice(),
                                 methods: self.method_arguments(),
                                 field_sites: self.field_sites.as_slice(),
                                 superinstructions: self.superinstructions.as_slice(),
@@ -4347,6 +4351,7 @@ impl<'a> Compiler<'a> {
         lower_settled(
             function,
             &LoweringTables {
+                object_sites: self.object_sites.as_slice(),
                 methods: self.method_arguments(),
                 field_sites: self.field_sites.as_slice(),
                 superinstructions: self.superinstructions.as_slice(),

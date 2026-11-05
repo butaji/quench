@@ -106,9 +106,9 @@ impl Snap for property_key::PropertyKey {
     }
 }
 
-crate::snapshot::snap_struct!(PropertyAttributes { writable, enumerable, configurable, accessor, getter, setter });
-crate::snapshot::snap_struct!(ShapeAttributes { writable, enumerable, configurable, accessor, accessors });
-crate::snapshot::snap_struct!(DataAttributes { writable, enumerable, configurable });
+crate::snapshot::snap_struct!(PropertyAttributes { [writable, enumerable, configurable, accessor]; getter, setter });
+crate::snapshot::snap_struct!(ShapeAttributes { [writable, enumerable, configurable, accessor]; accessors });
+crate::snapshot::snap_struct!(DataAttributes { [writable, enumerable, configurable]; });
 crate::snapshot::snap_struct!(GlobalLexicalState { declarations, bindings, immutable_bindings });
 crate::snapshot::snap_struct!(ParkedRealm { global, state, prototypes });
 crate::snapshot::snap_struct!(ArgumentsObjectTemplate { anchor, length_slot, callee_slot, iterator_slot });
@@ -423,7 +423,6 @@ impl<H: Host> Vm<H> {
             // Resolutions are the process's (its files), not the snapshot's.
             resolved_module_requests: _,
             resolved_module_names: _,
-            host_beside_activations: _,
         } = self;
         let Realm {
             globals,
@@ -529,10 +528,35 @@ impl<H: Host> Vm<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<ResidualProgram> {
+        self.restore_snapshot_state(bytes, None, read_host)?;
+        let main = self.rebased_entry(entry)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_entry");
+        self.install_restored_main(Rc::new(main.clone()));
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_ready");
+        Ok(main)
+    }
+
+    pub(super) fn restore_snapshot_state(
+        &mut self,
+        bytes: crate::KeptBytes,
+        native: Option<&ResidualProgram>,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> SnapshotResult<()> {
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_restore_begin");
         let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
         self.specialized = reader.bool()?;
-        self.read_atoms(&mut reader)?;
+        if native.is_some_and(|program| program.specialized != self.specialized) {
+            return Err(SnapshotError("native script specialization does not match runtime".into()));
+        }
+        self.read_atoms(&mut reader, native.map(|program| &program.atoms))?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_atoms");
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_heap");
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
@@ -550,8 +574,14 @@ impl<H: Host> Vm<H> {
         self.atom_strings = Snap::unsnap(&mut reader)?;
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_realm");
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_programs");
         self.read_shapes(&mut reader)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_shapes");
         self.symbol_registry = Snap::unsnap(&mut reader)?;
         self.well_known_symbols = Snap::unsnap(&mut reader)?;
         self.length_atom = reader.u32()?;
@@ -581,27 +611,43 @@ impl<H: Host> Vm<H> {
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;
-        let main = self.rebased_entry(entry)?;
-        self.programs.install_main(Rc::new(main.clone()));
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_host");
+        Ok(())
+    }
+
+    pub(super) fn install_restored_main(&mut self, main: Rc<ResidualProgram>) {
+        self.programs.install_main(main.clone());
         self.rebuild_program_cache_layouts();
         self.keep_slot_representations();
         self.materialize_program_constants(ProgramId::MAIN, &main);
         self.set_active_program(ProgramId::MAIN);
-        Ok(main)
     }
 
     /// The atom sequence `write_snapshot` wrote: the base table, then each appended name, which
     /// the VM indexes again as it appends them.
-    fn read_atoms(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
+    fn read_atoms(&mut self, reader: &mut Reader<'_>, native: Option<&AtomTable>) -> SnapshotResult<()> {
         let base = reader.len()?;
-        let mut text = String::new();
-        let mut ends = Vec::with_capacity(base);
-        for _ in 0..base {
-            text.push_str(reader.str()?);
-            ends.push(u32::try_from(text.len()).map_err(|_| SnapshotError("snapshot atom text exceeds u32".into()))?);
-        }
+        self.atom_text = if let Some(atoms) = native {
+            if atoms.len() != base {
+                return Err(SnapshotError("native script atom IDs do not match runtime namespace".into()));
+            }
+            for name in atoms.iter() {
+                if reader.str()? != name {
+                    return Err(SnapshotError("native script atom IDs do not match runtime namespace".into()));
+                }
+            }
+            atoms.clone()
+        } else {
+            let mut text = String::new();
+            let mut ends = Vec::with_capacity(base);
+            for _ in 0..base {
+                text.push_str(reader.str()?);
+                ends.push(u32::try_from(text.len()).map_err(|_| SnapshotError("snapshot atom text exceeds u32".into()))?);
+            }
+            AtomTable::new(text, ends)
+        };
         let appended = reader.len()?;
-        self.atom_text = AtomTable::new(text, ends);
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         // Sized for every atom at once: growing would hash every name again.
         self.atoms = hashbrown::HashTable::with_capacity(base + appended);
@@ -649,16 +695,12 @@ impl<H: Host> Vm<H> {
         }
         self.shape_constructors = Snap::unsnap(reader)?;
         self.shape_accessors = Snap::unsnap(reader)?;
-        let children = reader.u32s()?;
+        let children = reader.u32_iter()?;
         self.transitions = shape_transitions::ShapeTransitionIndex::with_capacity(children.len());
         for child in children {
-            let indexed = self.shapes.get(child as usize).is_some_and(|shape| {
-                shape_transitions_origin_key(&self.shapes, shape).is_some()
-            });
-            if !indexed {
+            if !self.transitions.try_insert_child(&self.shapes, child) {
                 return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
-            self.transitions.insert_child(&self.shapes, child);
         }
         Ok(())
     }
@@ -725,19 +767,94 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// Whether `shape`'s transition is one the transition index caches.
-fn shape_transitions_origin_key(shapes: &[Shape], shape: &Shape) -> Option<ShapeTransitionKey> {
-    match (shape.transition, shape.parent()) {
-        (ShapeTransition::Dictionary { .. }, Some(parent)) => shapes[parent as usize].transition.cache_key(),
-        (transition, _) => transition.cache_key(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{Engine, Host, NativeContext, RootId, RootedError, Runtime};
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_loop_calls_return_their_integer_state_with_a_captured_constant() {
+        let body = r#"
+            const feedback = 0xD008;
+            function state(n, seed) {
+                n |= 0; let x = seed | 0;
+                for (let i = 0; i < n; i = (i + 1) | 0) {
+                    if ((x & 1) === 0) x = x >> 1;
+                    else x = (x >> 1) ^ feedback;
+                }
+                return x | 0;
+            }
+            for (let warm = 0; warm < 64; warm++) state(1, warm);
+            const args = ['-1', '0', '123456789', '1', '17'];
+            print(state(Number(args[0]), Number(args[1])));
+            print(state(Number(args[1]), Number(args[2])));
+            print(state(Number(args[3]), Number(args[2])));
+            print(state(Number(args[4]), Number(args[2])));
+        "#;
+        let method = format!("const sink = {{ log: print }}; {}", body.replace("print(state(", "sink.log(state("));
+        for source in [body.to_owned(), format!("(function () {{ {body} }})();"), format!("(function () {{ {method} }})();")] {
+            let program = Engine::specialize(&source, "native-loop-result.js").unwrap();
+            let mut expected = Runtime::new(crate::test_host::TestHost::default());
+            expected.set_execution_mode(crate::ExecutionMode::Interpreted);
+            expected.execute(&program).unwrap();
+            let expected = expected.host_mut().lines().to_vec();
+            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let mut builder = Runtime::new(crate::test_host::TestHost::default());
+            let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
+            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+            runtime.execute_native_from_snapshot(Rc::new(bytes), &native, |_, _| Ok(())).unwrap();
+            assert_eq!(runtime.host_mut().lines().to_vec(), expected, "{source}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_bootstrap_preserves_static_namespace_and_retains_code_for_jobs() {
+        let program = Engine::specialize(r#"
+            function fold(n, x) { for (let i = 0; i < n; i++) x = (x ^ (x << 3)) | 0; return x; }
+            print(fold(17, 7));
+            Promise.resolve(9).then(value => print(value));
+        "#, "native-bootstrap.js").unwrap();
+        let mut builder = Runtime::new(crate::test_host::TestHost::default());
+        let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+        let mut expected = Runtime::new(crate::test_host::TestHost::default());
+        expected.execute(&program).unwrap();
+        let expected = expected.host_mut().lines().to_vec();
+        for mode in [crate::ExecutionMode::Compiled, crate::ExecutionMode::NativeOnly] {
+            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
+            runtime.set_execution_mode(mode);
+            runtime.execute_native_from_snapshot(Rc::new(bytes.clone()), &native, |_, _| Ok(())).unwrap();
+            let program = native.residual().clone();
+            drop(native);
+            runtime.run_host_jobs(&program).unwrap();
+            assert_eq!(&*runtime.host_mut().lines(), &expected);
+            assert_eq!(runtime.native_execution_rejections(), 0);
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_bootstrap_rejects_namespace_or_specialization_mismatch_before_entry() {
+        let program = Engine::specialize("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap();
+        let mut builder = Runtime::new(crate::test_host::TestHost::default());
+        let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+        for (foreign, message) in [
+            (Engine::specialize("function foreign() { print('effect'); } foreign();", "foreign.js").unwrap(), "atom IDs"),
+            (Engine::specialize("function foreign(argument) { print(extra); } foreign();", "foreign.js").unwrap(), "atom IDs"),
+            (Engine::specialize_unspecialized("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap(), "specialization"),
+        ] {
+            let native = crate::NativeJsProgram::compile_eager(foreign).unwrap();
+            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
+            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+            let error = runtime.execute_native_from_snapshot(Rc::new(bytes.clone()), &native, |_, _| Ok(())).unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+            assert!(runtime.host_mut().lines().is_empty());
+        }
+    }
 
     /// Global code a host runs while installing: what a snapshot keeps.
     const SETUP: &str = r#"

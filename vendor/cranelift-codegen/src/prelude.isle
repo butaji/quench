@@ -383,7 +383,7 @@
 (extern constructor intcc_swap_args intcc_swap_args)
 
 ;; Complement an IntCC flag.
-(decl intcc_complement (IntCC) IntCC)
+(decl pure intcc_complement (IntCC) IntCC)
 (extern constructor intcc_complement intcc_complement)
 
 ;; This is a direct import of `IntCC::without_equal`.

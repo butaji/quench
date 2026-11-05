@@ -12,12 +12,16 @@ pub use vm::NativeFaultHandler;
 mod bigint;
 mod bytecode;
 mod compile;
+mod code_dependencies;
 mod heap;
 mod host;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;
 mod module_identity;
 mod number_to_string;
+#[cfg(all(test, feature = "bench-primitives"))]
+#[path = "../benches/support/number_inputs.rs"]
+mod number_inputs;
 mod profile;
 mod snapshot;
 mod typed_ir;
@@ -64,7 +68,7 @@ const _: fn() = || {
 mod api;
 pub use api::{
     CollectionContext,
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot, IntactBuiltin,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule, ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,

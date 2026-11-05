@@ -125,6 +125,8 @@ pub trait Host {
     /// may call it while its frameless activations stay frameless: each of those first makes
     /// them frames (`Vm::materialize_deferred_lane`). A host function that reads frames any
     /// other way (source positions, callers) must answer `false`, as the default does.
+    /// Read this proof from operation metadata in constant time; the VM keeps no separate
+    /// per-instance copy of the host's declared policy.
     fn host_function_runs_beside_activations(&self, _index: usize) -> bool {
         false
     }
@@ -247,6 +249,25 @@ pub trait Host {
         Self: Sized,
     {
         &[]
+    }
+
+    /// Metadata and callback projections share stable indices. Every index below
+    /// this count must have a descriptor. Split catalogs may override these
+    /// operations without constructing a combined address table.
+    fn function_count(&self) -> usize where Self: Sized {
+        self.functions().len()
+    }
+
+    fn function_descriptor(&self, index: usize) -> Option<crate::HostFunctionDescriptor>
+    where Self: Sized {
+        self.functions().get(index).map(|binding| crate::HostFunctionDescriptor {
+            name: binding.name, length: binding.length, global: binding.global,
+        })
+    }
+
+    fn function_callback(&self, index: usize) -> Option<crate::HostCallback<Self>>
+    where Self: Sized {
+        self.functions().get(index).map(|binding| binding.call)
     }
 
     /// Install host-owned objects after shared intrinsics and native globals,

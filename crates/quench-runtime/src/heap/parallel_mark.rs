@@ -84,7 +84,7 @@ unsafe impl Send for ParallelMarkView<'_> {}
 unsafe impl Sync for ParallelMarkView<'_> {}
 
 /// What one worker marked and what it left for the collector (see the module documentation).
-#[derive(Default)]
+#[cfg_attr(not(feature = "profile-aggregate"), derive(Default))]
 struct ParallelMarkBatch {
     /// Shape roots, as `(owner, shape, prototype)`, without a shareable trace.
     object_roots: Vec<(Value, u32, bool)>,
@@ -102,6 +102,20 @@ struct ParallelMarkBatch {
     marked_kinds: [u64; CellKind::COUNT],
 }
 
+#[cfg(feature = "profile-aggregate")]
+impl Default for ParallelMarkBatch {
+    fn default() -> Self {
+        Self {
+            object_roots: Vec::new(),
+            closures: Vec::new(),
+            environments: Vec::new(),
+            ephemeron_owners: Vec::new(),
+            work_items: 0,
+            max_worklist: 0,
+            marked_kinds: [0; CellKind::COUNT],
+        }
+    }
+}
 
 impl ParallelMarkBatch {
     /// Counts a value of `kind` newly marked, as the serial mark counts it.

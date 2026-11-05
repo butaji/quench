@@ -8,6 +8,11 @@
 
 use crate::{Value, ValueType};
 
+mod int_range;
+mod slot_type;
+pub(crate) use slot_type::SlotType;
+pub(crate) use int_range::IntRange;
+
 /// Whether residual execution can export ownership or enter another guest activation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reentry { Closed, Possible }
@@ -28,8 +33,11 @@ pub(crate) enum BindingTime {
 enum TypeKind {
     Language(u16),
     Int32,
-    DirectObjectShape(u32),
+    DirectObjectFamily,
+    NullableDirectObjectFamily(u16),
+    DirectObjectShape { shape: u32, nullish: u16 },
     FunctionIdentity(Value),
+    FunctionBody(u32),
 }
 
 /// A set of language types, with an optional semantic refinement.
@@ -40,8 +48,13 @@ pub(crate) struct Type(TypeKind);
 impl Type {
     pub(crate) const NEVER: Self = Self(TypeKind::Language(0));
     pub(crate) const ANY: Self = Self(TypeKind::Language(u16::MAX));
+    pub(crate) const NULLISH: Self = Self(TypeKind::Language(
+        (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     pub(crate) const INT32: Self = Self(TypeKind::Int32);
+    /// The canonical direct-object tag only: no object-table range, base,
+    /// shape or storage permission follows from this refinement.
+    pub(crate) const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
     /// Internal control discriminant emitted by the typeof-test rewrite.
     pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));
 
@@ -53,8 +66,10 @@ impl Type {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
             TypeKind::Int32 => 1 << ValueType::Number as u16,
-            TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
-            TypeKind::FunctionIdentity(_) => 1 << ValueType::Function as u16,
+            TypeKind::DirectObjectFamily => 1 << ValueType::Object as u16,
+            TypeKind::DirectObjectShape { nullish, .. } => (1 << ValueType::Object as u16) | nullish,
+            TypeKind::NullableDirectObjectFamily(nullish) => (1 << ValueType::Object as u16) | nullish,
+            TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => 1 << ValueType::Function as u16,
         }
     }
 
@@ -63,13 +78,47 @@ impl Type {
     /// This fact lasts only within a layout-preserving, no-safepoint region;
     /// feedback alone and canonical tagged bits cannot establish it.
     pub(crate) const fn direct_object(shape: u32) -> Self {
-        Self(TypeKind::DirectObjectShape(shape))
+        Self(TypeKind::DirectObjectShape { shape, nullish: 0 })
+    }
+
+    pub(crate) const fn is_direct_object_family(self) -> bool {
+        matches!(self.0, TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape { nullish: 0, .. })
+    }
+
+    /// Nullish alternatives of a refined direct-object union. This never
+    /// implies record range, heap ownership, shape or physical storage.
+    fn direct_family_nullish(self) -> Option<u16> {
+        match self.0 {
+            TypeKind::DirectObjectFamily => Some(0),
+            TypeKind::DirectObjectShape { nullish, .. } => Some(nullish),
+            TypeKind::NullableDirectObjectFamily(nullish) => Some(nullish),
+            _ => None,
+        }
     }
 
     pub(crate) fn object_shape(self) -> Option<u32> {
         match self.0 {
-            TypeKind::DirectObjectShape(shape) => Some(shape),
+            TypeKind::DirectObjectShape { shape, nullish: 0 } => Some(shape),
             _ => None,
+        }
+    }
+
+    /// The object alternative, usable only after an edge proves this value is a
+    /// direct object. A nullable shape alone never authorizes a record access.
+    pub(crate) fn direct_object_part(self) -> Option<Self> {
+        match self.0 {
+            TypeKind::DirectObjectShape { shape, .. } => Some(Self::direct_object(shape)),
+            TypeKind::DirectObjectFamily | TypeKind::NullableDirectObjectFamily(_) => Some(Self::DIRECT_OBJECT_FAMILY),
+            _ => None,
+        }
+    }
+
+    /// Retire a region-local shape proof while retaining its language alternatives.
+    pub(crate) fn without_object_shape(self) -> Self {
+        match self.0 {
+            TypeKind::DirectObjectShape { nullish: 0, .. } => Self::DIRECT_OBJECT_FAMILY,
+            TypeKind::DirectObjectShape { nullish, .. } => Self(TypeKind::NullableDirectObjectFamily(nullish)),
+            _ => self,
         }
     }
 
@@ -82,6 +131,17 @@ impl Type {
 
     pub(crate) fn function_identity(self) -> Option<Value> {
         match self.0 { TypeKind::FunctionIdentity(identity) => Some(identity), _ => None }
+    }
+
+    /// A closure admitted against this region's program, function index and realm.
+    /// Unlike identity, this admits distinct environments of the same body. It is
+    /// local to the active program/realm and cannot cross a safepoint or reentry.
+    pub(crate) const fn function_body(function: u32) -> Self {
+        Self(TypeKind::FunctionBody(function))
+    }
+
+    pub(crate) fn body_index(self) -> Option<u32> {
+        match self.0 { TypeKind::FunctionBody(function) => Some(function), _ => None }
     }
 
     /// Facts available from a canonical value alone. Heap language types need
@@ -97,6 +157,8 @@ impl Type {
             Self::language(ValueType::Null)
         } else if value.is_undefined() {
             Self::language(ValueType::Undefined)
+        } else if value.direct_object_index().is_some() {
+            Self::DIRECT_OBJECT_FAMILY
         } else if value.is_record() {
             Self::language(ValueType::Object)
         } else {
@@ -111,11 +173,37 @@ impl Type {
         if self == Self::NEVER {
             return other;
         }
+        let shaped = match (self.0, other.0) {
+            (TypeKind::DirectObjectShape { shape, nullish: left }, TypeKind::DirectObjectShape { shape: right, nullish })
+                if shape == right => Some((shape, left | nullish)),
+            (TypeKind::DirectObjectShape { shape, nullish }, _) if other.is_subtype(Self::NULLISH) =>
+                Some((shape, nullish | other.kinds())),
+            (_, TypeKind::DirectObjectShape { shape, nullish }) if self.is_subtype(Self::NULLISH) =>
+                Some((shape, nullish | self.kinds())),
+            _ => None,
+        };
+        if let Some((shape, nullish)) = shaped { return Self(TypeKind::DirectObjectShape { shape, nullish }); }
+        let nullish = |ty: Self| ty.direct_family_nullish()
+            .or_else(|| ty.is_subtype(Self::NULLISH).then(|| ty.kinds()));
+        if (self.direct_family_nullish().is_some() || other.direct_family_nullish().is_some())
+            && let (Some(left), Some(right)) = (nullish(self), nullish(other)) {
+            let kinds = left | right;
+            return if kinds == 0 { Self::DIRECT_OBJECT_FAMILY }
+                else { Self(TypeKind::NullableDirectObjectFamily(kinds)) };
+        }
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         self == Self::NEVER || self == expected
+            || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }
+                if matches!(self.0, TypeKind::DirectObjectShape { shape: actual, nullish: alternatives }
+                    if actual == shape && alternatives & !nullish == 0)
+                    || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
+            || (expected == Self::DIRECT_OBJECT_FAMILY && self.is_direct_object_family())
+            || matches!(expected.0, TypeKind::NullableDirectObjectFamily(nullish)
+                if self.direct_family_nullish().is_some_and(|actual| actual & !nullish == 0)
+                    || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
             || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
     }
 }
@@ -194,8 +282,8 @@ impl Fact {
             }
         })
             && match self.binding {
-                BindingTime::Static => self.proof == Proof::Static && self.ty.object_shape().is_none()
-                    && self.ty.function_identity().is_none(),
+                BindingTime::Static => self.proof == Proof::Static && self.ty.without_object_shape() == self.ty
+                    && self.ty.function_identity().is_none() && self.ty.body_index().is_none(),
                 BindingTime::Location | BindingTime::Site => {
                     self.proof == Proof::EntryGuard
                         || (self.proof == Proof::CanonicalValue
@@ -242,6 +330,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn function_body_admission_is_not_identity_or_static_knowledge() {
+        let body = Type::function_body(7);
+        let other = Type::function_body(9);
+        let function = Type::language(ValueType::Function);
+        assert_eq!(body.body_index(), Some(7));
+        assert_eq!(body.join(body), body);
+        assert_eq!(body.join(other), function);
+        assert_eq!(body.join(Type::function(Value::direct_function(7)).unwrap()), function);
+        assert!(body.is_subtype(function));
+        assert!(!function.is_subtype(body));
+        assert!(!body.is_subtype(other));
+        let fact = Fact { ty: body, representation: Representation::Tagged,
+            binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact };
+        assert!(fact.verify());
+        assert!(!Fact { proof: Proof::CanonicalValue, ..fact }.verify());
+        assert!(!Fact { binding: BindingTime::Static, proof: Proof::Static, ..fact }.verify());
+    }
+
+    #[test]
     fn function_identities_join_without_conflating_closures_or_static_proofs() {
         let first = Type::function(Value::direct_function(7)).unwrap();
         let second = Type::function(Value::direct_function(9)).unwrap();
@@ -277,7 +384,7 @@ mod tests {
         let shape = Type::direct_object(3);
         assert_eq!(shape.join(shape), shape);
         assert_eq!(shape.join(Type::NEVER), shape);
-        assert_eq!(shape.join(Type::direct_object(4)), object);
+        assert_eq!(shape.join(Type::direct_object(4)), Type::DIRECT_OBJECT_FAMILY);
         assert_eq!(shape.join(object), object);
         assert!(shape.is_subtype(object));
         assert!(!object.is_subtype(shape));
@@ -291,6 +398,74 @@ mod tests {
             (BindingTime::Location, Proof::CanonicalValue)] {
             assert!(Fact { binding, proof, ..fact }.verified().is_none());
         }
+    }
+
+    #[test]
+    fn nullable_shapes_preserve_only_guarded_region_facts() {
+        let shape = Type::direct_object(3);
+        let other = Type::direct_object(4);
+        let null = Type::language(ValueType::Null);
+        let undefined = Type::language(ValueType::Undefined);
+        let nullable = shape.join(null);
+        let nullish = nullable.join(undefined);
+        assert_eq!(nullable.object_shape(), None, "null cannot authorize a record load");
+        assert!(!nullable.is_direct_object_family());
+        assert_eq!(nullable.direct_object_part(), Some(shape));
+        assert_eq!(nullish.direct_object_part(), Some(shape));
+        assert_eq!(nullable.join(shape), nullable);
+        assert_eq!(nullable.join(shape.join(undefined)), nullish);
+        assert_eq!(nullable.join(other), Type::DIRECT_OBJECT_FAMILY.join(null));
+        assert!(null.is_subtype(nullable) && shape.is_subtype(nullable));
+        assert!(!undefined.is_subtype(nullable) && !other.is_subtype(nullable));
+        assert!(nullable.is_subtype(nullish));
+        assert!(!Type::DIRECT_OBJECT_FAMILY.is_subtype(nullable));
+        assert_eq!(nullable.without_object_shape(), Type::DIRECT_OBJECT_FAMILY.join(null));
+        assert_eq!(SlotType::from_type(nullable), SlotType::DirectObjectOrNull);
+        let fact = Fact { ty: nullable, representation: Representation::Tagged,
+            binding: BindingTime::Dynamic, proof: Proof::Definition, projection: Projection::Exact };
+        assert!(fact.verify());
+        assert!(!Fact { binding: BindingTime::Static, proof: Proof::Static, ..fact }.verify());
+        assert!(!Fact { binding: BindingTime::Site, proof: Proof::CanonicalValue, ..fact }.verify());
+        let types = [Type::NEVER, shape, other, nullable, nullish, other.join(null),
+            Type::DIRECT_OBJECT_FAMILY, Type::DIRECT_OBJECT_FAMILY.join(null), null, undefined,
+            Type::NULLISH, Type::INT32, Type::NUMBER, Type::language(ValueType::Object), Type::ANY];
+        for a in types { for b in types {
+            let join = a.join(b);
+            assert_eq!(join, b.join(a));
+            assert!(a.is_subtype(join) && b.is_subtype(join));
+            for c in types {
+                assert_eq!(a.join(b).join(c), a.join(b.join(c)), "{a:?}, {b:?}, {c:?}");
+                if a.is_subtype(c) && b.is_subtype(c) { assert!(join.is_subtype(c)); }
+            }
+        }}
+    }
+
+    #[test]
+    fn direct_object_family_is_weaker_than_shape_and_stronger_than_generic_object() {
+        let family = Type::DIRECT_OBJECT_FAMILY;
+        let object = Type::language(ValueType::Object);
+        let shape = Type::direct_object(3);
+        for direct in [family, shape] {
+            assert!(direct.is_direct_object_family());
+            assert!(direct.is_subtype(family));
+            assert!(direct.is_subtype(object));
+            assert_eq!(direct.join(family), family);
+            assert_eq!(family.join(direct), family);
+            assert_eq!(direct.join(object), object);
+        }
+        assert_eq!(family.object_shape(), None);
+        assert!(!family.is_subtype(shape));
+        for wider in [object, Type::ANY, object.join(Type::language(ValueType::Null))] {
+            assert!(!wider.is_direct_object_family());
+            assert!(!wider.is_subtype(family));
+            assert_eq!(family.join(wider), wider);
+        }
+        let fact = Fact { ty: family, representation: Representation::Tagged,
+            binding: BindingTime::Dynamic, proof: Proof::Definition, projection: Projection::Exact };
+        assert!(fact.verified().is_some());
+        assert!(Fact { binding: BindingTime::Location, proof: Proof::EntryGuard, ..fact }.verified().is_some());
+        assert!(Fact { binding: BindingTime::Location, proof: Proof::CanonicalValue, ..fact }.verified().is_none());
+        assert!(Fact { representation: Representation::Int32, ..fact }.verified().is_none());
     }
 
     #[test]
@@ -355,9 +530,36 @@ mod tests {
     }
 
     #[test]
+    fn nullable_direct_object_observations_do_not_authorize_record_access() {
+        let family = Type::DIRECT_OBJECT_FAMILY;
+        let null = Type::language(ValueType::Null);
+        let undefined = Type::language(ValueType::Undefined);
+        let nullable = family.join(null);
+        let nullish = family.join(Type::NULLISH);
+        assert_eq!(Type::immediate(Value::direct_object(7)), family);
+        assert_eq!(nullable.join(undefined), nullish);
+        assert_ne!(nullable, Type::language(ValueType::Object).join(null));
+        assert!(!nullable.is_direct_object_family());
+        assert!(nullable.object_shape().is_none());
+        assert!(!undefined.is_subtype(nullable));
+        for ty in [family, null, undefined] { assert!(ty.is_subtype(nullish)); }
+        for value in [Value::direct_array(7), Value::direct_function(7), Value::integer(7), Value::DELETED] {
+            assert!(!Type::immediate(value).is_subtype(nullish));
+        }
+        let observed = Fact { ty: nullish, representation: Representation::Tagged,
+            binding: BindingTime::Site, proof: Proof::CanonicalValue, projection: Projection::Exact };
+        assert!(observed.verified().is_none());
+        assert!(Fact { proof: Proof::EntryGuard, ..observed }.verified().is_some());
+        assert!(Fact { representation: Representation::Int32, proof: Proof::EntryGuard, ..observed }.verified().is_none());
+    }
+
+    #[test]
     fn joins_preserve_each_semantic_input_and_never_invent_a_numeric_proof() {
         let types = [Type::NEVER, Type::INT32, Type::NUMBER, Type::ANY, Type::TYPEOF_INDEX,
-            Type::direct_object(3), Type::direct_object(4),
+            Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3), Type::direct_object(4),
+            Type::NULLISH, Type::DIRECT_OBJECT_FAMILY.join(Type::language(ValueType::Null)),
+            Type::DIRECT_OBJECT_FAMILY.join(Type::language(ValueType::Undefined)),
+            Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH),
             Type::language(ValueType::Undefined), Type::language(ValueType::Null),
             Type::language(ValueType::Boolean), Type::language(ValueType::String),
             Type::language(ValueType::Symbol), Type::language(ValueType::BigInt),
@@ -366,8 +568,14 @@ mod tests {
             for right in types {
                 let joined = left.join(right);
                 assert_eq!(joined, right.join(left));
+                for third in types {
+                    assert_eq!(joined.join(third), left.join(right.join(third)),
+                        "join associativity: {left:?}, {right:?}, {third:?}");
+                }
                 assert!(left.is_subtype(joined) && right.is_subtype(joined));
-                for expected in [Type::INT32, Type::NUMBER, Type::language(ValueType::Object), Type::direct_object(3)] {
+                for expected in [Type::INT32, Type::NUMBER, Type::language(ValueType::Object),
+                    Type::DIRECT_OBJECT_FAMILY, Type::direct_object(3), Type::NULLISH,
+                    Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH)] {
                     assert_eq!(joined.is_subtype(expected),
                         left.is_subtype(expected) && right.is_subtype(expected));
                 }

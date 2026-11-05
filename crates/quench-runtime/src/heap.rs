@@ -1,6 +1,6 @@
 use crate::value::{HeapReference, Value};
 use crate::vm::wtf16::JsString;
-use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
+use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec, TargetShape};
 use rayon::prelude::*;
 use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
@@ -92,11 +92,13 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
 
-/// Whether an existing-slot store may replace its owner's property storage.
-/// Native views require Preserve until their execution ends.
+/// Which invariants an existing-slot store must preserve. Native views cannot
+/// replace property storage; typed native regions also leave on content widening.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PropertyStoreLayout {
     Preserve,
+    /// Native code leaves before a store that retires its content observations.
+    PreserveNative,
     MayWiden,
 }
 
@@ -1158,6 +1160,7 @@ impl Heap {
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
     /// allocation (`charge_allocation`) for its element storage.
     fn alloc_array(&mut self, object: ArrayObject) -> Value {
+        self.admit_object_contents(&object);
         self.mark_prototype(object.proto());
         self.charge_allocation(array_payload_bytes(&object), 0);
         match self.array_records.try_insert(object) {
@@ -1184,7 +1187,10 @@ impl Heap {
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
-        if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
+        if let Some(object) = cell.object() {
+            self.admit_object_contents(object);
+            self.mark_prototype(object.proto());
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = Self::cell_kind(&cell) as usize;
@@ -1296,10 +1302,6 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        if self.properties.tracks() {
-            let length = self.properties.shape_length(header.shape());
-            self.properties.note_shape_values(header.shape(), &inline[..length.min(INLINE_PROPERTY_COUNT)]);
-        }
         let Some(object) = Object::from_inline_header(header, inline) else {
             return self.alloc_object_with_properties_of_header(header, prototype, inline);
         };
@@ -1319,7 +1321,6 @@ impl Heap {
     ) -> Value {
         debug_assert!(values.len() > INLINE_PROPERTY_COUNT);
         self.properties.assert_shape_length(header.shape(), values.len());
-        self.properties.note_shape_values(header.shape(), values);
         match self.properties.run_of(values) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
             None => self.alloc_object_with_properties(prototype, header.shape(), values),
@@ -1371,6 +1372,7 @@ impl Heap {
     fn insert_object_record(&mut self, object: Object) -> Value {
         self.allocated += 1;
         self.total_allocations += 1;
+        self.admit_object_contents(&object);
         match self.object_records.try_insert(object) {
             Ok(record_id) => {
                 let value = Value::direct_object(record_id);
@@ -1379,6 +1381,15 @@ impl Heap {
                 value
             }
             Err(object) => self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells()),
+        }
+    }
+
+    /// Admit initial named properties before any object-bearing cell or record
+    /// becomes visible. Generic and dedicated publishers share the live-slot reader.
+    #[inline(always)]
+    fn admit_object_contents(&mut self, object: &Object) {
+        if self.properties.tracks() {
+            join_object_slot_values(object, &mut self.properties, &self.object_records);
         }
     }
 
@@ -1406,6 +1417,7 @@ impl Heap {
     /// external bytes.
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
+        self.admit_object_contents(&function.object);
         self.allocated += 1;
         self.total_allocations += 1;
         match self.function_records.try_insert(function) {
@@ -1502,6 +1514,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Iterator(Box::new(iterator)));
         }
+        self.admit_object_contents(&iterator.object);
         self.mark_prototype(iterator.object.proto());
         // An iterator's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
@@ -1529,6 +1542,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Promise(Box::new(promise)));
         }
+        self.admit_object_contents(&promise.object);
         self.mark_prototype(promise.object.proto());
         // A promise's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
@@ -1608,7 +1622,6 @@ impl Heap {
         values: &[Value],
     ) -> Value {
         self.properties.assert_shape_length(shape, values.len());
-        self.properties.note_shape_values(shape, values);
         if values.len() <= INLINE_PROPERTY_COUNT
             && let Some(object) = Object::with_inline_values(proto, shape, values)
         {
@@ -1634,9 +1647,8 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        self.properties.note_shape_values(shape, values);
         let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
-        let previous = array.replace_property_storage(properties, inline_properties);
+        let previous = array.replace_property_storage(properties, inline_properties, &mut self.properties);
         self.properties.release(previous);
         let value = self.alloc(Cell::Array { object: array });
         #[cfg(feature = "profile-memory")]
@@ -1655,11 +1667,11 @@ impl Heap {
             .object(owner)
             .expect("property owner is an object")
             .is_array();
-        self.properties.note_shape_values(shape, values);
+        self.properties.note_shape_values(shape, values, |value| observed_target(&self.object_records, value));
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
-            let object = self.object_mut(owner).expect("property owner is an object");
-            object.replace_property_storage(properties, inline_properties)
+            let (object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
+            object.replace_property_storage(properties, inline_properties, arena)
         };
         self.properties.release(previous);
         #[cfg(feature = "profile-memory")]
@@ -1696,32 +1708,33 @@ impl Heap {
     /// each shape's length and parent (a parent precedes its children), its slot owners, and
     /// their representations joined anew from the values live objects hold.
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], layouts: &[(usize, Option<(u32, usize)>)]) {
+        self.properties.retire_shape_readers();
         self.object_records.for_each_live_mut(|_, object| {
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape]);
+            object.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.array_records.for_each_live_mut(|_, array| {
             let old_shape = array.shape() as usize;
-            array.set_shape(mapping[old_shape]);
+            array.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.function_records.for_each_live_mut(|_, function| {
             let old_shape = function.object.shape() as usize;
-            function.object.set_shape(mapping[old_shape]);
+            function.object.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.promise_records.for_each_live_mut(|_, promise| {
             let old_shape = promise.object.shape() as usize;
-            promise.object.set_shape(mapping[old_shape]);
+            promise.object.set_shape(mapping[old_shape], &mut self.properties);
         });
         self.iterator_records.for_each_live_mut(|_, iterator| {
             let old_shape = iterator.object.shape() as usize;
-            iterator.object.set_shape(mapping[old_shape]);
+            iterator.object.set_shape(mapping[old_shape], &mut self.properties);
         });
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
                 continue;
             };
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape]);
+            object.set_shape(mapping[old_shape], &mut self.properties);
         }
         self.register_shape_layouts(layouts);
     }
@@ -1747,22 +1760,22 @@ impl Heap {
         self.register_shape_layouts(layouts);
     }
 
-    /// Joins each live object record's slot values into its owners' representations.
+    /// Joins named properties across every live object-bearing record and legacy cell.
     fn join_live_slot_values(&mut self) {
         if !self.properties.tracks() { return; }
-        let mut held = Vec::new();
-        let properties = &self.properties;
+        let properties = &mut self.properties;
+        let records = &self.object_records;
         self.object_records.for_each_live(|_, object| {
-            let shape = object.exact_shape();
-            if shape != object.shape() { return; }
-            for slot in 0..properties.shape_length(shape) {
-                held.push((shape, slot, object as *const Object));
-            }
+            join_object_slot_values(object, properties, records);
         });
-        for (shape, slot, object) in held {
-            // SAFETY: the record is live and its exact, non-dictionary shape holds the slot.
-            let value = unsafe { self.property_get_flat(&*object, slot) };
-            if !value.is_deleted() { self.properties.note_slot_value(shape, slot, value); }
+        self.array_records.for_each_live(|_, object| join_object_slot_values(object, properties, records));
+        self.function_records.for_each_live(|_, function| join_object_slot_values(&function.object, properties, records));
+        self.promise_records.for_each_live(|_, promise| join_object_slot_values(&promise.object, properties, records));
+        self.iterator_records.for_each_live(|_, iterator| join_object_slot_values(&iterator.object, properties, records));
+        for slot in self.slots.iter() {
+            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
+                join_object_slot_values(object, properties, records);
+            }
         }
     }
     /// Slide every live arena range down over released ones, in offset order.
@@ -1822,7 +1835,7 @@ impl Heap {
             .expect("property owner remains live during compaction");
             let mut vector = object.properties();
             target += properties.compact_vector(&mut vector, target);
-            object.set_properties(vector);
+            object.set_properties(vector, properties);
         }
         properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
@@ -3448,19 +3461,8 @@ impl Heap {
     /// The slot exists and the object is not in dictionary storage.
     #[inline(always)]
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
-        // Most objects keep their values in the arena and have no extras; their payload is
-        // their storage start, read here without decoding the other forms.
-        if let Some(start) = object.plain_storage_start() {
-            debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
-            // SAFETY: the caller proves the slot exists outside dictionary storage.
-            return unsafe { self.properties.get_flat_at(start, slot) };
-        }
-        if let Some(value) = object.inline_property(slot) {
-            value
-        } else {
-            // SAFETY: the caller proves the slot exists outside dictionary storage.
-            unsafe { self.properties.get_flat(object.properties(), slot) }
-        }
+        // SAFETY: the caller proves the exact slot exists.
+        unsafe { read_exact_slot(object, &self.properties, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
@@ -3493,18 +3495,25 @@ impl Heap {
     ///
     /// # Safety
     /// The object's exact shape and slot were guarded by the caller. The caller must keep the
-    /// object rooted and prevent allocation, collection, and other heap access while using
-    /// the pointer. Direct stores must not install a heap reference without the write barrier.
+    /// object rooted and prevent allocation, collection, reentry, storage changes, or type
+    /// re-admission while using the pointer. Every stored value must fit `writes`. Direct stores must not install
+    /// a heap reference without the write barrier.
     #[inline(always)]
     pub(crate) unsafe fn flat_property_mut_ptr_unchecked(
         &mut self,
         object: Value,
         slot: usize,
+        writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
-        let vector = self.object(object)?.properties();
+        let data = self.object(object)?;
+        let vector = data.properties();
+        let shape = data.shape();
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
+        // A widening can retire an active caller. Decline before exposing a raw
+        // writer so its existing call/OSR miss leaves before any guest effect.
+        if !self.admit_slot_writes(shape, slot, writes) { return None; }
         // SAFETY: shape/slot and storage lifetime are the caller's obligations above.
         Some(unsafe { self.properties.flat_mut_ptr_unchecked(vector, slot) })
     }
@@ -3535,14 +3544,22 @@ impl Heap {
         }
     }
 
-    /// `note_object_slot` of the object `object` names, before a write of `value` to `slot`.
+    /// Classifies a pointee only when field observations are enabled.
+    #[inline(always)]
+    fn observed_slot_target(&self, value: Value) -> TargetShape {
+        if self.properties.tracks() { observed_target(&self.object_records, value) }
+        else { TargetShape::unclassified(value) }
+    }
+
+    /// Observes the value before writing the named object's slot.
     #[inline(always)]
     fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
         if !self.properties.tracks() { return; }
         if let Some(data) = self.object(object) {
             let shape = data.exact_shape();
             if shape == data.shape() && slot < self.properties.shape_length(shape) {
-                self.properties.note_slot_value(shape, slot, value);
+                let target = observed_target(&self.object_records, value);
+                self.properties.note_slot_target(shape, slot, value, target);
             }
         }
     }
@@ -3625,6 +3642,7 @@ impl Heap {
         if !LOGS && self.object_records.store_logs(record_id, value) {
             return false;
         }
+        let target = self.observed_slot_target(value);
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe {
             if LOGS {
@@ -3633,7 +3651,7 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        store_exact_slot(data, &mut self.properties, slot, value, layout)
+        store_exact_slot(data, &mut self.properties, slot, value, target, layout)
     }
 
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
@@ -3644,6 +3662,7 @@ impl Heap {
     /// `shape` is a shape outside dictionary storage holding a property at `slot`.
     #[inline(always)]
     pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+        let target = self.observed_slot_target(value);
         let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
             return false;
         };
@@ -3655,7 +3674,7 @@ impl Heap {
         if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
             return false;
         }
-        if !store_exact_slot(data, properties, slot, value, layout) {
+        if !store_exact_slot(data, properties, slot, value, target, layout) {
             return false;
         }
         if value.heap_index().is_some() {
@@ -3671,6 +3690,7 @@ impl Heap {
     /// is disjoint from the owner.
     #[inline(always)]
     pub(crate) fn property_add(&mut self, object: Value, value: Value, shape: u32) {
+        let target = self.observed_slot_target(value);
         let _slot = if let Some(record_id) = object.direct_object_index() {
             let Self {
                 object_records,
@@ -3680,14 +3700,14 @@ impl Heap {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
             let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape);
+            append_property(data, properties, slot, value, target, shape);
             slot
         } else {
             let (data, properties) = self
                 .object_and_arena_mut(object)
                 .expect("property owner is an object");
             let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape);
+            append_property(data, properties, slot, value, target, shape);
             slot
         };
         #[cfg(feature = "profile-memory")]
@@ -3701,6 +3721,7 @@ impl Heap {
         let Some(record_id) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
+        let target = self.observed_slot_target(value);
         let Self {
             object_records,
             properties,
@@ -3709,7 +3730,7 @@ impl Heap {
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
         debug_assert_eq!(slot, properties.len(data.properties()));
-        append_property(data, properties, slot, value, shape);
+        append_property(data, properties, slot, value, target, shape);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
@@ -3730,6 +3751,7 @@ impl Heap {
         if self.object_records.store_logs(record_id, value) {
             return false;
         }
+        let target = self.observed_slot_target(value);
         let Self {
             object_records,
             properties,
@@ -3738,7 +3760,7 @@ impl Heap {
         // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
         // exclusive, and the barrier logs nothing for this store.
         let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
-        data.append_plain(properties, slot, value, shape);
+        data.append_plain(properties, slot, value, target, shape);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(Value::direct_object(record_id), slot + 1);
         true
@@ -4379,15 +4401,15 @@ fn widen_inline_storage(
     let mut values = data.inline_properties().expect("inline storage");
     values[slot] = value;
     let moved = properties.with_values(shape, &values[..length]);
-    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
     properties.release(previous);
 }
 
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
-fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
-    properties.note_shape_value(shape, slot, value);
+fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, target: TargetShape, shape: u32) {
+    properties.note_shape_target(shape, slot, value, target);
     let mut vector = data.properties();
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
@@ -4395,7 +4417,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         // An append within its range leaves the storage as it was; `set_shape` below
         // records the grown shape.
         if vector.into_parts() != before {
-            data.set_properties(vector);
+            data.set_properties(vector, properties);
         }
     } else if slot < INLINE_PROPERTY_COUNT {
         if !data.store_inline_narrow(slot, value) {
@@ -4409,9 +4431,53 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
         grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
         let moved = properties.with_values(shape, &grown);
-        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
     }
-    data.set_shape(shape);
+    data.set_shape(shape, properties);
+}
+
+/// Join an initialized object's contents at publication or a new live-heap census.
+/// Dictionary properties do not participate in shape-owned slot observations.
+fn join_object_slot_values(object: &Object, properties: &mut ValueArena, records: &ObjectRecordSpace) {
+    let shape = object.exact_shape();
+    if shape != object.shape() { return; }
+    for slot in 0..properties.shape_length(shape) {
+        // SAFETY: the initialized object's exact, non-dictionary shape holds the slot.
+        let value = unsafe { read_exact_slot(object, properties, slot) };
+        if !value.is_deleted() { properties.note_slot_target(shape, slot, value, observed_target(records, value)); }
+    }
+}
+
+/// Classification precedes mutable receiver access, including a self-link write.
+/// This observation is not a certificate of heap ownership or a stable layout.
+fn observed_target(records: &ObjectRecordSpace, value: Value) -> TargetShape {
+    if let Some(id) = value.direct_object_index().filter(|id| records.is_live(*id)) {
+        // SAFETY: the range's occupied-record check above admits this read.
+        let object = unsafe { records.get_live(id) };
+        if object.exact_shape() == object.shape() { return TargetShape::exact(object.shape()); }
+    }
+    TargetShape::unclassified(value)
+}
+
+/// Reads a live slot outside dictionary storage, shared by execution and type admission.
+///
+/// # Safety
+/// The slot exists and the object is not in dictionary storage.
+#[inline(always)]
+unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
+    // Most objects keep their values in the arena and have no extras; their payload is
+    // their storage start, read here without decoding the other forms.
+    if let Some(start) = object.plain_storage_start() {
+        debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
+        // SAFETY: the caller proves the slot exists outside dictionary storage.
+        return unsafe { properties.get_flat_at(start, slot) };
+    }
+    if let Some(value) = object.inline_property(slot) {
+        value
+    } else {
+        // SAFETY: the caller proves the slot exists outside dictionary storage.
+        unsafe { properties.get_flat(object.properties(), slot) }
+    }
 }
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
@@ -4419,9 +4485,10 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 /// values that cannot take `value` move to the arena only under MayWiden.
 /// Preserve declines before changing storage or values.
 #[inline(always)]
-fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, target: TargetShape, layout: PropertyStoreLayout) -> bool {
     // The caller matched the exact shape, which holds the slot.
-    properties.note_slot_value(data.shape(), slot, value);
+    let widened = properties.note_slot_target(data.shape(), slot, value, target);
+    if widened && layout == PropertyStoreLayout::PreserveNative { return false; }
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
@@ -4430,7 +4497,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     }
     if data.properties().has_inline_property_storage() {
         if !data.store_inline_narrow(slot, value) {
-            if layout == PropertyStoreLayout::Preserve {
+            if layout != PropertyStoreLayout::MayWiden {
                 return false;
             }
             let length = properties.len(data.properties());

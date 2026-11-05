@@ -470,10 +470,14 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_warning_policy");
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
     context.scoped(initialize_cluster_worker)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_process_channels");
     let interactive = context.host_mut().commonjs_entry.is_none()
         && context
             .host_mut()
@@ -491,6 +495,8 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // user preloads inspect globalThis. Node 26 also provides navigator by
     // default; retain the standard getter shape even when the engine lacks it.
     context.scoped(install_global_descriptors)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_global_descriptors");
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -505,9 +511,15 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         let filename = context.host_mut().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         #[cfg(not(feature = "native-execution"))]
         let filename = std::fs::canonicalize(entry.path).map_err(|error| RootedError::host(error.to_string()))?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_filename_ready");
         let module = cached_builtin(context, BuiltinModule::Module)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_module_ready");
         let run_main = get(context, module, "runMain")?;
         let filename = context.string_rooted(&filename.to_string_lossy());
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_run_main_ready");
         context.call_rooted(run_main, module, &[filename])?;
     } else {
         let filename = inline_directory(context)?.join(context.host_mut().inline_source.label());
@@ -1596,6 +1608,22 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:zlib", BuiltinModule::Zlib),
 ];
 
+fn builtin_cache_key(builtin: BuiltinModule) -> Result<String, RootedError> {
+    let canonical = builtin.cache_key()
+        .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
+    Ok(format!("\0builtin:{canonical}"))
+}
+
+/// Rebind process-dependent state without loading an otherwise unused module.
+pub(super) fn refresh_module_paths(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let key = builtin_cache_key(BuiltinModule::Module)?;
+    let module = context.host_mut().shared_state().borrow().builtin_cache.get(&key).copied();
+    if let Some(module) = module {
+        crate::modules::module_shared_vm::install_global_paths(context, module)?;
+    }
+    Ok(())
+}
+
 fn cached_builtin(
     context: &mut Context<'_>,
     builtin: BuiltinModule,
@@ -1603,10 +1631,7 @@ fn cached_builtin(
     // Source-owned CommonJS modules keep their live exports on the module record.
     // Reentrant requires must observe module.exports reassignment during loading,
     // rather than a second cache retaining an earlier partial export object.
-    let canonical = builtin
-        .cache_key()
-        .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
-    let key = format!("\0builtin:{canonical}");
+    let key = builtin_cache_key(builtin)?;
     let roots = context.host_mut().shared_state();
     if let Some(module) = roots.borrow().builtin_cache.get(&key).copied() {
         return Ok(module);
@@ -3126,7 +3151,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                 }
             };
             if parent.is_none() {
-                crate::host::resident_pages::release_read_only_code_and_data();
+                crate::host::resident_pages::release_after_entry_compile();
                 crate::host::resident_pages::release_free_heap_pages();
                 crate::host::resident_pages::quench_entry_compiled();
             }

@@ -216,6 +216,14 @@
         (rn Reg)
         (rm Reg))
 
+       ;; Select rn when the condition holds, otherwise rm + 1, modulo size.
+       (CSInc
+        (size OperandSize)
+        (rd WritableReg)
+        (cond Cond)
+        (rn Reg)
+        (rm Reg))
+
        ;; A conditional-select negation operation.
        (CSNeg
         (rd WritableReg)
@@ -3009,6 +3017,16 @@
          (MInst.CSel dst cond if_true if_false)
          dst)))
 
+;; CSINC increments only the false alternative. Narrow CLIF integers use
+;; the W form; their upper bits remain unspecified until a widening consumer.
+(attr csinc (veri chain))
+(decl csinc (Type Cond Reg Reg) ConsumesFlags)
+(rule (csinc ty cond if_true if_false)
+      (let ((dst WritableReg (temp_writable_reg ty)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.CSInc (operand_size ty) dst cond if_true if_false)
+         dst)))
+
 ;; Helper for constructing `cset` instructions.
 (attr cset (veri chain))
 (decl cset (Cond) ConsumesFlags)
@@ -3851,6 +3869,19 @@
 ;; specified is commutative.
 (attr alu_rs_imm_logic_commutative (veri chain))
 (decl alu_rs_imm_logic_commutative (ALUOp Type Value Value) Reg)
+
+;; Do not absorb the final shift of a signed extract into the logical op:
+;; that leaves its first shift alive. Materialize the extract as one SBFX.
+(rule 3 (alu_rs_imm_logic_commutative op (fits_in_64 (ty_int ty)) x
+         (sshr ty (ishl ty source (iconst _ (u64_from_imm64 left)))
+                  (iconst _ (u64_from_imm64 right))))
+      (if-let width (sign_extract_width ty left right))
+      (alu_rrr op ty x (extend source true width (ty_bits ty))))
+(rule 4 (alu_rs_imm_logic_commutative op (fits_in_64 (ty_int ty))
+         (sshr ty (ishl ty source (iconst _ (u64_from_imm64 left)))
+                  (iconst _ (u64_from_imm64 right))) y)
+      (if-let width (sign_extract_width ty left right))
+      (alu_rrr op ty (extend source true width (ty_bits ty)) y))
 
 ;; Base case of operating on registers.
 (rule -1 (alu_rs_imm_logic_commutative op ty x y)
@@ -4879,6 +4910,10 @@
 ;; have an integer type (and it can be I128)
 (attr is_nonzero (veri chain))
 (decl is_nonzero (Value) CondResult)
+(decl masked_nonzero (Type Value ImmLogic) Value)
+(extern extractor masked_nonzero masked_nonzero)
+(rule 4 (is_nonzero (masked_nonzero ty source mask))
+  (CondResult.Cond (tst_imm ty source mask) (Cond.Ne)))
 (rule 0 (is_nonzero val @ (value_type (fits_in_32 ty)))
   (CondResult.NotZero (put_in_reg_zext32 val) (OperandSize.Size32)))
 (rule 1 (is_nonzero val @ (value_type $I64))
@@ -5128,8 +5163,23 @@
         a
         b))
 
+;; Total integer increment, accepting either commutative operand order.
+(decl pure partial add_one (Value) Value)
+(rule 1 (add_one (iadd _ x (iconst _ (u64_from_imm64 1)))) x)
+(rule 0 (add_one (iadd _ (iconst _ (u64_from_imm64 1)) x)) x)
+
 (attr lower_select_cond (veri chain))
 (decl lower_select_cond (Type ProducesFlags Cond Value Value) ValueRegs)
+(rule 8 (lower_select_cond (fits_in_64 (ty_int ty)) flags cond rn (u64_from_iconst 1))
+  (with_flags flags (csinc ty cond rn (zero_reg))))
+(rule 7 (lower_select_cond (fits_in_64 (ty_int ty)) flags cond (u64_from_iconst 1) rm)
+  (with_flags flags (csinc ty (invert_cond cond) rm (zero_reg))))
+(rule 6 (lower_select_cond (fits_in_64 (ty_int ty)) flags cond rn rm)
+  (if-let base (add_one rm))
+  (with_flags flags (csinc ty cond rn base)))
+(rule 5 (lower_select_cond (fits_in_64 (ty_int ty)) flags cond rn rm)
+  (if-let base (add_one rn))
+  (with_flags flags (csinc ty (invert_cond cond) rm base)))
 (rule 2 (lower_select_cond (ty_scalar_float (fits_in_64 ty)) flags cond rn rm)
   (with_flags flags (fpu_csel ty cond rn rm)))
 (rule 4 (lower_select_cond $F128 flags cond rn rm)

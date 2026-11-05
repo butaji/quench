@@ -113,13 +113,13 @@ impl<H: Host> Vm<H> {
         initializer: Value,
     ) -> Result<(), JsError> {
         let flag = |set: bool| if set { Value::TRUE } else { Value::FALSE };
-        let mut slots = vec![Value::UNDEFINED; GroupSlot::COUNT];
+        let mut slots = [Value::UNDEFINED; GroupSlot::COUNT];
         slots[GroupSlot::Holder as usize] = holder;
         slots[GroupSlot::Initializer as usize] = initializer;
         slots[GroupSlot::State as usize] = GroupState::Pending.value();
         slots[GroupSlot::CompletesKeys as usize] = flag(completes_keys);
         slots[GroupSlot::Redefines as usize] = flag(members.iter().any(|member| member.redefined));
-        let group = self.native_environment(slots);
+        let group = self.native_environment(&slots);
         self.with_call_roots([group], |vm| {
             for &LazyMember {
                 key,
@@ -127,12 +127,12 @@ impl<H: Host> Vm<H> {
                 redefined,
             } in members
             {
-                let mut slots = vec![Value::UNDEFINED; MemberSlot::COUNT];
+                let mut slots = [Value::UNDEFINED; MemberSlot::COUNT];
                 slots[MemberSlot::Group as usize] = group;
                 slots[MemberSlot::Key as usize] = key;
                 slots[MemberSlot::Redefined as usize] = flag(redefined);
                 vm.lazy_member_key(key)?;
-                let member = vm.native_environment(slots);
+                let member = vm.native_environment(&slots);
                 let accessor = vm.native_with_env(Native::LazyDataProperty, member);
                 let record = PropertyDescriptorRecord {
                     value: None,

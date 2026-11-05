@@ -1139,6 +1139,45 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
 }
 
 #[test]
+fn dense_storage_reads_writes_and_native_views_share_the_owner_checks() {
+    let mut slots = EnvironmentSlots::from(vec![Value::UNDEFINED, Value::DELETED, Value::integer(42)]);
+    let storage = slots.dense_storage().unwrap();
+    // SAFETY: all owners below stay live; operations borrow only for their duration.
+    // Writes contain no heap references and no guest or collection can run here.
+    unsafe {
+        assert_eq!(EnvironmentSlots::read_storage(storage, 0), Some(Value::UNDEFINED));
+        assert_eq!(EnvironmentSlots::read_storage(storage, 1), None);
+        assert_eq!(EnvironmentSlots::read_storage(storage, slots.len()), None);
+        assert_eq!(EnvironmentSlots::read_storage(std::ptr::null(), 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(storage, 0, Value::integer(7)), Some(()));
+        assert_eq!(EnvironmentSlots::write_storage(storage, 1, Value::integer(7)), None);
+        assert_eq!(EnvironmentSlots::write_storage(storage, slots.len(), Value::integer(7)), None);
+        assert_eq!(EnvironmentSlots::write_storage(std::ptr::null(), 0, Value::integer(7)), None);
+        assert_eq!(slots.owned(0), Some(Value::integer(7)));
+        *slots.owned_mut(2).unwrap() = Value::integer(99);
+        assert_eq!(EnvironmentSlots::read_storage(storage, 2), Some(Value::integer(99)));
+        assert_eq!(EnvironmentSlots::native_storage_view(storage), slots.native_dense_view());
+        assert_eq!(EnvironmentSlots::native_storage_view(std::ptr::null()), None);
+        let empty = EnvironmentSlots::from(Vec::new());
+        let empty_storage = empty.dense_storage().unwrap();
+        assert_eq!(EnvironmentSlots::read_storage(empty_storage, 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(empty_storage, 0, Value::TRUE), None);
+        assert_eq!(EnvironmentSlots::native_storage_view(empty_storage), empty.native_dense_view());
+        let mut heap = Heap::new();
+        let owner = heap.alloc_environment(Value::NULL, 1, slots.clone(), EnvironmentScopeRef::of_program(0)).0;
+        let shared = slots.iteration_copy(owner, &[], &[], |_, _| unreachable!()).unwrap();
+        let shared_storage = shared.dense_storage().unwrap();
+        assert_eq!(EnvironmentSlots::read_storage(shared_storage, 0), None);
+        assert_eq!(EnvironmentSlots::write_storage(shared_storage, 0, Value::TRUE), None);
+        assert!(matches!(shared.state(0), Some(EnvironmentSlotState::Shared(value)) if value == owner));
+    }
+    // Scoped descriptors did not consume the owner or leave it marked/uninitialized.
+    assert_eq!(slots.dense_plain(0), Some(Value::integer(7)));
+    assert_eq!(slots.dense_plain(1), None);
+    assert_eq!(slots.dense_plain(2), Some(Value::integer(99)));
+}
+
+#[test]
 fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let mut heap = Heap::new();
     let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
@@ -1163,6 +1202,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
     // A length and owner, then the fresh and reset slots, each with its index.
     assert_eq!((first.len(), first.0.len()), (width, 6));
+    assert!(first.dense_storage().is_none());
     let first = environment(&mut heap, first);
     assert_eq!(heap.environment_slot(first, 3), Some(Value::number(3.0)));
     assert_eq!(heap.environment_slot(first, 5), Some(Value::UNDEFINED));
@@ -1414,6 +1454,31 @@ fn promotion_age_may_change_between_minor_collections() {
 }
 
 #[test]
+fn restored_sparse_slot_marks_survive_minor_and_full_collection() {
+    for count in [0, 1, u64::BITS as usize, u64::BITS as usize + 1, SLOTS_PER_SLAB + 1] {
+        let mut heap = Heap::new();
+        let cells: Vec<_> = (0..count).map(|index| heap.alloc(Cell::Error(index.to_string()))).collect();
+        // Alternating retained slots exercise both bits at word/slab boundaries.
+        let retained: Vec<_> = cells.iter().step_by(2).copied().collect();
+        heap.collect(retained.iter().copied());
+        let mut writer = crate::snapshot::Writer::new();
+        heap.write_snapshot(&mut writer).unwrap();
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
+        reader.finish().unwrap();
+        for (index, &cell) in cells.iter().enumerate() {
+            assert_eq!(restored.is_live(cell), index % 2 == 0);
+            if index % 2 == 0 { assert!(restored.is_old(cell)); }
+        }
+        collect_minor(&mut restored, []);
+        assert!(retained.iter().all(|&cell| restored.is_live(cell)));
+        restored.collect([]);
+        assert!(retained.iter().all(|&cell| !restored.is_live(cell)));
+    }
+}
+
+#[test]
 fn snapshots_restore_aged_survivors_as_old() {
     let mut heap = heap_at(PromotionAge::Second);
     let cell = heap.alloc(Cell::Error("aged".into()));
@@ -1471,6 +1536,67 @@ fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
 
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
+fn memory_census_counts_array_allocations_once_across_storage_and_collection() {
+    let mut heap = Heap::new();
+    let empty_direct = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), ArrayElements::new()),
+    });
+    let empty_legacy = heap.alloc_in_slot(Cell::Array {
+        object: ArrayObject::new(plain_object(), ArrayElements::new()),
+    }, false);
+    let empty = heap.memory_composition();
+    assert_eq!(empty.dense_array_backing_count, 0);
+    assert_eq!(empty.dense_array_elements_bytes, 0);
+    assert_eq!(empty.dense_array_headers_bytes, 0);
+
+    let source = ArrayElements::from([Value::integer(1), Value::integer(2), Value::integer(3)]);
+    let source_payload_bytes = source.capacity() * size_of::<Value>();
+    let header_bytes = source.allocated_bytes() - source_payload_bytes;
+    let direct = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), source.clone()),
+    });
+    let legacy = heap.alloc_in_slot(Cell::Array {
+        object: ArrayObject::new(plain_object(), source.clone()),
+    }, false);
+    assert!(direct.direct_array_index().is_some());
+    assert!(legacy.direct_array_index().is_none());
+    let shared = heap.memory_composition();
+    assert_eq!(shared.dense_array_backing_count, 1);
+    assert_eq!(shared.dense_array_elements_bytes, source_payload_bytes);
+    assert_eq!(shared.dense_array_headers_bytes, header_bytes);
+
+    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::integer(4));
+    let grown = heap.array_elements(direct).unwrap();
+    assert!(grown.capacity() > source.capacity());
+    let grown_payload_bytes = grown.capacity() * size_of::<Value>();
+    assert_eq!(source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
+    heap.collect([empty_direct, empty_legacy, direct, legacy]);
+    let detached = heap.memory_composition();
+    assert_eq!(detached.dense_array_backing_count, 2);
+    assert_eq!(detached.dense_array_elements_bytes, source_payload_bytes + grown_payload_bytes);
+    assert_eq!(detached.dense_array_headers_bytes, 2 * header_bytes);
+
+    heap.array_elements_mut(direct).unwrap().make_mut().truncate(0);
+    assert!(heap.array_elements(direct).unwrap().is_empty());
+    let reserved_empty = heap.memory_composition();
+    assert_eq!(reserved_empty.dense_array_backing_count, 2);
+    assert_eq!(reserved_empty.dense_array_elements_bytes, source_payload_bytes + grown_payload_bytes);
+    assert_eq!(reserved_empty.dense_array_headers_bytes, 2 * header_bytes);
+
+    heap.collect([legacy]);
+    let survivor = heap.memory_composition();
+    assert_eq!(survivor.dense_array_backing_count, 1);
+    assert_eq!(survivor.dense_array_elements_bytes, source_payload_bytes);
+    assert_eq!(survivor.dense_array_headers_bytes, header_bytes);
+    heap.collect([]);
+    let collected = heap.memory_composition();
+    assert_eq!(collected.dense_array_backing_count, 0);
+    assert_eq!(collected.dense_array_elements_bytes, 0);
+    assert_eq!(collected.dense_array_headers_bytes, 0);
+}
+
+#[test]
+#[cfg(not(feature = "profile-aggregate"))]
 fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
     let mut heap = Heap::new();
     let before = heap.memory_composition();
@@ -1497,4 +1623,268 @@ fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
     let empty = heap.memory_composition();
     assert_eq!(empty.cell_counts[CellKind::WasmV128 as usize], 0);
     assert_eq!(empty.v128_record_used_bytes, 0);
+}
+
+#[test]
+fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
+    use crate::typed_ir::Type;
+    let mut heap = Heap::new();
+    let layouts = [(0, None), (1, None), (2, Some((1, 1)))];
+    heap.register_shape_layouts(&layouts);
+    let link = heap.alloc_object(plain_object());
+    let packed = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
+    let arena = heap.alloc_object_with_properties(Value::NULL, 2, &[link, Value::number(0.5)]);
+    let extras = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED]);
+    heap.object_record_mut(extras).unwrap().set_extensible(false);
+    let deleted = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::DELETED]);
+    assert!(heap.object(packed).unwrap().inline_properties().is_some());
+    assert!(heap.object(arena).unwrap().inline_properties().is_none());
+    heap.track_slot_representations(&layouts);
+    let nullable = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
+    assert_eq!(heap.slot_type(1, 0), nullable);
+    assert_eq!(heap.slot_type(2, 0), nullable);
+    assert_eq!(heap.slot_type(2, 1), Type::NUMBER);
+    assert_eq!(heap.unrepresented_slots(), 0);
+
+    // A fresh admission reflects live contents, not stale observation history.
+    for object in [packed, arena, extras, deleted] { heap.property_set(object, 0, link); }
+    heap.track_slot_representations(&layouts);
+    assert_eq!(heap.slot_type(1, 0), Type::DIRECT_OBJECT_FAMILY);
+    // Reassign shape identities and re-establish the parent-owned slot projection.
+    let remapped = [(0, None), (0, None), (1, None), (2, Some((2, 1)))];
+    heap.remap_live_object_shapes(&[0, 2, 3], &remapped);
+    assert_eq!(heap.slot_type(2, 0), Type::DIRECT_OBJECT_FAMILY);
+    assert_eq!(heap.slot_type(3, 0), Type::DIRECT_OBJECT_FAMILY);
+    assert_eq!(heap.slot_type(3, 1), Type::NUMBER);
+    assert_eq!(heap.unrepresented_slots(), 0);
+}
+
+#[test]
+fn raw_slot_admission_records_write_domain_before_exposing_storage() {
+    use crate::typed_ir::Type;
+    let mut heap = Heap::new();
+    let layouts = [(0, None), (1, None), (3, None)];
+    heap.register_shape_layouts(&layouts);
+    let packed = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::integer(1)]);
+    let object = heap.alloc_object_with_properties(Value::NULL, 2,
+        &[Value::NULL, Value::integer(1), Value::integer(2)]);
+    let child = heap.alloc_object(plain_object());
+    heap.track_slot_representations(&layouts);
+    // Declined storage does not admit a write capability.
+    assert!(unsafe { heap.flat_property_mut_ptr_unchecked(packed, 0, Type::ANY) }.is_none());
+    assert_eq!(heap.slot_type(1, 0), Type::INT32);
+    let pointer = unsafe { heap.flat_property_mut_ptr_unchecked(object, 0, Type::ANY) }.unwrap();
+    assert_eq!(heap.slot_type(2, 0), Type::ANY);
+    // A reference-capable region logs its owner before its no-GC raw writes.
+    heap.object_store_mut(object, object).unwrap();
+    unsafe { pointer.write(child); }
+    assert_eq!(heap.unrepresented_slots(), 0);
+}
+
+#[test]
+fn object_publication_admits_preinitialized_slots_after_census() {
+    use crate::typed_ir::Type;
+    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 3] = [
+        ("object", Heap::alloc_object),
+        ("flagged-prototype", Heap::alloc_object_under_flagged_prototype),
+        ("cell", |heap, object| heap.alloc(Cell::Object(object))),
+    ];
+    for (publisher, publish) in publishers {
+        for storage in ["inline", "arena", "extras"] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None)]);
+            assert_eq!(heap.slot_type(1, 0), Type::NEVER);
+            let value = if storage == "arena" { Value::number(0.5) } else { Value::NULL };
+            let (properties, inline) = heap.initial_object_storage(1, &[value], storage != "arena");
+            let mut object = Object::with_property_storage(Value::NULL, properties, inline);
+            if storage == "extras" { object.set_extensible(false); }
+            let published = publish(&mut heap, object);
+            assert!(published.direct_object_index().is_some());
+            assert_eq!(heap.slot_type(1, 0), Type::immediate(value), "{publisher}/{storage}");
+            assert_eq!(heap.unrepresented_slots(), 0, "{publisher}/{storage}");
+            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+        }
+    }
+}
+
+#[test]
+fn shape_departures_retire_readers_through_each_storage_path() {
+    use crate::{code_dependencies::{DependentCode, SlotDependency}, typed_ir::Type};
+    struct Reader(std::cell::Cell<bool>);
+    impl DependentCode for Reader {
+        fn is_published(&self) -> bool { self.0.get() }
+        fn retire(&self) { self.0.set(false); }
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum Change { Shape, Replace, Copy, Append, Remap }
+    for change in [Change::Shape, Change::Replace, Change::Copy, Change::Append, Change::Remap] {
+        for inline in [false, true] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None), (1, None), (2, Some((1, 1)))]);
+            let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], inline);
+            let object = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
+            let reader: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
+            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }, &reader));
+            let unrelated: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
+            assert!(heap.properties.subscribe_shape(2, &unrelated));
+            // No departure: a repeated shape and storage descriptor preserve the
+            // shape assumption (physical storage needs its own proof).
+            heap.set_object_shape(object, 1);
+            let (data, arena) = heap.object_and_arena_mut(object).unwrap();
+            data.set_properties(data.properties(), arena);
+            assert!(reader.is_published());
+            match change {
+                Change::Shape => heap.set_object_shape(object, 2),
+                Change::Replace => heap.initialize_object_properties(object, 2, &[Value::integer(3)]),
+                Change::Copy => {
+                    let source = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(3)]);
+                    let source = heap.object(source).unwrap().clone();
+                    assert!(heap.copy_property_storage(&source, object));
+                }
+                Change::Append => heap.property_add(object, Value::integer(3), 3),
+                Change::Remap => heap.remap_live_object_shapes(&[0, 2, 1, 3],
+                    &[(0, None), (1, None), (1, None), (2, Some((2, 1)))]),
+            }
+            assert!(!reader.is_published(), "{change:?}, inline={inline}");
+            assert_eq!(unrelated.is_published(), !matches!(change, Change::Remap), "{change:?}");
+            assert_eq!(heap.object(object).unwrap().shape(), if matches!(change, Change::Append) { 3 } else { 2 });
+        }
+    }
+}
+
+#[test]
+fn named_property_publication_retires_readers_for_every_record_family() {
+    use crate::{code_dependencies::{DependentCode, SlotDependency}, typed_ir::Type};
+    struct Reader(std::cell::Cell<bool>);
+    impl DependentCode for Reader {
+        fn is_published(&self) -> bool { self.0.get() }
+        fn retire(&self) { self.0.set(false); }
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum Family { Array, Function, Promise, Iterator, Date }
+    for family in [Family::Array, Family::Function, Family::Promise, Family::Iterator, Family::Date] {
+        for generic in [false, true] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None)]);
+            heap.alloc_object_with_properties(Value::NULL, 1, &[Value::integer(1)]);
+            let reader: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
+            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }, &reader));
+            // Construct storage without publishing it: the publication boundary
+            // must admit its contents, regardless of the allocator's fast path.
+            let value = Value::number(0.5);
+            let (properties, inline) = heap.initial_object_storage(1, &[value], false);
+            let object = Object::with_property_storage(Value::NULL, properties, inline);
+            let cell = match family {
+                Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },
+                Family::Function => Cell::Function(Box::new(FunctionRecord {
+                    object, realm: Value::NULL, env: Value::NULL,
+                    kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
+                })),
+                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord {
+                    state: PromiseState::Pending, result: Value::UNDEFINED,
+                    reactions: Default::default(), rejection: PromiseRejectionState::Unobserved,
+                    rejection_id: None, host_context: None.into(), module_evaluation: false,
+                } })),
+                Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
+                    object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
+                    ext: IteratorExt { position_high: 0, next_method: None, helper: None,
+                        helper_running: false, helper_started: false, generator: None },
+                })),
+                Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
+            };
+            let published = if generic { heap.alloc_cell(cell) } else {
+                match cell {
+                    Cell::Array { object } => heap.alloc_array(object),
+                    Cell::Function(function) => heap.alloc_function(*function),
+                    Cell::Promise(promise) => heap.alloc_promise(*promise),
+                    Cell::Iterator(iterator) => heap.alloc_iterator(*iterator),
+                    cell => heap.alloc(cell),
+                }
+            };
+            assert!(!reader.is_published(), "{family:?}, generic={generic}");
+            assert_eq!(heap.slot_type(1, 0), Type::NUMBER);
+            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+            assert_eq!(heap.unrepresented_slots(), 0);
+            heap.track_slot_representations(&[(0, None), (1, None)]);
+            assert_eq!(heap.slot_type(1, 0), Type::NUMBER, "census includes {family:?}");
+        }
+    }
+}
+
+#[test]
+fn linked_target_observations_retire_on_mutation_and_raw_admission() {
+    use crate::code_dependencies::{DependentCode, PublishedCode, SlotDependency};
+    #[derive(Clone, Copy, Debug)]
+    enum Change { TargetShape, LinkWrite, RawAdmission }
+    for change in [Change::TargetShape, Change::LinkWrite, Change::RawAdmission] {
+        for inline in [false, true] {
+            let mut heap = Heap::new();
+            let layouts = [(0, None), (1, None), (0, None), (0, None)];
+            heap.track_slot_representations(&layouts);
+            let target = heap.alloc_object_with_properties(Value::NULL, 2, &[]);
+            let (storage, values) = heap.initial_object_storage(1, &[Value::NULL], inline);
+            let owner = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
+            heap.property_set(owner, 0, target);
+            assert_eq!(heap.slot_target_shape(1, 0), Some(2));
+            heap.property_set(owner, 0, Value::NULL);
+            heap.property_set(owner, 0, target);
+            assert_eq!(heap.slot_target_shape(1, 0), Some(2));
+            // Census reconstructs observations from actual contents.
+            heap.track_slot_representations(&layouts);
+            assert_eq!(heap.slot_target_shape(1, 0), Some(2));
+            let reader: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));
+            assert!(heap.subscribe_slot(SlotDependency {
+                shape: 1, slot: 0, ty: heap.slot_type(1, 0), target_shape: Some(2),
+            }, &reader));
+            match change {
+                Change::TargetShape => heap.set_object_shape(target, 3),
+                Change::LinkWrite => {
+                    let different = heap.alloc_object_with_properties(Value::NULL, 3, &[]);
+                    // Same coarse object family, different pointee: decline before storing.
+                    let record = owner.direct_object_index().unwrap();
+                    assert!(!unsafe { heap.record_property_set_flat::<true>(record, 0, different, PropertyStoreLayout::PreserveNative) });
+                    assert_eq!(heap.property_get(heap.object(owner).unwrap(), 0), Some(target));
+                    assert!(unsafe { heap.record_property_set_flat::<true>(record, 0, different, PropertyStoreLayout::PreserveNative) });
+                }
+                Change::RawAdmission => {
+                    assert!(!heap.admit_slot_writes(1, 0, crate::typed_ir::Type::DIRECT_OBJECT_FAMILY));
+                    assert!(heap.admit_slot_writes(1, 0, crate::typed_ir::Type::DIRECT_OBJECT_FAMILY));
+                }
+            }
+            assert_eq!(heap.slot_target_shape(1, 0), None, "{change:?}, inline={inline}");
+            assert!(!reader.is_published(), "{change:?}, inline={inline}");
+        }
+    }
+}
+
+#[test]
+fn linked_target_self_reference_is_observed_before_mutable_access() {
+    let mut heap = Heap::new();
+    heap.track_slot_representations(&[(0, None), (1, None)]);
+    let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
+    heap.property_set(object, 0, object);
+    assert_eq!(heap.slot_target_shape(1, 0), Some(1));
+}
+
+#[test]
+fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
+    let mut heap = Heap::new();
+    let width = super::cell::SPARSE_CLONE_MIN_SLOTS;
+    let slots = EnvironmentSlots::from_values(std::iter::repeat_n(Value::UNDEFINED, width));
+    let (owner, _) = heap.alloc_environment(Value::UNDEFINED, 0, slots, EnvironmentScopeRef::of_program(0));
+    let Some(Cell::Environment { slots, .. }) = heap.get(owner) else { unreachable!() };
+    let sparse = slots.iteration_copy(owner, &[], &[], |_, _| None).unwrap();
+    assert!(sparse.dense().is_none());
+    let sparse_bytes = sparse.0.allocated_bytes();
+    let (copy, _) = heap.alloc_environment(owner, 0, sparse, EnvironmentScopeRef::of_program(0));
+    let census = heap.memory_composition();
+    assert_eq!(census.environment_logical_slots, 2 * width);
+    assert_eq!(census.environment_sparse_count, 1);
+    assert_eq!(census.environment_storage_bytes,
+        size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
+    assert!(sparse_bytes < width * size_of::<EnvironmentSlot>());
+    heap.collect([copy]);
+    assert_eq!(heap.memory_composition().environment_storage_bytes, census.environment_storage_bytes);
+    heap.collect([]);
+    assert_eq!(heap.memory_composition().environment_storage_bytes, 0);
 }

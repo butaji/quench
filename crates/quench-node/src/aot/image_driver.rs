@@ -9,6 +9,7 @@ const _: () = assert!(SUPPORT.is_available() && (SUPPORT.allows_dynamic_source()
 include!(env!("QUENCH_NATIVE_CATALOG"));
 
 fn run() -> Result<std::process::ExitCode, String> {
+    quench_node::host::resident_pages::phase_peak("native worker entry");
     let assets = embedded_modules();
     let entry_path = assets
         .entry
@@ -24,6 +25,7 @@ fn run() -> Result<std::process::ExitCode, String> {
     // SAFETY: the compiler emits this catalog, metadata and objects together.
     let entry = unsafe { bind_entry() }?;
     let namespace = quench_runtime::NativeProgramNamespace::from_entry(entry.residual())?;
+    quench_node::host::resident_pages::phase_peak("native entry bound");
     let host = NodeHost::new(argv)
         .with_exec_argv(Vec::new())?
         .with_embedded_modules(assets)
@@ -31,8 +33,15 @@ fn run() -> Result<std::process::ExitCode, String> {
             // SAFETY: this resolver belongs to the same compiler-owned image.
             unsafe { resolve(&namespace, name, parts) }
         });
-    quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT)
-        .map(|completion| completion.exit_code())
+    quench_node::host::resident_pages::phase_peak("native host ready");
+    #[cfg(quench_native_bootstrap)]
+    let result = quench_node::aot::execute_native_process_entry_with_bootstrap(
+        host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
+    );
+    #[cfg(not(quench_native_bootstrap))]
+    let result = quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT);
+    quench_node::host::resident_pages::phase_peak("native run complete");
+    result.map(|completion| completion.exit_code())
 }
 
 fn main() -> std::process::ExitCode {
