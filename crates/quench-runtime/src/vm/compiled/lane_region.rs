@@ -3924,22 +3924,21 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(direct);
         // A value the slot's type may not hold takes the VM's hit, which joins its type
         // (`ValueArena::note_slot_value`); a bound slot's raw store would not.
-        let widen = (!ty.is_subtype(field.ty)).then(|| {
+        let (widen, direct_ty) = if !ty.is_subtype(field.ty) {
             let widen = self.builder.create_block();
             self.builder.set_cold_block(widen);
-            self.represented(field.ty, value, widen);
-            widen
-        });
+            (Some(widen), self.represented(field.ty, value, widen))
+        } else { (None, ty) };
         let record_id = self.ins().ireduce(types::I32, object_bits);
         let record_id = self.ins().uextend(types::I64, record_id);
         let payload = self.payload;
-        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, ty, general);
+        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, direct_ty, general);
         // The admitted write domain and barrier above also cover packed
         // references. Encoding support is shared with bound native stores.
-        if (ty.is_subtype(Type::INT32)
+        if (direct_ty.is_subtype(Type::INT32)
             || field.storage_len <= crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
             && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
-            self.store_narrow_value(object, inline, field.slot, value, ty, done, general);
+            self.store_narrow_value(object, inline, field.slot, value, direct_ty, done, general);
         }
         let projection = match projection {
             Some(projection) => projection,
@@ -3997,12 +3996,15 @@ impl Lowering<'_, '_> {
 
     /// Continue where a slot of type `slot` (`NativeFieldLoad::ty`) holds `value`, by its int
     /// tag, else at `otherwise`.
-    fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) {
+    fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) -> Type {
         // Only the type algebra may establish that an int fits. In particular,
         // nullable object contracts must not inherit the old numeric-chain rule.
         let held = if Type::INT32.is_subtype(slot) { is_int_tagged(&mut self.builder, value) }
             else { self.ins().iconst(types::I8, 0) };
         emit_js_guard(&mut self.builder, held, otherwise);
+        // Only the successful edge carries this fact. The general store may
+        // also be reached before admission and must retain the original type.
+        Type::INT32
     }
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
@@ -4879,6 +4881,33 @@ mod tests {
         assert_eq!(status, NATIVE_JS_STOPPED);
         assert_eq!(word, 0);
         assert_eq!(registers, before);
+    }
+
+    #[test]
+    fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
+        let program = crate::Engine::specialize(
+            "function write(o, value) { o.value=value; return value; }", "store-proof.js").unwrap();
+        let function = program.function(1);
+        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op() == Op::SetField)
+            .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
+                shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
+                ty: Type::INT32, target_shape: None,
+            }])).collect();
+        assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+        for ty in [Type::INT32, Type::ANY] {
+            fields.values_mut().next().unwrap()[0].ty = ty;
+            let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+                &fields, &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa,
+                Coverage::Full, Completion::StatusAndPc).unwrap();
+            let native = region.function;
+            let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+                .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
+                    if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32));
+            assert_eq!(barrier, ty == Type::ANY,
+                "only the admitted integer excludes a heap edge:\n{native}");
+        }
     }
 
     #[test]
