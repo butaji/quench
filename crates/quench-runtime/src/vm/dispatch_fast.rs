@@ -621,6 +621,8 @@ pub(super) struct LaneBodyStats {
     ends: [std::cell::Cell<u32>; 4],
     /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
+    /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
+    refused: std::cell::Cell<u32>,
 }
 
 impl LaneBodyStats {
@@ -638,9 +640,11 @@ impl LaneBodyStats {
             super::compiled::LaneExit::Callee => 3,
         };
         self.ends[index].set(self.ends[index].get() + 1);
+        // Prefixed by the compile that left there, the first being `c1`.
+        let compile = self.compiles.get();
         let at = match exit {
-            super::compiled::LaneExit::At(pc) => pc.to_string(),
-            super::compiled::LaneExit::Inlined { frame, pc } => format!("{frame}:{pc}"),
+            super::compiled::LaneExit::At(pc) => format!("c{compile} {pc}"),
+            super::compiled::LaneExit::Inlined { frame, pc } => format!("c{compile} {frame}:{pc}"),
             _ => return,
         };
         let mut leaves = self.leaves.borrow_mut();
@@ -650,13 +654,20 @@ impl LaneBodyStats {
         }
     }
 
-    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`.
-    pub(super) fn report(&self, program: usize) -> Option<String> {
+    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`, with the
+    /// state its body ended the run in.
+    pub(super) fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>) -> Option<String> {
         (self.compiles.get() != 0).then(|| {
+            let function = self.function.get();
+            // A leave at a caller PC names the instruction there.
+            let leaves: Vec<_> = self.leaves.borrow().iter().map(|(at, count)| match at.rsplit(' ').next().and_then(|pc| pc.parse::<u32>().ok()).and_then(|pc| op_at(function, pc)) {
+                Some(op) => (format!("{at} {op}"), *count),
+                None => (at.clone(), *count),
+            }).collect();
             let [completed, at, inlined, callee] = self.ends.each_ref().map(std::cell::Cell::get);
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"leaves\":\"{:?}\"}}",
-                self.function.get(), self.compiles.get(), self.frames.get(), self.leaves.borrow(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"leaves\":\"{:?}\"}}",
+                function, self.compiles.get(), self.frames.get(), self.refused.get(), leaves,
             )
         })
     }
@@ -680,6 +691,17 @@ const LANE_BODY_TRIAL_RUNS: u16 = 1024;
 const LANE_BODY_WARMUP_ENTRIES: u16 = 400;
 
 impl LaneView {
+    /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
+    pub(super) fn lane_body_state(&self) -> &'static str {
+        // SAFETY: as `lane_body`.
+        match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Unspecialized { .. } => "unspecialized",
+            LaneBody::Specialized { .. } => "specialized",
+            LaneBody::Retired { .. } => "retired",
+            LaneBody::Declined => "declined",
+        }
+    }
+
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<&super::compiled::LaneMethod> {
         // SAFETY: the body changes only at specialization and at a shape compaction, when
@@ -14216,6 +14238,9 @@ script_handler! {
             .expect("a lane body entry runs in its view");
         let method = own.lane_body().expect("the record enters a specialized body");
         if !lane_body_admits(cx, own) {
+            if vm.programs.js_jit_diagnostics_enabled() {
+                own.body_stats.refused.set(own.body_stats.refused.get() + 1);
+            }
             next!(cx, r, base, Carried::script(cx))
         }
         // SAFETY: the activation just set the context to its own receiver.
