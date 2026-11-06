@@ -3227,6 +3227,25 @@ impl EnvironmentSlots {
         Some(())
     }
 
+    /// `read_storage` and `write_storage` of one slot under one borrow and bounds test: `update`
+    /// maps the slot's ordinary value to the one it stores, or declines and stores nothing.
+    /// The old value and the stored one.
+    /// # Safety
+    /// As `write_storage`.
+    #[inline(always)]
+    pub(crate) unsafe fn update_storage(
+        storage: *const usize,
+        slot: usize,
+        update: impl FnOnce(Value) -> Option<Value>,
+    ) -> Option<(Value, Value)> {
+        // SAFETY: as guaranteed by the caller, for this update only.
+        let mut slots = unsafe { Self::borrow_storage(storage) }?;
+        let place = slots.dense_plain_mut(slot)?;
+        let old = *place;
+        *place = update(old)?;
+        Some((old, *place))
+    }
+
     /// Native entry's values/count projection of the same cached storage.
     /// # Safety
     /// As `read_storage`; the returned pointer expires with the original storage.
