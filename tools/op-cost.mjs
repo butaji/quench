@@ -47,6 +47,21 @@ const OPERATIONS = [
     5,
   ],
   ["allocate", "", [], "var p = { x: i, y: acc }; acc = (p.x + p.y) | 0;", 4],
+  [
+    "construct",
+    "function N(p, s) { this.type = ''; this.start = s; this.end = 0; this.loc = null; }",
+    ["N"],
+    "var x = new N(null, i); acc = (acc + x.start) | 0;",
+    8,
+  ],
+  // A native's call of a JavaScript function per element: the callback entry and return.
+  [
+    "array-callback",
+    "var cells = [0]; function add(x) { cells[0] = (cells[0] + x) | 0; }",
+    ["cells", "add"],
+    "[i].forEach(add); acc = cells[0];",
+    8,
+  ],
 ];
 
 const WARM = 3;
