@@ -977,6 +977,9 @@ pub(crate) struct ProgramStore {
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
+    /// Whether loops may run in loop regions (`QUENCH_JS_JIT_LOOP_REGIONS`, default on);
+    /// off, a loop runs in its function's lane body, where those run.
+    js_jit_loop_regions_enabled: bool,
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
@@ -1025,6 +1028,8 @@ impl Default for ProgramStore {
                 .is_some_and(|value| value == "1"),
             js_jit_lane_methods_enabled: std::env::var_os("QUENCH_JS_JIT_LANE_METHODS")
                 .is_some_and(|value| value == "1"),
+            js_jit_loop_regions_enabled: std::env::var_os("QUENCH_JS_JIT_LOOP_REGIONS")
+                .is_none_or(|value| value != "0"),
             js_general_dispatch_work: None,
             js_general_artifact_cache_enabled: std::env::var_os(
                 "QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE",
@@ -2121,6 +2126,10 @@ impl ProgramStore {
 
     pub(super) fn js_jit_lane_methods_enabled(&self) -> bool {
         self.js_jit_lane_methods_enabled
+    }
+
+    pub(super) fn js_jit_loop_regions_enabled(&self) -> bool {
+        self.js_jit_loop_regions_enabled
     }
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {

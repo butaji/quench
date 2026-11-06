@@ -7297,7 +7297,7 @@ script_handler! {
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop no region runs runs in its function's lane body, which calls natively.
-        if site.promotion_only {
+        if site.promotion_only || lane_bodies && !runtime.programs.js_jit_loop_regions_enabled() {
             lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }

@@ -322,6 +322,42 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, record: S::Word, index: S::
     Some(value)
 }
 
+/// Replaces the present element `index` (unsigned) of the array record at `record` with
+/// `value`, as the interpreter's in-place replacement does (`Vm::try_replace_record_element`):
+/// elements this array alone owns, of an array neither frozen nor with extras (indexed
+/// descriptors, an arguments map), and a value no write barrier logs, an immediate; `miss`
+/// for any other store, which then changes nothing.
+#[inline(always)]
+pub(crate) fn dense_element_store<S: Stage>(stage: &mut S, record: S::Word, index: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let immediate = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
+    stage.guard(immediate, miss)?;
+    let meta = stage.load_u32(record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
+    let frozen = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
+    let thawed = stage.eq_imm(frozen, 0);
+    stage.guard(thawed, miss)?;
+    let auxiliary = stage.load_u32(record, (ARRAY.object_offset + OBJECT.auxiliary_offset) as i32);
+    let extras = stage.and_imm(auxiliary, u64::from(OBJECT.extras_storage_mask));
+    let plain = stage.eq_imm(extras, 0);
+    stage.guard(plain, miss)?;
+    let header = stage.load_u64(record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let owners = stage.load_u32(header, ARRAY.header_owners_offset as i32);
+    let owned = stage.eq_imm(owners, 1);
+    stage.guard(owned, miss)?;
+    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    let within = stage.below(index, length);
+    stage.guard(within, miss)?;
+    let offset = stage.mul_imm(index, std::mem::size_of::<u64>() as u64);
+    let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
+    let address = stage.add(values, offset);
+    let old = stage.load_u64(address, 0);
+    let present = stage.ne_imm(old, crate::Value::DELETED.to_bits());
+    stage.guard(present, miss)?;
+    stage.store_u64(address, 0, value);
+    Some(())
+}
+
 /// Whether a binding's word is a value the program reads, not an internal marker (an
 /// uninitialized binding's, a hole's).
 #[inline(always)]

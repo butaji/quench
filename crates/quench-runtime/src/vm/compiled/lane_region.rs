@@ -1061,8 +1061,10 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variable, same);
             receiver_shapes.insert(field.shape, variable);
         }
-        // A direct store of an atom needs a specialized run and no method cache naming it; a
-        // run that makes no call changes neither (`emit_js_own_field_set`, `store_field`).
+        // A direct store of an atom needs a specialized run and no method cache naming it,
+        // which hold until guest code runs: tested here, and again after each call
+        // (`Lowering::after_guest_code`), never at the stores (`emit_js_own_field_set`,
+        // `store_field`).
         let mut store_atoms = BTreeMap::new();
         let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => Some(instruction.atom_index()),
@@ -1094,6 +1096,16 @@ impl Lowering<'_, '_> {
             std::mem::offset_of!(CallContext, interrupt) as i32);
         self.builder.def_var(interrupt, flag);
         Entry { receiver, receiver_shapes, store_atoms, capture_values, capture_len, this, interrupt }
+    }
+
+    /// The facts guest code may change, proved again once after it ran: each stored atom's
+    /// admission (`Entry::store_atoms`).
+    fn after_guest_code(&mut self) {
+        let atoms: Vec<_> = self.entry.as_ref().expect("entry facts").store_atoms.iter().map(|(atom, variable)| (*atom, *variable)).collect();
+        for (atom, variable) in atoms {
+            let admitted = self.emit_store_atom_admitted(atom);
+            self.builder.def_var(variable, admitted);
+        }
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
@@ -1290,15 +1302,31 @@ impl Lowering<'_, '_> {
             }
             Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
                 .iter().all(|register| *register < self.unit.registers) => {
-                // The lane's in-place element replacement; a miss leaves at the store.
+                // The in-place replacement every tier makes (`staged::dense_element_store`), of an
+                // index key; any other store is the lane's own (`compiled::lane_index_set`), whose
+                // miss leaves at the store.
                 let exit = self.guard_exit(state, pc32);
                 let value = self.tagged(state, instruction.register_a());
                 let base = self.tagged(state, instruction.register_b());
                 let key = self.tagged(state, instruction.register_c());
+                let (general, done) = (self.builder.create_block(), self.builder.create_block());
+                self.builder.set_cold_block(general);
+                let index = crate::vm::staged::index(&mut LaneMachine { lowering: self, state, pc }, crate::vm::staged::Source::Register(instruction.register_c()), general)
+                    .expect("an emitting stage's guards continue");
+                let index = self.ins().uextend(types::I64, index);
+                let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+                let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::ArrayRecords, records);
+                crate::vm::staged::array_record(&mut stage, base, general)
+                    .and_then(|record| crate::vm::staged::dense_element_store(&mut stage, record, index, value, general))
+                    .expect("an emitting stage's guards continue");
+                self.ins().jump(done, &[]);
+                self.builder.switch_to_block(general);
                 let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.index_set, &[base, key, value]);
-                state.epoch = None;
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
                 emit_js_guard(&mut self.builder, hit, exit);
+                self.ins().jump(done, &[]);
+                self.builder.switch_to_block(done);
+                state.epoch = None;
                 Some(true)
             }
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
@@ -1474,6 +1502,7 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
         state.layouts.clear();
         state.epoch = None;
+        self.after_guest_code();
         if let Some(record) = completes {
             self.return_value(record, this);
             return Some(false);
@@ -1778,6 +1807,7 @@ impl Lowering<'_, '_> {
         state.layouts.clear();
         state.epoch = None;
         self.reload_property_arena();
+        self.after_guest_code();
         let destination = instruction.result_register();
         let base = self.registers_base;
         let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
@@ -2441,11 +2471,7 @@ impl Lowering<'_, '_> {
         let header = (!receiver).then(|| self.object_record(state, register, false, exit));
         // A run that calls may meet a method cache that names the atom only after a call;
         // one that does not tests it once, at entry (`Lowering::entry_facts`).
-        let admitted = if self.native_calls {
-            self.emit_store_atom_admitted(atom)
-        } else {
-            self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])
-        };
+        let admitted = self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom]);
         let entry = self.entry.as_ref().expect("entry facts");
         let projection = state.layouts.get(&(owner, field.shape)).copied();
         let (object, shape) = header.map_or_else(|| (

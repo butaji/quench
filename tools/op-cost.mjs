@@ -68,6 +68,8 @@ const ALL_TIERS = [
   ["interp", [], {}],
   ["jit", ["--jit"], {}],
   ["lane", ["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1" }],
+  // The lane-body compiler alone: every loop in its function's body, no loop region.
+  ["body", ["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1", QUENCH_JS_JIT_LOOP_REGIONS: "0" }],
 ];
 
 function run(command, args, env) {
