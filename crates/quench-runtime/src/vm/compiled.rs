@@ -2012,15 +2012,25 @@ fn emit_js_own_field_get(
     destination_offset: i32,
     next: ir::Block,
     exact: &JsExactFallback,
+    table: NarrowTable,
 ) {
     let fallback = builder.create_block();
     let mut receiver = receiver;
     let mut value = None;
     for &site in sites {
-        let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
-        let read = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-        receiver = JsFieldReceiver::Value(read);
-        value = Some(read);
+        // An own slot in inline storage holds a packed value, which decodes to the same Value.
+        let (packed, read) = (builder.create_block(), builder.create_block());
+        let packed_address = builder.append_block_param(packed, types::I64);
+        let field = builder.append_block_param(read, types::I64);
+        let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, Some(packed));
+        let stored = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        builder.ins().jump(read, &[ir::BlockArg::Value(stored)]);
+        builder.switch_to_block(packed);
+        let narrow = builder.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
+        emit_narrow_read(builder, narrow, table, read);
+        builder.switch_to_block(read);
+        receiver = JsFieldReceiver::Value(field);
+        value = Some(field);
     }
     let value = value.expect("a field read names a site");
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
@@ -2898,6 +2908,13 @@ pub(super) fn lower_js_general_dispatch(
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
     }
+    // Packed values decode through the process's table, or an image's linked copy of it.
+    let narrow_table = match callout_kind {
+        #[cfg(feature = "aot")]
+        JsGeneralCallout::Relocatable { .. } => NarrowTable::Linked(
+            u32::try_from(program.function_count()).map_err(|_| "native-data-symbol-overflow")?),
+        _ => NarrowTable::Process,
+    };
     if isa.pointer_type() != types::I64 {
         return Err("general-dispatch-requires-64-bit-pointers");
     }
@@ -3228,7 +3245,7 @@ pub(super) fn lower_js_general_dispatch(
             builder.ins().store(MemFlagsData::trusted(), length, arguments, destination_offset);
             builder.ins().jump(next, &[]);
             builder.switch_to_block(generic);
-            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &[cache_site], destination_offset, next, &exact);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &[cache_site], destination_offset, next, &exact, narrow_table);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -3256,7 +3273,7 @@ pub(super) fn lower_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact, narrow_table);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
