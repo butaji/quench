@@ -7466,7 +7466,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let specialize = |generic: &[super::compiled::LaneExit]| {
         // A function whose loop runs in its region (`LoopSite::runs_region`) keeps it there:
         // a body would only leave for the region at each of the loop's entries.
-        if own.loops.iter().any(LoopSite::runs_region) { return None; }
+        if vm.programs.js_jit_loop_regions_enabled() && own.loops.iter().any(LoopSite::runs_region) { return None; }
         if let Some(body) = code.function_get(function as usize) {
             lane_prepare_callees(cx, own, body);
         }

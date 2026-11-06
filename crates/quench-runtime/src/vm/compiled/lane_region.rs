@@ -154,6 +154,8 @@ struct Lowering<'a, 'f> {
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
     frame_live: Vec<Option<&'a crate::compile::liveness::RegisterMasks>>,
     valid: bool,
+    /// The lowering line that first found the body invalid, for the diagnostics report.
+    invalid_at: u32,
     /// Per loop header, the reads its loop repeats unchanged (`invariant_reads`), made once
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
@@ -244,7 +246,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
-        self.valid &= fact.value.verify();
+        self.require(fact.value.verify());
         let index = usize::from(register);
         let variable = match fact.value.representation {
             Representation::Tagged => self.registers.tagged[index],
@@ -445,8 +447,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn entry_state(&mut self, pc: usize, registers: usize) -> State {
         let mut state = State::canonical(registers);
-        if let Some(types) = self.facts.at(pc) {
-            for (index, ty) in types.iter().copied().enumerate() {
+        if let Some(types) = self.facts.at(pc).map(<[Type]>::to_vec) {
+            for (index, ty) in types.into_iter().enumerate() {
                 if !self.is_live(pc, index as Register) { continue; }
                 let representation = if ty == Type::INT32 { Representation::Int32 }
                     else if ty == Type::NUMBER { Representation::Float64 }
@@ -456,7 +458,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
                     fact.value.binding = BindingTime::Location;
                     fact.value.proof = if ty == Type::ANY { Proof::CanonicalValue } else { Proof::EntryGuard };
                 }
-                self.valid &= fact.value.verify();
+                self.require(fact.value.verify());
                 state.values[index] = fact;
             }
         }
@@ -641,6 +643,7 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &[bool], starts: &[u
 }
 
 /// Why a unit has no lane body: it does not lower, or its machine code is rejected.
+#[derive(Debug)]
 pub(super) enum LaneDecline {
     Unlowered,
     Rejected(super::super::jit_backend::NativeCompileRejection),
@@ -757,6 +760,7 @@ fn lower(
         live,
         frame_live,
         valid: true,
+        invalid_at: 0,
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
         hoisted_arrays: BTreeMap::new(),
@@ -925,7 +929,12 @@ fn lower(
     lowering.builder.switch_to_block(leave);
     let status = lowering.builder.block_params(leave)[0];
     lowering.builder.ins().return_(&[status]);
-    if !lowering.valid || !lowering.finishes { return None; }
+    if !lowering.valid || !lowering.finishes {
+        if lowering.vm.diagnostics {
+            eprintln!("QUENCH_LANE_DECLINE {{\"function\":{function_id},\"invalid_at\":{},\"finishes\":{}}}", lowering.invalid_at, lowering.finishes);
+        }
+        return None;
+    }
     let native_count = lowering.native;
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
@@ -1027,6 +1036,15 @@ impl Lowering<'_, '_> {
         false
     }
 
+    /// Keeps the body valid only where `holds`; the first line that does not is reported.
+    #[track_caller]
+    fn require(&mut self, holds: bool) {
+        if !holds && self.valid {
+            self.invalid_at = std::panic::Location::caller().line();
+        }
+        self.valid &= holds;
+    }
+
     /// `state` past a join with `incoming`: each register's facts as both paths prove them.
     fn join_states(&mut self, state: &mut State, incoming: &State) {
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
@@ -1035,12 +1053,12 @@ impl Lowering<'_, '_> {
                 let representation = if current.value.representation == incoming.value.representation {
                     current.value.representation
                 } else {
-                    self.valid &= current.tagged_current && incoming.tagged_current;
+                    self.require(current.tagged_current && incoming.tagged_current);
                     Representation::Tagged
                 };
                 let mut fact = RegisterFact::definition(current.value.ty.join(incoming.value.ty), representation);
                 fact.tagged_current = current.tagged_current && incoming.tagged_current;
-                self.valid &= fact.value.verify();
+                self.require(fact.value.verify());
                 state.values[index] = fact;
             }
         }

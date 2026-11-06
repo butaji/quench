@@ -7194,10 +7194,16 @@ impl<H: Host> Vm<H> {
             } else {
                 targets(callee, pc)
             };
-            let unit = lane_unit::unit(function, body, budget, &called, &|callee| program.function_get(callee as usize),
-                self.vm_facts().function_call.map(|(atom, _)| atom))?;
+            let declined = |vm: &Self, reason: &str| if vm.vm_facts().diagnostics {
+                eprintln!("QUENCH_LANE_DECLINE {{\"function\":{function},\"reason\":\"{reason}\"}}");
+            };
+            let Some(unit) = lane_unit::unit(function, body, budget, &called, &|callee| program.function_get(callee as usize),
+                self.vm_facts().function_call.map(|(atom, _)| atom)) else { declined(self, "unit"); return None };
             let loop_entry = match loop_header {
-                Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
+                Some(header) => match unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)) {
+                    Some(entry) => Some(entry),
+                    None => { declined(self, "loop-entry"); return None }
+                },
                 None => None,
             };
             // A call of the body itself proves the room this unit's inlined calls take.
@@ -7227,7 +7233,8 @@ impl<H: Host> Vm<H> {
                 Ok(region) => break (unit, region, fields, sites),
                 Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
                     if !unit.frames.is_empty() => budget /= 2,
-                Err(_) => {
+                Err(decline) => {
+                    declined(self, &format!("{decline:?}"));
                     self.host.after_native_compilation();
                     return None;
                 }
@@ -7235,6 +7242,10 @@ impl<H: Host> Vm<H> {
         };
         self.host.after_native_compilation();
         if region.native == 0 {
+            if self.vm_facts().diagnostics {
+                let first = unit.instructions.get(loop_header.and_then(|header| unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))).unwrap_or(0)).map(|instruction| instruction.op());
+                eprintln!("QUENCH_LANE_DECLINE {{\"function\":{function},\"reason\":\"no native instruction\",\"first\":\"{first:?}\"}}");
+            }
             return None;
         }
         let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
