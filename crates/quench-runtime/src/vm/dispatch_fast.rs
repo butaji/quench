@@ -14910,11 +14910,19 @@ fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64
         r.set(i.a & crate::bytecode::REGISTER_MASK, this);
         return LANE_CALL_COMPLETED;
     }
-    // `new Array()` of the realm's own `Array`: ArrayCreate(0), an empty array of
-    // `Array.prototype`, which calls nothing.
+    // `new Array()` and `new Array(length)` of the realm's own `Array`: ArrayCreate, an array
+    // of `Array.prototype` of that many holes, which calls nothing. A length that is no array
+    // length, or one argument that is no Number, is the general construction's.
     let argc = ImmediateLayout::argument_count(i.imm());
-    if argc == 0 && vm.realm_array_constructor(callee) {
-        let array = vm.hole_array(0);
+    if argc <= 1 && vm.realm_array_constructor(callee) {
+        let array = match argc {
+            0 => Some(vm.hole_array(0)),
+            _ => r.get(i.c).as_number().and_then(|length| {
+                let prototype = vm.array_prototype_for_realm(vm.realm.globals);
+                vm.array_of_length(prototype, length)
+            }),
+        };
+        let Some(array) = array else { return LANE_CALL_MISSED };
         note_allocation(vm);
         r.set(i.a & crate::bytecode::REGISTER_MASK, array);
         return LANE_CALL_COMPLETED;

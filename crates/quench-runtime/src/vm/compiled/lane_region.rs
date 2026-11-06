@@ -477,26 +477,6 @@ impl<'a, 'f> Lowering<'a, 'f> {
         register < self.unit.caller_registers && self.live.is_none_or(|live| live.is_live(at as usize, register))
     }
 
-    /// An operand's int32 value, statically where it is a constant int32.
-    fn operand_int(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
-        match operand.kind()? {
-            OperandKind::Register => Some(self.int(state, operand.register_index()?, otherwise)),
-            OperandKind::Constant => {
-                let constant = self.program.constants.get(usize::from(operand.payload()))?;
-                let value = super::facts::immediate(constant)?;
-                if super::facts::is_int32(value) {
-                    Some(self.ins().iconst(types::I32, i64::from(value.wasm_bits32() as i32)))
-                } else {
-                    self.ins().jump(otherwise, &[]);
-                    let dead = self.builder.create_block();
-                    self.builder.switch_to_block(dead);
-                    Some(self.ins().iconst(types::I32, 0))
-                }
-            }
-            OperandKind::Field | OperandKind::Local => None,
-        }
-    }
-
     /// An operand's tagged bits: its register's, or its immediate constant's.
     fn operand_tagged(&mut self, state: &mut State, operand: Operand) -> Option<ir::Value> {
         match operand.kind()? {
@@ -1283,13 +1263,28 @@ impl Lowering<'_, '_> {
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
+                // Any other element, a hole's or one past the dense end included, is the lane's
+                // own read (`compiled::lane_index_get`), which leaves only where it does.
                 let exit = self.guard_exit(state, pc32);
                 let base = self.operand_tagged(state, instruction.operand_b());
-                let index = self.operand_int(state, instruction.operand_c(), exit);
-                base.zip(index).map(|(base, index)| {
+                let key = self.operand_tagged(state, instruction.operand_c());
+                // The key's index, as every tier takes it (`staged::index`).
+                let index = super::lane_source(&self.program.constants, instruction.operand_c())
+                    .and_then(|source| crate::vm::staged::index(&mut LaneMachine { lowering: self, state, pc }, source, exit));
+                base.zip(key).zip(index).map(|((base, key), index)| {
                     let payload = self.payload;
-                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, index, exit);
-                    self.set_tagged(state, instruction.result_register(), value);
+                    let (general, join) = (self.builder.create_block(), self.builder.create_block());
+                    self.builder.set_cold_block(general);
+                    let read = self.builder.append_block_param(join, types::I64);
+                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, index, general);
+                    self.ins().jump(join, &[ir::BlockArg::Value(value)]);
+                    self.builder.switch_to_block(general);
+                    let value = emit_lane_helper_call(&mut self.builder, payload, self.helpers.index_get, &[base, key]);
+                    let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                    emit_js_guard(&mut self.builder, hit, exit);
+                    self.ins().jump(join, &[ir::BlockArg::Value(value)]);
+                    self.builder.switch_to_block(join);
+                    self.set_tagged(state, instruction.result_register(), read);
                     true
                 })
             }
@@ -2835,6 +2830,7 @@ impl crate::vm::staged::Numbers for LaneMachine<'_, '_, '_> {
     fn int_bitwise(&mut self, operation: super::operations::NumberBitwise, left: ir::Value, right: ir::Value) -> ir::Value {
         emit_number_bitwise_bits(&mut self.lowering.builder, operation, left, right)
     }
+    fn float_of_int(&mut self, int: ir::Value) -> ir::Value { self.lowering.ins().fcvt_from_sint(types::F64, int) }
     fn unsigned(&mut self, bits: ir::Value) -> ir::Value {
         let unsigned = self.lowering.ins().uextend(types::I64, bits);
         self.lowering.ins().fcvt_from_uint(types::F64, unsigned)

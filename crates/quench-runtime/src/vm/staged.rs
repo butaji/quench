@@ -11,7 +11,7 @@
 
 mod numbers;
 
-pub(crate) use numbers::{Number, NumberOperator, Numbers, Source, binary, binary_values, relation};
+pub(crate) use numbers::{Number, NumberOperator, Numbers, Source, binary, binary_values, index, relation};
 
 use crate::heap::{PlainPropertyStorage, NATIVE_OBJECT_LAYOUT as OBJECT};
 use crate::value::{NarrowLayout, ValueLayout};

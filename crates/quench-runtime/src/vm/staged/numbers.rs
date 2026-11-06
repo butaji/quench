@@ -61,6 +61,8 @@ pub(crate) trait Numbers: Stage {
     fn float_relation(&mut self, relation: NumberRelation, left: Self::Float, right: Self::Float) -> Self::Cond;
     /// The Number of `bits` read as an unsigned 32-bit integer.
     fn unsigned(&mut self, bits: Self::Int) -> Self::Float;
+    /// The double of an int32.
+    fn float_of_int(&mut self, int: Self::Int) -> Self::Float;
     /// ToInt32 of a double; `miss` where the machine does not compute it exactly.
     fn float_to_int32(&mut self, number: Self::Float, miss: Self::Miss) -> Option<Self::Int>;
     fn or_cond(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
@@ -263,6 +265,40 @@ fn to_int32<N: Numbers>(machine: &mut N, source: Source, miss: N::Miss) -> Optio
     }
 }
 
+/// The int32 a double holds exactly; `miss` for any other double (a fraction, beyond int32,
+/// NaN). -0 holds 0.
+#[inline(always)]
+fn exact_int<N: Numbers>(machine: &mut N, number: N::Float, miss: N::Miss) -> Option<N::Int> {
+    let int = machine.float_to_int32(number, miss)?;
+    let back = machine.float_of_int(int);
+    let exact = machine.float_relation(NumberRelation::Equal, back, number);
+    machine.guard(exact, miss)?;
+    Some(int)
+}
+
+/// `source` as an element index: a Number that holds an int32, in whichever representation
+/// the machine holds it; `miss` for any other value.
+#[inline(always)]
+pub(crate) fn index<N: Numbers>(machine: &mut N, source: Source, miss: N::Miss) -> Option<N::Int> {
+    if known_int(machine, source) {
+        return int_operand(machine, source, miss);
+    }
+    let number = if known_float(machine, source) {
+        let number = float_operand(machine, source, miss)?;
+        Number::Int(exact_int(machine, number, miss)?)
+    } else {
+        let held = ints_held(machine, &[source]);
+        machine.choose_number(held, |machine| Some(Number::Int(assumed_int(machine, source, miss)?)), |machine| {
+            let number = float_operand(machine, source, miss)?;
+            Some(Number::Int(exact_int(machine, number, miss)?))
+        })?
+    };
+    match number {
+        Number::Int(int) => Some(int),
+        Number::Float(_) => unreachable!("int32 arms join as an int32"),
+    }
+}
+
 /// `left op right` for a bitwise operator: ToInt32 of both operands, the operator on their
 /// bits, and the int32 result, but for a zero-fill shift, whose result is the Number of its
 /// unsigned bits. `miss` for an operand that is not a Number.
@@ -418,6 +454,8 @@ impl<R: super::RegisterFile> Numbers for super::ConcreteFrame<R> {
     }
     #[inline(always)]
     fn unsigned(&mut self, bits: i32) -> f64 { f64::from(bits as u32) }
+    #[inline(always)]
+    fn float_of_int(&mut self, int: i32) -> f64 { f64::from(int) }
     #[inline(always)]
     fn float_to_int32(&mut self, number: f64, _: ()) -> Option<i32> { Some(crate::value::number_to_u32(number) as i32) }
     #[inline(always)]

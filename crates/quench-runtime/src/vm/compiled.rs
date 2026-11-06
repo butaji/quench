@@ -2000,6 +2000,8 @@ pub(super) struct LaneHelpers {
     call: usize,
     /// The lane's in-place element store (`Vm::try_replace_record_element`).
     index_set: usize,
+    /// An element read the dense read misses (`lane_index_get`).
+    index_get: usize,
     /// A global name's read (`Vm::lane_global_read`).
     global_get: usize,
     /// An outer capture's read (`dispatch_fast::lane_body_capture`).
@@ -7047,6 +7049,20 @@ unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u
     array.to_bits()
 }
 
+/// A lane body's element read that the native dense read missed, as the lane's own read
+/// makes it: a present element (`Vm::direct_dense_element`), else `undefined` where no object
+/// on the chain holds the index (`Vm::absent_array_element`); `DELETED` for any other read,
+/// which the body leaves for. Neither runs guest code.
+unsafe extern "C" fn lane_index_get<H: Host>(vm: u64, _residual: u64, object: u64, key: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the reads allocate nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    let (object, key) = (Value::from_bits(object), Value::from_bits(key));
+    vm.direct_dense_element(object, key)
+        .or_else(|| vm.absent_array_element(object, key))
+        .unwrap_or(Value::DELETED)
+        .to_bits()
+}
+
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
@@ -7148,6 +7164,7 @@ impl<H: Host> Vm<H> {
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             call: super::dispatch_fast::lane_body_call::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             index_set: lane_index_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
+            index_get: lane_index_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             global_get: lane_global_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             capture_get: super::dispatch_fast::lane_body_capture::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             env_capture_get: super::dispatch_fast::lane_env_capture::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
