@@ -6905,10 +6905,12 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
         return value.to_bits();
     }
     let receiver = Value::from_bits(receiver);
-    match vm.cached_field_hit(residual, receiver, site) {
-        super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
-        _ => Value::DELETED.to_bits(),
+    // A private name is the lane's own read, which the body leaves for.
+    if vm.is_private_name(atom) {
+        return Value::DELETED.to_bits();
     }
+    let probe = vm.cached_field_hit(residual, receiver, site);
+    super::dispatch_fast::lane_field_probe_rest(vm, residual, receiver, atom, site, probe).unwrap_or(Value::DELETED).to_bits()
 }
 
 /// A logged own-field store that preserves every native storage projection.

@@ -6150,6 +6150,20 @@ fn lane_cached_field_miss<H: Host>(
             }
         };
     }
+    lane_field_probe_rest(vm, code, object, atom, site, probe)
+}
+
+/// The rest of a public field read after the site's cache probe, as the lane's own and native
+/// code's reads take it (`compiled::lane_field_get`): the effect-free tiers past the probe,
+/// which record what they find, so the site's next read of that receiver hits.
+pub(super) fn lane_field_probe_rest<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    site: u16,
+    probe: super::object::FieldCacheProbe,
+) -> Option<Value> {
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
@@ -14827,6 +14841,18 @@ fn lane_body_call_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
         || (returns && !lane_returning_call_admitted(cx))
     {
         return LANE_CALL_MISSED;
+    }
+    // A native callee runs as the lane's own native call runs it (`lane_native_value`): `None`
+    // leaves the body at the call, where the general path raises the error the call stashed,
+    // or makes the call, of which nothing has run.
+    if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
+        let kind = *kind;
+        // SAFETY: the call's window is registers of the running function, which the native
+        // call copies before anything can move them.
+        let args = unsafe { lane_call_window(r, i) };
+        let Some(value) = lane_native_value(cx, ip, i, kind, callee, r.get(i.c), args) else { return LANE_CALL_MISSED };
+        r.set(i.a & crate::bytecode::REGISTER_MASK, value);
+        return LANE_CALL_COMPLETED;
     }
     let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else { return LANE_CALL_MISSED };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
