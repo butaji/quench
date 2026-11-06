@@ -500,7 +500,7 @@ fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
 }
 
-fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
+pub(super) fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
     let payload = builder.ins().uextend(types::I64, int);
     builder.ins().bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
 }

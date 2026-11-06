@@ -3205,6 +3205,33 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
+        // A direct array's `length` is its record's; any other receiver reads the field as
+        // the plain read below does.
+        if instruction.op() == Op::GetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup()
+            && program.atoms.get(atom as usize).is_some_and(|name| name == "length")
+            && let Some(receiver @ JsFieldReceiver::Register(source)) = js_field_receiver(base, &register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            let exact = JsExactFallback {
+                context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc,
+            };
+            let generic = builder.create_block();
+            let array = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+            let length = emit_array_length_read(&mut builder, payload, array, generic);
+            let length = lane_region::int_tagged(&mut builder, length);
+            builder.ins().store(MemFlagsData::trusted(), length, arguments, destination_offset);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(generic);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &[cache_site], destination_offset, next, &exact);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
         if instruction.op() == Op::GetField
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
