@@ -279,6 +279,12 @@ impl LoopRegion {
             && self.field_reads.iter().any(|(offset, field)| *field == index && !self.dynamic_field_reads.contains_key(offset))
     }
 
+    /// Whether the region leaves at a call it does not inline: a loop the function's lane
+    /// body, which calls natively, runs better where lane bodies run.
+    pub(crate) fn leaves_at_calls(&self) -> bool {
+        self.inlining.is_none() && self.instructions.iter().any(|instruction| matches!(instruction.op(), Op::Call | Op::CallArray))
+    }
+
     pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
         self.instructions
             .iter()

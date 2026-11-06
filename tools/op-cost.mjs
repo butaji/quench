@@ -50,7 +50,7 @@ const OPERATIONS = [
 ];
 
 const WARM = 3;
-const N = 4_000;
+const N = 20_000;
 
 function fixture(setup, names, body, n) {
   // `acc` is printed as a checksum; doubles keep a fixed rendering through `toFixed`.

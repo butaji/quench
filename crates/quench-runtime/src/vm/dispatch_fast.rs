@@ -7289,6 +7289,11 @@ script_handler! {
                 }
             },
         };
+        if lane_bodies && region.leaves_at_calls() {
+            site.exits.set(LOOP_TIER_MAX_EXITS);
+            lane_loop_body_or_retire::<H>(cx, ip, site);
+            next!(cx, r, header, Carried::script(cx))
+        }
         let region = if region.has_captured_call() && region.inlining.is_none() {
             site.inline_region.get_or_init(|| lane_inlining_region(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
         } else { region };
@@ -7424,8 +7429,9 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = |generic: &[super::compiled::LaneExit]| {
         // A function whose loop the loop tier admitted runs that loop in its region, which
-        // a body would only leave for at each of the loop's entries.
-        if own.loops.iter().any(|site| site.active_region().is_some()) { return None; }
+        // a body would only leave for at each of the loop's entries; a region that leaves at
+        // each call yields its loop to the body.
+        if own.loops.iter().any(|site| site.active_region().is_some_and(|region| !region.leaves_at_calls())) { return None; }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
         if diagnostics && let Some(method) = &method {
