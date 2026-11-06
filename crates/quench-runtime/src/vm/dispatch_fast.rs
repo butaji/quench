@@ -15080,7 +15080,9 @@ fn lane_body_activate<H: Host>(
 fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::LaneExit) -> bool {
     // SAFETY: the running lane's context, read and reset by the run that ended.
     let warming = unsafe { std::mem::take(&mut (*cx).callee_warming) };
-    !(warming && exit == super::compiled::LaneExit::Callee)
+    // A leave while a collection is due is the allocation's, which the lane makes after
+    // collecting: no feedback on the body's code.
+    !(warming && exit == super::compiled::LaneExit::Callee) && !unsafe { vm(cx) }.heap.should_collect()
 }
 
 /// Counts `exit` toward the reoptimization of the body it is a leave of (`lane_body_left`):
