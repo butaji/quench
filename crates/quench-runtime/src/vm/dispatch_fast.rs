@@ -4799,6 +4799,27 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// An addition or subtraction (`OP`) of a register and a register or, where `CONSTANT`, a
+    /// constant, whose result the next record truncates to an int32 (`| 0`) and nothing after
+    /// reads (`specialize_int32_truncations`), as `(a + b) | 0` compiles: the exact sum of two
+    /// int32s is an integer a double holds, so its truncation is their wrapping sum, which the
+    /// record writes to the truncation's register. Other operands run the operator's own
+    /// record (`lane_operator`, `lane_operator_constant`), then the truncation's.
+    fn lane_operator_int32<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
+        let right = if CONSTANT { i.constant() } else { r.get(i.c) };
+        let (Some(left), Some(right)) = (r.get(i.b).as_int(), right.as_int()) else {
+            let own: Handler = if CONSTANT { lane_operator_constant::<H, OP> } else { lane_operator::<H, OP> };
+            sibling!(own, r, ip, Carried::script(cx))
+        };
+        let value = if OP == super::operations::SUBTRACTION { left.wrapping_sub(right) } else { left.wrapping_add(right) };
+        // SAFETY: the pair is two records, the second never the view's last.
+        let truncation = unsafe { &*following(ip) };
+        r.set(truncation.a, Value::integer(value));
+        next!(cx, r, following(following(ip)), Carried::script(cx))
+    }
+}
+
 /// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol or index key's proof
 /// gives for the site's next read (`Vm::site_keyed_own_read`). Out of line: the site's hits
 /// skip it.
@@ -20926,6 +20947,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_update_jumps::<H>(&decoded, &mut records);
         specialize_store_moves::<H>(&mut records);
         specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
+        specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records);
@@ -21565,6 +21587,36 @@ fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Opt
         }
         records[pc].handler = fused_arithmetic!(pairs) as *const ();
         pc += 2;
+    }
+}
+
+/// Gives each addition or subtraction whose result the next record only truncates to an
+/// int32 (`| 0` of it, the sum's register dead after: the truncation overwrites it, or
+/// liveness says so) the record that writes the truncated wrapping sum
+/// (`lane_operator_int32`). The truncation keeps its record for jumps that reach it and for
+/// operands the fused record declines.
+fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+    use super::operations::{ADDITION, BITWISE_OR, SUBTRACTION};
+    let truncation = lane_operator_constant::<H, BITWISE_OR> as Handler as *const ();
+    let fusions: [(Handler, Handler); 4] = [
+        (lane_operator::<H, ADDITION>, lane_operator_int32::<H, ADDITION, false>),
+        (lane_operator::<H, SUBTRACTION>, lane_operator_int32::<H, SUBTRACTION, false>),
+        (lane_operator_constant::<H, ADDITION>, lane_operator_int32::<H, ADDITION, true>),
+        (lane_operator_constant::<H, SUBTRACTION>, lane_operator_int32::<H, SUBTRACTION, true>),
+    ];
+    for pc in 0..records.len().saturating_sub(1) {
+        let (first, second) = (&records[pc], &records[pc + 1]);
+        let truncates = second.handler == truncation && second.b == first.a && second.constant().as_int() == Some(0);
+        let Some(&(_, fused)) = fusions.iter().find(|(own, _)| *own as *const () == first.handler) else {
+            continue;
+        };
+        let dead = second.a == first.a
+            || live
+                .and_then(|masks| masks.get(pc + 2))
+                .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
+        if truncates && dead {
+            records[pc].handler = fused as *const ();
+        }
     }
 }
 

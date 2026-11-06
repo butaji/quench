@@ -25409,6 +25409,45 @@ fn lane_leaf_calls_survive_collections_their_getters_make() {
     assert!(collections > 0, "the getters' allocations collect");
 }
 
+
+#[test]
+fn lane_int32_truncated_sums_match_node() {
+    // `(a + b) | 0` and `(a - b) | 0` run as one record (`lane_operator_int32`) whose int32
+    // operands wrap; overflowing, fractional, NaN, string, BigInt-free primitive and
+    // `valueOf` operands, and a sum whose register stays live, keep the operators' own
+    // results (expected values from Node).
+    let source = r#"
+      function wrap(a, b) {
+        var s = 0, d = 0, k = 0, kept = 0, t = "";
+        for (var i = 0; i < 3000; i++) {
+          s = (s + a[i & 7]) | 0;
+          d = (d - b[i & 7]) | 0;
+          k = (k + 2147483000) | 0;
+          var sum = kept + i;
+          kept = (sum + 1) | 0;
+          t = (sum - 1) | 0;
+        }
+        return [s, d, k, kept, t, sum].join(",");
+      }
+      print(wrap([1, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1]));
+      print(wrap([2147483647, -2147483648, 1, -1, 0, 7, 9, 11], [-2147483648, 2147483647, 3, 3, 3, 3, 3, 3]));
+      print(wrap([0.5, 1.5, 1e10, -0, NaN, Infinity, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8]));
+      print(wrap(["1", "2", 3, 4, 5, 6, 7, 8], [true, null, undefined, {}, [], 1n === 1n, "x", 1]));
+      var vo = { valueOf: function () { return 2147483647; } };
+      print(wrap([vo, vo, vo, vo, 1, 1, 1, 1], [vo, 1, vo, 1, vo, 1, vo, 1]));
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "int32-sums.js").0,
+        [
+            "13500,-13500,-1944000,4501500,4501498,4501499",
+            "9750,-6375,-1944000,4501500,4501498,4501499",
+            "7,-13500,-1944000,4501500,4501498,4501499",
+            "1000583613,-1,-1944000,4501500,4501498,4501499",
+            "0,0,-1944000,4501500,4501498,4501499",
+        ]
+    );
+}
+
 #[test]
 fn lane_leaf_calls_bind_receivers_as_activations() {
     // A leaf method reads its receiver's field; a sloppy leaf binds the global object for a
