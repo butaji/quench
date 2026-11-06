@@ -1456,6 +1456,35 @@ impl<H: Host> Vm<H> {
             .map(Value::length)
     }
 
+    /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
+    /// answers from a polymorphic site's prototype-held entries, keyed by both exact shapes.
+    /// The interpreter's reads leave that tier to their miss path, which also records the
+    /// site's entries: answering them here left postcss's `cloneNode` reading a stale
+    /// `constructor` (JetStream postcss-wtb), whose cause remains open (Linear TOD-121).
+    pub(super) fn compiled_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> FieldCacheProbe {
+        let probe = self.cached_field_hit(p, object, site);
+        if !matches!(probe, FieldCacheProbe::OrdinaryMiss) {
+            return probe;
+        }
+        let Some(receiver) = self.heap.object(object) else {
+            return probe;
+        };
+        if let Some(record) = receiver.proto_link().object_record_id() {
+            let holder = self.heap.object_record_by_id(record);
+            if let Some(cache) = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape()) {
+                // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
+                // immediate-prototype data property of these exact shapes.
+                return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
+            }
+        }
+        probe
+    }
+
     /// Probe own and holder entries using the shape pinned by the receiver.
     #[inline(always)]
     pub(super) fn cached_field_hit(
@@ -1483,15 +1512,6 @@ impl<H: Host> Vm<H> {
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
-        }
-        // A polymorphic site's prototype-held entries, keyed by both exact shapes.
-        if let Some(record) = receiver.proto_link().object_record_id() {
-            let holder = self.heap.object_record_by_id(record);
-            if let Some(cache) = self.megamorphic_field_cache(index, receiver.exact_shape(), holder.exact_shape()) {
-                // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
-                // immediate-prototype data property of these exact shapes.
-                return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
-            }
         }
         // The tiers the lane's own handlers read past these: a receiver a heap cell holds, and
         // a field inherited from beyond the immediate prototype.

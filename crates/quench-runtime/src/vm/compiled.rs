@@ -5151,7 +5151,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
         let site = u16::try_from(cache_site).ok()?;
         // The ABI slot is used as a raw 64-bit Value, never as an address.
         let receiver = Value::from_bits(receiver_bits);
-        let probe = vm.cached_field_hit(program, receiver, site);
+        let probe = vm.compiled_field_hit(program, receiver, site);
         if payload.diagnostics_enabled {
             let function = payload.function;
             vm.programs.record_js_jit_field_cache_probe(
@@ -7660,7 +7660,7 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
         return value.to_bits();
     }
     let receiver = Value::from_bits(receiver);
-    match vm.cached_field_hit(residual, receiver, site) {
+    match vm.compiled_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         _ => Value::DELETED.to_bits(),
     }
