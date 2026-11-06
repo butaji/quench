@@ -586,6 +586,7 @@ impl ArrayIteration {
     }
 
     /// The method's value once every element was visited without a step ending it.
+    #[inline(always)]
     pub(super) fn completion(&self) -> Value {
         match self.native {
             Native::ArrayMap | Native::ArrayFilter => self.result,

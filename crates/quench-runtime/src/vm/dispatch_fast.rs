@@ -13872,7 +13872,7 @@ fn lane_begin_array_iteration<H: Host>(
     if !unsafe { (*cx).script_calls } || vm.with_scope_entered {
         return None;
     }
-    let length = vm.heap.array_elements(receiver)?.len();
+    let length = lane_array_object(vm, receiver)?.elements().len();
     if vm.own_array_length(receiver) != Some(length) {
         return None;
     }
@@ -13889,21 +13889,40 @@ fn lane_begin_array_iteration<H: Host>(
     }
     let mut iteration = vm.fresh_array_iteration(native, receiver, callback, this_arg, length)?;
     note_allocation(vm);
-    // SAFETY: `ip` is the call record of the running function's view.
-    let i = unsafe { &*ip };
     let Some(index) = iteration.advance() else {
-        return Some(lane_native_complete(cx, ip, i, Some(iteration.completion())));
+        // SAFETY: `ip` is the call record of the running function's view.
+        return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
     };
-    let key = Value::length(index);
-    if let Some(element) = vm.dense_array_element(receiver, key)
-        && let Some(start) = lane_push_prepared(cx, &shape.activation, shape.room, &entry, &[element, key, receiver])
+    if let Some(element) = lane_dense_element(vm, receiver, index)
+        && let Some(window) = lane_admit_prepared(cx, &shape.activation, shape.room)
     {
+        let values = [element, Value::length(index), receiver];
+        // SAFETY: the admission pushed the activation over the window.
+        let start = unsafe { lane_enter_prepared_values(cx, &entry, values, window) };
         vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry });
-        // SAFETY: the push made the callback's registers the context's.
+        // SAFETY: the entry made the callback's registers the context's.
         return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
     }
     iteration.visited -= 1;
     Some(lane_resume_array_iteration(cx, ip, iteration))
+}
+
+/// The array `receiver` names: a direct array's record, found inline as
+/// `Vm::own_array_length` finds it, or a slot's.
+#[inline(always)]
+fn lane_array_object<H: Host>(vm: &Vm<H>, receiver: Value) -> Option<&crate::heap::ArrayObject> {
+    match vm.heap.record_array(receiver) {
+        Some(object) => Some(object),
+        None => vm.heap.array(receiver),
+    }
+}
+
+/// The present element at `index` of `receiver`'s dense storage: an own data property,
+/// which HasProperty finds and Get reads observing nothing.
+#[inline(always)]
+fn lane_dense_element<H: Host>(vm: &Vm<H>, receiver: Value, index: usize) -> Option<Value> {
+    let element = *lane_array_object(vm, receiver)?.elements().get(index)?;
+    (!element.is_deleted()).then_some(element)
 }
 
 /// The iteration `iteration` of the call at `ip`, whose caller runs, past its last element:
@@ -13980,13 +13999,7 @@ fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: 
     if applied.is_none() && depth < vm.lane_stack.activation_limit.get() {
         if let Some(index) = step.iteration.advance() {
             let receiver = step.iteration.receiver;
-            // A direct array's record is found inline, as `own_array_length` finds it.
-            let elements = match vm.heap.record_array(receiver) {
-                Some(object) => Some(object.elements()),
-                None => vm.heap.array_elements(receiver),
-            };
-            let element = elements.and_then(|elements| elements.get(index)).copied();
-            if let Some(element) = element.filter(|element| !element.is_deleted()) {
+            if let Some(element) = lane_dense_element(vm, receiver, index) {
                 step.element = element;
                 step.index = index;
                 // The callback's completed loops close nothing more.
@@ -22598,17 +22611,25 @@ fn lane_push_prepared<H: Host>(
     entry: &PreparedEntry,
     args: &[Value],
 ) -> Option<Ip> {
-    let vm = unsafe { vm(cx) };
-    let stack = &mut vm.lane_stack;
+    let window = lane_admit_prepared(cx, activation, room)?;
+    // SAFETY: the admission pushed the activation over the window; `args` holds
+    // `entry.argc` values.
+    Some(unsafe { lane_enter_prepared(cx, entry, args, window) })
+}
+
+/// `lane_push_prepared`'s admission: `activation` pushed over a window at the lane stack's
+/// top with `room`, whose lane-stack index it answers for the entry to fill. `None`, which
+/// changes nothing, where the lane stack lacks room.
+#[inline(always)]
+fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<usize> {
+    let stack = &mut unsafe { vm(cx) }.lane_stack;
     let window = stack.values.len();
     if stack.activations.len() >= stack.activation_limit.get() || stack.values.capacity() - window < room {
         return None;
     }
-    // SAFETY: as `lane_push_callback`'s; `args` holds `entry.argc` values.
-    unsafe {
-        stack.push_activation(Activation { window, ..*activation });
-        Some(lane_enter_prepared(cx, entry, args, window))
-    }
+    // SAFETY: as `lane_push_callback`'s.
+    unsafe { stack.push_activation(Activation { window, ..*activation }) };
+    Some(window)
 }
 
 /// The activation `entry` enters, whose window starts at the lane-stack index `window`,
