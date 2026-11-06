@@ -61,6 +61,15 @@ const OPERATIONS = [
     "var x = new N(null, i); acc = (acc + x.start) | 0;",
     8,
   ],
+  // Reads of global bindings: a script's top-level var and function, a built-in global.
+  ["global-load", "var g = 5;", [], "acc = (acc + g) | 0;", 4],
+  ["global-call", "function gf(x) { return (x + 1) | 0; }", [], "acc = gf(acc);", 5],
+  ["builtin-load", "", [], "acc = (acc + Math.PI) | 0;", 4],
+  // Calls of built-in functions from JavaScript: a static method, an array method pair, a
+  // string method.
+  ["native-call", "", [], "acc = (acc + Math.max(i & 7, 3)) | 0;", 6],
+  ["push-pop", "var a = [];", ["a"], "a.push(i); acc = (acc + a.pop()) | 0;", 8],
+  ["string-method", "var s = 'abcdefgh';", ["s"], "acc = (acc + s.charCodeAt(i & 7)) | 0;", 5],
   // A native's call of a JavaScript function per element: the callback entry and return.
   [
     "array-callback",
@@ -72,7 +81,7 @@ const OPERATIONS = [
 ];
 
 const WARM = 3;
-const N = 4_000;
+const N = 40_000;
 
 function fixture(setup, names, body, n) {
   // `acc` is printed as a checksum; doubles keep a fixed rendering through `toFixed`.
