@@ -1696,6 +1696,9 @@ struct FieldSlotBinding {
     records: ir::Value,
     arena: FieldArena,
     writes: Option<crate::typed_ir::Type>,
+    /// Whether the run's entry admitted `writes` for the slot (`Lowering::entry_facts`): a
+    /// store through the binding guards it, so an unadmitted slot leaves only its stores.
+    admitted: Option<ir::Value>,
 }
 
 /// A bound slot moves invariant address arithmetic off the receiver-load chain.
@@ -1786,7 +1789,7 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
     let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
-        arena: FieldArena::Unbound { values, length }, writes: None }
+        arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
 }
 
 // `packed_slot`, when requested, receives a proved own-slot address holding a narrow
@@ -20973,7 +20976,7 @@ mod tests {
             slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
             records: parameters[0],
             arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
-            writes: None,
+            writes: None, admitted: None,
         };
         let slot = binding.slot.read(&mut builder);
         binding.arena = binding.arena.bind(&mut builder, slot);
