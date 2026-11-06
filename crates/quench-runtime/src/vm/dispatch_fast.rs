@@ -78,13 +78,25 @@ union LaneOperand {
 
 /// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
 /// hint names, `NO_FIELD_RECEIVER` for none. The hint's slot is the record's `call_link`,
-/// which no field record reads otherwise (`holds_no_call_link`).
+/// which no field record reads otherwise (`holds_no_call_link`). An inherited read's record
+/// hints the inherited entry that last answered it instead (`set_inherited_hint`): its shape
+/// is then `INHERITED_HINT` and its `call_link` that entry's index; a polymorphic read's, the
+/// prototype-held read that last answered it (`set_holder_hint`), `HOLDER_HINT` and its index.
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct FieldOperand {
     imm: u32,
     shape: u32,
 }
+
+/// The `FieldOperand::shape` of a record whose hint is an inherited entry
+/// (`Vm::hinted_inherited_field_hit`): no object's exact shape (`Object::exact_shape`, whose id
+/// bits never all hold), so an own-field hint read (`LaneInstruction::field_hint`) misses it.
+const INHERITED_HINT: u32 = super::NO_FIELD_RECEIVER - 1;
+
+/// The `FieldOperand::shape` of a polymorphic read's record whose hint is a prototype-held
+/// read (`Vm::holder_hint_hit`), as `INHERITED_HINT` no object's exact shape.
+const HOLDER_HINT: u32 = super::NO_FIELD_RECEIVER - 2;
 
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
@@ -584,6 +596,27 @@ unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
     if !count.is_multiple_of(WINDOW_FILL_PAIR) {
         // SAFETY: the odd final value is within the logical range.
         unsafe { registers.add(tail).write_unaligned(initial) };
+    }
+}
+
+/// `fill_window` of a plain activation's `count` registers with `undefined`, whose admission
+/// reserved whole `SCRIPT_FILL_BLOCK`s past them (`ScriptCallTarget::room`): a window within
+/// one `WINDOW_FILL_BLOCK` takes that block's fixed stores, the values past the live range
+/// landing in the reserved room, which no frame reads, so it makes no test of its count.
+///
+/// # Safety
+/// `registers` has writable storage for `fill_room::<SCRIPT_FILL_BLOCK>(count)` values, none
+/// of them live.
+#[inline(always)]
+unsafe fn fill_admitted_window(registers: *mut Value, count: usize) {
+    const _: () = assert!(WINDOW_FILL_BLOCK <= SCRIPT_FILL_BLOCK);
+    if count > WINDOW_FILL_BLOCK {
+        // SAFETY: the function's contract.
+        return unsafe { fill_window(registers, count, Value::UNDEFINED) };
+    }
+    for index in 0..WINDOW_FILL_BLOCK {
+        // SAFETY: the admitted room holds a whole block.
+        unsafe { registers.add(index).write_unaligned(Value::UNDEFINED) };
     }
 }
 
@@ -2217,9 +2250,16 @@ impl LaneStack {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
         if site.last() != Some(&target) {
-            site.retain(|recorded| *recorded != target);
-            if site.len() == CALL_SITE_TARGETS {
-                site.remove(0);
+            // A record holds each callee once, so the callee in hand moves to the newest end
+            // from where it was, or evicts the oldest.
+            match site.iter().position(|recorded| *recorded == target) {
+                Some(older) => {
+                    site.remove(older);
+                }
+                None if site.len() == CALL_SITE_TARGETS => {
+                    site.remove(0);
+                }
+                None => {}
             }
             site.push(target);
         }
@@ -5558,14 +5598,58 @@ script_handler! {
 /// `NO_CALL_LINK`, a held one's shape a recorded one.
 #[inline(always)]
 fn set_field_hint(ip: Ip, entry: super::FieldCache) {
+    set_record_hint(ip, entry.receiver, entry.slot);
+}
+
+/// Makes inherited entry `index` the hint of the `GetField` record at `ip`
+/// (`Vm::hinted_inherited_field_hit`), where `call_link` can name it.
+#[inline(always)]
+fn set_inherited_hint(ip: Ip, index: u32) {
+    if let Ok(index) = u16::try_from(index)
+        && index != NO_CALL_LINK
+    {
+        set_record_hint(ip, INHERITED_HINT, index);
+    }
+}
+
+/// Makes the prototype's answer `hold` keeps (`Vm::hold_holder_hint`, `Vm::hold_string_hint`)
+/// the hint of the `GetField` record at `ip`, in place of the one it holds, which `hold` takes.
+/// Out of line, so the reads that keep their hint keep their registers.
+#[cold]
+#[inline(never)]
+fn set_prototype_hint(ip: Ip, hold: impl FnOnce(Option<u16>) -> Option<u16>) {
+    if holds_loop_site(ip) {
+        return;
+    }
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let owned = (unsafe { i.operand.field.shape } == HOLDER_HINT).then(|| i.call_link.get());
+    if let Some(index) = hold(owned) {
+        set_record_hint(ip, HOLDER_HINT, index);
+    }
+}
+
+/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header
+/// (`holds_loop_site`).
+#[inline(always)]
+fn set_record_hint(ip: Ip, shape: u32, link: u16) {
+    if !holds_loop_site(ip) {
+        // SAFETY: as `requicken`; `ip` is a field read/store record of a live view.
+        unsafe {
+            (*ip.cast_mut()).operand.field.shape = shape;
+            (*ip).call_link.set(link);
+        }
+    }
+}
+
+/// Whether the field record at `ip` is a held loop header's, whose `call_link` names its
+/// site (`lane_header_site`), so it keeps no hint: an empty hint's link is `NO_CALL_LINK`,
+/// and a held one's shape a recorded one, `INHERITED_HINT` or `HOLDER_HINT`.
+#[inline(always)]
+fn holds_loop_site(ip: Ip) -> bool {
     // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
-    let header = unsafe { i.operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
-    if !header {
-        // SAFETY: as `requicken`.
-        unsafe { (*ip.cast_mut()).operand.field.shape = entry.receiver };
-        i.call_link.set(entry.slot);
-    }
+    (unsafe { i.operand.field.shape }) == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
 }
 
 /// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
@@ -5588,7 +5672,9 @@ script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
     /// (`Vm::field_site_polymorphic`): its inline megamorphic entries, after its hint where
     /// `HINTED` (`polymorphic_read`), which a read a prototype's entry answers drops for good,
-    /// since its site's receivers keep no own hint; any other read takes
+    /// since its site's receivers keep no own hint: the record then hints the last read a
+    /// prototype answered instead, with its value (`Vm::holder_hint_hit`), as a parser whose
+    /// shape grows while it runs reads its methods. Any other read takes
     /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
     fn lane_get_field_polymorphic<THIS: bool, HINTED: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -5596,7 +5682,14 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
             if !HINTED {
-                return vm.inline_polymorphic_field_hit(code, object, i.c);
+                if let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
+                    return Some(value);
+                }
+                let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, super::EMPTY_CACHE)?;
+                if matches!(hit, super::object::PolymorphicHit::Holder) {
+                    set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
+                }
+                return Some(value);
             }
             let (value, holder) = polymorphic_read(vm, code, ip, object)?;
             if holder {
@@ -5710,15 +5803,32 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_string` of a register base whose `String.prototype` entry answers
-    /// (`Vm::string_prototype_field_hit`): one tag test and the entry's shape before the
-    /// slot. Any other read takes `lane_get_field_string` out of line.
+    /// `lane_get_field_string` of a register base whose read the record's hint answers
+    /// (`Vm::string_hint_hit`): one tag test and the hint's name, prototype and epoch. Any
+    /// other read takes `lane_get_field_string_refresh` out of line.
     fn lane_get_field_string_register<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let Some(value) = vm.heap.is_string(base).then(|| vm.string_hint_hit(i.call_link.get(), i.imm())).flatten() else {
+            sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_string_register` past its hint: the site's `String.prototype` entry
+    /// (`Vm::string_prototype_field_hit`), whose answer becomes the hint. Any other read
+    /// takes `lane_get_field_string`.
+    #[inline(never)]
+    fn lane_get_field_string_refresh<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let base = r.get(i.b);
         let Some(value) = vm.heap.is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
             sibling!(lane_get_field_string::<H>, r, ip, Carried::script(cx))
         };
+        set_prototype_hint(ip, |owned| vm.hold_string_hint(owned, i.imm(), value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -5757,14 +5867,13 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
-    /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
-    /// inline while its proof holds (`Vm::proved_inherited_field_hit`); any other read takes
-    /// `lane_get_field_inherited_walk`.
+    /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: the entry
+    /// that last answered it, its hint, inline while its proof holds
+    /// (`Vm::hinted_inherited_field_hit`), as a parser's methods read from instances of
+    /// several plugin classes; any other read takes `lane_get_field_inherited_walk`.
     fn lane_get_field_inherited<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).proved_inherited_field_hit(code, object, i.c))
+            .and_then(|object| (unsafe { vm(cx) }).hinted_inherited_field_hit(object, i.imm(), i.call_link.get()))
         else {
             sibling!(lane_get_field_inherited_walk::<H, THIS>, r, ip, Carried::script(cx))
         };
@@ -5774,17 +5883,19 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_inherited` past its proof: the entry's chain walk, which proves it
-    /// again (`Vm::inherited_field_hit`); any other read takes `lane_get_field_miss`.
+    /// `lane_get_field_inherited` past its hint: the site's entries and their chain walk,
+    /// which proves one again (`Vm::inherited_field_entry_hit`); the entry that answered
+    /// becomes the hint. Any other read takes `lane_get_field_miss`.
     #[inline(never)]
     fn lane_get_field_inherited_walk<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
+        let Some((value, entry)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).inherited_field_entry_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
+        set_inherited_hint(ip, entry);
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -6030,10 +6141,13 @@ fn lane_field_site_tier<H: Host>(
     }
 }
 
-/// A nested `GetField`'s value (`this.a.b`, `r.a.b`) where each step hits its site's primary
-/// own entry (`Vm::primary_own_field_hit`), or the second is an array's own `length`
-/// (`Vm::array_length_field`); `None` leaves the read to the general cached read. The site
-/// reads neither `name` nor another `length` (`lane_field_site_tier`).
+/// A nested `GetField`'s value (`this.a.b`, `r.a.b`) where the first step hits the record's
+/// own-field hint (`LaneInstruction::field_hint`), which holds the receiver shape that step
+/// last met however many its site has seen (a parser's `this` gains a field mid-parse), and
+/// the second its site's primary own entry or an array's or a string's own `length`
+/// (`nested_last_step`); `None` leaves the read to `lane_nested_polymorphic_value`, which
+/// refreshes the hint. The site reads neither `name` nor another `length`
+/// (`lane_field_site_tier`).
 ///
 /// # Safety
 /// `cx` is the running lane's context and `i` a nested record of it.
@@ -6051,37 +6165,42 @@ unsafe fn lane_nested_own_value<H: Host>(
         Some(register) => r.get(register),
         None => unsafe { lane_fixed_this(cx) }?,
     };
-    nested_own_field_hit(vm, code, site, base)
+    let first = vm.record_field_entry_hit(i.field_hint(), base)?;
+    nested_last_step(vm, code, site, first)
 }
 
-/// `lane_nested_own_value` past the primary own entries: each step's site's entries, the
-/// primary own one or the polymorphic ones, inline or hashed (`Vm::polymorphic_field_hit`),
-/// as an AST walk's `node.loc.start` reads nodes of many shapes, and a string's own `length`,
-/// as a tokenizer's `this.input.length` reads (`lane_cached_field`); none runs guest code. Out
-/// of line, so the primary probe keeps its registers; `None` leaves the read to
-/// `lane_get_field`.
+/// `lane_nested_own_value` past the record's hint: each step's site's entries, the primary own
+/// one or the polymorphic ones, inline or hashed (`Vm::polymorphic_field_entry_hit`), as an
+/// AST walk's `node.loc.start` reads nodes of many shapes, and a string's own `length`, as a
+/// tokenizer's `this.input.length` reads (`lane_cached_field`); none runs guest code. The own
+/// entry that answered the first step becomes the record's hint. Out of line, so the hinted
+/// probe keeps its registers; `None` leaves the read to `lane_get_field`.
 ///
 /// # Safety
-/// As for `lane_nested_own_value`.
+/// As for `lane_nested_own_value`, with `ip` that record.
 #[inline(never)]
-unsafe fn lane_nested_polymorphic_value<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    i: &LaneInstruction,
-) -> Option<Value> {
+unsafe fn lane_nested_polymorphic_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip) -> Option<Value> {
     // SAFETY: the context's program outlives the lane run; a nested record names its site.
     let code = unsafe { &*(*cx).code };
-    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
+    let site = unsafe { code.field_sites.get_unchecked((*ip).imm() as usize) };
     let base = unsafe { lane_field_base(cx, r, site.base) }?;
     let vm = unsafe { vm(cx) };
-    let step = |vm: &mut Vm<H>, object: Value, cache: u16| {
-        vm.primary_own_field_hit(code, object, cache).or_else(|| vm.polymorphic_field_hit(code, object, cache))
+    let (first, own) = match vm.primary_own_field_hit(code, base, site.first.1) {
+        Some(value) => (value, Some(vm.field_cache_entry(site.first.1))),
+        None => match vm.polymorphic_field_entry_hit(code, base, site.first.1)? {
+            (value, super::object::PolymorphicHit::Own(entry)) => (value, Some(entry)),
+            (value, _) => (value, None),
+        },
     };
-    let first = step(vm, base, site.first.1)?;
+    if let Some(entry) = own {
+        set_field_hint(ip, entry);
+    }
     match site.second {
         None => Some(first),
         Some((atom, _)) if atom == vm.length_atom => own_length(vm, first),
-        Some((_, cache)) => step(vm, first, cache),
+        Some((_, cache)) => vm
+            .primary_own_field_hit(code, first, cache)
+            .or_else(|| vm.polymorphic_field_hit(code, first, cache)),
     }
 }
 
@@ -6095,12 +6214,26 @@ pub(super) fn nested_own_field_hit<H: Host>(
     base: Value,
 ) -> Option<Value> {
     #[cfg(feature = "profile-field-primitives")]
-    let pair = site.second.is_some_and(|(atom, _)| atom != vm.length_atom);
-    #[cfg(feature = "profile-field-primitives")]
-    if pair { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairAttempt); }
+    if site.second.is_some_and(|(atom, _)| atom != vm.length_atom) {
+        vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairAttempt);
+    }
     let first = vm.primary_own_field_hit(code, base, site.first.1)?;
     #[cfg(feature = "profile-field-primitives")]
-    if pair { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairFirstHit); }
+    if site.second.is_some_and(|(atom, _)| atom != vm.length_atom) {
+        vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairFirstHit);
+    }
+    nested_last_step(vm, code, site, first)
+}
+
+/// A nested site's last step from `first`, the first step's value: none, an array's or a
+/// string's own `length`, or the second step's primary own entry.
+#[inline(always)]
+fn nested_last_step<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    site: &crate::bytecode::FieldSite,
+    first: Value,
+) -> Option<Value> {
     match site.second {
         None => Some(first),
         Some((atom, _)) if atom == vm.length_atom => own_length(vm, first),
@@ -6130,7 +6263,7 @@ script_handler! {
     /// any other read takes `lane_get_field`.
     fn lane_get_field_nested<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_nested_own_value(cx, r, i) })
-            .or_else(|| unsafe { lane_nested_polymorphic_value(cx, r, i) })
+            .or_else(|| unsafe { lane_nested_polymorphic_value(cx, r, ip) })
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
@@ -15518,12 +15651,12 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     let count = usize::from(target.registers);
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
-    // SAFETY: capacity holds the window; each slot is written before the length covers
-    // it, and no activation's window moves. Parameter `k` lives in register `k` of a
-    // plain activation (`Vm::place_plain_parameters`).
+    // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); each
+    // slot is written before the length covers it, and no activation's window moves.
+    // Parameter `k` lives in register `k` of a plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, count, Value::UNDEFINED);
+        fill_admitted_window(registers, count);
         copy_arguments(registers, passed, argc);
         stack.values.set_len(window + count);
         Registers(registers)
@@ -17534,7 +17667,7 @@ script_handler! {
                     Some(value)
                 }
                 RETURNING_FIELD_NESTED => {
-                    let Some(value) = lane_nested_own_value(cx, r, i) else {
+                    let Some(value) = lane_nested_own_value(cx, r, i).or_else(|| lane_nested_polymorphic_value(cx, r, ip)) else {
                         sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::script(cx))
                     };
                     Some(value)
@@ -21657,6 +21790,32 @@ mod instruction_set_tests {
             }
             for pc in 0..count { assert!(set.contains(pc)); }
         }
+    }
+}
+
+#[cfg(test)]
+mod call_site_history_tests {
+    use super::*;
+    use super::super::compiled::{CallTarget, CalleeBinding};
+
+    #[test]
+    fn a_call_sites_history_keeps_each_callee_once_newest_last() {
+        // A callee met again moves to the newest end; a further one evicts the oldest
+        // (`LaneStack::note_site_callee`).
+        let stack = LaneStack::default();
+        let link = std::cell::Cell::new(NO_CALL_LINK);
+        let target = |k: i32| CallTarget { callee: CalleeBinding::Identity(Value::integer(k)), function: k as u32 };
+        let history = || {
+            stack.call_sites.borrow()[&std::ptr::from_ref(&link).addr()].iter().map(|target| target.function).collect::<Vec<_>>()
+        };
+        for k in [1, 2, 3, 2, 2] {
+            stack.note_site_callee(&link, target(k));
+        }
+        assert_eq!(history(), [1, 3, 2]);
+        for k in [4, 1, 5] {
+            stack.note_site_callee(&link, target(k));
+        }
+        assert_eq!(history(), [2, 4, 1, 5]);
     }
 }
 

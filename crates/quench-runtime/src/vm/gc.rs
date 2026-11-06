@@ -893,6 +893,11 @@ impl<H: Host> Vm<H> {
         }
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        // A hint names its prototype by record id, which an allocation may give another object
+        // once this one is swept.
+        for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {
+            hint.epoch = crate::heap::NO_CONSTANT_EPOCH;
+        }
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -1023,6 +1028,7 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
+        self.holder_hints.clear();
         self.programs.invalidate_shape_bindings();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();

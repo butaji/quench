@@ -782,6 +782,22 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
+/// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
+/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver of exact shape `receiver`, which
+/// lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
+/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` while
+/// the prototype value epoch was `epoch` (`heap::prototype_value_epoch`), which every change
+/// to a marked prototype's layout or slot values advances. `prototype` is `holder` as an
+/// object's header links it, which an object receiver's test compares.
+#[derive(Clone, Copy)]
+struct HolderHint {
+    receiver: u32,
+    atom: Atom,
+    prototype: crate::heap::ProtoLink,
+    holder: Value,
+    value: Value,
+    epoch: u64,
+}
 /// Stored as `[receiver, holder, slot]` complemented against `EMPTY_CACHE`, which stores
 /// as zero words.
 impl site_table::SiteEntry for FieldCache {
@@ -2064,6 +2080,15 @@ pub(crate) struct Vm<H> {
     /// `FIELD_CACHE_SPARSE_RESET_SHARE` of the sites, and every site resets.
     field_cache_writes: Option<Vec<u32>>,
     megamorphic_fields: Vec<FieldCacheSet>,
+    /// The prototype-held reads polymorphic `GetField` records keep as their hints, each
+    /// record its own, by index (`Vm::holder_hint_hit`). A hint names its prototype by record
+    /// id, so a collection that sweeps that prototype drops the hint's value, and one that
+    /// renumbers shapes every hint.
+    holder_hints: Vec<HolderHint>,
+    /// This thread's prototype value epoch (`heap::prototype_value_epoch_address`), which
+    /// the lane's constant reads load as native code does: a VM stays on the thread that made
+    /// it, and the cell lives as long as that thread.
+    prototype_value_epoch: *const u64,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
@@ -2169,6 +2194,15 @@ struct IteratorRealmPrototypes {
     generator: Value,
     async_generator: Value,
 }
+impl<H> Vm<H> {
+    /// The current prototype value epoch (`heap::prototype_value_epoch`), one load.
+    #[inline(always)]
+    fn prototype_value_epoch(&self) -> u64 {
+        // SAFETY: the address of this thread's epoch cell (`Vm::prototype_value_epoch`).
+        unsafe { *self.prototype_value_epoch }
+    }
+}
+
 impl<H: Host> Vm<H> {
     /// Diagnostic: general-loop dispatches by the register width of their function, since
     /// register liveness (and with it promotion and move coalescing) covers only functions
@@ -3070,6 +3104,7 @@ impl<H: Host> Vm<H> {
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.megamorphic_fields.clear();
+        self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
         self.to_fixed_atom = self.intern_atom("toFixed");

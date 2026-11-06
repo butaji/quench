@@ -161,6 +161,8 @@ impl<H: Host> Vm<H> {
             megamorphic_field_indices: Default::default(),
             field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
+            holder_hints: Vec::new(),
+            prototype_value_epoch: crate::heap::prototype_value_epoch_address(),
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layouts: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
