@@ -20614,6 +20614,76 @@ fn promise_jobs_run_short_handlers_in_the_lane_as_frames_would() {
 }
 
 #[test]
+fn promise_jobs_keep_order_errors_and_species_across_redefinitions() {
+    // Reaction jobs and `then` registrations after their species proof holds: job order across
+    // `then` and `await`, thrown handlers, collections inside jobs, and redefinitions of
+    // `Promise[@@species]`, `Promise.prototype.constructor`, an own `constructor` and
+    // `Promise.prototype.then` after warm-up, each retiring the proof (expected output from
+    // Node 22).
+    let source = r#"
+      const gc = $262.gc;
+      const out = [];
+      let count = 0;
+      const h = () => { count++; };
+      function warm(rounds) {
+        for (let i = 0; i < rounds; i++) {
+          const p = Promise.resolve(i);
+          for (let k = 0; k < 50; k++) p.then(h);
+          p.then((v) => { if (v % 7 === 0) gc(); if (v % 5 === 0) throw new Error("t" + v); return v; })
+            .then((v) => out.push("v" + v), (e) => out.push(e.message));
+        }
+      }
+      async function run() {
+        warm(30);
+        out.push("a0");
+        await null;
+        out.push("a1");
+        Promise.resolve().then(() => out.push("j1"));
+        await undefined;
+        out.push("a2");
+        class Sub extends Promise {}
+        const plain = Promise.resolve(1);
+        out.push(plain.then(h) instanceof Sub);
+        const desc = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+        Object.defineProperty(Promise, Symbol.species, { get() { return Sub; }, configurable: true });
+        out.push("species " + (plain.then(h) instanceof Sub));
+        Object.defineProperty(Promise, Symbol.species, desc);
+        out.push("restored " + (plain.then(h) instanceof Sub));
+        Promise.prototype.constructor = Sub;
+        out.push("ctor " + (plain.then(h) instanceof Sub));
+        Promise.prototype.constructor = Promise;
+        out.push("ctor back " + (plain.then(h) instanceof Sub));
+        const own = Promise.resolve(2);
+        own.constructor = Sub;
+        out.push("own " + (own.then(h) instanceof Sub) + " " + (plain.then(h) instanceof Sub));
+        warm(10);
+        const then = Promise.prototype.then;
+        Promise.prototype.then = function (f, r) { out.push("patched"); return then.call(this, f, r); };
+        await { then(resolve) { out.push("thenable"); resolve(); } };
+        await Promise.resolve(3);
+        await Promise.resolve().then(() => Promise.resolve(5)).then((v) => out.push("resolved " + v));
+        plain.then(() => out.push("direct"));
+        Promise.prototype.then = then;
+        await Promise.resolve(4);
+        out.push("count " + count);
+      }
+      run().then(() => {
+        let hash = 0;
+        const text = out.join(",");
+        for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+        print(out.length + "|" + hash + "|" + out.slice(0, 6).join(",") + "|" + out.filter((x) => !/^[vt]\d/.test(x)).join(","));
+      });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "promise-job-redefinitions.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["58|-79309871|a0,a1,t0,v1,v2,v3|a0,a1,j1,a2,false,species true,restored false,ctor true,ctor back false,own true false,thenable,patched,patched,patched,resolved 5,patched,direct,count 2007"]
+    );
+}
+
+#[test]
 fn lane_settled_async_calls_keep_their_promises_and_job_order() {
     // Non-suspending async callees run as settling lane activations
     // (`Completion::SettlesPromise`): returns, throws, thenables, an impure `then` read
