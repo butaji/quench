@@ -514,7 +514,7 @@ impl<H: Host> Vm<H> {
                 function: id,
                 code: body.code.as_ptr(),
                 wide: body.wide.as_ptr(),
-                decoded: std::ptr::null(),
+                decoded: body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
                 lane: view,
                 back_edges: None,
             };
@@ -1498,7 +1498,7 @@ impl<H: Host> Vm<H> {
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
         self.active_registers = caller_registers;
-        self.set_active_program(previous_program);
+        self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         outcome
     }
@@ -1587,7 +1587,7 @@ impl<H: Host> Vm<H> {
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
         self.active_registers = caller_registers;
-        self.set_active_program(previous_program);
+        self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         outcome
     }

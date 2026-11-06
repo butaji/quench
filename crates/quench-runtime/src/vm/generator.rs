@@ -1468,7 +1468,7 @@ impl<H: Host> Vm<H> {
         };
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
-        self.set_active_program(previous_program);
+        self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         let outcome = match result {
             Ok(outcome) => outcome,
