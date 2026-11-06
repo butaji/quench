@@ -1641,6 +1641,9 @@ impl Heap {
         }
         Value::heap(index as u32)
     }
+    /// Inline into the literal-pair paths (`Vm::object_pair`): as a call, its frame cost ~21
+    /// Ir of the ~120 an allocation took.
+    #[inline(always)]
     pub(crate) fn alloc_object_pair(
         &mut self,
         proto: Value,
@@ -2246,7 +2249,7 @@ impl Heap {
             // only the barriers' log needs excluding from them.
             let written = self.record_families_mut().map(|(family, _)| {
                 let written = family.take_remembered();
-                family.prepare_minor(&written);
+                family.prepare_minor(&written, age);
                 written
             });
             for owner in std::mem::take(&mut self.carried_owners) {
@@ -2442,7 +2445,7 @@ impl Heap {
                     RecordSweep::Dead(_record_id, function) => {
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(function.object.properties());
-                        properties.release(function.object.properties());
+                        properties.release_ordinary(function.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_function(Value::direct_function(_record_id), slots);
                     }
@@ -2462,7 +2465,7 @@ impl Heap {
                         abandoned_contexts.abandon(&promise.record);
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(promise.object.properties());
-                        properties.release(promise.object.properties());
+                        properties.release_ordinary(promise.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
                     }
@@ -2485,7 +2488,7 @@ impl Heap {
                     RecordSweep::Dead(_record_id, iterator) => {
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(iterator.object.properties());
-                        properties.release(iterator.object.properties());
+                        properties.release_ordinary(iterator.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
                     }
@@ -2517,7 +2520,7 @@ impl Heap {
                     *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
                     #[cfg(feature = "profile-memory")]
                     let slots = properties.len(array.properties());
-                    properties.release(array.properties());
+                    properties.release_ordinary(array.properties());
                     #[cfg(feature = "profile-memory")]
                     memory_profile.freed_array(Value::direct_array(record_id), slots, &array);
                     dead_arrays.push(Value::direct_array(record_id));
