@@ -13933,15 +13933,14 @@ fn lane_step_array_iteration<H: Host>(cx: *mut LaneContext<H>, activation: &Acti
 }
 
 /// The step of the innermost lane iteration whose callback returned `mapped`
-/// (`Vm::array_iteration_apply`), whose fresh result's store and answers run no guest code.
+/// (`Vm::fresh_array_step`): the method's value where the step ends it.
 #[inline(always)]
-fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Result<Option<Value>, JsError> {
+fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
-    // SAFETY: the context's program outlives the lane run; the entry stays in place while
-    // the step, which reads no lane stack, runs.
-    let (code, step) = unsafe { (&*(*cx).code, &mut *step) };
-    let applied = vm.array_iteration_apply(code, &mut step.iteration, step.index, step.element, mapped);
+    // SAFETY: the entry stays in place while the step, which reads no lane stack, runs.
+    let step = unsafe { &mut *step };
+    let applied = vm.fresh_array_step(&mut step.iteration, step.index, step.element, mapped);
     note_allocation(vm);
     applied
 }
@@ -13955,7 +13954,7 @@ fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: 
     let applied = lane_apply_array_step(cx, mapped);
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activations.len() - 1;
-    if let Ok(None) = applied
+    if applied.is_none()
         && depth < vm.lane_stack.activation_limit.get()
     {
         let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
@@ -13984,11 +13983,7 @@ fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: 
 /// The iteration of the call `activation` made, its caller restored, after a step that
 /// `applied`: the iteration retires, and the call completes with the method's value where
 /// the step ended it, else goes on as `lane_resume_array_iteration` does.
-fn lane_finish_array_step<H: Host>(
-    cx: *mut LaneContext<H>,
-    activation: &Activation,
-    applied: Result<Option<Value>, JsError>,
-) -> Resumed {
+fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, applied: Option<Value>) -> Resumed {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.steps.len() - 1;
     let iteration = vm.lane_stack.steps[depth].iteration;
@@ -13996,12 +13991,8 @@ fn lane_finish_array_step<H: Host>(
     // SAFETY: the call record lies in the restored caller's view.
     let i = unsafe { &*activation.call };
     match applied {
-        Ok(None) => lane_resume_array_iteration(cx, activation.call, iteration),
-        Ok(value) => lane_native_complete(cx, activation.call, i, value),
-        Err(error) => {
-            vm.lane_raised = Some(error);
-            lane_native_complete(cx, activation.call, i, None)
-        }
+        None => lane_resume_array_iteration(cx, activation.call, iteration),
+        value => lane_native_complete(cx, activation.call, i, value),
     }
 }
 

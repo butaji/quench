@@ -390,8 +390,7 @@ impl<H: Host> Vm<H> {
 
     /// The step of an array callback method after its callback returned `mapped` for the
     /// element `value` at `index`: the result's element stored, or the method's value where
-    /// the step ends it (a `some`, `every` or `find*` answer). A fresh result's store and
-    /// every answer run no guest code (`fresh_array_iteration`).
+    /// the step ends it (a `some`, `every` or `find*` answer).
     pub(super) fn array_iteration_apply(
         &mut self,
         p: &ResidualProgram,
@@ -400,38 +399,55 @@ impl<H: Host> Vm<H> {
         value: Value,
         mapped: Value,
     ) -> Result<Option<Value>, JsError> {
-        let target = iteration.result;
-        Ok(match iteration.native {
+        match iteration.native {
             Native::ArrayMap if iteration.typed_array => {
-                self.typed_array_set(p, target, index, mapped)?;
-                None
+                self.typed_array_set(p, iteration.result, index, mapped)?;
             }
-            Native::ArrayMap if iteration.fresh => {
-                self.store_fresh_array_element(target, index, mapped);
-                None
+            Native::ArrayMap if !iteration.fresh => {
+                self.create_data_property_or_throw(p, iteration.result, index, mapped)?;
             }
-            Native::ArrayMap => {
-                self.create_data_property_or_throw(p, target, index, mapped)?;
-                None
-            }
-            Native::ArrayFilter if self.truthy(mapped) => {
-                if iteration.fresh {
-                    self.store_fresh_array_element(target, iteration.kept, value);
-                } else {
-                    self.create_data_property_or_throw(p, target, iteration.kept, value)?;
+            Native::ArrayFilter if !iteration.fresh => {
+                if self.truthy(mapped) {
+                    self.create_data_property_or_throw(p, iteration.result, iteration.kept, value)?;
+                    iteration.kept += 1;
                 }
-                iteration.kept += 1;
+            }
+            _ => return Ok(self.fresh_array_step(iteration, index, value, mapped)),
+        };
+        Ok(None)
+    }
+
+    /// `array_iteration_apply` of an iteration whose result, if it makes one, ArrayCreate
+    /// made (`fresh_array_iteration`): its store and every answer run no guest code and raise
+    /// nothing.
+    #[inline]
+    pub(super) fn fresh_array_step(
+        &mut self,
+        iteration: &mut ArrayIteration,
+        index: usize,
+        value: Value,
+        mapped: Value,
+    ) -> Option<Value> {
+        match iteration.native {
+            Native::ArrayForEach => None,
+            Native::ArrayMap => {
+                self.store_fresh_array_element(iteration.result, index, mapped);
                 None
             }
-            Native::ArraySome if self.truthy(mapped) => Some(Value::TRUE),
-            Native::ArrayEvery if !self.truthy(mapped) => Some(Value::FALSE),
-            Native::ArrayFind | Native::ArrayFindLast if self.truthy(mapped) => Some(value),
-            Native::ArrayFindIndex | Native::ArrayFindLastIndex if self.truthy(mapped) => {
-                Some(Value::number(index as f64))
+            Native::ArrayFilter => {
+                if self.truthy(mapped) {
+                    self.store_fresh_array_element(iteration.result, iteration.kept, value);
+                    iteration.kept += 1;
+                }
+                None
             }
-            _ => None,
-        })
+            Native::ArraySome => self.truthy(mapped).then_some(Value::TRUE),
+            Native::ArrayEvery => (!self.truthy(mapped)).then_some(Value::FALSE),
+            Native::ArrayFind | Native::ArrayFindLast => self.truthy(mapped).then_some(value),
+            _ => self.truthy(mapped).then(|| Value::number(index as f64)),
+        }
     }
+
     pub(super) fn array_like_length(
         &mut self,
         p: &ResidualProgram,
@@ -612,10 +628,9 @@ impl<H: Host> Vm<H> {
         mapped: Value,
     ) -> Result<Value, JsError> {
         let ArrayStepCall { mut iteration, element, index, roots } = *call;
-        let result = match self.array_iteration_apply(p, &mut iteration, index, element, mapped) {
-            Ok(Some(value)) => Ok(value),
-            Ok(None) => self.array_iteration_run(p, &mut iteration),
-            Err(error) => Err(error),
+        let result = match self.fresh_array_step(&mut iteration, index, element, mapped) {
+            Some(value) => Ok(value),
+            None => self.array_iteration_run(p, &mut iteration),
         };
         self.release_array_step(roots);
         result
