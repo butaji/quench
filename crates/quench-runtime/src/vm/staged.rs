@@ -11,7 +11,7 @@
 
 mod numbers;
 
-pub(crate) use numbers::{AnyOperands, IntOperands, Number, NumberOperands, NumberOperator, Numbers, Source, binary, binary_values, relation};
+pub(crate) use numbers::{Number, NumberOperator, Numbers, Source, binary, binary_values, relation};
 
 use crate::heap::{PlainPropertyStorage, NATIVE_OBJECT_LAYOUT as OBJECT};
 use crate::value::{NarrowLayout, ValueLayout};
@@ -512,22 +512,9 @@ pub(crate) trait Machine: Numbers {
     }
 }
 
-/// A quickened record's guess about its number operation's operands: nothing (any values),
-/// int32s, or Numbers. The semantics specializes to it as the specializer does to a proof, and
-/// misses where it is wrong.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Guess {
-    Values,
-    Int32s,
-    Numbers,
-}
-
 /// The interpreter's register file, as words: the activation's registers and whatever the
 /// interpreter keeps of them outside memory (`dispatch_fast`'s accumulator).
 pub(crate) trait RegisterFile {
-    /// What the interpreter that holds the file guessed of a number operation's operands when
-    /// it quickened the record, which the semantics then specializes to.
-    const GUESS: Guess = Guess::Values;
     fn get(&mut self, register: crate::bytecode::Register) -> u64;
     fn set(&mut self, register: crate::bytecode::Register, value: u64);
 }

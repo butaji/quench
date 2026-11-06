@@ -34,6 +34,10 @@ pub(crate) trait Numbers: Stage {
     fn known_int(&self, register: Register) -> bool;
     /// Whether `register` is held as a double.
     fn known_float(&self, register: Register) -> bool;
+    /// Whether the machine keeps operands proved int32 in int32 and leaves where an exact
+    /// result is none, as a specializer does; the interpreter, which nothing falls back from,
+    /// takes the double.
+    fn speculates(&self) -> bool;
     /// Whether the current operation's int32 sum or difference may wrap: its result is read
     /// only through ToInt32 (`| 0` and its kin), or proved within int32.
     fn wraps(&self) -> bool;
@@ -177,6 +181,13 @@ fn int_arithmetic<N: Numbers>(machine: &mut N, operation: NumberArithmetic, left
     (result, machine.or_cond(overflow, negative_zero))
 }
 
+/// `operation` on the doubles of `left` and `right`.
+#[inline(always)]
+fn float_arithmetic<N: Numbers>(machine: &mut N, operation: NumberArithmetic, left: Source, right: Source, miss: N::Miss) -> Option<Number<N::Int, N::Float>> {
+    let (a, b) = (float_operand(machine, left, miss)?, float_operand(machine, right, miss)?);
+    Some(Number::Float(machine.float_op(operation, a, b)))
+}
+
 /// `left op right` for Number operands, JavaScript's arithmetic on Numbers: int32 operands
 /// give an int32 where the exact result is one, else the IEEE double; a division takes the
 /// doubles. Operands proved int32 stay int32 and leave where the exact result is no int32,
@@ -192,10 +203,6 @@ pub(crate) fn arithmetic<N: Numbers>(
     miss: N::Miss,
 ) -> Option<Number<N::Int, N::Float>> {
     let wraps = wraps && matches!(operation, NumberArithmetic::Add | NumberArithmetic::Subtract);
-    let doubles = |machine: &mut N| -> Option<Number<N::Int, N::Float>> {
-        let (a, b) = (float_operand(machine, left, miss)?, float_operand(machine, right, miss)?);
-        Some(Number::Float(machine.float_op(operation, a, b)))
-    };
     let ints = |machine: &mut N, a: N::Int, b: N::Int| if wraps {
         (machine.int_wrapping(operation, a, b), None)
     } else {
@@ -203,46 +210,52 @@ pub(crate) fn arithmetic<N: Numbers>(
         (result, Some(inexact))
     };
     if operation == NumberArithmetic::Divide || known_float(machine, left) || known_float(machine, right) {
-        return doubles(machine);
+        return float_arithmetic(machine, operation, left, right, miss);
     }
     if known_int(machine, left) && known_int(machine, right) {
         let (a, b) = (int_operand(machine, left, miss)?, int_operand(machine, right, miss)?);
-        let (result, inexact) = ints(machine, a, b);
-        if let Some(inexact) = inexact {
-            let exact = machine.not_cond(inexact);
-            machine.guard(exact, miss)?;
-        }
-        return Some(Number::Int(result));
+        return match ints(machine, a, b) {
+            (result, None) => Some(Number::Int(result)),
+            (result, Some(inexact)) if machine.speculates() => {
+                let exact = machine.not_cond(inexact);
+                machine.guard(exact, miss)?;
+                Some(Number::Int(result))
+            }
+            (result, Some(inexact)) => machine.choose_number(inexact, |machine| float_arithmetic(machine, operation, left, right, miss), |_| Some(Number::Int(result))),
+        };
     }
     let held = ints_held(machine, &[left, right]);
     machine.choose_number(held, |machine| {
         let (a, b) = (assumed_int(machine, left, miss)?, assumed_int(machine, right, miss)?);
         match ints(machine, a, b) {
             (result, None) => Some(Number::Int(result)),
-            (result, Some(inexact)) => machine.choose_number(inexact, doubles, |_| Some(Number::Int(result))),
+            (result, Some(inexact)) => machine.choose_number(inexact, |machine| float_arithmetic(machine, operation, left, right, miss), |_| Some(Number::Int(result))),
         }
-    }, |machine| match doubles(machine)? {
+    }, |machine| match float_arithmetic(machine, operation, left, right, miss)? {
         Number::Float(number) if wraps => Some(Number::Int(machine.float_to_int32(number, miss)?)),
         number => Some(number),
     })
+}
+
+/// ToInt32 of `source`'s double.
+#[inline(always)]
+fn truncate<N: Numbers>(machine: &mut N, source: Source, miss: N::Miss) -> Option<Number<N::Int, N::Float>> {
+    let number = float_operand(machine, source, miss)?;
+    Some(Number::Int(machine.float_to_int32(number, miss)?))
 }
 
 /// `source`'s ToInt32 (ECMA-262 7.1.6): an int32 as it is, any other Number truncated
 /// modulo 2^32. `miss` for an operand that is not a Number.
 #[inline(always)]
 fn to_int32<N: Numbers>(machine: &mut N, source: Source, miss: N::Miss) -> Option<N::Int> {
-    let truncate = |machine: &mut N| -> Option<Number<N::Int, N::Float>> {
-        let number = float_operand(machine, source, miss)?;
-        Some(Number::Int(machine.float_to_int32(number, miss)?))
-    };
     if known_int(machine, source) {
         return int_operand(machine, source, miss);
     }
     let number = if known_float(machine, source) {
-        truncate(machine)?
+        truncate(machine, source, miss)?
     } else {
         let held = ints_held(machine, &[source]);
-        machine.choose_number(held, |machine| Some(Number::Int(assumed_int(machine, source, miss)?)), truncate)?
+        machine.choose_number(held, |machine| Some(Number::Int(assumed_int(machine, source, miss)?)), |machine| truncate(machine, source, miss))?
     };
     match number {
         Number::Int(int) => Some(int),
@@ -270,6 +283,13 @@ pub(crate) fn bitwise<N: Numbers>(
     })
 }
 
+/// Whether `relation` holds of the doubles of `left` and `right`.
+#[inline(always)]
+fn float_relation<N: Numbers>(machine: &mut N, relation: NumberRelation, left: Source, right: Source, miss: N::Miss) -> Option<N::Cond> {
+    let (a, b) = (float_operand(machine, left, miss)?, float_operand(machine, right, miss)?);
+    Some(machine.float_relation(relation, a, b))
+}
+
 /// Whether Number `relation` holds of `left` and `right`: int32s compare as int32s, any
 /// other Numbers as doubles, the two agreeing where both apply. `miss` for an operand that
 /// is not a Number.
@@ -281,12 +301,8 @@ pub(crate) fn relation<N: Numbers>(
     right: Source,
     miss: N::Miss,
 ) -> Option<N::Cond> {
-    let doubles = |machine: &mut N| {
-        let (a, b) = (float_operand(machine, left, miss)?, float_operand(machine, right, miss)?);
-        Some(machine.float_relation(relation, a, b))
-    };
     if known_float(machine, left) || known_float(machine, right) {
-        return doubles(machine);
+        return float_relation(machine, relation, left, right, miss);
     }
     if known_int(machine, left) && known_int(machine, right) {
         let (a, b) = (int_operand(machine, left, miss)?, int_operand(machine, right, miss)?);
@@ -296,7 +312,7 @@ pub(crate) fn relation<N: Numbers>(
     machine.choose_cond(held, |machine| {
         let (a, b) = (assumed_int(machine, left, miss)?, assumed_int(machine, right, miss)?);
         Some(machine.int_relation(relation, a, b))
-    }, doubles)
+    }, |machine| float_relation(machine, relation, left, right, miss))
 }
 
 /// A binary operator on Numbers, as the semantics dispatches it.
@@ -346,15 +362,17 @@ pub(crate) fn binary<N: Numbers>(
     Some(())
 }
 
-/// The interpreter's number machine: values from its register file, which states what its
-/// quickening guessed (`RegisterFile::GUESS`).
+/// The interpreter's number machine: values from its register file, of which it proves
+/// nothing ahead; a value it holds is a constant (`Source::Constant`).
 impl<R: super::RegisterFile> Numbers for super::ConcreteFrame<R> {
     type Int = i32;
     type Float = f64;
     #[inline(always)]
-    fn known_int(&self, _: Register) -> bool { R::GUESS == super::Guess::Int32s }
+    fn speculates(&self) -> bool { false }
     #[inline(always)]
-    fn known_float(&self, _: Register) -> bool { R::GUESS == super::Guess::Numbers }
+    fn known_int(&self, _: Register) -> bool { false }
+    #[inline(always)]
+    fn known_float(&self, _: Register) -> bool { false }
     #[inline(always)]
     fn wraps(&self) -> bool { false }
     #[inline(always)]
@@ -440,47 +458,24 @@ impl<R: super::RegisterFile> Numbers for super::ConcreteFrame<R> {
     }
 }
 
-/// The register file of one binary operation on two values (`binary_values`).
-struct Operands<Q>([crate::Value; 3], std::marker::PhantomData<Q>);
+/// The register file of one binary operation's result (`binary_values`).
+struct Result(crate::Value);
 
-/// The guess of a binary operation's interpreter (`binary_values`), as a type.
-pub(crate) trait Quickening {
-    const GUESS: super::Guess;
-}
+const RESULT: Register = 0;
 
-/// No guess: the operation tests its operands.
-pub(crate) struct AnyOperands;
-/// The guess that both operands are int32s.
-pub(crate) struct IntOperands;
-/// The guess that both operands are Numbers: an int32 takes the IEEE path, which gives it
-/// the exact JavaScript result.
-pub(crate) struct NumberOperands;
-
-impl Quickening for AnyOperands { const GUESS: super::Guess = super::Guess::Values; }
-impl Quickening for IntOperands { const GUESS: super::Guess = super::Guess::Int32s; }
-impl Quickening for NumberOperands { const GUESS: super::Guess = super::Guess::Numbers; }
-
-const LEFT: Register = 0;
-const RIGHT: Register = 1;
-const RESULT: Register = 2;
-
-impl<Q: Quickening> super::RegisterFile for Operands<Q> {
-    const GUESS: super::Guess = Q::GUESS;
+impl super::RegisterFile for Result {
     #[inline(always)]
-    fn get(&mut self, register: Register) -> u64 { self.0[usize::from(register)].to_bits() }
+    fn get(&mut self, _: Register) -> u64 { self.0.to_bits() }
     #[inline(always)]
-    fn set(&mut self, register: Register, value: u64) { self.0[usize::from(register)] = crate::Value::from_bits(value) }
+    fn set(&mut self, _: Register, value: u64) { self.0 = crate::Value::from_bits(value) }
 }
 
 /// `left op right` for Number operator `operator`, as the interpreter computes it on two
-/// values, under the quickening's guess `Q`: `None` where either is not a Number, or where
-/// the guess fails.
+/// values, which it knows as the specializer knows a constant: `None` where either is not a
+/// Number.
 #[inline(always)]
-pub(crate) fn binary_values<Q: Quickening>(operator: NumberOperator, left: crate::Value, right: crate::Value) -> Option<crate::Value> {
-    let mut frame = super::ConcreteFrame {
-        stage: super::Concrete::DETACHED,
-        registers: Operands::<Q>([left, right, crate::Value::UNDEFINED], std::marker::PhantomData),
-    };
-    binary(&mut frame, operator, RESULT, Source::Register(LEFT), Source::Register(RIGHT), ())?;
-    Some(frame.registers.0[usize::from(RESULT)])
+pub(crate) fn binary_values(operator: NumberOperator, left: crate::Value, right: crate::Value) -> Option<crate::Value> {
+    let mut frame = super::ConcreteFrame { stage: super::Concrete::DETACHED, registers: Result(crate::Value::UNDEFINED) };
+    binary(&mut frame, operator, RESULT, Source::Constant(left), Source::Constant(right), ())?;
+    Some(frame.registers.0)
 }

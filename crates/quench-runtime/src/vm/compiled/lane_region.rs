@@ -2798,6 +2798,7 @@ impl crate::vm::staged::Numbers for LaneMachine<'_, '_, '_> {
     fn known_float(&self, register: Register) -> bool {
         self.state.values[usize::from(register)].value.representation == Representation::Float64
     }
+    fn speculates(&self) -> bool { true }
     fn wraps(&self) -> bool { self.lowering.wrapping.contains(self.pc) }
     fn int_register(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.int(self.state, register, miss)) }
     fn float_register(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.number(self.state, register, miss)) }
