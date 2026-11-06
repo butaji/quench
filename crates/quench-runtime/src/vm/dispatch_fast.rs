@@ -73,12 +73,20 @@ macro_rules! arithmetic_all {
     };
 }
 
-/// The return records' leaf forms (`LaneView::specialize_leaf_returns`): a record of no leaf's
-/// records, of a leaf that runs in its caller's context (`CallEntry::Leaf`), or of one whose
-/// call made the context its own (`CallEntry::ContextLeaf`).
-const NOT_LEAF: u8 = 0;
-const PLAIN_LEAF: u8 = 1;
-const CONTEXT_LEAF: u8 = 2;
+/// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
+/// what the call makes its own and its return restores: the forms of its call
+/// (`lane_script_call_leaf`), its entry (`CallEntry::leaf`) and its return records
+/// (`LaneView::specialize_leaf_returns`). `NOT_LEAF` is a record of no leaf's records.
+type LeafForm = u8;
+const NOT_LEAF: LeafForm = 0;
+/// Neither its receiver nor its captures (`CallEntry::Leaf`): it runs in its caller's context.
+const PLAIN_LEAF: LeafForm = 1;
+/// Its captures and not its receiver (`CallEntry::CaptureLeaf`): the call makes the
+/// environment its own and binds no receiver unless the leaf materializes.
+const CAPTURE_LEAF: LeafForm = 2;
+/// Its receiver, and maybe its captures (`CallEntry::ContextLeaf`): the call makes the
+/// receiver and the environment its own.
+const CONTEXT_LEAF: LeafForm = 3;
 
 /// One instruction of a lane view.
 #[repr(C)]
@@ -394,11 +402,10 @@ pub(super) struct OsrSiteDiagnostics {
 }
 
 impl LaneView {
-    /// Gives each return record of a leaf's records (`leaf_body`) its leaf form (`PLAIN_LEAF`,
-    /// or `CONTEXT_LEAF` where the records read their receiver or captures, `context`), which
-    /// completes a running leaf call (`lane_complete_leaf`), so no other function's return
-    /// tests for one, and a leaf's return restores the context only where its call replaced it.
-    fn specialize_leaf_returns<H: Host>(&self, context: bool) {
+    /// Gives each return record of a leaf's records (`leaf_body`) its leaf form (`LeafForm`),
+    /// which completes a running leaf call (`lane_complete_leaf`), so no other function's
+    /// return tests for one, and a leaf's return restores only what its call replaced.
+    fn specialize_leaf_returns<H: Host>(&self, form: LeafForm) {
         macro_rules! forms {
             ($leaf:expr) => {{
                 macro_rules! pick {
@@ -426,7 +433,11 @@ impl LaneView {
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
         }
-        let forms = if context { forms!(CONTEXT_LEAF) } else { forms!(PLAIN_LEAF) };
+        let forms = match form {
+            CONTEXT_LEAF => forms!(CONTEXT_LEAF),
+            CAPTURE_LEAF => forms!(CAPTURE_LEAF),
+            _ => forms!(PLAIN_LEAF),
+        };
         for record in &self.records {
             // SAFETY: as `requicken`: the lane runs on the view's thread, and no reference to
             // the handler field is live.
@@ -551,9 +562,9 @@ struct TargetBody {
     entry: CallEntry,
     constructs: bool,
     initializes: bool,
-    /// Whether an `Activates` body is a leaf (`leaf_body`), and whether its records then read
-    /// its receiver or captures.
-    leaf: Option<bool>,
+    /// Whether an `Activates` body is a leaf (`leaf_body`), and what its records then read of
+    /// the context.
+    leaf: Option<LeafForm>,
 }
 
 /// Conservative admission granule retained from block initialization. Padding stays
@@ -1665,8 +1676,11 @@ enum CallEntry {
     /// anything observing activations makes first (`lane_materialize_leaf`). Any other
     /// call activates it as `Activates`.
     Leaf,
-    /// A leaf whose records read its receiver or captures, so its call makes the context's
-    /// receiver and environment its own, which its return restores.
+    /// A leaf whose records read its captures and not its receiver (`CAPTURE_LEAF`), so its
+    /// call makes the context's environment its own, which its return restores.
+    CaptureLeaf,
+    /// A leaf whose records read its receiver (`CONTEXT_LEAF`), so its call makes the
+    /// context's receiver and environment its own, which its return restores.
     ContextLeaf,
 }
 
@@ -1675,12 +1689,27 @@ impl CallEntry {
     /// alone (`lane_activate`): a leaf's every call but the plain one does.
     #[inline(always)]
     fn activates(self) -> bool {
-        matches!(self, Self::Activates | Self::Leaf | Self::ContextLeaf)
+        matches!(self, Self::Activates | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf)
     }
 
-    /// The leaf entry of a body whose records read its receiver or captures (`context`) or not.
-    fn leaf(context: bool) -> Self {
-        if context { Self::ContextLeaf } else { Self::Leaf }
+    /// The leaf entry of a body whose records read the context as `form` says.
+    fn leaf(form: LeafForm) -> Self {
+        match form {
+            CONTEXT_LEAF => Self::ContextLeaf,
+            CAPTURE_LEAF => Self::CaptureLeaf,
+            _ => Self::Leaf,
+        }
+    }
+
+    /// The form of a leaf entry, `NOT_LEAF` for any other.
+    #[inline(always)]
+    fn leaf_form(self) -> LeafForm {
+        match self {
+            Self::Leaf => PLAIN_LEAF,
+            Self::CaptureLeaf => CAPTURE_LEAF,
+            Self::ContextLeaf => CONTEXT_LEAF,
+            _ => NOT_LEAF,
+        }
     }
 }
 
@@ -1790,8 +1819,8 @@ fn this_read_body(body: &Function) -> bool {
         && done.a() == load.a()
 }
 
-/// Whether `body` is a leaf (`CallEntry::Leaf`), and then whether its records read its
-/// receiver or captures: every instruction's lane record writes registers, captures or
+/// Whether `body` is a leaf (`CallEntry::Leaf`), and then what its records read of the
+/// context (`LeafForm`): every instruction's lane record writes registers, captures or
 /// nothing, reads no frame state and no activation, and leaves the lane for anything else
 /// (its general path), or activates a getter, which makes the leaf an activation first; no
 /// backward jump, so no safepoint runs in it. That is a register move or constant, a number
@@ -1801,7 +1830,7 @@ fn this_read_body(body: &Function) -> bool {
 /// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
 /// `private` says whether an atom is a private name, whose access the running function
 /// decides (`lane_cached_field_miss`, `lane_private_brand`).
-fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<bool> {
+fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     use crate::bytecode::{FieldBase, FieldLookup, Operand, OperandKind};
     if body.is_generator
         || body.is_async
@@ -1815,23 +1844,25 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
         return None;
     }
     let value_operand = |encoded: u16| matches!(Operand(encoded).kind(), Some(OperandKind::Register | OperandKind::Constant));
-    // A field base reads `this` (`true`), a register (`false`), or no base a leaf reads.
+    // A field base reads `this` (`CONTEXT_LEAF`), a register (`PLAIN_LEAF`), or no base a
+    // leaf reads.
     let field_base = |base: FieldBase| match base {
-        FieldBase::THIS => Some(true),
-        base => base.register_index().map(|_| false),
+        FieldBase::THIS => Some(CONTEXT_LEAF),
+        base => base.register_index().map(|_| PLAIN_LEAF),
     };
-    let mut context = false;
+    let mut form = PLAIN_LEAF;
     for (pc, instruction) in body.instructions().enumerate() {
-        let reads_context = match instruction.op() {
-            Op::Nop | Op::LoadConst | Op::Move | Op::Unary | Op::IncDec | Op::Return => false,
-            Op::Jump | Op::JumpFalse | Op::JumpTrue => false,
+        let reads = match instruction.op() {
+            Op::Nop | Op::LoadConst | Op::Move | Op::Unary | Op::IncDec | Op::Return => PLAIN_LEAF,
+            Op::Jump | Op::JumpFalse | Op::JumpTrue => PLAIN_LEAF,
             Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
                 if !(value_operand(instruction.b()) && value_operand(instruction.c())) {
                     return None;
                 }
-                false
+                PLAIN_LEAF
             }
-            Op::LoadThis | Op::LoadCapture | Op::StoreCapture => true,
+            Op::LoadThis => CONTEXT_LEAF,
+            Op::LoadCapture | Op::StoreCapture => CAPTURE_LEAF,
             // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
             // place (`lane_set_field_in_place`) or on the general path, either of which makes
             // the leaf an activation first.
@@ -1839,11 +1870,11 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
                 if private(instruction.imm()) {
                     return None;
                 }
-                matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)
+                if matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict) { CONTEXT_LEAF } else { PLAIN_LEAF }
             }
             // A global name's first load finds the running function (`lane_load_name_first`),
             // which makes the leaf an activation first; its later loads read the realm alone.
-            Op::LoadName if body.names_resolve_statically(code) => false,
+            Op::LoadName if body.names_resolve_statically(code) => PLAIN_LEAF,
             // A returning read requickens by its site's tier in its leaf form
             // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
             Op::GetField => match instruction.field_lookup()? {
@@ -1860,7 +1891,8 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
                         return None;
                     }
                     // A sink stores the value to a field of `this` (`lane_get_field_sink`).
-                    field_base(site.base)? || site.sink.is_some()
+                    let base = field_base(site.base)?;
+                    if site.sink.is_some() { CONTEXT_LEAF } else { base }
                 }
             },
             _ => return None,
@@ -1868,9 +1900,10 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= pc {
             return None;
         }
-        context |= reads_context;
+        // Each form makes its own what the forms before it do, and more.
+        form = form.max(reads);
     }
-    Some(context)
+    Some(form)
 }
 
 impl ScriptCallTarget {
@@ -2629,8 +2662,8 @@ struct LaneContext<H: Host> {
 }
 
 /// A running leaf call (`CallEntry::Leaf`): what its activation would hold that the context
-/// does not. The context's registers and records are the callee's; its receiver and
-/// environment are the callee's for a `CallEntry::ContextLeaf`, else the caller's.
+/// does not. The context's registers and records are the callee's; what its form makes its
+/// own (`LeafForm`) of the receiver and environment is the callee's, the rest the caller's.
 #[derive(Clone, Copy)]
 struct LeafCall {
     /// The call record, null while no leaf runs.
@@ -2640,7 +2673,8 @@ struct LeafCall {
     /// The target the call resolved, which stays in its cache while the leaf runs: nothing
     /// in a leaf resolves a target.
     target: *const ScriptCallTarget,
-    /// The caller's receiver and environment, which a `CallEntry::ContextLeaf` call replaced.
+    /// The caller's receiver, which a `CallEntry::ContextLeaf` call replaced, and
+    /// environment, which a `CallEntry::CaptureLeaf` call replaced too.
     caller_this: Value,
     caller_env: Value,
     caller_capture: *const usize,
@@ -3050,6 +3084,21 @@ macro_rules! lane_handler {
 macro_rules! script_handler {
     ($(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         lane_handler!(@define bytes [{
+            let cx: *mut LaneContext<H> = bytes.cast();
+            debug_assert_eq!(cx, lane_context::<H>(), "a JavaScript view carries its context");
+            cx
+        }] $(#[$meta])* fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
+    };
+}
+
+/// `lane_handler!` for a return record of any view that has a leaf form
+/// (`LaneView::specialize_leaf_returns`): a leaf's records are JavaScript, so its form takes
+/// the context as `script_handler!` does, and only the others load it.
+macro_rules! return_handler {
+    ($(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+        lane_handler!(@define bytes [if LEAF == NOT_LEAF {
+            lane_context::<H>()
+        } else {
             let cx: *mut LaneContext<H> = bytes.cast();
             debug_assert_eq!(cx, lane_context::<H>(), "a JavaScript view carries its context");
             cx
@@ -12170,10 +12219,10 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    .inspect(|&context| {
+                    .inspect(|&form| {
                         if !self.js_tier_runs() {
                             // SAFETY: the program store keeps a derived view alive with its program.
-                            unsafe { &*view }.specialize_leaf_returns::<H>(context);
+                            unsafe { &*view }.specialize_leaf_returns::<H>(form);
                         }
                     }),
             }
@@ -12243,7 +12292,7 @@ impl<H: Host> Vm<H> {
                 // A leaf runs the records of the view the JavaScript tier would claim
                 // (`LaneView::claim_for_tier`), so only a VM whose tier never runs calls it as one.
                 match shape.leaf {
-                    Some(context) if !self.js_tier_runs() => CallEntry::leaf(context),
+                    Some(form) if !self.js_tier_runs() => CallEntry::leaf(form),
                     _ => shape.entry,
                 }
             },
@@ -12364,7 +12413,7 @@ script_handler! {
             Some(CallEntry::Environment) => lane_script_call_environment::<H>,
             Some(CallEntry::Settles) => lane_script_call_settles::<H>,
             Some(CallEntry::Keeps | CallEntry::Gathers) => lane_script_call_keeping::<H>,
-            Some(entry @ (CallEntry::Leaf | CallEntry::ContextLeaf)) => leaf_call_handler::<H>(entry, i),
+            Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler::<H>(entry, i),
             Some(_) => lane_script_call_full::<H>,
             None => sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx)),
         };
@@ -12441,17 +12490,17 @@ macro_rules! lane_plain_activation {
 use lane_plain_activation;
 
 script_handler! {
-    /// A plain call of a leaf target (`CallEntry::Leaf`, or `CallEntry::ContextLeaf` where
-    /// `CONTEXT`): the callee's records run on a window at the lane stack's top, the call's
-    /// facts held by `LaneContext::leaf` instead of an activation until its return completes
-    /// the call (`lane_complete_leaf`) or anything observing activations makes it one
-    /// (`lane_materialize_leaf`). The window and the stack room are those its activation
-    /// would take, so the guest-call budget and a full stack decide as they would. A call of
-    /// this leaf form the site does not make (a receiver whose binding reads the heap, values
-    /// past the parameters, no room) takes `lane_script_call_full`, which activates a leaf as
-    /// any registers-only target. `ARGC` is the record's argument count
-    /// (`leaf_call_handler`), which a call returning its completion never has.
-    fn lane_script_call_leaf<CONTEXT: bool, ARGC: u16>(cx, r, ip, i, view) {
+    /// A plain call of a leaf target of form `LEAF` (`CallEntry::leaf`): the callee's records
+    /// run on a window at the lane stack's top, the call's facts held by `LaneContext::leaf`
+    /// instead of an activation until its return completes the call (`lane_complete_leaf`)
+    /// or anything observing activations makes it one (`lane_materialize_leaf`). The window
+    /// and the stack room are those its activation would take, so the guest-call budget and
+    /// a full stack decide as they would. A call of this leaf form the site does not make (a
+    /// receiver whose binding reads the heap, values past the parameters, no room) takes
+    /// `lane_script_call_full`, which activates a leaf as any registers-only target. `ARGC`
+    /// is the record's argument count (`leaf_call_handler`), which a call returning its
+    /// completion never has.
+    fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let target = if unsafe { (*cx).script_calls } && !lane_constructing(vm, callee) {
@@ -12464,20 +12513,31 @@ script_handler! {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         // A site meeting other callees too calls each as its own form would: a plain
-        // activation's in place, the other leaf form's through it, any other through the
+        // activation's in place, another leaf form's through it, any other through the
         // full form.
-        if target.entry != CallEntry::leaf(CONTEXT) {
+        if target.entry != CallEntry::leaf(LEAF) {
             std::hint::cold_path();
             if target.entry == CallEntry::Activates {
                 lane_plain_activation!(cx, vm, r, ip, i, target, ARGC)
             }
-            if target.entry == CallEntry::leaf(!CONTEXT) {
-                let other: Handler = if CONTEXT { lane_script_call_leaf::<H, false, ARGC> } else { lane_script_call_leaf::<H, true, ARGC> };
-                sibling!(other, r, ip, Carried::script(cx))
-            }
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            let other: Handler = match target.entry.leaf_form() {
+                PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
+                CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
+                CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
+                _ => lane_script_call_full::<H>,
+            };
+            sibling!(other, r, ip, Carried::script(cx))
         }
-        let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
+        // Only a leaf reading its receiver binds it here; any other binds it if it
+        // materializes (`lane_materialize_leaf`), which a binding past the receiver's own
+        // bits could not.
+        let receiver = r.get(i.c);
+        let this = if LEAF == CONTEXT_LEAF {
+            lane_direct_call_this(vm, target, receiver)
+        } else {
+            lane_binds_directly(target, receiver).then_some(receiver)
+        };
+        let Some(this) = this else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
@@ -12503,11 +12563,13 @@ script_handler! {
             leaf.caller_registers = r;
             leaf.caller_base = (*cx).base;
             leaf.target = target;
-            if CONTEXT {
+            if LEAF == CONTEXT_LEAF {
                 leaf.caller_this = (*cx).this;
+                (*cx).this = this;
+            }
+            if LEAF != PLAIN_LEAF {
                 leaf.caller_env = (*cx).env;
                 leaf.caller_capture = (*cx).capture;
-                (*cx).this = this;
                 (*cx).env = target.env;
                 (*cx).capture = target.capture;
             }
@@ -12525,13 +12587,13 @@ script_handler! {
 fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) -> Handler {
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
     macro_rules! leaf {
-        ($context:literal) => {
+        ($form:ident) => {
             match ImmediateLayout::argument_count(i.imm()) {
-                0 => lane_script_call_leaf::<H, $context, 0>,
-                1 => lane_script_call_leaf::<H, $context, 1>,
-                2 => lane_script_call_leaf::<H, $context, 2>,
-                3 => lane_script_call_leaf::<H, $context, 3>,
-                4 => lane_script_call_leaf::<H, $context, 4>,
+                0 => lane_script_call_leaf::<H, $form, 0>,
+                1 => lane_script_call_leaf::<H, $form, 1>,
+                2 => lane_script_call_leaf::<H, $form, 2>,
+                3 => lane_script_call_leaf::<H, $form, 3>,
+                4 => lane_script_call_leaf::<H, $form, 4>,
                 _ => lane_script_call_full::<H>,
             }
         };
@@ -12539,14 +12601,29 @@ fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) -> Handler 
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_script_call_full::<H>;
     }
-    if entry == CallEntry::ContextLeaf { leaf!(true) } else { leaf!(false) }
+    match entry.leaf_form() {
+        CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
+        CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
+        _ => leaf!(PLAIN_LEAF),
+    }
+}
+
+/// Whether `lane_direct_call_this` binds `receiver` for `target`, without the binding: any
+/// binding but a sloppy function's, and its of an object in the direct record table, `null`
+/// or `undefined`, the commonest receiver of a plain call, tested first.
+#[inline(always)]
+fn lane_binds_directly(target: &ScriptCallTarget, receiver: Value) -> bool {
+    target.this_binding != ThisBinding::Sloppy
+        || receiver.is_undefined()
+        || receiver.is_direct_object_family()
+        || receiver.is_null()
 }
 
 /// The return of the running leaf with `value` (`LaneContext::leaf`): the caller's registers,
 /// records and context again, and the call's result in its register, as the plain
 /// activation's return makes them (`lane_return_plain`). `None` while no leaf runs.
 #[inline(always)]
-fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, context: bool) -> Option<(Registers, Ip)> {
+fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
     let leaf = unsafe { &mut (*cx).leaf };
     if leaf.call.is_null() {
@@ -12556,9 +12633,11 @@ fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, context: b
     let caller = leaf.caller_registers;
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
-        if context {
-            debug_assert!((*leaf.target).entry == CallEntry::ContextLeaf);
+        debug_assert!((*leaf.target).entry.leaf_form() == form);
+        if form == CONTEXT_LEAF {
             (*cx).this = leaf.caller_this;
+        }
+        if form != PLAIN_LEAF {
             (*cx).env = leaf.caller_env;
             (*cx).capture = leaf.caller_capture;
         }
@@ -12594,16 +12673,17 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     // SAFETY: the leaf's target stays in its cache while it runs, and its call record
     // belongs to the caller's live view.
     let (target, call) = unsafe { (&*leaf.target, &*leaf.call) };
-    let context = target.entry == CallEntry::ContextLeaf;
+    let form = target.entry.leaf_form();
     let stack = &mut vm.lane_stack;
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
     // (`lane_script_call_leaf`).
     let window = unsafe { (*cx).registers.0.offset_from(stack.values.as_ptr()) } as usize;
     unsafe { stack.values.set_len(window + usize::from(target.registers)) };
-    let (caller_this, caller_env, caller_capture) = if context {
-        (leaf.caller_this, leaf.caller_env, leaf.caller_capture)
+    let caller_this = if form == CONTEXT_LEAF { leaf.caller_this } else { unsafe { (*cx).this } };
+    let (caller_env, caller_capture) = if form == PLAIN_LEAF {
+        unsafe { ((*cx).env, (*cx).capture) }
     } else {
-        unsafe { ((*cx).this, (*cx).env, (*cx).capture) }
+        (leaf.caller_env, leaf.caller_capture)
     };
     let activation = Activation {
         function: target.function,
@@ -12625,13 +12705,15 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     };
     // SAFETY: the call proved room for the activation (`lane_activation_room`).
     unsafe { stack.push_activation(activation) };
-    if !context {
-        // The receiver the call bound (`lane_script_call_leaf`), from the caller's registers,
-        // which the leaf does not write.
+    if form != CONTEXT_LEAF {
+        // The receiver the call proved it binds directly (`lane_script_call_leaf`), from the
+        // caller's registers, which the leaf does not write.
         let this = lane_direct_call_this(vm, target, leaf.caller_registers.get(call.c))
-            .expect("the leaf's call bound its receiver");
+            .expect("the leaf's call proved its receiver's binding");
+        unsafe { (*cx).this = this };
+    }
+    if form == PLAIN_LEAF {
         unsafe {
-            (*cx).this = this;
             (*cx).env = target.env;
             (*cx).capture = target.capture;
         }
@@ -17594,7 +17676,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     lane_enter_frame(cx, caller + 1, 0)
 }
 
-lane_handler! {
+return_handler! {
     /// Return from an inline call to its caller; returning from the loop's
     /// entry frame belongs to the general loop.
     /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
@@ -17606,7 +17688,7 @@ lane_handler! {
     }
 }
 
-lane_handler! {
+return_handler! {
     /// `LoadConst` of the register the next record, a `Return`, returns
     /// (`specialize_constant_returns`): the constant's return in one record, as `return;` and
     /// `return null;` compile. Any return past the common one writes the register and takes
@@ -17780,7 +17862,7 @@ fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
 fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let completed = match LEAF {
         NOT_LEAF => None,
-        leaf => lane_complete_leaf::<H>(cx, value, leaf == CONTEXT_LEAF),
+        form => lane_complete_leaf::<H>(cx, value, form),
     };
     let (registers, next) = match completed {
         Some(completed) => completed,
@@ -23293,11 +23375,11 @@ mod leaf_call_tests {
         let program = crate::Engine::specialize(source, "leaf-entries.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
         vm.execute(&program).unwrap();
-        let leaf = |entry: CallEntry| matches!(entry, CallEntry::Leaf | CallEntry::ContextLeaf);
+        let leaf = |entry: CallEntry| entry.leaf_form() != NOT_LEAF;
         for (name, expected) in [
             ("plain", Some(CallEntry::Leaf)),
             ("branch", Some(CallEntry::Leaf)),
-            ("bump", Some(CallEntry::ContextLeaf)),
+            ("bump", Some(CallEntry::CaptureLeaf)),
             ("method", Some(CallEntry::ContextLeaf)),
             ("setter", Some(CallEntry::ContextLeaf)),
             ("readsGlobal", Some(CallEntry::Leaf)),
