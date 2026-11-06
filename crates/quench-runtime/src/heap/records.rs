@@ -295,6 +295,13 @@ pub(super) enum RecordSweep<'a, T> {
     Dead(RecordId, T),
 }
 
+/// A sweep's two callbacks (`RecordSpace::sweep_disposing`): what frees a dead record in
+/// place, and what it shows the records left to drop and its survivors.
+struct Sweeper<'v, D, V> {
+    dispose: D,
+    visit: &'v mut V,
+}
+
 impl RecordBlock {
     fn new() -> Self {
         Self {
@@ -359,13 +366,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         // take `claim_slow`, which names no value: an allocation inlined into a lane handler
         // then passes it no address of the handler's stack.
         let id = if self.free_word != 0 {
-            let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
-            self.free_word &= !(1_u64 << bit);
-            let id = self.free_word_base + bit as RecordId;
-            let (block_index, record_index) = Self::split_id(id);
-            let claimed = self.blocks[block_index].claim(record_index);
-            debug_assert!(claimed, "a free-word bit names an unoccupied id");
-            id
+            self.take_free_word_id()
         } else if self.free_cursor == 0
             && self.reserved
             && (self.next_id as usize) < CAPACITY
@@ -396,6 +397,23 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         Ok(id)
     }
 
+    /// Claims the highest id of the loaded free word, whose bits name unoccupied ids of one
+    /// occupancy word: the bit is set in that word, which the free word's base names, with no
+    /// test of the id it already proved free.
+    #[inline(always)]
+    fn take_free_word_id(&mut self) -> RecordId {
+        debug_assert_ne!(self.free_word, 0);
+        let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
+        let mask = 1_u64 << bit;
+        self.free_word &= !mask;
+        let (block_index, word_index) = Self::word_position(self.free_word_base);
+        // SAFETY: a free word is loaded from an existing block's occupancy word.
+        let word = unsafe { &mut self.blocks.get_unchecked_mut(block_index).occupied[word_index] };
+        debug_assert_eq!(*word & mask, 0, "a free-word bit names an unoccupied id");
+        *word |= mask;
+        self.free_word_base + bit as RecordId
+    }
+
     /// `try_insert`'s claim of an unoccupied id when it reserves the range, adds a block or
     /// loads a free word; `None` when no id is free.
     #[inline(never)]
@@ -407,13 +425,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             self.load_free_word();
         }
         if self.free_word != 0 {
-            let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
-            self.free_word &= !(1_u64 << bit);
-            let id = self.free_word_base + bit as RecordId;
-            let (block_index, record_index) = Self::split_id(id);
-            let claimed = self.blocks[block_index].claim(record_index);
-            debug_assert!(claimed, "a free-word bit names an unoccupied id");
-            return Some(id);
+            return Some(self.take_free_word_id());
         }
         let id = self.next_id;
         if id as usize >= CAPACITY {
@@ -724,13 +736,26 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 
     /// Names the records a minor collection under `age` finds newborn, before its mark sets
-    /// their mark bits as it does the old records' (`minor_words`). Only an age that keeps
-    /// survivors young needs them: under `PromotionAge::First` every marked record is old after
-    /// the sweep, whatever it was before. The barrier's `logged` records are old though
-    /// unmarked, and are not newborn.
+    /// their mark bits as it does the old records'. The barrier's `logged` records are old
+    /// though unmarked, and are not newborn. Under `PromotionAge::Second` the sweep's words
+    /// and their newborn records are listed (`minor_words`). Under `PromotionAge::First`
+    /// every survivor becomes old, as an aged one does, so the newborn records are marked
+    /// aged in place: the sweep then frees or promotes them alike, and shows its young
+    /// survivors as the marked aged ones, with no list. Listing them cost acorn-wtb a
+    /// quarter of a megabyte of max RSS, the capacity those lists kept.
     pub(super) fn prepare_minor(&mut self, logged: &[RecordId], age: PromotionAge) {
         debug_assert!(self.minor_words.is_empty());
+        let word_bits = OCCUPANCY_WORD_BITS as RecordId;
         if !age.ages() {
+            for base in Self::young_word_bases(&self.young_words, self.young_floor, self.next_id) {
+                let (block_index, word_index) = Self::word_position(base);
+                let block = &mut self.blocks[block_index];
+                block.aged[word_index] |= block.occupied[word_index] & !block.marked[word_index];
+            }
+            for &id in logged {
+                let (block_index, record_index) = Self::split_id(id);
+                self.blocks[block_index].aged[record_index / OCCUPANCY_WORD_BITS] &= !(1_u64 << (id % word_bits));
+            }
             return;
         }
         let mut bases: Vec<RecordId> =
@@ -743,7 +768,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let block = &self.blocks[block_index];
             (base, block.occupied[word_index] & !block.marked[word_index] & !block.aged[word_index])
         }));
-        let word_bits = OCCUPANCY_WORD_BITS as RecordId;
         for &id in logged {
             let base = id - id % word_bits;
             if let Ok(position) = self.minor_words.binary_search_by_key(&base, |&(base, _)| base) {
@@ -764,7 +788,8 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
 
     /// Frees every occupied, unmarked record through `visit`. Marked records survive and keep
     /// their mark bit, which makes them old for the next minor collection; they reach `visit`
-    /// only when a full sweep asks for them (`visit_live`). A full sweep visits every word; a
+    /// only when the sweep asks for them (`visit_live`): every one in a full sweep, the young
+    /// ones (newborn or aged, `prepare_minor`) in a minor one. A full sweep visits every word; a
     /// minor one only the words young records can occupy (`young_word_bases`) and the aged
     /// ones, so it pays for its allocation, not for the old records it keeps. Under `age`
     /// `PromotionAge::Second` a minor sweep ages its newborn survivors instead and promotes its
@@ -775,15 +800,30 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         full: bool,
         age: PromotionAge,
         visit_live: bool,
+        visit: impl FnMut(RecordSweep<'_, T>),
+    ) -> (usize, usize) {
+        self.sweep_disposing(full, age, visit_live, |_, _| true, visit)
+    }
+
+    /// `sweep`, which first hands each dead record in place to `dispose`, which frees what it
+    /// owns and answers whether anything is left for its drop: a record it answers `false`
+    /// for is forgotten, neither moved out of the space nor dropped, nor shown to `visit`.
+    pub(super) fn sweep_disposing(
+        &mut self,
+        full: bool,
+        age: PromotionAge,
+        visit_live: bool,
+        dispose: impl FnMut(RecordId, &T) -> bool,
         mut visit: impl FnMut(RecordSweep<'_, T>),
     ) -> (usize, usize) {
+        let mut visit = Sweeper { dispose, visit: &mut visit };
         let mut freed_count = 0;
         let live_count = if full {
             debug_assert!(self.aged_words.is_empty(), "a full collection forgets ages first");
             let mut live_count = 0;
             for block_index in 0..self.blocks.len() {
                 for word_index in 0..BLOCK_WORDS {
-                    let (live, freed) = self.sweep_word(block_index, word_index, visit_live, &mut visit);
+                    let (live, freed) = self.sweep_word(block_index, word_index, if visit_live { u64::MAX } else { 0 }, &mut visit);
                     live_count += live;
                     freed_count += freed;
                 }
@@ -792,23 +832,22 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         } else if age.ages() {
             let words = std::mem::take(&mut self.minor_words);
             for &(base, newborn) in &words {
-                freed_count += self.sweep_aging_word(base, newborn, &mut visit);
+                freed_count += self.sweep_aging_word(base, newborn, visit_live, &mut visit);
             }
             self.minor_words = words;
             self.minor_words.clear();
             self.live - freed_count
         } else {
+            // Newborn records are aged here (`prepare_minor`): the young survivors are the
+            // marked aged ones, and the aged records the sweep kept are marked, so old.
             let young_words = std::mem::take(&mut self.young_words);
             let mut aged_words = std::mem::take(&mut self.aged_words);
             for base in Self::young_word_bases(&young_words, self.young_floor, self.next_id)
-                .chain(aged_words.iter().copied())
+                .chain(aged_words.drain(..))
             {
                 let (block_index, word_index) = Self::word_position(base);
-                freed_count += self.sweep_word(block_index, word_index, false, &mut visit).1;
-            }
-            // The aged records the sweep kept are marked, so old.
-            for base in aged_words.drain(..) {
-                let (block_index, word_index) = Self::word_position(base);
+                let young = if visit_live { self.blocks[block_index].aged[word_index] } else { 0 };
+                freed_count += self.sweep_word(block_index, word_index, young, &mut visit).1;
                 self.blocks[block_index].aged[word_index] = 0;
             }
             self.young_words = young_words;
@@ -829,15 +868,15 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         (live_count, freed_count)
     }
 
-    /// Sweeps one occupancy word: frees its occupied, unmarked records and, when
-    /// `visit_live`, shows `visit` its marked ones. Returns the live and freed counts it saw.
+    /// Sweeps one occupancy word: frees its occupied, unmarked records and shows `visit` its
+    /// marked ones among `shown`. Returns the live and freed counts it saw.
     #[inline(always)]
     fn sweep_word(
         &mut self,
         block_index: usize,
         word_index: usize,
-        visit_live: bool,
-        visit: &mut impl FnMut(RecordSweep<'_, T>),
+        shown: u64,
+        visit: &mut Sweeper<impl FnMut(RecordId, &T) -> bool, impl FnMut(RecordSweep<'_, T>)>,
     ) -> (usize, usize) {
         let block = &mut self.blocks[block_index];
         let occupied = block.occupied[word_index];
@@ -845,11 +884,11 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         debug_assert_eq!(marked & !occupied, 0);
         let dead = occupied & !marked;
         let id_base = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
-        let mut live = if visit_live { marked } else { 0 };
+        let mut live = marked & shown;
         while live != 0 {
             let id = id_base + live.trailing_zeros();
             // SAFETY: a mark bit is set only for an occupied record.
-            visit(RecordSweep::Keep(id, unsafe {
+            (visit.visit)(RecordSweep::Keep(id, unsafe {
                 (*self.base.as_ptr().add(id as usize)).assume_init_ref()
             }));
             live &= live - 1;
@@ -862,12 +901,15 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// records `prepare_minor` named: the newborn and aged records the mark left unmarked die,
     /// the marked aged ones are promoted (kept marked, and listed in `promoted`), and the
     /// marked newborn ones stay young, aged and unmarked. Old records are left as they are.
-    /// Not idempotent: `prepare_minor` lists each word once. Returns the freed count.
+    /// Not idempotent: `prepare_minor` lists each word once. Returns the freed count. Out of
+    /// line, so the sweep's visitor keeps the two call sites of `sweep_word` it is inlined at.
+    #[inline(never)]
     fn sweep_aging_word(
         &mut self,
         base: RecordId,
         newborn: u64,
-        visit: &mut impl FnMut(RecordSweep<'_, T>),
+        visit_live: bool,
+        visit: &mut Sweeper<impl FnMut(RecordId, &T) -> bool, impl FnMut(RecordSweep<'_, T>)>,
     ) -> usize {
         let (block_index, word_index) = Self::word_position(base);
         let block = &mut self.blocks[block_index];
@@ -887,28 +929,39 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         if stays != 0 {
             self.aged_words.push(base);
         }
+        let mut kept = if visit_live { stays | promoted } else { 0 };
         while promoted != 0 {
             self.promoted.push(base + promoted.trailing_zeros());
             promoted &= promoted - 1;
+        }
+        while kept != 0 {
+            let id = base + kept.trailing_zeros();
+            // SAFETY: a kept record is marked or aged, so occupied.
+            (visit.visit)(RecordSweep::Keep(id, unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() }));
+            kept &= kept - 1;
         }
         self.release(base, dead, visit)
     }
 
     /// Hands `visit` the `dead` records of the word starting at `id_base`, whose occupancy
-    /// bits the caller cleared. Returns how many there were.
+    /// bits the caller cleared, once its `dispose` leaves them something to drop; the others
+    /// are forgotten. Returns how many there were.
     fn release(
         &mut self,
         id_base: RecordId,
         mut dead: u64,
-        visit: &mut impl FnMut(RecordSweep<'_, T>),
+        visit: &mut Sweeper<impl FnMut(RecordId, &T) -> bool, impl FnMut(RecordSweep<'_, T>)>,
     ) -> usize {
         let freed = dead.count_ones() as usize;
         while dead != 0 {
             let id = id_base + dead.trailing_zeros();
-            // SAFETY: the occupied bit proved initialization and clearing it transferred this
-            // record to the drop callback.
-            let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
-            visit(RecordSweep::Dead(id, value));
+            // SAFETY: the occupied bit proved initialization, and clearing it transferred the
+            // record to the sweep, which forgets one disposed of and moves any other out to
+            // the drop callback.
+            let record = unsafe { &mut *self.base.as_ptr().add(id as usize) };
+            if (visit.dispose)(id, unsafe { record.assume_init_ref() }) {
+                (visit.visit)(RecordSweep::Dead(id, unsafe { record.assume_init_read() }));
+            }
             dead &= dead - 1;
         }
         freed

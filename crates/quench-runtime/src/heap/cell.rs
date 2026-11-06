@@ -1480,7 +1480,9 @@ impl InlineObjectHeader {
     }
 
     fn of_storage(proto: Value, storage: ValueVec) -> Self {
-        let object = Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        // Its inline values are `undefined`, which the payload word holds, so the object has
+        // no extras and nothing to drop.
+        let object = std::mem::ManuallyDrop::new(Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]));
         Self {
             meta: object.meta,
             auxiliary: object.auxiliary,
@@ -1992,7 +1994,17 @@ impl Object {
         )
     }
 
+    /// A direct object, the usual prototype, is tested first: its record id and its range's
+    /// base alone, before the decode of every other reference family.
+    #[inline(always)]
     fn encode_proto(proto: Value) -> u32 {
+        match proto.direct_object_index() {
+            Some(id) => PROTO_OBJECT_RECORD_BASE + id,
+            None => Self::encode_other_proto(proto),
+        }
+    }
+
+    fn encode_other_proto(proto: Value) -> u32 {
         match proto.heap_reference() {
             Some(HeapReference::LegacySlot(index)) => {
                 assert!(
@@ -2180,6 +2192,23 @@ impl Object {
         let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
+    }
+
+    /// Releases a dead object's storage in `arena` (`ValueArena::release`), and answers
+    /// whether it owns extras, which its drop frees. Inline values hold no arena words;
+    /// without extras the payload word is the storage position alone, upper half zero
+    /// (`plain_storage_start`).
+    #[inline(always)]
+    pub(crate) fn release_storage(&self, arena: &mut ValueArena) -> bool {
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return self.extras_pointer().is_some();
+        }
+        if self.payload >> u32::BITS == 0 {
+            arena.release(ValueVec::from_parts(self.payload as u32, self.auxiliary));
+            return false;
+        }
+        arena.release(self.properties());
+        true
     }
 
     fn extras(&self) -> Option<&ObjectExtras> {

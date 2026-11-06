@@ -1346,7 +1346,10 @@ impl Heap {
         len: usize,
     ) -> Value {
         self.properties.assert_shape_length(header.shape(), len);
-        match self.properties.run_of_padded(values, len) {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc_object_with_properties(prototype, header.shape(), &values[..len]);
+        }
+        match self.properties.young_run_padded(values, len) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
@@ -1405,7 +1408,15 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(object) => self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells()),
+            Err(mut object) => {
+                // A young run's owner is a direct object record (`ValueArena::young_run_padded`):
+                // an object that takes a legacy slot takes an ordinary run first.
+                if self.properties.holds_young_run(object.properties()) {
+                    let storage = self.properties.duplicate(object.properties());
+                    object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
+                }
+                self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells())
+            }
         }
     }
 
@@ -1630,6 +1641,9 @@ impl Heap {
         }
         Value::heap(index as u32)
     }
+    /// Inline into the literal-pair paths (`Vm::object_pair`): as a call, its frame cost ~21
+    /// Ir of the ~120 an allocation took.
+    #[inline(always)]
     pub(crate) fn alloc_object_pair(
         &mut self,
         proto: Value,
@@ -1808,6 +1822,21 @@ impl Heap {
             }
         }
     }
+    /// Moves the surviving young runs of `owners`, live direct objects, out of the nursery's
+    /// young range, in the order of their starts, and ends the young cycle
+    /// (`ValueArena::finish_young_cycle`).
+    fn evacuate_young_runs(&mut self, mut owners: Vec<(usize, RecordId)>) {
+        owners.sort_unstable_by_key(|&(start, _)| start);
+        for (_, record_id) in owners {
+            // SAFETY: the owners were listed from records the sweep kept.
+            let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+            let mut vector = object.properties();
+            self.properties.evacuate_young(&mut vector);
+            object.set_properties(vector, &mut self.properties);
+        }
+        self.properties.finish_young_cycle();
+    }
+
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
     fn compact_property_arena(
@@ -2350,6 +2379,9 @@ impl Heap {
         } else {
             self.sweep_serial(full, compacts, age, &mut remembered_owners)
         };
+        // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
+        // where no compaction moves every run.
+        let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
         let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
@@ -2376,22 +2408,29 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
-            let (object_live, object_freed) = self.object_records.sweep(full, age, full, |record| match record {
+            // Every young run's owner is a direct object (`ValueArena::young_run_padded`), so
+            // their sweep shows its survivors, minor or full, and lists those it keeps.
+            // A dead object's storage is released in place; one without extras, which its drop
+            // would free, is then forgotten.
+            let young_runs = properties.young_runs();
+            let dispose = |_record_id: RecordId, object: &Object| {
+                #[cfg(feature = "profile-memory")]
+                memory_profile.freed_object(Value::direct_object(_record_id), properties.len(object.properties()));
+                object.release_storage(properties)
+            };
+            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
                             Value::direct_object(record_id),
                         ));
+                    } else if young_runs.hold(object.properties()) {
+                        note_young_owner(&mut young_owners, object.properties().start_offset(), record_id);
                     }
                 }
-                RecordSweep::Dead(_record_id, object) => {
-                    #[cfg(feature = "profile-memory")]
-                    let slots = properties.len(object.properties());
-                    properties.release(object.properties());
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_object(Value::direct_object(_record_id), slots);
-                }
+                // Released in place: dropping it frees its extras.
+                RecordSweep::Dead(..) => {}
             });
             let (function_live, function_freed) =
                 self.function_records.sweep(full, age, full, |record| match record {
@@ -2406,7 +2445,7 @@ impl Heap {
                     RecordSweep::Dead(_record_id, function) => {
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(function.object.properties());
-                        properties.release(function.object.properties());
+                        properties.release_ordinary(function.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_function(Value::direct_function(_record_id), slots);
                     }
@@ -2426,7 +2465,7 @@ impl Heap {
                         abandoned_contexts.abandon(&promise.record);
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(promise.object.properties());
-                        properties.release(promise.object.properties());
+                        properties.release_ordinary(promise.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
                     }
@@ -2449,7 +2488,7 @@ impl Heap {
                     RecordSweep::Dead(_record_id, iterator) => {
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(iterator.object.properties());
-                        properties.release(iterator.object.properties());
+                        properties.release_ordinary(iterator.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
                     }
@@ -2481,7 +2520,7 @@ impl Heap {
                     *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
                     #[cfg(feature = "profile-memory")]
                     let slots = properties.len(array.properties());
-                    properties.release(array.properties());
+                    properties.release_ordinary(array.properties());
                     #[cfg(feature = "profile-memory")]
                     memory_profile.freed_array(Value::direct_array(record_id), slots, &array);
                     dead_arrays.push(Value::direct_array(record_id));
@@ -2550,8 +2589,14 @@ impl Heap {
             self.payload_bytes = live_payload_bytes;
         }
         if compacts {
+            // Compaction moves the young survivors with every other run and forgets the
+            // nursery (`ValueArena::finish_compaction`): due before the sweep, it stays due,
+            // as the sweep only releases.
+            debug_assert!(self.properties.compaction_due());
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
+        } else {
+            self.evacuate_young_runs(young_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -4470,6 +4515,13 @@ fn sort_by_unique_offset(keys: &mut Vec<u64>) {
         }
         std::mem::swap(keys, &mut scratch);
     }
+}
+
+/// Lists a young survivor's run for `Heap::evacuate_young_runs`, out of line: survivors are
+/// few, and the sweep's visitor stays small enough to inline.
+#[inline(never)]
+fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id: RecordId) {
+    owners.push((start, record_id));
 }
 
 /// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
