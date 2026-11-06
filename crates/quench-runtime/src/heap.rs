@@ -1334,9 +1334,9 @@ impl Heap {
         self.alloc_object_of(object, prototype)
     }
 
-    /// `alloc_object_with_properties` of a planned object whose values outgrow its inline
-    /// slots: `header`, derived once for `prototype` and an arena shape
-    /// (`InlineObjectHeader::of_run`), over a new run of `values`.
+    /// `alloc_object_with_properties` of an object whose values outgrow its inline slots, or
+    /// that they cannot hold: `header`, derived for `prototype` and an arena shape
+    /// (`InlineObjectHeader::of_run`), over a new run of the first `len` of `values`.
     #[inline(always)]
     pub(crate) fn alloc_object_from_run_header<const N: usize>(
         &mut self,
@@ -1345,7 +1345,6 @@ impl Heap {
         values: &[Value; N],
         len: usize,
     ) -> Value {
-        debug_assert!(len > INLINE_PROPERTY_COUNT);
         self.properties.assert_shape_length(header.shape(), len);
         match self.properties.run_of_padded(values, len) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
@@ -1638,8 +1637,13 @@ impl Heap {
         first: Value,
         second: Value,
     ) -> Value {
-        let values = [first, second];
-        self.alloc_object_with_properties(proto, shape, &values)
+        if let Some(object) = Object::with_inline_values(proto, shape, &[first, second]) {
+            return self.alloc_object(object);
+        }
+        // Values the inline slots cannot hold take a run of the smallest class, as a planned
+        // receiver's do (`alloc_object_from_run_header`).
+        let padded = [first, second, Value::UNDEFINED, Value::UNDEFINED];
+        self.alloc_object_from_run_header(InlineObjectHeader::of_run(proto, shape), proto, &padded, INLINE_PROPERTY_COUNT)
     }
     pub(crate) fn alloc_object_with_properties(
         &mut self,
