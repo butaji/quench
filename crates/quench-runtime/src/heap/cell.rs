@@ -1710,6 +1710,7 @@ impl ArrayObject {
 
     /// The elements for any change, including their backing's: the running lane's array
     /// storage proofs retire first (`retire_array_storage_proofs`).
+    #[inline(always)]
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
@@ -2609,14 +2610,19 @@ impl Object {
         self.extras_mut().arguments_object = true;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
-    /// Whether the object's elements are ordinary, as `dense_array_length` needs them: it
-    /// is extensible and not frozen, and holds no indexed or `length` descriptor and no
-    /// arguments mapping. Read from the integrity bits and one extras record.
+    /// Whether the object's elements are ordinary and all dense, as `dense_array_length`
+    /// needs them: it is extensible and not frozen, and holds no indexed or `length`
+    /// descriptor, no arguments mapping and never held sparse elements
+    /// (`mark_sparse_elements`, which every sparse write makes). Read from the integrity bits
+    /// and one extras record.
     #[inline(always)]
     pub(crate) fn holds_ordinary_elements(&self) -> bool {
         self.meta & VALUE_VEC_INTEGRITY_BITS == 0
             && self.extras().is_none_or(|extras| {
-                !extras.indexed_descriptors && !extras.arguments_object && !extras.length_descriptor
+                !extras.indexed_descriptors
+                    && !extras.arguments_object
+                    && !extras.length_descriptor
+                    && !extras.sparse_elements
             })
     }
     pub(crate) fn is_arguments_object(&self) -> bool {

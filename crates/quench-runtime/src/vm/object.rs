@@ -2189,13 +2189,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// The value prototype-held hint `index` (`hold_holder_hint`) holds for a read of `atom`
-    /// from the direct object `object`: a receiver of its shape and prototype under the epoch
-    /// it was read in reads it again, whose prototype, marked, has changed neither layout nor
-    /// values since. `None` for any other receiver, name or epoch, or no such hint.
+    /// from the direct object or array `object`: a receiver of its shape and prototype under
+    /// the epoch it was read in reads it again, whose prototype, marked, has changed neither
+    /// layout nor values since. `None` for any other receiver, name or epoch, or no such hint.
     #[inline(always)]
     pub(super) fn holder_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
         let hint = self.holder_hints.get(usize::from(index))?;
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let receiver = self.hinted_receiver(object)?;
         (hint.atom == atom
             && hint.receiver == receiver.exact_shape()
             && hint.prototype == receiver.proto_link()
@@ -2215,11 +2215,24 @@ impl<H: Host> Vm<H> {
         .then_some(hint.value)
     }
 
-    /// Makes `value`, which the immediate prototype of the direct object `object` answered
-    /// for a polymorphic read of `atom`, a record's hint (`hold_prototype_hint`); `None` for
+    /// The object part of a direct object, array or function, whose own shape and prototype
+    /// link a prototype-held hint tests (`holder_hint_hit`).
+    #[inline(always)]
+    fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
+        if let Some(record_id) = object.direct_object_index() {
+            return Some(self.heap.object_record_by_id(record_id));
+        }
+        if let Some(array) = self.heap.record_array(object) {
+            return Some(array);
+        }
+        object.direct_function_index().and_then(|_| self.heap.function(object)).map(|function| &function.object)
+    }
+
+    /// Makes `value`, which the immediate prototype of the direct object or array `object`
+    /// answered for a read of `atom`, a record's hint (`hold_prototype_hint`); `None` for
     /// another receiver.
     pub(super) fn hold_holder_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let receiver = self.hinted_receiver(object)?;
         let (shape, prototype) = (receiver.exact_shape(), receiver.proto());
         self.hold_prototype_hint(owned, atom, shape, prototype, value, limit)
     }

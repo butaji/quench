@@ -634,6 +634,20 @@ impl Heap {
         Some(result)
     }
 
+    /// Appends `value` to the direct array `array`'s elements, as `grow_array_elements` grows
+    /// them, through the write barrier of that one store (`record_array_store_mut`).
+    #[inline(always)]
+    pub(crate) fn push_array_element(&mut self, array: Value, value: Value) -> Option<()> {
+        let elements = self.record_array_store_mut(array, value)?.elements_mut().make_mut();
+        let capacity = elements.capacity();
+        elements.push(value);
+        let grown = elements.capacity() - capacity;
+        if grown != 0 {
+            self.charge_payload_growth(grown * size_of::<Value>());
+        }
+        Some(())
+    }
+
     /// `record_array`, mutably.
     #[inline(always)]
     pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {

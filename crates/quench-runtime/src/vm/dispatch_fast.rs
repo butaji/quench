@@ -5893,14 +5893,34 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_holder_cell` of a register base: the base read from its register, and
-    /// a miss taken out of line by `lane_get_field_holder_cell`, which moves the record on.
+    /// `lane_get_field_holder_cell` of a register base, an array or function whose prototype
+    /// answers a method read (`a.push`, `f.call`): the record's hint of that read
+    /// (`Vm::holder_hint_hit`), whose shape, link and epoch tests stand for the site's entry
+    /// and the prototype's storage. Any other read takes
+    /// `lane_get_field_holder_cell_refresh` out of line.
     fn lane_get_field_holder_cell_register<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), r.get(i.b)) else {
+            sibling!(lane_get_field_holder_cell_refresh::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_holder_cell_register` past its hint: the site's holder entry
+    /// (`Vm::cell_holder_field_hit`), whose answer becomes the hint. A miss takes
+    /// `lane_get_field_holder_cell`, which moves the record on.
+    #[inline(never)]
+    fn lane_get_field_holder_cell_refresh<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { vm(cx) }).cell_holder_field_hit(code, r.get(i.b), i.c) else {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let Some(value) = vm.cell_holder_field_hit(code, base, i.c) else {
             sibling!(lane_get_field_holder_cell::<H>, r, ip, Carried::script(cx))
         };
+        set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), base, value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -12415,16 +12435,8 @@ script_handler! {
         }
         // A site calling a native takes the native handler from now on, which hands any other
         // callee back.
-        match vm.heap.function(callee) {
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::StringCharCodeAt), .. })
-                if i.a & crate::bytecode::RETURN_REGISTER == 0 =>
-            {
-                requicken::<H>(ip, lane_call_char_code_at::<H>);
-            }
-            Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) => {
-                requicken::<H>(ip, lane_native_call::<H>);
-            }
-            _ => {}
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
+            requicken::<H>(ip, native_call_handler::<H>(*native, i));
         }
         sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
     }
@@ -13306,6 +13318,85 @@ script_handler! {
             .filter(|_| is_char_code_at && i.a & crate::bytecode::RETURN_REGISTER == 0)
             .and_then(|index| string_char_code_at(vm, r.get(i.c), index))
         else {
+            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// The handler a `Call` site whose callee resolved to `native` takes from then on
+/// (`lane_script_call_resolve`): a native whose common case the lane makes in place has its
+/// own handler, which tests the callee's identity once and hands any other call to
+/// `lane_native_call`, the handler of every other native. A call returning its result
+/// completes its caller, which only `lane_native_call` makes.
+fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction) -> Handler {
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        return lane_native_call::<H>;
+    }
+    match native {
+        Native::StringCharCodeAt => lane_call_char_code_at::<H>,
+        Native::ArrayPush => lane_call_array_push::<H>,
+        Native::ArrayPop => lane_call_array_pop::<H>,
+        native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
+        _ => lane_native_call::<H>,
+    }
+}
+
+/// Whether `callee` is a function whose behavior is the native `native`'s.
+#[inline(always)]
+fn callee_is_native<H: Host>(vm: &Vm<H>, callee: Value, native: Native) -> bool {
+    matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(found), .. }) if *found == native)
+}
+
+script_handler! {
+    /// A `Call` site whose callee was `Array.prototype.push` (`native_call_handler`): that
+    /// call of one value in place (`Vm::array_push_one`). Any other callee, receiver or
+    /// count takes `lane_native_call`.
+    fn lane_call_array_push<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the call's window is registers of the running function.
+        let length = match unsafe { lane_call_window(r, i) } {
+            [value] if callee_is_native(vm, r.get(i.b), Native::ArrayPush) => vm.array_push_one(r.get(i.c), *value),
+            _ => None,
+        };
+        let Some(length) = length else {
+            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, length);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// A `Call` site whose callee was `Array.prototype.pop` (`native_call_handler`): that call
+    /// in place (`Vm::array_pop_one`), which reads no argument. Any other callee or receiver
+    /// takes `lane_native_call`.
+    fn lane_call_array_pop<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = if callee_is_native(vm, r.get(i.b), Native::ArrayPop) { vm.array_pop_one(r.get(i.c)) } else { None };
+        let Some(value) = value else {
+            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// A `Call` site whose callee was a Math function of Numbers (`native_call_handler`): the
+    /// call of Number arguments in place (`number::math_inline_call`). Any other callee or
+    /// argument takes `lane_native_call`.
+    fn lane_call_math<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = match vm.heap.function(r.get(i.b)) {
+            // SAFETY: the call's window is registers of the running function.
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
+                super::number::math_inline_call(*native, unsafe { lane_call_window(r, i) })
+            }
+            _ => None,
+        };
+        let Some(value) = value else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);

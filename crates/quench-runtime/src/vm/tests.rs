@@ -1276,6 +1276,203 @@ fn string_method_reads_follow_the_prototype_values() {
 }
 
 #[test]
+fn lane_array_and_function_method_reads_follow_their_holder_hint() {
+    // An array's or function's method read its prototype answered keeps that read as its record's
+    // hint (`Vm::holder_hint_hit`): an array moved to another prototype, the method replaced,
+    // deleted (Object.prototype's then answers) and restored, an own method shadowing it, and
+    // Function.prototype.call replaced and shadowed each read what the receiver in hand inherits.
+    // Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function put() { for (var k = 0; k < arguments.length; k++) out[out.length] = arguments[k]; }
+      function readPush(a) { return a.push; }
+      function readCall(f) { return f.call; }
+      function id(x) { return x; }
+      var i, hits = 0, plain = [], proto = { push: "proto push" };
+      for (i = 0; i < 300; i++) hits += readPush(plain) === Array.prototype.push ? 1 : 0;
+      var moved = [];
+      Object.setPrototypeOf(moved, proto);
+      put(hits, readPush(moved), readPush(plain) === Array.prototype.push);
+      var savedPush = Array.prototype.push;
+      Array.prototype.push = "replaced";
+      put(readPush(plain));
+      delete Array.prototype.push;
+      put(String(readPush(plain)));
+      Object.prototype.push = "object push";
+      put(readPush(plain));
+      delete Object.prototype.push;
+      Array.prototype.push = savedPush;
+      put(readPush(plain) === savedPush);
+      var shadowed = [];
+      shadowed.push = "own";
+      put(readPush(shadowed), readPush(plain) === savedPush);
+      for (i = 0; i < 300; i++) hits += readCall(id) === Function.prototype.call ? 1 : 0;
+      var savedCall = Function.prototype.call;
+      Function.prototype.call = "replaced call";
+      put(hits, readCall(id));
+      Function.prototype.call = savedCall;
+      var ownCall = function () {};
+      ownCall.call = "own call";
+      put(readCall(ownCall), readCall(id) === savedCall);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_array_and_function_method_reads_follow_their_holder_hint.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["300|proto push|true|replaced|undefined|object push|true|own|true|600|replaced call|own call|true"]
+    );
+}
+
+#[test]
+fn lane_math_sites_keep_math_semantics() {
+    // A call site of a Math function computes Number arguments in place (`number::math_inline_call`):
+    // NaN, signed zeros, infinities and int32 bounds, conversions whose valueOf runs once per
+    // argument in order, Symbol and BigInt errors, and a Math.max replaced by a user function,
+    // by another native, and by a shadowing global Math each keep Math's semantics. Expected
+    // value is Node's.
+    let source = r#"
+      var out = [];
+      function max2(x, y) { return Math.max(x, y); }
+      function min2(x, y) { return Math.min(x, y); }
+      function max0() { return Math.max(); }
+      function max3(x, y, z) { return Math.max(x, y, z); }
+      function floor1(x) { return Math.floor(x); }
+      function pow2(x, y) { return Math.pow(x, y); }
+      function show(v) { return Object.is(v, -0) ? "-0" : String(v); }
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += max2(i & 7, 3) + min2(i & 7, 3) + floor1(i / 3) + pow2(i & 3, 2);
+      out.push(s);
+      var values = [NaN, -0, 0, 1.5, -Infinity, Infinity, 2147483647, -2147483648, "7", null, undefined, true];
+      for (i = 0; i < values.length; i++) {
+        for (var j = 0; j < values.length; j++) {
+          out.push(show(max2(values[i], values[j])) + "/" + show(min2(values[i], values[j])));
+        }
+        out.push(show(floor1(values[i])), show(pow2(values[i], 0.5)));
+      }
+      out.push(show(max0()), show(Math.min()), show(max3(1, NaN, 3)), show(max3(-0, 0, -0)));
+      // valueOf runs once per argument, in order, even after a NaN.
+      var log = [];
+      var a = { valueOf: function () { log.push("a"); return 5; } };
+      var b = { valueOf: function () { log.push("b"); return NaN; } };
+      var c = { valueOf: function () { log.push("c"); return 9; } };
+      for (i = 0; i < 3; i++) out.push(show(max3(a, b, c)), show(max2(c, a)), show(min2(a, 4)));
+      out.push(log.join(""));
+      // A Symbol throws; a BigInt throws.
+      try { max2(1, Symbol()); } catch (e) { out.push(e.constructor.name); }
+      try { max2(1n, 2); } catch (e) { out.push(e.constructor.name); }
+      // Redefined Math.max, then a different native and a user function at the same site.
+      var savedMax = Math.max;
+      Math.max = function (x, y) { return "mine" + x + y; };
+      out.push(max2(1, 2));
+      Math.max = Math.min;
+      out.push(max2(1, 2));
+      Math.max = savedMax;
+      out.push(max2(1, 2));
+      var M = Math;
+      globalThis.Math = { max: function () { return "shadow"; }, min: M.min, floor: M.floor, pow: M.pow };
+      out.push(max2(1, 2));
+      globalThis.Math = M;
+      out.push(max2(1, 2));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_math_sites_keep_math_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["17842|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN|NaN|NaN/NaN|-0/-0|0/-0|1.5/-0|-0/-Infinity|Infinity/-0|2147483647/-0|-0/-2147483648|7/-0|0/-0|NaN/NaN|1/-0|-0|0|NaN/NaN|0/-0|0/0|1.5/0|0/-Infinity|Infinity/0|2147483647/0|0/-2147483648|7/0|0/0|NaN/NaN|1/0|0|0|NaN/NaN|1.5/-0|1.5/0|1.5/1.5|1.5/-Infinity|Infinity/1.5|2147483647/1.5|1.5/-2147483648|7/1.5|1.5/0|NaN/NaN|1.5/1|1|1.224744871391589|NaN/NaN|-0/-Infinity|0/-Infinity|1.5/-Infinity|-Infinity/-Infinity|Infinity/-Infinity|2147483647/-Infinity|-2147483648/-Infinity|7/-Infinity|0/-Infinity|NaN/NaN|1/-Infinity|-Infinity|Infinity|NaN/NaN|Infinity/-0|Infinity/0|Infinity/1.5|Infinity/-Infinity|Infinity/Infinity|Infinity/2147483647|Infinity/-2147483648|Infinity/7|Infinity/0|NaN/NaN|Infinity/1|Infinity|Infinity|NaN/NaN|2147483647/-0|2147483647/0|2147483647/1.5|2147483647/-Infinity|Infinity/2147483647|2147483647/2147483647|2147483647/-2147483648|2147483647/7|2147483647/0|NaN/NaN|2147483647/1|2147483647|46340.950001051984|NaN/NaN|-0/-2147483648|0/-2147483648|1.5/-2147483648|-2147483648/-Infinity|Infinity/-2147483648|2147483647/-2147483648|-2147483648/-2147483648|7/-2147483648|0/-2147483648|NaN/NaN|1/-2147483648|-2147483648|NaN|NaN/NaN|7/-0|7/0|7/1.5|7/-Infinity|Infinity/7|2147483647/7|7/-2147483648|7/7|7/0|NaN/NaN|7/1|7|2.6457513110645907|NaN/NaN|0/-0|0/0|1.5/0|0/-Infinity|Infinity/0|2147483647/0|0/-2147483648|7/0|0/0|NaN/NaN|1/0|0|0|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN|NaN|NaN/NaN|1/-0|1/0|1.5/1|1/-Infinity|Infinity/1|2147483647/1|1/-2147483648|7/1|1/0|NaN/NaN|1/1|1|1|-Infinity|Infinity|NaN|0|NaN|9|4|NaN|9|4|NaN|9|4|abccaaabccaaabccaa|TypeError|TypeError|mine12|1|2|shadow|2"]
+    );
+}
+
+#[test]
+fn lane_array_push_pop_sites_keep_array_semantics() {
+    // A call site of Array.prototype.push or pop appends or removes in place where the receiver's
+    // elements are ordinary and dense and no prototype holds an index (`Vm::array_push_one`,
+    // `Vm::array_pop_one`): holes, indexed accessors and values added to Array.prototype and
+    // Object.prototype after the sites warm, frozen, sealed and non-extensible arrays, a
+    // non-writable length, zero and many values, redefined and shadowed methods, and array-like
+    // and primitive receivers each keep the generic steps. Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function pp(a, v) { a.push(v); return a.pop(); }
+      function push1(a, v) { return a.push(v); }
+      function pop1(a) { return a.pop(); }
+      function tryPush(a, v) { try { return a.push(v); } catch (e) { return e.constructor.name; } }
+      function tryPop(a) { try { return a.pop(); } catch (e) { return e.constructor.name; } }
+      var s = 0, i, a = [];
+      for (i = 0; i < 300; i++) s += pp(a, i);
+      out.push(s, a.length);
+      // A hole at the end: pop reads the prototype chain.
+      var holes = [1, , 3];
+      holes.length = 2;
+      for (i = 0; i < 50; i++) push1(holes, i);
+      out.push(holes.length, String(pop1([5, , ])), 1 in holes);
+      // Indexed property on Array.prototype after warm-up: a hole there reads it, a push past
+      // a prototype setter calls it.
+      var b = [];
+      for (i = 0; i < 300; i++) push1(b, i);
+      Object.defineProperty(Array.prototype, "400", { set: function (v) { out.push("setter " + v); }, get: function () { return "proto"; }, configurable: true });
+      for (i = 0; i < 120; i++) push1(b, i);
+      out.push(b.length, b[400], Object.prototype.hasOwnProperty.call(b, 400));
+      delete Array.prototype[400];
+      var c = [];
+      c.length = 3;
+      Object.prototype[2] = "objproto";
+      out.push(String(pop1(c)), c.length);
+      delete Object.prototype[2];
+      Object.prototype[0] = "zero";
+      var d = [];
+      for (i = 0; i < 3; i++) push1(d, i);
+      out.push(d.join(","));
+      delete Object.prototype[0];
+      // Frozen, sealed, non-extensible, non-writable length.
+      var frozen = Object.freeze([1, 2]);
+      var sealed = Object.seal([1, 2]);
+      var closed = Object.preventExtensions([1, 2]);
+      var fixed = [1, 2]; Object.defineProperty(fixed, "length", { writable: false });
+      for (i = 0; i < 3; i++) {
+        out.push(tryPush(frozen, 9), tryPop(frozen), tryPush(sealed, 9), tryPop(sealed), tryPush(closed, 9), tryPop(closed), tryPush(fixed, 9), tryPop(fixed));
+      }
+      out.push(frozen.length, sealed.length, closed.length, fixed.length);
+      // Zero and many arguments.
+      var e = [1];
+      function pushMany(a) { return a.push(); }
+      function pushLots(a) { return a.push(1, 2, 3, 4, 5, 6, 7); }
+      for (i = 0; i < 100; i++) { pushMany(e); pushLots(e); }
+      out.push(e.length, e[e.length - 1]);
+      // Redefined push and pop.
+      var saved = Array.prototype.push, savedPop = Array.prototype.pop;
+      Array.prototype.push = function (v) { return "mine " + v; };
+      Array.prototype.pop = function () { return "popped"; };
+      var mine = [push1([], 4), pop1([1])];
+      Array.prototype.push = saved; Array.prototype.pop = savedPop;
+      out.push(mine[0], mine[1]);
+      var own = [];
+      own.push = function () { return "own"; };
+      out.push(push1(own, 1), push1([], 1));
+      // Array-likes and other receivers through the same sites.
+      var like = { length: 2, push: Array.prototype.push, pop: Array.prototype.pop };
+      out.push(push1(like, "x"), like.length, like[2], String(pop1(like)), like.length);
+      String.prototype.push = Array.prototype.push;
+      out.push(tryPush("str", 1));
+      delete String.prototype.push;
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_array_push_pop_sites_keep_array_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["44850|0|52|undefined|false|setter 100|420|proto|false|objproto|2|0,1,2|TypeError|TypeError|TypeError|TypeError|TypeError|2|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|1|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError||TypeError|TypeError|2|2|0|2|701|7|mine 4|popped|own|1|3|3|x|x|2|TypeError"]
+    );
+}
+
+#[test]
 fn call_sites_test_each_target_their_link_names() {
     // One call site links the target cache entry of a plain callee, which dies; after the
     // collection, functions that need another entry (a kept `arguments`, values past their

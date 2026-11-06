@@ -426,13 +426,20 @@ impl UniqueElements {
         }
     }
 
-    /// Room for `additional` more values, growing by `GROWTH_SHIFT`.
+    /// Room for `additional` more values, growing by `GROWTH_SHIFT`. Inline: a backing with
+    /// room, the common append, tests its capacity alone.
+    #[inline(always)]
     pub(crate) fn reserve(&mut self, additional: usize) {
         let required = self.0.len().checked_add(additional).expect("array backing overflow");
-        let capacity = self.0.capacity();
-        if required <= capacity {
-            return;
+        if required > self.0.capacity() {
+            self.grow_for(required);
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_for(&mut self, required: usize) {
+        let capacity = self.0.capacity();
         let grown = required.max(capacity + (capacity >> GROWTH_SHIFT)).max(MIN_GROWN_CAPACITY);
         self.grow_to(grown);
     }
@@ -459,6 +466,7 @@ impl UniqueElements {
         unsafe { (*header.as_ptr()).capacity = capacity_word };
     }
 
+    #[inline(always)]
     pub(crate) fn push(&mut self, value: Value) {
         let len = self.0.len();
         self.reserve(1);
@@ -468,6 +476,7 @@ impl UniqueElements {
         self.set_len(len + 1);
     }
 
+    #[inline(always)]
     pub(crate) fn pop(&mut self) -> Option<Value> {
         let len = self.0.len().checked_sub(1)?;
         let value = self[len];
