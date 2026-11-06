@@ -2761,6 +2761,15 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // Independent loop entries share the original unit PC/frame IDs. Prefix
     // lowering stops before an opaque operation and returns its exact origin;
     // neither initialization nor a preceding loop is replayed on re-entry.
+    // A body without loops of its own whose inlined calls a full region cannot cover runs
+    // them from its entry up to the first opaque operation. An inlined callee's loop that
+    // indexes arrays stays the callee's own region, which views its arrays at its header.
+    let array_loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
+        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            && instruction.jump_target() as usize <= pc
+            && unit.instructions[instruction.jump_target() as usize..=pc].iter()
+                .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
+    if headers.is_empty() && !array_loops && !unit.frames.is_empty() { headers.push(0); }
     headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect()
 }
 
@@ -9262,7 +9271,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 None
             };
             // A pushed call is the shared frame transition however it then completes.
-            let pushed = matches!(in_loop_call, Some(Ok(super::StepResult::PushFrame { .. })));
+            let pushed = diagnostics_enabled && matches!(in_loop_call, Some(Ok(super::StepResult::PushFrame { .. })));
             let in_loop_call = in_loop_call.map(|step| vm.complete_pushed_call(program, dispatch.frame, current_instruction, step));
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]

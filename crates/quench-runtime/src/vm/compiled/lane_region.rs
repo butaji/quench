@@ -1633,7 +1633,9 @@ pub(super) fn lower(
             lowering.builder.ins().jump(header, &[]);
         }
     }
-    if matches!(coverage, Coverage::PrefixFrom(_) | Coverage::Osr(_)) && !lowering.backedge { return None; }
+    // A prefix pays for its entry with a loop, or with the calls it runs inlined.
+    if matches!(coverage, Coverage::PrefixFrom(_) | Coverage::Osr(_)) && !lowering.backedge
+        && !(matches!(coverage, Coverage::PrefixFrom(_)) && !unit.frames.is_empty()) { return None; }
     for (block, values, pc, line) in std::mem::take(&mut lowering.pending) {
         lowering.builder.switch_to_block(block);
         let mut leaving = State { values, proofs: LocalProofs::default() };
@@ -2625,6 +2627,15 @@ impl Lowering<'_, '_> {
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction)
             }
+            Op::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
+                && instruction.register_b() < self.unit.registers => {
+                let exit = self.guard_exit(state, pc32);
+                let truthy = self.truthiness(state, instruction.register_b(), exit);
+                let falsy = self.ins().bxor_imm_u(truthy, 1);
+                let boolean = self.boolean(falsy);
+                self.set_boolean(state, instruction.result_register(), boolean);
+                Some(true)
+            }
             Op::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
@@ -2690,26 +2701,7 @@ impl Lowering<'_, '_> {
             Op::JumpFalse | Op::JumpTrue if plain => {
                 let take_when_truthy = instruction.op() == Op::JumpTrue;
                 let exit = self.guard_exit(state, pc32);
-                let register = instruction.register_a();
-                let fact = state.values[usize::from(register)].value;
-                let truthy = match fact.representation {
-                    Representation::Int32 => {
-                        let int = { let variable = self.int_var(usize::from(register)); self.builder.use_var(variable) };
-                        self.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
-                    }
-                    Representation::Float64 => {
-                        let number = { let variable = self.float_var(usize::from(register)); self.builder.use_var(variable) };
-                        emit_number_truthiness(&mut self.builder, number)
-                    }
-                    Representation::Tagged => {
-                        let bits = self.tagged(state, register);
-                        if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
-                            self.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-                        } else {
-                            emit_js_tagged_truthiness(&mut self.builder, bits, exit)
-                        }
-                    }
-                };
+                let truthy = self.truthiness(state, instruction.register_a(), exit);
                 let taken = if take_when_truthy { truthy } else { self.ins().icmp_imm_u(IntCC::Equal, truthy, 0) };
                 self.branch(state, pc, instruction.jump_target() as usize, taken);
                 return false;
@@ -3030,6 +3022,30 @@ impl Lowering<'_, '_> {
     /// operand's type decides its name, else by the operand's tag for a Number, `undefined`,
     /// `null` or a boolean, as `osr_loop` does; a heap value, whose cell decides its name,
     /// leaves at the instruction.
+    /// ToBoolean of `register` as an i8, from its proved representation; a tagged value
+    /// whose truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `exit`.
+    fn truthiness(&mut self, state: &mut State, register: Register, exit: ir::Block) -> ir::Value {
+        let fact = state.values[usize::from(register)].value;
+        match fact.representation {
+            Representation::Int32 => {
+                let int = { let variable = self.int_var(usize::from(register)); self.builder.use_var(variable) };
+                self.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
+            }
+            Representation::Float64 => {
+                let number = { let variable = self.float_var(usize::from(register)); self.builder.use_var(variable) };
+                emit_number_truthiness(&mut self.builder, number)
+            }
+            Representation::Tagged => {
+                let bits = self.tagged(state, register);
+                if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
+                    self.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
+                } else {
+                    emit_js_tagged_truthiness(&mut self.builder, bits, exit)
+                }
+            }
+        }
+    }
+
     fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         use crate::value::ValueLayout;
         let index = |kind: crate::ValueType| i64::try_from(crate::bytecode::typeof_name_index(
