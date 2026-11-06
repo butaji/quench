@@ -140,7 +140,7 @@ struct Lowering<'a, 'f> {
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
-    global_reads: &'a BTreeSet<usize>,
+    global_reads: &'a BTreeMap<usize, Option<Value>>,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts,
@@ -321,6 +321,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let index = usize::from(register);
         if state.values[index].value.representation == Representation::Int32 {
             return { let variable = self.int_var(index); self.builder.use_var(variable) };
+        }
+        // A double is an int32 when converting it back gives the same bits, which excludes
+        // `-0`, NaN and fractions: an integral result of float arithmetic proves int once.
+        if state.values[index].value.representation == Representation::Float64 {
+            let number = { let variable = self.float_var(index); self.builder.use_var(variable) };
+            let int = self.ins().fcvt_to_sint_sat(types::I32, number);
+            let back = self.ins().fcvt_from_sint(types::F64, int);
+            let (number_bits, back_bits) = (self.ins().bitcast(types::I64, MemFlagsData::new(), number), self.ins().bitcast(types::I64, MemFlagsData::new(), back));
+            let exact = self.ins().icmp(IntCC::Equal, number_bits, back_bits);
+            emit_js_guard(&mut self.builder, exact, otherwise);
+            { let variable = self.int_var(index); self.builder.def_var(variable, int); }
+            state.values[index] = RegisterFact::definition(Type::INT32, Representation::Int32);
+            return int;
         }
         let bits = self.tagged(state, register);
         if !state.values[index].value.ty.is_subtype(Type::INT32) {
@@ -711,7 +724,7 @@ pub(super) fn compile(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeSet<usize>,
+    global_reads: &BTreeMap<usize, Option<Value>>,
     vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, Vec<*const DirectCallee>>,
@@ -734,7 +747,7 @@ fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeSet<usize>,
+    global_reads: &BTreeMap<usize, Option<Value>>,
     vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, Vec<*const DirectCallee>>,
@@ -1328,14 +1341,23 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, coercible, exit);
                 Some(true)
             }
-            Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains(&pc) => {
-                let exit = self.guard_exit(state, pc as u32);
-                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
-                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
-                let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.global_get, &[atom, site]);
-                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, hit, exit);
-                self.set_tagged(state, instruction.result_register(), value);
+            Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains_key(&pc) => {
+                match self.global_reads[&pc] {
+                    Some(constant) => {
+                        let value = self.ins().iconst(types::I64, constant.to_bits() as i64);
+                        self.define(state, instruction.result_register(), value,
+                            RegisterFact::definition(Type::immediate(constant), Representation::Tagged));
+                    }
+                    None => {
+                        let exit = self.guard_exit(state, pc as u32);
+                        let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
+                        let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
+                        let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.global_get, &[atom, site]);
+                        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                        emit_js_guard(&mut self.builder, hit, exit);
+                        self.set_tagged(state, instruction.result_register(), value);
+                    }
+                }
                 // A call's receiver is `undefined` for a binding of the global scope.
                 if instruction.op() == Op::LoadNameCall {
                     let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
@@ -1350,6 +1372,8 @@ impl Lowering<'_, '_> {
             },
             // The interpreter's own semantics, run on the register state (`staged::step`).
             Op::LoadConst | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue if plain =>
+                super::lane_operation(&self.program.constants, instruction).and_then(|operation| self.run(state, pc, operation)),
+            Op::Unary if plain && instruction.unary_operator() == super::super::coercion::LOGICAL_NOT =>
                 super::lane_operation(&self.program.constants, instruction).and_then(|operation| self.run(state, pc, operation)),
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
@@ -3099,7 +3123,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -3124,7 +3148,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

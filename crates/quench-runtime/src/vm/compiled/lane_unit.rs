@@ -127,8 +127,9 @@ fn inlinable(instruction: WideInstruction) -> bool {
             None => false,
         },
         Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
-        // A fused `typeof` test (`Lowering::typeof_test`).
-        Op::Unary => plain && crate::bytecode::typeof_test(instruction.unary_operator()).is_some(),
+        // A fused `typeof` test (`Lowering::typeof_test`), or a logical not (`staged::step`).
+        Op::Unary => plain && (crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
+            || instruction.unary_operator() == super::super::coercion::LOGICAL_NOT),
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }

@@ -654,6 +654,8 @@ pub(crate) enum Operation {
     Binary { operator: NumberOperator, destination: crate::bytecode::Register, left: Source, right: Source },
     /// Continues at `target`.
     Jump { target: u32 },
+    /// `destination = !source`: the negation of ToBoolean of `source`.
+    Not { destination: crate::bytecode::Register, source: crate::bytecode::Register },
     /// Continues at `target` where ToBoolean of `register` is `when`.
     JumpIf { register: crate::bytecode::Register, when: bool, target: u32 },
     /// Continues at `target` unless Number `relation` holds of `left` and `right`.
@@ -707,6 +709,11 @@ pub(crate) fn step<M: Machine>(machine: &mut M, operation: Operation, miss: M::M
         Operation::Move { destination, source } => machine.copy_register(destination, source),
         Operation::LoadConst { destination, constant } => machine.set_static(destination, constant),
         Operation::Binary { operator, destination, left, right } => binary(machine, operator, destination, left, right, miss)?,
+        Operation::Not { destination, source } => {
+            let truthy = to_boolean(machine, source, miss)?;
+            let negated = machine.not_cond(truthy);
+            machine.set_boolean(destination, negated);
+        }
         Operation::Jump { target } => return Some(Flow::Jump(target)),
         Operation::JumpIf { register, when, target } => {
             let truthy = to_boolean(machine, register, miss)?;

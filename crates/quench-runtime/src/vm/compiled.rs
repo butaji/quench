@@ -7137,8 +7137,9 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
     /// (`dispatch_fast::lane_load_name_first`): in a function whose unresolved names are
-    /// global and resolve statically, a name no internal binding owns.
-    fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeSet<usize> {
+    /// global and resolve statically, a name no internal binding owns; each with its constant
+    /// where the name is an immutable global (`builtins::immutable_globals`).
+    fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeMap<usize, Option<Value>> {
         let global = |function: u32| program.function_get(function as usize)
             .is_some_and(|body| body.names_resolve_statically(program))
             && self.programs.unresolved_names_are_global(self.active_program, function);
@@ -7153,7 +7154,10 @@ impl<H: Host> Vm<H> {
                 global(function) && (!self.atom_class(atom).contains(super::object::AtomClass::INTERNAL)
                     || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
             })
-            .map(|(pc, _)| pc)
+            .map(|(pc, instruction)| {
+                let name = self.atom_name(instruction.atom_index());
+                (pc, super::builtins::immutable_globals().into_iter().find(|(global, _)| *global == name).map(|(_, value)| value))
+            })
             .collect()
     }
 
@@ -7573,6 +7577,10 @@ pub(super) fn lane_operation(constants: &[crate::bytecode::Constant], instructio
             constant: constants.get(instruction.constant_index()).and_then(facts::immediate)?,
         },
         Op::Jump => Operation::Jump { target: instruction.jump_target() },
+        Op::Unary if instruction.unary_operator() == super::coercion::LOGICAL_NOT => Operation::Not {
+            destination: instruction.result_register(),
+            source: instruction.register_b(),
+        },
         Op::JumpFalse | Op::JumpTrue => Operation::JumpIf {
             register: instruction.register_a(),
             when: instruction.op() == Op::JumpTrue,

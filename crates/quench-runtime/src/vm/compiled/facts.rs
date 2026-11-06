@@ -163,6 +163,10 @@ fn transfer(
             }
             if instruction.returns_from_frame() { Flow::Leaves } else { Flow::Next }
         }
+        Op::Unary if instruction.unary_operator() == super::super::coercion::LOGICAL_NOT && instruction.result_flags() == 0 => {
+            set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
+            Flow::Next
+        }
         Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(vec![instruction.jump_target() as usize])
@@ -190,6 +194,9 @@ fn transfer(
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(vec![instruction.jump_target() as usize])
                 }
+                // A lane body continues past a call or construction with its result written;
+                // only one that returns from the frame ends the path.
+                ControlFlowLayout::Call if !instruction.returns_from_frame() => Flow::Next,
                 ControlFlowLayout::Call | ControlFlowLayout::BranchTable | ControlFlowLayout::Terminal => Flow::Leaves,
             }
         }

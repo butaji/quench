@@ -705,10 +705,8 @@ impl<H: Host> Vm<H> {
             crate::bytecode::ITERATOR_CLOSE_BINDING,
             native_iterator_close,
         )?;
-        self.global(program, "undefined", Value::UNDEFINED)?;
-        self.global(program, "NaN", Value::number(f64::NAN))?;
-        self.global(program, "Infinity", Value::number(f64::INFINITY))?;
-        for name in ["undefined", "NaN", "Infinity"] {
+        for (name, value) in immutable_globals() {
+            self.global(program, name, value)?;
             let atom = self.intern_atom(name);
             self.set_property_attributes(
                 self.realm.globals,
@@ -1401,4 +1399,11 @@ mod math_function_tests {
             );
         }
     }
+}
+
+/// The global object's value properties that are neither writable nor configurable
+/// (ECMA-262 19.1): no global lexical declaration may shadow them
+/// (`HasRestrictedGlobalProperty`), so a read the global scope resolves is its constant.
+pub(crate) fn immutable_globals() -> [(&'static str, Value); 3] {
+    [("undefined", Value::UNDEFINED), ("NaN", Value::number(f64::NAN)), ("Infinity", Value::number(f64::INFINITY))]
 }
