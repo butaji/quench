@@ -559,7 +559,7 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     if op > LAST_COMPARISON_OPERATOR {
         return None;
     }
-    let holds = super::staged::binary_values::<false>(super::staged::NumberOperator::Relation(NumberRelation::from_operator(op)?), left, right)?;
+    let holds = super::staged::binary_values::<super::staged::AnyOperands>(super::staged::NumberOperator::Relation(NumberRelation::from_operator(op)?), left, right)?;
     Some(holds == Value::TRUE)
 }
 
@@ -712,7 +712,7 @@ mod numeric_instruction_tests {
 
 #[inline(always)]
 fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, right: i32) -> Value {
-    super::staged::binary_values::<false>(super::staged::NumberOperator::Arithmetic(operation), Value::integer(left), Value::integer(right))
+    super::staged::binary_values::<super::staged::AnyOperands>(super::staged::NumberOperator::Arithmetic(operation), Value::integer(left), Value::integer(right))
         .expect("int32s are Numbers")
 }
 
@@ -739,8 +739,9 @@ pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) ->
     if let Some(value) = bitwise_value_operator::<OP>(left, right) {
         return Some(value);
     }
+    // The numbers-quickened records' operation: their operands' doubles.
     if let Some(operation) = NumberArithmetic::from_operator(OP) {
-        return super::staged::binary_values::<false>(super::staged::NumberOperator::Arithmetic(operation), left, right);
+        return super::staged::binary_values::<super::staged::NumberOperands>(super::staged::NumberOperator::Arithmetic(operation), left, right);
     }
     let (left, right) = Value::number_pair(left, right)?;
     number_operator::<OP>(left, right).map(Value::number)
@@ -760,7 +761,7 @@ pub(super) fn number_operator<const OP: u32>(left: f64, right: f64) -> Option<f6
 #[inline(always)]
 fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
-    super::staged::binary_values::<false>(super::staged::NumberOperator::Bitwise(operation), left, right)
+    super::staged::binary_values::<super::staged::AnyOperands>(super::staged::NumberOperator::Bitwise(operation), left, right)
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
@@ -771,10 +772,10 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // time: each tag test needs a single scratch register, which keeps the lane's integer
     // handlers free of saved registers.
     if let Some(operation) = NumberArithmetic::from_operator(OP) {
-        return super::staged::binary_values::<true>(super::staged::NumberOperator::Arithmetic(operation), left, right);
+        return super::staged::binary_values::<super::staged::IntOperands>(super::staged::NumberOperator::Arithmetic(operation), left, right);
     }
     if let Some(operation) = NumberBitwise::from_operator(OP) {
-        return super::staged::binary_values::<true>(super::staged::NumberOperator::Bitwise(operation), left, right);
+        return super::staged::binary_values::<super::staged::IntOperands>(super::staged::NumberOperator::Bitwise(operation), left, right);
     }
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
@@ -1864,7 +1865,7 @@ impl<H: Host> Vm<H> {
         };
         // The interpreter's own semantics of Number arithmetic, which the specializer
         // specializes too (`staged::binary`).
-        let value = super::staged::binary_values::<false>(super::staged::NumberOperator::Arithmetic(operation), left, right)?;
+        let value = super::staged::binary_values::<super::staged::AnyOperands>(super::staged::NumberOperator::Arithmetic(operation), left, right)?;
         let path = if operation != NumberArithmetic::Divide && Value::int_pair(left, right).is_some() {
             crate::profile::BinaryValuePath::IntegerFastPath
         } else {

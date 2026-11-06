@@ -300,12 +300,11 @@ impl<H: Host> Vm<H> {
     /// `dense_array_element` of an array whose object is a record; `None` for any other base.
     #[inline(always)]
     pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
-        let index = usize::try_from(key.as_int()?).ok()?;
-        let value = *self.heap.record_array(base)?.elements().get(index)?;
-        if value.is_deleted() {
-            return None;
-        }
-        Some(value)
+        // As every tier reads it: a negative key is past any array's end, unsigned.
+        let index = key.as_int()? as u32;
+        let mut stage = super::staged::Concrete::of(&self.heap);
+        let record = super::staged::array_record(&mut stage, base.to_bits(), ())?;
+        super::staged::dense_element(&mut stage, record, u64::from(index), ()).map(Value::from_bits)
     }
 
     /// `base[key]` for a non-negative integer key that neither an ordinary object or array

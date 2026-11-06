@@ -1445,50 +1445,13 @@ pub(super) fn emit_dense_element_read(
     index: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-
-    let record = emit_array_record(builder, payload, base, fallback);
-    let elements = builder.ins().iadd_imm_s(
-        record,
-        i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
-    );
-    let header = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        elements,
-        i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
-    );
-    let length = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        header,
-        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
-    );
-    let index_is_present = builder
-        .ins()
-        .icmp(IntCC::UnsignedLessThan, index, length);
-    emit_js_guard(builder, index_is_present, fallback);
-
-    let value_offset = emit_value_index_offset(builder, index);
-    let values = builder.ins().iadd_imm_s(
-        header,
-        i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
-    );
-    let value_address = builder.ins().iadd(values, value_offset);
-    let value = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        value_address,
-        0,
-    );
-    let is_present = builder.ins().icmp_imm_u(
-        IntCC::NotEqual,
-        value,
-        Value::DELETED.to_bits() as i64,
-    );
-    emit_js_guard(builder, is_present, fallback);
-
-    value
+    // As every tier reads it (`staged::array_record`, `staged::dense_element`).
+    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+    let index = builder.ins().uextend(types::I64, index);
+    let mut stage = object_slots::Emit::new(builder).with(super::staged::Table::ArrayRecords, records);
+    super::staged::array_record(&mut stage, base, fallback)
+        .and_then(|record| super::staged::dense_element(&mut stage, record, index, fallback))
+        .expect("an emitting stage's guards continue")
 }
 
 /// Lower a present dense own-array read. The receiver and key come from the
@@ -2806,7 +2769,7 @@ pub(super) fn lower_js_general_dispatch(
                         let len = emit_js_payload_word(
                             &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len),
                         );
-                        let mut stage = object_slots::Emit { builder: &mut builder, property_base: None, object_records: None };
+                        let mut stage = object_slots::Emit::new(&mut builder);
                         let value = super::staged::dense_capture(&mut stage, values, len, instruction.capture_slot(), fallback)
                             .expect("an emitting stage's guards continue");
                         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);

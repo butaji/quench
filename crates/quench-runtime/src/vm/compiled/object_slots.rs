@@ -176,12 +176,21 @@ pub(super) type CheckedObject = crate::vm::staged::Layout<ir::Value>;
 /// its IR, a guard leaving through its miss block.
 pub(super) struct Emit<'a, 'b> {
     pub(super) builder: &'a mut FunctionBuilder<'b>,
-    /// The property arena's base the residual reads (`JsStepDispatch::property_values`),
-    /// for an operation that addresses the arena.
-    pub(super) property_base: Option<ir::Value>,
-    /// The object record reservation's base (`JsStepDispatch::object_record_base`), for an
-    /// operation that locates a prototype's record.
-    pub(super) object_records: Option<ir::Value>,
+    /// The tables' bases the residual reads (`JsStepDispatch`), as its caller loaded them for
+    /// the operations that address them.
+    tables: [Option<ir::Value>; crate::vm::staged::Table::COUNT],
+}
+
+impl<'a, 'b> Emit<'a, 'b> {
+    pub(super) fn new(builder: &'a mut FunctionBuilder<'b>) -> Self {
+        Self { builder, tables: [None; crate::vm::staged::Table::COUNT] }
+    }
+
+    /// The stage with `table` based at `base`.
+    pub(super) fn with(mut self, table: crate::vm::staged::Table, base: ir::Value) -> Self {
+        self.tables[table as usize] = Some(base);
+        self
+    }
 }
 
 impl crate::vm::staged::Stage for Emit<'_, '_> {
@@ -222,6 +231,7 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
     fn below_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, a, imm as i64) }
     fn ne_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm as i64) }
     fn above_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm as i64) }
+    fn below(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b) }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> Option<ir::Value>, otherwise: impl FnOnce(&mut Self) -> Option<ir::Value>) -> Option<ir::Value> {
         let (then_block, otherwise_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let result = self.builder.append_block_param(join, types::I64);
@@ -241,8 +251,9 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
         emit_js_guard(self.builder, cond, miss);
         Some(())
     }
-    fn property_base(&mut self) -> ir::Value { self.property_base.expect("an arena layout's caller passes the arena base") }
-    fn object_records(&mut self) -> ir::Value { self.object_records.expect("a prototype read's caller passes the record base") }
+    fn table(&mut self, table: crate::vm::staged::Table) -> ir::Value {
+        self.tables[table as usize].expect("an operation's caller passes the bases of the tables it addresses")
+    }
 }
 
 impl CheckedObject {
@@ -256,12 +267,12 @@ impl CheckedObject {
         access: PackedAccess,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_base: Some(base), object_records: None };
+        let mut stage = Emit::new(builder).with(crate::vm::staged::Table::PropertyValues, base);
         Some(crate::vm::staged::layout(&mut stage, record, plan.shape, plan.storage_len, matches!(access, PackedAccess::Snapshot)))
     }
 
     /// Read fresh contents using only the established layout and slot bound (`staged::read_slot`).
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::vm::staged::read_slot(&mut Emit { builder, property_base: None, object_records: None }, self, slot)
+        crate::vm::staged::read_slot(&mut Emit::new(builder), self, slot)
     }
 }

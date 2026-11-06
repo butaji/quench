@@ -347,14 +347,14 @@ pub(crate) fn binary<N: Numbers>(
 }
 
 /// The interpreter's number machine: values from its register file, which states what its
-/// quickening assumed (`RegisterFile::ASSUMED_INT`).
+/// quickening guessed (`RegisterFile::GUESS`).
 impl<R: super::RegisterFile> Numbers for super::ConcreteFrame<R> {
     type Int = i32;
     type Float = f64;
     #[inline(always)]
-    fn known_int(&self, _: Register) -> bool { R::ASSUMED_INT }
+    fn known_int(&self, _: Register) -> bool { R::GUESS == super::Guess::Int32s }
     #[inline(always)]
-    fn known_float(&self, _: Register) -> bool { false }
+    fn known_float(&self, _: Register) -> bool { R::GUESS == super::Guess::Numbers }
     #[inline(always)]
     fn wraps(&self) -> bool { false }
     #[inline(always)]
@@ -441,14 +441,31 @@ impl<R: super::RegisterFile> Numbers for super::ConcreteFrame<R> {
 }
 
 /// The register file of one binary operation on two values (`binary_values`).
-struct Operands<const ASSUMED_INT: bool>([crate::Value; 3]);
+struct Operands<Q>([crate::Value; 3], std::marker::PhantomData<Q>);
+
+/// The guess of a binary operation's interpreter (`binary_values`), as a type.
+pub(crate) trait Quickening {
+    const GUESS: super::Guess;
+}
+
+/// No guess: the operation tests its operands.
+pub(crate) struct AnyOperands;
+/// The guess that both operands are int32s.
+pub(crate) struct IntOperands;
+/// The guess that both operands are Numbers: an int32 takes the IEEE path, which gives it
+/// the exact JavaScript result.
+pub(crate) struct NumberOperands;
+
+impl Quickening for AnyOperands { const GUESS: super::Guess = super::Guess::Values; }
+impl Quickening for IntOperands { const GUESS: super::Guess = super::Guess::Int32s; }
+impl Quickening for NumberOperands { const GUESS: super::Guess = super::Guess::Numbers; }
 
 const LEFT: Register = 0;
 const RIGHT: Register = 1;
 const RESULT: Register = 2;
 
-impl<const ASSUMED_INT: bool> super::RegisterFile for Operands<ASSUMED_INT> {
-    const ASSUMED_INT: bool = ASSUMED_INT;
+impl<Q: Quickening> super::RegisterFile for Operands<Q> {
+    const GUESS: super::Guess = Q::GUESS;
     #[inline(always)]
     fn get(&mut self, register: Register) -> u64 { self.0[usize::from(register)].to_bits() }
     #[inline(always)]
@@ -456,13 +473,13 @@ impl<const ASSUMED_INT: bool> super::RegisterFile for Operands<ASSUMED_INT> {
 }
 
 /// `left op right` for Number operator `operator`, as the interpreter computes it on two
-/// values, under the guess `ASSUMED_INT` that both are int32s: `None` where either is not a
-/// Number, or where the guess fails.
+/// values, under the quickening's guess `Q`: `None` where either is not a Number, or where
+/// the guess fails.
 #[inline(always)]
-pub(crate) fn binary_values<const ASSUMED_INT: bool>(operator: NumberOperator, left: crate::Value, right: crate::Value) -> Option<crate::Value> {
+pub(crate) fn binary_values<Q: Quickening>(operator: NumberOperator, left: crate::Value, right: crate::Value) -> Option<crate::Value> {
     let mut frame = super::ConcreteFrame {
         stage: super::Concrete::DETACHED,
-        registers: Operands::<ASSUMED_INT>([left, right, crate::Value::UNDEFINED]),
+        registers: Operands::<Q>([left, right, crate::Value::UNDEFINED], std::marker::PhantomData),
     };
     binary(&mut frame, operator, RESULT, Source::Register(LEFT), Source::Register(RIGHT), ())?;
     Some(frame.registers.0[usize::from(RESULT)])

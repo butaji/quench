@@ -11,7 +11,7 @@
 
 mod numbers;
 
-pub(crate) use numbers::{Number, NumberOperator, Numbers, Source, binary, binary_values, relation};
+pub(crate) use numbers::{AnyOperands, IntOperands, Number, NumberOperands, NumberOperator, Numbers, Source, binary, binary_values, relation};
 
 use crate::heap::{PlainPropertyStorage, NATIVE_OBJECT_LAYOUT as OBJECT};
 use crate::value::{NarrowLayout, ValueLayout};
@@ -44,6 +44,8 @@ pub(crate) trait Stage {
     fn ne_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// Whether `a` is above `imm`, both unsigned.
     fn above_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    /// Whether `a` is below `b`, both unsigned.
+    fn below(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// Whether `a` is below `imm`, both unsigned.
     fn below_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s: only the arm taken runs.
@@ -53,10 +55,22 @@ pub(crate) trait Stage {
     fn either(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
     /// Continues where `cond` holds; `None` where it never can, so nothing runs past it.
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
-    /// The property arena's base, whose values a flat object's run starts at its position.
-    fn property_base(&mut self) -> Self::Word;
-    /// The object record reservation's base, which a record id indexes.
-    fn object_records(&mut self) -> Self::Word;
+    /// The base address of `table`.
+    fn table(&mut self, table: Table) -> Self::Word;
+}
+
+/// The process tables an operation addresses from a base: the property arena's values, which
+/// a flat object's run starts at its position, and the object and array record reservations,
+/// which a record id indexes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Table {
+    PropertyValues,
+    ObjectRecords,
+    ArrayRecords,
+}
+
+impl Table {
+    pub(crate) const COUNT: usize = 3;
 }
 
 /// Where an object of a proved exact shape keeps its named values: the payload word that packs
@@ -94,7 +108,7 @@ pub(crate) fn exact_shape_is<S: Stage>(stage: &mut S, record: S::Word, exact: u3
 pub(crate) fn layout<S: Stage>(stage: &mut S, record: S::Word, exact: u32, storage_len: usize, snapshot: bool) -> Layout<S::Word> {
     let arena_run = |stage: &mut S, start: S::Word| {
         let offset = stage.mul_imm(start, OBJECT.property_value_size as u64);
-        let base = stage.property_base();
+        let base = stage.table(Table::PropertyValues);
         Slots::Arena(stage.add(base, offset))
     };
     let slots = match PlainPropertyStorage::of_exact(exact) {
@@ -131,7 +145,7 @@ pub(crate) fn prototype_record<S: Stage>(stage: &mut S, record: S::Word, miss: S
     let object = stage.below_imm(id, u64::from(OBJECT.proto_record_end - OBJECT.proto_record_base));
     stage.guard(object, miss)?;
     let offset = stage.mul_imm(id, OBJECT.record_size as u64);
-    let records = stage.object_records();
+    let records = stage.table(Table::ObjectRecords);
     Some(stage.add(records, offset))
 }
 
@@ -273,6 +287,41 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
     }).expect("both arms of a narrow decode are total")
 }
 
+/// The record of the direct array `bits`; `miss` for any other value, or before any array
+/// record is reserved.
+#[inline(always)]
+pub(crate) fn array_record<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
+    let array = stage.eq_imm(family, ValueLayout::DIRECT_ARRAY_TAG);
+    stage.guard(array, miss)?;
+    let records = stage.table(Table::ArrayRecords);
+    let reserved = stage.ne_imm(records, 0);
+    stage.guard(reserved, miss)?;
+    // A direct array's low word is its record's id.
+    let id = stage.and_imm(bits, u64::from(u32::MAX));
+    let offset = stage.mul_imm(id, ARRAY.record_size as u64);
+    Some(stage.add(records, offset))
+}
+
+/// The present element `index` (unsigned) of the dense elements of the array record at
+/// `record`, through its current backing; `miss` past their end or at a hole.
+#[inline(always)]
+pub(crate) fn dense_element<S: Stage>(stage: &mut S, record: S::Word, index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let header = stage.load_u64(record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    let within = stage.below(index, length);
+    stage.guard(within, miss)?;
+    let offset = stage.mul_imm(index, std::mem::size_of::<u64>() as u64);
+    let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
+    let address = stage.add(values, offset);
+    let value = stage.load_u64(address, 0);
+    let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
+    stage.guard(present, miss)?;
+    Some(value)
+}
+
 /// Whether a binding's word is a value the program reads, not an internal marker (an
 /// uninitialized binding's, a hole's).
 #[inline(always)]
@@ -302,20 +351,26 @@ pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Wo
 }
 
 /// The interpreter's stage: words are the machine's own, and a failed guard returns to the
-/// caller's slow path. The property arena gives its base where an operation addresses it.
+/// caller's slow path. A table's base is read where an operation addresses it.
 pub(crate) struct Concrete {
-    pub(crate) arena: *const crate::value_vec::ValueArena,
-    pub(crate) records: *const crate::heap::Object,
+    heap: *const crate::heap::Heap,
+    arena: *const crate::value_vec::ValueArena,
 }
 
 impl Concrete {
     /// The stage of an operation that touches no object storage (a number operation).
-    pub(crate) const DETACHED: Self = Self { arena: std::ptr::null(), records: std::ptr::null() };
+    pub(crate) const DETACHED: Self = Self { heap: std::ptr::null(), arena: std::ptr::null() };
 
-    /// The stage over `heap`'s object storage.
+    /// The stage over `heap`'s storage.
     #[inline(always)]
     pub(crate) fn of(heap: &crate::heap::Heap) -> Self {
-        Self { arena: heap.property_arena(), records: heap.object_record_base().unwrap_or(std::ptr::null()) }
+        Self { heap, arena: heap.property_arena() }
+    }
+
+    /// The stage over the property arena `arena` alone.
+    #[inline(always)]
+    pub(crate) fn over_arena(arena: *const crate::value_vec::ValueArena) -> Self {
+        Self { arena, ..Self::DETACHED }
     }
 }
 
@@ -372,6 +427,8 @@ impl Stage for Concrete {
     #[inline(always)]
     fn above_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
     #[inline(always)]
+    fn below(&mut self, a: u64, b: u64) -> bool { a < b }
+    #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>, otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {
         if cond { then(self) } else { otherwise(self) }
     }
@@ -380,10 +437,16 @@ impl Stage for Concrete {
     #[inline(always)]
     fn guard(&mut self, cond: bool, _: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
-    // SAFETY: the stage lives within the operation, while the arena lives with its heap.
-    fn property_base(&mut self) -> u64 { unsafe { (*self.arena).native_values().0 as u64 } }
-    #[inline(always)]
-    fn object_records(&mut self) -> u64 { self.records as u64 }
+    fn table(&mut self, table: Table) -> u64 {
+        // SAFETY: the stage lives within the operation, while its heap and arena outlive it.
+        unsafe {
+            match table {
+                Table::PropertyValues => (*self.arena).native_values().0 as u64,
+                Table::ObjectRecords => (*self.heap).object_record_base().map_or(0, |base| base as u64),
+                Table::ArrayRecords => (*self.heap).array_record_base().map_or(0, |base| base as u64),
+            }
+        }
+    }
 }
 
 /// The own data value `slot` of the object `object` where its exact shape is `exact`, as every
@@ -422,7 +485,7 @@ pub(crate) fn inherited_field(heap: &crate::heap::Heap, object: &crate::heap::Ob
 /// does not take it (`store_slot`), the object unchanged.
 #[inline(always)]
 pub(crate) fn store_own_field(arena: &mut crate::value_vec::ValueArena, object: &mut crate::heap::Object, exact: u32, slot: u16, value: crate::Value) -> bool {
-    let mut stage = Concrete { arena, ..Concrete::DETACHED };
+    let mut stage = Concrete::over_arena(arena);
     let record = object as *mut crate::heap::Object as u64;
     let layout = layout(&mut stage, record, exact, usize::from(slot) + 1, false);
     store_slot(&mut stage, layout, slot, value.to_bits(), false, ()).is_some()
@@ -449,12 +512,22 @@ pub(crate) trait Machine: Numbers {
     }
 }
 
+/// A quickened record's guess about its number operation's operands: nothing (any values),
+/// int32s, or Numbers. The semantics specializes to it as the specializer does to a proof, and
+/// misses where it is wrong.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Guess {
+    Values,
+    Int32s,
+    Numbers,
+}
+
 /// The interpreter's register file, as words: the activation's registers and whatever the
 /// interpreter keeps of them outside memory (`dispatch_fast`'s accumulator).
 pub(crate) trait RegisterFile {
-    /// Whether the interpreter that holds the file has quickened on the guess that a number
-    /// operation's operands are int32s, which the semantics then specializes to.
-    const ASSUMED_INT: bool = false;
+    /// What the interpreter that holds the file guessed of a number operation's operands when
+    /// it quickened the record, which the semantics then specializes to.
+    const GUESS: Guess = Guess::Values;
     fn get(&mut self, register: crate::bytecode::Register) -> u64;
     fn set(&mut self, register: crate::bytecode::Register, value: u64);
 }
@@ -499,9 +572,9 @@ impl<R: RegisterFile> Stage for ConcreteFrame<R> {
         below_imm(a: u64, imm: u64) -> bool;
         ne_imm(a: u64, imm: u64) -> bool;
         above_imm(a: u64, imm: u64) -> bool;
+        below(a: u64, b: u64) -> bool;
         guard(cond: bool, miss: ()) -> Option<()>;
-        property_base() -> u64;
-        object_records() -> u64;
+        table(table: Table) -> u64;
     }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>, otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {

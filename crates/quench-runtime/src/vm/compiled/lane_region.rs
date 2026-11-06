@@ -1232,7 +1232,7 @@ impl Lowering<'_, '_> {
                 let done = self.builder.create_block();
                 self.builder.append_block_param(done, types::I64);
                 // The dense view's read, as every tier makes it (`staged::dense_capture`).
-                let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_base: None, object_records: None };
+                let mut stage = super::object_slots::Emit::new(&mut self.builder);
                 let value = crate::vm::staged::dense_capture(&mut stage, values, len, slot, general)
                     .expect("an emitting stage's guards continue");
                 self.ins().jump(done, &[value.into()]);
@@ -2222,7 +2222,7 @@ impl Lowering<'_, '_> {
         }
         let cases: Vec<_> = shapes.iter().map(|field| field.case()).collect();
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_base: Some(properties), object_records: Some(records) };
+        let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::PropertyValues, properties).with(crate::vm::staged::Table::ObjectRecords, records);
         crate::vm::staged::field_read(&mut stage, object, shape, &cases, exit)
     }
 
@@ -2269,7 +2269,7 @@ impl Lowering<'_, '_> {
         // The prototype's own value, read as every tier reads it (`staged::holder_slot`).
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_base: Some(properties), object_records: Some(records) };
+        let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::PropertyValues, properties).with(crate::vm::staged::Table::ObjectRecords, records);
         crate::vm::staged::holder_slot(&mut stage, record, holder, field.slot, field.storage_len, exit)
     }
 
@@ -2489,7 +2489,7 @@ impl Lowering<'_, '_> {
         let layout = projection.or_else(|| CheckedObject::prove(&mut self.builder, object, properties, field, PackedAccess::Reload));
         let int = ty.is_subtype(Type::INT32);
         let stored = layout.and_then(|layout| crate::vm::staged::store_slot(
-            &mut super::object_slots::Emit { builder: &mut self.builder, property_base: None, object_records: None }, layout, field.slot, value, int, general));
+            &mut super::object_slots::Emit::new(&mut self.builder), layout, field.slot, value, int, general));
         let next = if stored.is_some() { done } else { general };
         self.ins().jump(next, &[]);
     }
@@ -2654,7 +2654,7 @@ struct LaneMachine<'l, 'a, 'f> {
 
 impl<'f> LaneMachine<'_, '_, 'f> {
     fn emit(&mut self) -> super::object_slots::Emit<'_, 'f> {
-        super::object_slots::Emit { builder: &mut self.lowering.builder, property_base: None, object_records: None }
+        super::object_slots::Emit::new(&mut self.lowering.builder)
     }
 }
 
@@ -2687,6 +2687,7 @@ impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
         below_imm(a: ir::Value, imm: u64) -> ir::Value;
         ne_imm(a: ir::Value, imm: u64) -> ir::Value;
         above_imm(a: ir::Value, imm: u64) -> ir::Value;
+        below(a: ir::Value, b: ir::Value) -> ir::Value;
         guard(cond: ir::Value, miss: ir::Block) -> Option<()>;
     }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> Option<ir::Value>, otherwise: impl FnOnce(&mut Self) -> Option<ir::Value>) -> Option<ir::Value> {
@@ -2703,12 +2704,19 @@ impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
         Some(result)
     }
     fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.lowering.ins().bor(a, b) }
-    fn property_base(&mut self) -> ir::Value {
-        let entry = self.lowering.entry.as_ref().expect("entry facts");
-        self.lowering.builder.use_var(entry.receiver.properties)
-    }
-    fn object_records(&mut self) -> ir::Value {
-        emit_js_payload_word(&mut self.lowering.builder, self.lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base))
+    /// The arena base the body keeps current across allocations; the record reservations'
+    /// from the dispatch payload.
+    fn table(&mut self, table: crate::vm::staged::Table) -> ir::Value {
+        use crate::vm::staged::Table;
+        let word = match table {
+            Table::PropertyValues => {
+                let entry = self.lowering.entry.as_ref().expect("entry facts");
+                return self.lowering.builder.use_var(entry.receiver.properties);
+            }
+            Table::ObjectRecords => std::mem::offset_of!(JsStepDispatch, object_record_base),
+            Table::ArrayRecords => std::mem::offset_of!(JsStepDispatch, array_record_base),
+        };
+        emit_js_payload_word(&mut self.lowering.builder, self.lowering.payload, word)
     }
 }
 
