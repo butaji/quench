@@ -5239,7 +5239,7 @@ script_handler! {
     /// other takes `lane_load_capture_walk`.
     fn lane_load_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
-        // Deeper reads take `lane_load_outer_capture` (`specialize_outer_captures`).
+        // Deeper reads take `lane_load_outer_capture` (`specialize_captures`).
         debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
         let slots = capture_reads(unsafe { (*cx).capture });
         // SAFETY: null or the running function's dense storage, found this run
@@ -5255,7 +5255,7 @@ script_handler! {
 
 script_handler! {
     /// `lane_load_capture` of a capture past the running function's own scope
-    /// (`specialize_outer_captures`). An activation's read through the walk it read last
+    /// (`specialize_captures`). An activation's read through the walk it read last
     /// (`LaneContext::outer`) runs here, saving no registers; a frame's read takes
     /// `lane_load_frame_outer_capture`, any other `lane_load_outer_capture_walk`.
     fn lane_load_outer_capture<>(cx, r, ip, i, view) {
@@ -5515,24 +5515,57 @@ unsafe fn lane_unary_value<H: Host>(
     Some(value)
 }
 
+/// The direct write of `value` to the running function's own capture `slot` through its dense
+/// slots, where they admit every store (`CAPTURE_STORES`) and the slot holds an initialized
+/// binding: whether it wrote.
+#[inline(always)]
+fn lane_store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Value) -> bool {
+    capture_stores(unsafe { (*cx).capture })
+        // SAFETY: the running function's dense capture slots, which admit this write
+        // (`CAPTURE_STORES`); no collection runs in the lane.
+        .and_then(|slots| unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
+        .is_some()
+}
+
 script_handler! {
-    /// `StoreCapture` that writes an initialized slot directly
-    /// (`Vm::direct_store_environment`); any other store takes the general path.
+    /// `StoreCapture` of the running function's own scope that writes an initialized slot
+    /// directly (`lane_store_own_capture`); a deeper one is `lane_store_outer_capture`
+    /// (`specialize_captures`), which any other store takes too.
     fn lane_store_capture<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let depth = ImmediateLayout::capture_depth(imm);
-        if depth == 0
-            && let Some(slots) = capture_stores(unsafe { (*cx).capture })
-            // SAFETY: the running function's dense capture slots, which admit this write
-            // (`CAPTURE_STORES`); no collection runs in the lane.
-            && unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(ImmediateLayout::capture_slot(imm)), r.get(i.a)) }.is_some()
-        {
+        if lane_store_own_capture(cx, ImmediateLayout::capture_slot(i.imm()), r.get(i.a)) {
             next!(cx, r, following(ip), view)
         }
-        if !lane_capture_store(cx, depth, ImmediateLayout::capture_slot(imm), r.get(i.a)) {
+        sibling!(lane_store_outer_capture::<H>, r, ip, view)
+    }
+}
+
+script_handler! {
+    /// `StoreCapture` past the running function's dense slots, or of a capture past its own
+    /// scope: the lane's store (`lane_capture_store`), else the general path.
+    #[inline(never)]
+    fn lane_store_outer_capture<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        if !lane_capture_store(cx, ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm), r.get(i.a)) {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// `lane_store_capture` followed by a `LoadCapture` of the same capture
+    /// (`specialize_captures`), as `c = c + 1; return c;` compiles: a direct write leaves the
+    /// slot holding the value, which is the read's value, so the record runs both. Any other
+    /// store takes `lane_store_outer_capture`, and the read then runs its own record.
+    fn lane_store_capture_load<>(cx, r, ip, i, view) {
+        let value = r.get(i.a);
+        if !lane_store_own_capture(cx, ImmediateLayout::capture_slot(i.imm()), value) {
+            sibling!(lane_store_outer_capture::<H>, r, ip, view)
+        }
+        // SAFETY: the pair is two records, the second never the view's last.
+        let load = unsafe { &*following(ip) };
+        r.set(load.a, value);
+        next!(cx, r, following(following(ip)), view)
     }
 }
 
@@ -20924,7 +20957,7 @@ fn derive_lane_view<'live, H: Host>(
     specialize_updated_index_operators::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
-    specialize_outer_captures::<H>(&mut records);
+    specialize_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
     let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
         install_loop_sites::<H>(
@@ -21885,14 +21918,30 @@ fn specialize_environment_window<H: Host>(
     })
 }
 
-/// Gives each `LoadCapture` record past the function's own scope the handler that reads
-/// remembered walks (`lane_load_outer_capture`); depth-0 reads keep `lane_load_capture`.
-fn specialize_outer_captures<H: Host>(records: &mut [LaneInstruction]) {
+/// Gives each capture record its handler by the capture's depth, which the bytecode fixes:
+/// a `LoadCapture` past the function's own scope the one that reads remembered walks
+/// (`lane_load_outer_capture`), a `StoreCapture` past it the lane's walking store
+/// (`lane_store_outer_capture`); a depth-0 store followed by a read of the same capture runs
+/// both (`lane_store_capture_load`). The other depth-0 records keep the handlers that read
+/// the running function's dense slots.
+fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
     let load = lane_load_capture::<H> as Handler as *const ();
-    for record in records.iter_mut() {
-        if record.handler == load && ImmediateLayout::capture_depth(record.imm()) != 0 {
-            record.handler = lane_load_outer_capture::<H> as Handler as *const ();
-        }
+    let store = lane_store_capture::<H> as Handler as *const ();
+    for pc in 0..records.len() {
+        let record = &records[pc];
+        let own = ImmediateLayout::capture_depth(record.imm()) == 0;
+        let handler: Handler = if record.handler == load && !own {
+            lane_load_outer_capture::<H>
+        } else if record.handler == store && !own {
+            lane_store_outer_capture::<H>
+        } else if record.handler == store
+            && records.get(pc + 1).is_some_and(|next| next.handler == load && next.imm() == record.imm())
+        {
+            lane_store_capture_load::<H>
+        } else {
+            continue;
+        };
+        records[pc].handler = handler as *const ();
     }
 }
 
