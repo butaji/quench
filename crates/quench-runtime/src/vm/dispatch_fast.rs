@@ -4849,16 +4849,17 @@ script_handler! {
 }
 
 script_handler! {
-    /// An addition or subtraction (`OP`) of a register and a register or, where `CONSTANT`, a
-    /// constant, whose result the next record truncates to an int32 (`| 0`) and nothing after
-    /// reads (`specialize_int32_truncations`), as `(a + b) | 0` compiles: the exact sum of two
-    /// int32s is an integer a double holds, so its truncation is their wrapping sum, which the
-    /// record writes to the truncation's register. Other operands run the operator's own
-    /// record (`lane_operator`, `lane_operator_constant`), then the truncation's.
+    /// An addition or subtraction (`OP`) of a register and a register or, where `CONSTANT`, an
+    /// integer constant (the record's immediate, `lane_operator_integer_constant`), whose
+    /// result the next record truncates to an int32 (`| 0`) and nothing after reads
+    /// (`specialize_int32_truncations`), as `(a + b) | 0` compiles: the exact sum of two int32s
+    /// is an integer a double holds, so its truncation is their wrapping sum, which the record
+    /// writes to the truncation's register. Other operands run the operator's own record
+    /// (`lane_operator`, `lane_operator_integer_constant`), then the truncation's.
     fn lane_operator_int32<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
-        let right = if CONSTANT { i.constant() } else { r.get(i.c) };
-        let (Some(left), Some(right)) = (r.get(i.b).as_int(), right.as_int()) else {
-            let own: Handler = if CONSTANT { lane_operator_constant::<H, OP> } else { lane_operator::<H, OP> };
+        let right = if CONSTANT { Some(i.imm() as i32) } else { r.get(i.c).as_int() };
+        let (Some(left), Some(right)) = (r.get(i.b).as_int(), right) else {
+            let own: Handler = if CONSTANT { lane_operator_integer_constant::<H, OP> } else { lane_operator::<H, OP> };
             sibling!(own, r, ip, Carried::script(cx))
         };
         let value = if OP == super::operations::SUBTRACTION { left.wrapping_sub(right) } else { left.wrapping_add(right) };
@@ -21712,16 +21713,16 @@ fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Opt
 /// operands the fused record declines.
 fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
     use super::operations::{ADDITION, BITWISE_OR, SUBTRACTION};
-    let truncation = lane_operator_constant::<H, BITWISE_OR> as Handler as *const ();
+    let truncation = lane_operator_integer_constant::<H, BITWISE_OR> as Handler as *const ();
     let fusions: [(Handler, Handler); 4] = [
         (lane_operator::<H, ADDITION>, lane_operator_int32::<H, ADDITION, false>),
         (lane_operator::<H, SUBTRACTION>, lane_operator_int32::<H, SUBTRACTION, false>),
-        (lane_operator_constant::<H, ADDITION>, lane_operator_int32::<H, ADDITION, true>),
-        (lane_operator_constant::<H, SUBTRACTION>, lane_operator_int32::<H, SUBTRACTION, true>),
+        (lane_operator_integer_constant::<H, ADDITION>, lane_operator_int32::<H, ADDITION, true>),
+        (lane_operator_integer_constant::<H, SUBTRACTION>, lane_operator_int32::<H, SUBTRACTION, true>),
     ];
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (&records[pc], &records[pc + 1]);
-        let truncates = second.handler == truncation && second.b == first.a && second.constant().as_int() == Some(0);
+        let truncates = second.handler == truncation && second.b == first.a && second.imm() == 0;
         let Some(&(_, fused)) = fusions.iter().find(|(own, _)| *own as *const () == first.handler) else {
             continue;
         };
