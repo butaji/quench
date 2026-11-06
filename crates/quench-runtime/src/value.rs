@@ -385,6 +385,14 @@ impl Value {
         })
     }
 
+    /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
+    /// never NaN, so `number` stores its bits as they are; inline, where `number` is a call.
+    #[inline(always)]
+    pub(crate) fn overflowed_integer(value: f64) -> Self {
+        debug_assert_eq!(Self::number(value).0, value.to_bits());
+        Self(value.to_bits())
+    }
+
     #[inline(always)]
     pub(crate) fn integer(value: i32) -> Self {
         IntegerEncoding::TAG.encode(value)

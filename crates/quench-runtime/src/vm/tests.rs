@@ -1517,6 +1517,38 @@ fn lane_array_and_function_method_reads_follow_their_holder_hint() {
 }
 
 #[test]
+fn integer_constant_operands_and_counter_loops_keep_number_semantics() {
+    // An integer constant operand is proved once (`lane_operator_integer_constant`), an `i32`
+    // overflow boxes its double inline (`Value::overflowed_integer`), and a loop's counter
+    // test reads the update's integer (`lane_inc_dec_loop` of `COUNTER`): signed zero, the
+    // `i32` bounds, doubles, strings, NaN, booleans, null, undefined and a BigInt operand,
+    // counters past both `i32` bounds and a double counter keep Number semantics. Expected
+    // value is Node's (v22).
+    let source = r#"
+      var out = [];
+      function f(x) { return [x | 0, x + 1, x * 3, x - 7, x % 5, x / 2, x << 2]; }
+      var vals = [5, -0, 2147483647, -2147483648, 1.5, "a", 1e10, NaN, true, null, undefined, 3n];
+      for (var k = 0; k < 400; k++) f(k);
+      for (var v of vals) { try { out.push(f(v).map(String).join(",")); } catch (e) { out.push(e.constructor.name); } }
+      var s = 0, i;
+      for (i = 2147483640; i < 2147483650; i++) s += i;
+      out.push(s, i);
+      for (i = -2147483640; i > -2147483650; i--) s += i;
+      out.push(s, i);
+      for (i = 0.5; i < 5; i++) s += i;
+      out.push(s, i);
+      var a = 2147483647; for (var j = 0; j < 3; j++) { a = a + 1; } out.push(a);
+      var m = 65536; for (j = 0; j < 3; j++) { m = m * 65536; } out.push(m);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "integer-constant-operands.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["5,6,15,-2,0,2.5,20|0,1,0,-7,0,0,0|2147483647,2147483648,6442450941,2147483640,2,1073741823.5,-4|-2147483648,-2147483647,-6442450944,-2147483655,-3,-1073741824,0|1,2.5,4.5,-5.5,1.5,0.75,4|0,a1,NaN,NaN,NaN,NaN,0|1410065408,10000000001,30000000000,9999999993,0,5000000000,1345294336|0,NaN,NaN,NaN,NaN,NaN,0|1,2,3,-6,1,0.5,4|0,1,0,-7,0,0,0|0,NaN,NaN,NaN,NaN,NaN,0|TypeError|21474836445|2147483650|0|-2147483650|12.5|5.5|2147483650|18446744073709552000"]);
+}
+
+#[test]
 fn lane_math_sites_keep_math_semantics() {
     // A call site of a Math function computes Number arguments in place (`number::math_inline_call`):
     // NaN, signed zeros, infinities and int32 bounds, conversions whose valueOf runs once per

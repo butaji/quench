@@ -1889,13 +1889,21 @@ pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value
             integer.checked_add(1)
         };
         return Some(next.map_or_else(
-            || Value::number(f64::from(integer) + increment_delta(is_decrement)),
+            || Value::overflowed_integer(f64::from(integer) + increment_delta(is_decrement)),
             Value::integer,
         ));
     }
     input
         .as_number()
         .map(|number| Value::number(number + increment_delta(is_decrement)))
+}
+
+/// `number_increment` of an integer whose update stays one; `None` for any other value or
+/// an overflow, which `number_increment` answers.
+#[inline(always)]
+pub(super) fn integer_increment(input: Value, is_decrement: bool) -> Option<Value> {
+    let integer = input.as_int()?;
+    if is_decrement { integer.checked_sub(1) } else { integer.checked_add(1) }.map(Value::integer)
 }
 
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional

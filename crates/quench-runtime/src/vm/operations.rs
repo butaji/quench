@@ -744,7 +744,7 @@ fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, rig
             && int32_zero_product_sign!(left, right, |l, r| l | r, |signs| signs < 0) =>
                 Value::number(-0.0),
         Some(integer) => Value::integer(integer),
-        None => Value::number(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
+        None => Value::overflowed_integer(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
     }
 }
 

@@ -2616,6 +2616,9 @@ struct LaneContext<H: Host> {
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
     /// one; a nested run retires them on entry, and they end with the run.
     proofs: crate::heap::ArrayStorageProofs,
+    /// The run's floor cell (`lane_floor`), which a JavaScript safepoint reads from here
+    /// (`script_below_floor`).
+    floor: *const std::sync::atomic::AtomicUsize,
     /// Whether that callee left the lane because it has no body yet and is still warming
     /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
     /// specialization (`lane_leave_counts`).
@@ -2828,6 +2831,14 @@ fn stack_pointer() -> usize {
 #[inline(always)]
 fn below_floor() -> bool {
     stack_pointer() < lane_floor().load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `below_floor` of a JavaScript record, whose context register carries the run's floor
+/// (`LaneContext::floor`) without the thread-local load.
+#[inline(always)]
+fn script_below_floor<H: Host>(cx: *mut LaneContext<H>) -> bool {
+    // SAFETY: the run's floor cell, which its VM holds for the whole run.
+    stack_pointer() < unsafe { &*(*cx).floor }.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// After a lane allocation, a due collection raises the floor.
@@ -3865,21 +3876,27 @@ script_handler! {
     /// (`lane_jump_binary_false_registers`, `specialize_update_jumps`): the update, the back
     /// edge's safepoint, then the test, continuing in the body or at the loop's exit, a
     /// rotated loop's one dispatch per iteration where the pair and the test took two. A pair
-    /// other than two integers runs the test's own record.
-    fn lane_inc_dec_loop<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script(cx))
+    /// other than two integers runs the test's own record, any update but an integer's that
+    /// stays one the update's own (`lane_inc_dec`).
+    fn lane_inc_dec_loop<DECREMENT: bool, OP: u32, COUNTER: bool>(cx, r, ip, i, view) {
+        // An overflow, a double or a BigInt runs the update's own record, which continues at
+        // the jump record.
+        let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
+            sibling!(lane_inc_dec::<H, DECREMENT>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
-        if below_floor() {
+        if script_below_floor(cx) {
             resume!(cx, lane_jump::<H>(r, jump_ip, true, Carried::script(cx), None))
         }
         // SAFETY: the view records the distance to a validated jump target, the test record
         // `specialize_update_jumps` matched.
         let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let test = unsafe { &*test_ip };
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), r.get(test.c))
+        // A test of the counter (`COUNTER`, `specialize_update_jumps`) reads the integer just
+        // written, whose tag the update proved.
+        let left = if COUNTER { value } else { r.get(test.b) };
+        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), left, r.get(test.c))
         else {
             next!(cx, r, test_ip, Carried::script(cx))
         };
@@ -8096,7 +8113,7 @@ script_handler! {
         // SAFETY: the region carries its validated header and latch PCs, and
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
-        if below_floor() {
+        if script_below_floor(cx) {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
@@ -8274,7 +8291,7 @@ script_handler! {
     fn lane_loop_header<>(cx, r, ip, i, view) {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
-        if !below_floor()
+        if !script_below_floor(cx)
             && site.exits.get() < LOOP_TIER_MAX_EXITS
             && site.declines.get() < LOOP_TIER_MAX_DECLINES
             && let Some(region) = site.active_region()
@@ -8358,7 +8375,7 @@ script_handler! {
         let site = i.loop_site();
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
-        if below_floor() {
+        if script_below_floor(cx) {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         let vm = unsafe { vm(cx) };
@@ -21660,7 +21677,7 @@ fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [
             .then(|| records.get(test))
             .flatten()
             .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
-            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1));
+            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1, test.b == records[pc].a));
         records[pc].handler = looped.unwrap_or(fused) as *const ();
     }
 }
@@ -21886,14 +21903,16 @@ fn relation_jump_handler<H: Host, const SMALL: bool>(operator: u32, backward: bo
 }
 
 /// The fused update, back edge and register test handler (`lane_inc_dec_loop`) of the test's
-/// `operator`: as `relation_jump_handler` picks, the comparison's own instantiation.
-fn update_loop_handler<H: Host>(operator: u32, decrement: bool) -> Handler {
+/// `operator`: as `relation_jump_handler` picks, the comparison's own instantiation; `counter`
+/// where the test's left operand is the updated register.
+fn update_loop_handler<H: Host>(operator: u32, decrement: bool, counter: bool) -> Handler {
     macro_rules! pick {
         ($op:expr) => {
-            if decrement {
-                lane_inc_dec_loop::<H, true, { $op }> as Handler
-            } else {
-                lane_inc_dec_loop::<H, false, { $op }> as Handler
+            match (decrement, counter) {
+                (true, true) => lane_inc_dec_loop::<H, true, { $op }, true> as Handler,
+                (true, false) => lane_inc_dec_loop::<H, true, { $op }, false> as Handler,
+                (false, true) => lane_inc_dec_loop::<H, false, { $op }, true> as Handler,
+                (false, false) => lane_inc_dec_loop::<H, false, { $op }, false> as Handler,
             }
         };
     }
@@ -22257,6 +22276,7 @@ impl<H: Host> Vm<H> {
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
+            floor: floor_cell,
         };
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
