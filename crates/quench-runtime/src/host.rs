@@ -364,6 +364,18 @@ pub trait Host {
     /// Restore the host context returned by `enter_job_context`.
     fn restore_job_context(&mut self, _previous: Option<HostExecutionContext>) {}
 
+    /// Enter the context of a job `capture_job_context` captured as `None`. A host that
+    /// observes the job now answers a fresh context, which the job enters, observes and
+    /// releases as a captured one; otherwise the job runs, then `leave_unobserved_job`.
+    fn enter_unobserved_job(&mut self) -> Option<HostExecutionContext> {
+        None
+    }
+
+    /// Leave `enter_unobserved_job`'s context. Returned roots are released by the runtime.
+    fn leave_unobserved_job(&mut self) -> Vec<crate::RootId> {
+        Vec::new()
+    }
+
     /// Release a completed or collected context snapshot. Returned roots are
     /// released by the runtime that owns them.
     fn release_job_context(&mut self, _context: HostExecutionContext) -> Vec<crate::RootId> {

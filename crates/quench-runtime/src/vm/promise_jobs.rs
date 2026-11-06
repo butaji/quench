@@ -473,8 +473,12 @@ impl<H: Host> Vm<H> {
         body: impl FnOnce(&mut Self) -> Result<(), JsError>,
     ) -> Result<(), JsError> {
         self.switch_realm_global(realm);
-        let Some(context) = context else {
-            return body(self);
+        let Some(context) = context.or_else(|| self.host.enter_unobserved_job()) else {
+            let outcome = body(self);
+            for root in self.host.leave_unobserved_job() {
+                self.heap.release_root(root);
+            }
+            return outcome;
         };
         let previous = self.host.enter_job_context(context);
         let outcome = self.promise_job_boundary(Some(context), true).and_then(|()| body(self));
