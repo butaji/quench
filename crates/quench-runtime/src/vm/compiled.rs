@@ -9361,6 +9361,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     dispatch.allow_inline_calls,
                 )
             };
+            // A construction the operation pushed completes as a pushed call does.
+            let step = if current_instruction.op() == Op::Construct && dispatch.allow_inline_calls {
+                vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
+            } else { step };
             if is_call && diagnostics_enabled {
                 let outcome = match &step {
                     _ if pushed => super::program_store::JsJitCallOutcome::PushFrame,
@@ -15356,13 +15360,21 @@ impl<H: Host> Vm<H> {
     /// native stack budget, stays the loop's push.
     fn complete_pushed_call(&mut self, program: &ResidualProgram, caller: usize, call: WideInstruction,
         step: Result<super::StepResult, JsError>) -> Result<super::StepResult, JsError> {
-        let Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Value }) = step
-        else { return step };
+        // A construction yields its receiver unless the body returns an object, as the loop's
+        // return of a pushed constructor does (`CallCompletion::Constructor`).
+        let (destination, call_guard, constructed) = match step {
+            Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Value }) =>
+                (destination, call_guard, None),
+            Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Constructor(this) }) =>
+                (destination, call_guard, Some(this)),
+            step => return step,
+        };
         let callee = self.frames.len() - 1;
         let stack = (self.frames[callee].program == self.frames[caller].program)
             .then(crate::stack::StackGuard::enter_optional).flatten();
         let Some(_stack) = stack else {
-            return Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Value });
+            let completion = constructed.map_or(super::CallCompletion::Value, super::CallCompletion::Constructor);
+            return Ok(super::StepResult::PushFrame { destination, call_guard, completion });
         };
         // A linked body that returns completes the call without a loop; any other transition
         // it made is the loop's to continue, as its own entry of the body would.
@@ -15380,9 +15392,16 @@ impl<H: Host> Vm<H> {
         };
         #[cfg(not(feature = "native-execution"))]
         let result = self.run_frame_general(program, callee);
-        let outcome = self.complete_user_frame(program, result, false);
+        // A construction yields the activation's own receiver, which a derived constructor's
+        // `super()` binds in the body.
+        let outcome = self.complete_user_frame(program, result, constructed.is_some());
         drop(call_guard);
-        match outcome? {
+        let outcome = match outcome? {
+            super::FrameOutcome::ConstructComplete { value, this } =>
+                super::FrameOutcome::Complete(if self.is_object_like(value) { value } else { this }),
+            outcome => outcome,
+        };
+        match outcome {
             super::FrameOutcome::Complete(value) if call.returns_from_frame() => Ok(super::StepResult::Return(value)),
             super::FrameOutcome::Complete(value) => {
                 self.frames[caller].registers[usize::from(destination)] = value;
