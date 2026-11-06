@@ -5536,7 +5536,13 @@ impl<H: Host> Vm<H> {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
         let then_atom = self.runtime_atoms.then;
-        let then = match self.get_property(p, value, then_atom) {
+        // A `then` that reads as plain data (`plain_named_load`), as an intrinsic promise's
+        // does, is the value [[Get]] would answer, without its general lookup.
+        let read = match self.plain_named_load(value, then_atom) {
+            Some(then) => Ok(then),
+            None => self.get_property(p, value, then_atom),
+        };
+        let then = match read {
             Ok(then) => then,
             // Cancellation must unwind the active job, not become a guest
             // rejection or an allocated Error during thenable assimilation.

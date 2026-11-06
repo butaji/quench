@@ -140,7 +140,7 @@ impl<H: Host> Vm<H> {
         state: PromiseState,
         result: Value,
     ) -> Result<(), JsError> {
-        let (reactions, notify_unhandled, module_evaluation) = {
+        let (reactions, notify_unhandled, module_evaluation, host_context) = {
             let Some(record) = self.promise_record_mut(promise) else {
                 return Err(JsError("invalid Promise state".into()));
             };
@@ -158,10 +158,10 @@ impl<H: Host> Vm<H> {
             } else {
                 false
             };
-            (std::mem::take(&mut record.reactions), notify_unhandled, module_evaluation)
+            (std::mem::take(&mut record.reactions), notify_unhandled, module_evaluation, record.host_context)
         };
         self.realm.promise.async_module_settled |= module_evaluation;
-        if let Some(resource) = self.promise_record(promise).expect("promise record").host_context.get() {
+        if let Some(resource) = host_context.get() {
             // The reactions have left the authoritative record but are not
             // queued yet. Hooks may collect, so keep their entire payload live.
             let roots = std::iter::once(promise)

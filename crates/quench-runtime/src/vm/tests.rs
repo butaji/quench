@@ -20524,6 +20524,48 @@ fn async_activations_await_again_through_their_spent_state() {
 }
 
 #[test]
+fn promise_resolution_reads_then_as_get_would() {
+    // Resolving with an object reads its `then` once: plain data through its shape proof,
+    // getters, proxies, throwing getters, own and inherited `then`s and subclass promises
+    // through [[Get]], in the order Node's jobs run (expected output from Node 22).
+    let source = r#"
+      const log = [];
+      const L = (s) => log.push(String(s));
+      let reads = 0;
+      const getterThenable = { get then() { reads++; L("getter read " + reads); return (r) => r("G"); } };
+      Promise.resolve().then(() => getterThenable).then((v) => L("getter value " + v + " reads " + reads));
+      const proxied = new Proxy({}, { get(t, k) { L("proxy get " + String(k)); return k === "then" ? (r) => r("P") : undefined; } });
+      Promise.resolve().then(() => proxied).then((v) => L("proxy value " + v));
+      const own = Promise.resolve("own");
+      own.then = function (f, r) { L("own then"); return Promise.prototype.then.call(this, f, r); };
+      Promise.resolve().then(() => own).then((v) => L("own value " + v));
+      const plainObj = { a: 1 };
+      Promise.resolve().then(() => plainObj).then((v) => L("plain value " + v.a));
+      const thenNull = { then: null };
+      Promise.resolve().then(() => thenNull).then((v) => L("then null " + (v === thenNull)));
+      Object.prototype.then = undefined;
+      Promise.resolve().then(() => ({ b: 2 })).then((v) => L("proto then undefined " + v.b));
+      delete Object.prototype.then;
+      class Sub extends Promise {}
+      const sub = Sub.resolve("sub");
+      Promise.resolve().then(() => sub).then((v) => L("sub value " + v));
+      let throwingReads = 0;
+      const throwing = { get then() { throwingReads++; throw new Error("then threw"); } };
+      Promise.resolve().then(() => throwing).then(null, (e) => L("throwing " + e.message + " " + throwingReads));
+      new Promise((r) => r(getterThenable)).then((v) => L("ctor getter " + v + " " + reads));
+      Promise.resolve().then(() => L("tick1")).then(() => L("tick2")).then(() => L("tick3")).then(() => L("tick4"));
+      Promise.resolve().then(() => 0).then(() => 0).then(() => 0).then(() => 0).then(() => 0).then(() => 0).then(() => print(log.join("|")));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "then-reads.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["getter read 1|getter read 2|proxy get then|tick1|own then|plain value 1|then null true|proto then undefined 2|throwing then threw 1|ctor getter G 2|tick2|getter value G reads 2|proxy value P|tick3|own value own|sub value sub|tick4"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
