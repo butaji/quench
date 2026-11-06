@@ -7371,11 +7371,25 @@ script_handler! {
     /// `SetField` or `SetFieldStrict` at a site whose primary entry names an own data field
     /// (`Vm::hinted_primary_field_store_hit`): that store inline where the write barrier logs
     /// nothing; any other takes `lane_set_field_logged`.
-    fn lane_set_object_field_own<>(cx, r, ip, i, view) {
-        if !unsafe { vm(cx) }.hinted_primary_field_store_hit(i.field_hint(), r.get(i.b), i.imm(), r.get(i.a)) {
-            sibling!(lane_set_field_logged::<H, false>, r, ip, Carried::script(cx))
+    fn lane_set_object_field_own<TRACKED: bool>(cx, r, ip, i, view) {
+        if !unsafe { vm(cx) }.hinted_primary_field_store_hit::<TRACKED>(i.field_hint(), r.get(i.b), i.imm(), r.get(i.a)) {
+            sibling!(lane_set_field_own_miss::<H, false, TRACKED>, r, ip, Carried::script(cx))
         }
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// A refused hinted own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
+    /// in a runtime whose arena keeps slot representations, which the untracked store refuses,
+    /// the record moves to its `TRACKED` instantiation for good; the store itself takes
+    /// `lane_set_field_logged`.
+    #[inline(never)]
+    fn lane_set_field_own_miss<THIS: bool, TRACKED: bool>(cx, r, ip, i, view) {
+        if !TRACKED && unsafe { vm(cx) }.heap.tracks_slot_representations() {
+            requicken::<H>(ip, if THIS { lane_set_this_field_own::<H, true> } else { lane_set_object_field_own::<H, true> });
+        }
+        sibling!(lane_set_field_logged::<H, THIS>, r, ip, Carried::script(cx))
     }
 }
 
@@ -7405,11 +7419,11 @@ script_handler! {
 
 script_handler! {
     /// `lane_set_object_field_own` for `SetThisField` and `SetThisFieldStrict`.
-    fn lane_set_this_field_own<>(cx, r, ip, i, view) {
+    fn lane_set_this_field_own<TRACKED: bool>(cx, r, ip, i, view) {
         let this = unsafe { lane_held_this(cx) };
-        let stored = unsafe { vm(cx) }.hinted_primary_field_store_hit(i.field_hint(), this, i.imm(), r.get(i.a));
+        let stored = unsafe { vm(cx) }.hinted_primary_field_store_hit::<TRACKED>(i.field_hint(), this, i.imm(), r.get(i.a));
         if !stored {
-            sibling!(lane_set_field_logged::<H, true>, r, ip, Carried::script(cx))
+            sibling!(lane_set_field_own_miss::<H, true, TRACKED>, r, ip, Carried::script(cx))
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -19310,8 +19324,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
-        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
-        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
+        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H, false>),
+        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H, false>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::ToPropertyKey => Some(lane_to_property_key::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),

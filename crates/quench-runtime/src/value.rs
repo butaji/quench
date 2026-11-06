@@ -166,11 +166,7 @@ impl Value {
         let upper = self.0 & !LOWER_WORD;
         let lower = self.0 as u32;
         if upper == TAG_INT {
-            let integer = lower as i32;
-            let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
-            return (-limit..limit)
-                .contains(&integer)
-                .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG);
+            return Self::narrow_integer(lower as i32);
         }
         // The code of the value's tag plus its family bits; only an upper word the code names
         // exactly is narrow, which also rejects numbers and family bits on a constant.
@@ -179,6 +175,15 @@ impl Value {
         let code = base + ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize;
         (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
             .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
+    }
+
+    /// The narrow form of the integer `integer`, when it has one (`to_narrow`).
+    #[inline(always)]
+    pub(crate) fn narrow_integer(integer: i32) -> Option<u32> {
+        let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
+        (-limit..limit)
+            .contains(&integer)
+            .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG)
     }
 
     /// `to_narrow`, testing a direct object handle first: a new object's values
