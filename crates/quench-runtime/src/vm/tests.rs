@@ -1376,6 +1376,41 @@ fn planned_constructions_run_forwarded_initializers_and_their_defaults() {
 
 
 #[test]
+fn planned_constructions_store_string_literal_fields() {
+    // An initializer constructor storing string literals (`this.type = ""`, as acorn's Node
+    // does) is planned like one storing number constants: each object gets the literal the
+    // body's load yields, and writing one object's field leaves the others. Expected values
+    // are Node's (v22).
+    let source = r#"
+      function N(p, s) { this.type = ""; this.start = s; this.end = 0; this.loc = null; this.label = "name"; }
+      function U(s) { this.u = "\u00e9t\u00e9"; this.s = s; this.k = "x"; }
+      var out = [], sum = 0;
+      for (var i = 0; i < 3000; i++) {
+        var n = new N(null, i), u = new U(i);
+        sum += n.start + n.type.length + n.label.length + u.u.length;
+        if (i % 997 === 0) { n.type = "t" + i; out.push(JSON.stringify(n) + JSON.stringify(u)); }
+      }
+      var a = new N(1, 2), b = new N(3, 4);
+      out.push(a.type === b.type, a.label === "name", Object.keys(a).join(), sum);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "planned-string-fields.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [concat!(
+            r#"{"type":"t0","start":0,"end":0,"loc":null,"label":"name"}{"u":"été","s":0,"k":"x"} "#,
+            r#"{"type":"t997","start":997,"end":0,"loc":null,"label":"name"}{"u":"été","s":997,"k":"x"} "#,
+            r#"{"type":"t1994","start":1994,"end":0,"loc":null,"label":"name"}{"u":"été","s":1994,"k":"x"} "#,
+            r#"{"type":"t2991","start":2991,"end":0,"loc":null,"label":"name"}{"u":"été","s":2991,"k":"x"} "#,
+            "true true type,start,end,loc,label 4519500"
+        )]
+    );
+}
+
+#[test]
 fn promoted_locals_preserve_order_and_survive_collection() {
     let source = r#"
       function read(value) {

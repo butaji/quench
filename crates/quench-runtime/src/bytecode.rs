@@ -2787,7 +2787,7 @@ impl Function {
                 load if load.op() == Op::LoadConst
                     && load.result_flags() == 0
                     && load.result_register() >= self.params
-                    && let Some(constant) = constants.get(load.constant_index()).and_then(InitializerConstant::of) =>
+                    && let Some(constant) = InitializerConstant::of(constants, load.constant_index()) =>
                 {
                     temporaries.push((load.result_register(), constant));
                     pc += 1;
@@ -4572,25 +4572,32 @@ pub(crate) enum InitializerConstant {
     Boolean(bool),
     Null,
     Undefined,
+    /// A string literal: the program's constant at this index, the value its `LoadConst`
+    /// yields (`this.type = ""`).
+    String(u32),
 }
 
 impl InitializerConstant {
-    fn of(constant: &Constant) -> Option<Self> {
-        Some(match constant {
+    fn of(constants: &[Constant], index: usize) -> Option<Self> {
+        Some(match constants.get(index)? {
             Constant::Number(number) => Self::Number(*number),
             Constant::Boolean(boolean) => Self::Boolean(*boolean),
             Constant::Null => Self::Null,
             Constant::Undefined => Self::Undefined,
+            Constant::String(_) | Constant::StringUnits(_) => Self::String(u32::try_from(index).ok()?),
             _ => return None,
         })
     }
 
-    pub(crate) fn value(self) -> crate::value::Value {
-        match self {
+    /// The value the constant stores, a string literal's from the running program's
+    /// materialized constants (`program_constant`).
+    pub(crate) fn value(self, program_constant: impl FnOnce(usize) -> Option<crate::value::Value>) -> Option<crate::value::Value> {
+        Some(match self {
             Self::Number(number) => crate::value::Value::number(number),
             Self::Boolean(boolean) => crate::value::Value::boolean(boolean),
             Self::Null => crate::value::Value::NULL,
             Self::Undefined => crate::value::Value::UNDEFINED,
-        }
+            Self::String(index) => return program_constant(index as usize),
+        })
     }
 }

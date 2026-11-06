@@ -1959,6 +1959,13 @@ impl ConstructPlan {
         Self { header, ..self }
     }
 
+    /// The value of a field of a plan whose stores default nothing (`ConstructPlanKind::Passed`):
+    /// a constant field's constant, else the argument its parameter names.
+    #[inline(always)]
+    fn passed_value(&self, field: usize, argument: impl Fn(u16) -> Value) -> Value {
+        if self.constant & (1 << field) != 0 { self.fallbacks[field] } else { argument(self.parameters[field]) }
+    }
+
     /// This plan's field values in order, `undefined` past them: the argument each field's
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
     /// value, or a constant field's constant, as its store computes it.
@@ -1996,7 +2003,7 @@ impl ConstructPlan {
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
-    fn with_field(mut self, store: &crate::bytecode::InitializerStore) -> Option<Self> {
+    fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
         let field = usize::from(self.fields);
         let slot = self.parameters.get_mut(field)?;
         match store.value {
@@ -2008,10 +2015,9 @@ impl ConstructPlan {
                     self.fallbacks[field] = Value::number(fallback);
                 }
             }
-            crate::bytecode::InitializerValue::Constant(constant) => {
-                self.kind = ConstructPlanKind::Defaulted;
+            crate::bytecode::InitializerValue::Constant(_) => {
                 self.constant |= 1 << field;
-                self.fallbacks[field] = constant.value();
+                self.fallbacks[field] = value;
             }
         }
         self.fields += 1;
@@ -14134,8 +14140,8 @@ fn lane_construct_keeping_activation<H: Host>(
             let code = unsafe { &*(*cx).code };
             let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
             let argument = lane_construct_argument(r, i);
-            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store| {
-                fields = fields.and_then(|fields| fields.with_field(store));
+            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store, value| {
+                fields = fields.and_then(|fields| fields.with_field(store, value));
             }) {
                 if let Some(fields) = fields {
                     lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
@@ -15997,8 +16003,8 @@ fn lane_initialize_fields<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = lane_add_initializer_fields(vm, code, this, function, argument, |store| {
-        planned = planned.and_then(|plan| plan.with_field(store));
+    let added = lane_add_initializer_fields(vm, code, this, function, argument, |store, value| {
+        planned = planned.and_then(|plan| plan.with_field(store, value));
     });
     if !added {
         return Some((this, false));
@@ -16026,7 +16032,7 @@ fn lane_add_initializer_fields<H: Host>(
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
-    mut each: impl FnMut(&crate::bytecode::InitializerStore),
+    mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
@@ -16036,12 +16042,18 @@ fn lane_add_initializer_fields<H: Host>(
             crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
                 initializer_value(vm, argument(parameter), fallback.map(Value::number))
             }
-            crate::bytecode::InitializerValue::Constant(constant) => constant.value(),
+            // The running program is `code` (`Vm::active_constant`).
+            crate::bytecode::InitializerValue::Constant(constant) => {
+                match constant.value(|index| vm.active_constant(index)) {
+                    Some(value) => value,
+                    None => return false,
+                }
+            }
         };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
             return false;
         }
-        each(store);
+        each(store, value);
     }
     true
 }
@@ -16079,7 +16091,7 @@ fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl F
     if plan.kind != ConstructPlanKind::Passed {
         return lane_defaulted_construction(vm, index, argument);
     }
-    Some(plan.allocate(&mut vm.heap, |field| argument(plan.parameters[field])))
+    Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
 }
 
 /// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, by the callee's
@@ -16110,7 +16122,7 @@ pub(super) unsafe fn lane_body_construction<H: Host>(context: *mut (), callee: V
 /// code.
 #[inline(never)]
 fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let plan = vm.lane_stack.construct_plans[index];
+    let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
