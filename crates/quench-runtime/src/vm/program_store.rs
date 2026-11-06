@@ -3504,8 +3504,10 @@ impl Drop for ProgramStore {
             let code: &ResidualProgram = &entry.residual;
             let op_at = |function: u32, pc: u32| code.function_get(function as usize)
                 .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
+            let source_at = |function: u32| code.function_get(function as usize)
+                .and_then(|body| body.source_span).map_or(0, |span| span.start);
             for view in entry.lane_views.arena.borrow().iter().flatten() {
-                if let Some(line) = view.body_stats.report(program, view.lane_body_state(), &op_at) {
+                if let Some(line) = view.body_stats.report(program, view.lane_body_state(), &op_at, &source_at) {
                     eprintln!("{line}");
                 }
             }

@@ -273,6 +273,10 @@ impl ValueLayout {
     pub(crate) const DIRECT_OBJECT_TAG: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
     /// Tag and family bits that distinguish a direct function record.
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS;
+    /// The family bit a direct function's family adds to a direct object's: a family with it
+    /// set is the function family exactly for a direct object or function, the receivers a
+    /// sloppy callee binds as themselves that native code admits.
+    pub(crate) const FUNCTION_OVER_OBJECT_BIT: u64 = DIRECT_FUNCTION_HANDLE_BITS & !DIRECT_OBJECT_HANDLE_BIT;
     pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     /// Tag and family bits that distinguish a direct string record.
     pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;

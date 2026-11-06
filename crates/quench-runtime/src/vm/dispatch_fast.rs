@@ -682,7 +682,7 @@ impl LaneBodyStats {
 
     /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`, with the
     /// state its body ended the run in.
-    pub(super) fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>) -> Option<String> {
+    pub(super) fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>, source_at: &dyn Fn(u32) -> u32) -> Option<String> {
         (self.compiles.get() != 0).then(|| {
             let function = self.function.get();
             // A leave names the instruction it left at, in the function it left in.
@@ -695,8 +695,8 @@ impl LaneBodyStats {
             }).collect();
             let [completed, at, inlined, callee] = self.ends.each_ref().map(std::cell::Cell::get);
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"leaves\":\"{:?}\"}}",
-                function, self.compiles.get(), self.frames.get(), self.refused.get(), leaves,
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"at\":{},\"compiles\":{},\"frames\":{},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"leaves\":\"{:?}\"}}",
+                function, source_at(function), self.compiles.get(), self.frames.get(), self.refused.get(), leaves,
             )
         })
     }

@@ -1790,8 +1790,7 @@ impl Lowering<'_, '_> {
         // A callee that observes no `this` takes any receiver: its binding is unobserved.
         if inlined.observes_this {
             let receiver = self.tagged(state, inlined.receiver);
-            let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-            let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            let object = emit_object_or_function(&mut self.builder, receiver);
             emit_js_guard(&mut self.builder, object, exit);
         }
         for register in 0..inlined.registers {
@@ -1921,7 +1920,6 @@ impl Lowering<'_, '_> {
     /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
     /// stack takes `helper`. The caller wrote back its registers.
     fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
-        use crate::value::ValueLayout;
         let word = std::mem::size_of::<Value>() as i64;
         let frame_size = std::mem::size_of::<ShadowFrame>() as i64;
         let offset = |field: usize| i32::try_from(field).expect("dispatch offset fits i32");
@@ -1933,8 +1931,7 @@ impl Lowering<'_, '_> {
         // to the global object (`lane_receiver_this`); any other receiver takes the helper.
         let (admitted, this) = match callee.sloppy {
             Some(global) => {
-                let family = self.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = emit_object_or_function(&mut self.builder, this);
                 let undefined = self.ins().icmp_imm_u(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
                 let null = self.ins().icmp_imm_u(IntCC::Equal, this, Value::NULL.to_bits() as i64);
                 let nullish = self.ins().bor(undefined, null);

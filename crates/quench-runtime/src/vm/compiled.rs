@@ -1782,6 +1782,15 @@ fn emit_js_guarded_return(
     builder.ins().return_(&[status]);
 }
 
+/// Whether `value` is a direct object or function, which a sloppy callee binds as its own
+/// `this` (`dispatch_fast::lane_receiver_this`) and its reads prove readable.
+fn emit_object_or_function(builder: &mut FunctionBuilder<'_>, value: ir::Value) -> ir::Value {
+    use crate::value::ValueLayout;
+    let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let widened = builder.ins().bor_imm_u(family, ValueLayout::FUNCTION_OVER_OBJECT_BIT as i64);
+    builder.ins().icmp_imm_u(IntCC::Equal, widened, ValueLayout::DIRECT_FUNCTION_TAG as i64)
+}
+
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
 fn emit_lane_helper_call(
     builder: &mut FunctionBuilder<'_>,
