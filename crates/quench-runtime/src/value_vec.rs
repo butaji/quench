@@ -469,8 +469,15 @@ impl ValueArena {
         self.note_slot_target(shape, slot, value, TargetShape::unclassified(value))
     }
 
+    /// The untracked case, every store of a runtime without lane bodies, is the test alone:
+    /// the joins are out of line (`note_tracked_slot_target`).
+    #[inline(always)]
     pub(crate) fn note_slot_target(&mut self, shape: u32, slot: usize, value: Value, target: TargetShape) -> bool {
-        if !self.tracking { return false; }
+        self.tracking && self.note_tracked_slot_target(shape, slot, value, target)
+    }
+
+    #[inline(never)]
+    fn note_tracked_slot_target(&mut self, shape: u32, slot: usize, value: Value, target: TargetShape) -> bool {
         let owner = self.slot_owner(shape, slot);
         let changed = self.targets.join(owner, target);
         if changed { self.slot_readers.retire(owner); }
