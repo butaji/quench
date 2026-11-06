@@ -830,6 +830,7 @@ impl LaneView {
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
+        method.retired.set(true);
         *body = LaneBody::Retired { _method: method };
         self.release_from_tier();
     }
@@ -881,9 +882,11 @@ impl LaneView {
         let next = if unmoved { LaneBody::Declined } else { LaneBody::Unspecialized { entries: 0, recompiles, stuck: feedback } };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         if unmoved {
-            *body = LaneBody::Retired { _method: method };
+            method.retired.set(true);
+        *body = LaneBody::Retired { _method: method };
             self.release_from_tier();
         } else {
+            method.retired.set(true);
             self.retired.borrow_mut().push(method);
         }
     }
@@ -15080,9 +15083,7 @@ fn lane_body_activate<H: Host>(
 fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::LaneExit) -> bool {
     // SAFETY: the running lane's context, read and reset by the run that ended.
     let warming = unsafe { std::mem::take(&mut (*cx).callee_warming) };
-    // A leave while a collection is due is the allocation's, which the lane makes after
-    // collecting: no feedback on the body's code.
-    !(warming && exit == super::compiled::LaneExit::Callee) && !unsafe { vm(cx) }.heap.should_collect()
+    !(warming && exit == super::compiled::LaneExit::Callee)
 }
 
 /// Counts `exit` toward the reoptimization of the body it is a leave of (`lane_body_left`):

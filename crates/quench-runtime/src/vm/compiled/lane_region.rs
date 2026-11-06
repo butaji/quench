@@ -2026,6 +2026,13 @@ impl Lowering<'_, '_> {
         let room = self.ins().icmp(IntCC::UnsignedLessThan, shadow, shadow_end);
         let admitted = self.ins().band(admitted, fits);
         let admitted = self.ins().band(admitted, room);
+        // A callee body its view no longer runs is called through the lane (`LaneMethod::retired`).
+        let admitted = if callee.method.is_null() { admitted } else {
+            let method = self.ins().iconst(types::I64, callee.method as i64);
+            let retired = self.ins().load(types::I8, MemFlagsData::trusted(), method, offset(std::mem::offset_of!(LaneMethod, retired)));
+            let current = self.ins().icmp_imm_u(IntCC::Equal, retired, 0);
+            self.ins().band(admitted, current)
+        };
         let enter = self.builder.create_block();
         self.ins().brif(admitted, enter, &[], helper, &[]);
         self.builder.switch_to_block(enter);

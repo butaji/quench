@@ -6779,6 +6779,9 @@ pub(super) struct LaneMethod {
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,
+    /// Whether its view no longer runs it, retired or specialized again: its direct callers,
+    /// which keep its code, call the function through the lane instead (`direct_call`).
+    pub(super) retired: std::cell::Cell<bool>,
 }
 
 impl LaneMethod {
@@ -7320,7 +7323,7 @@ impl<H: Host> Vm<H> {
                 self.lane_code_roots.push(callee);
             }
         }
-        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed });
+        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed, retired: std::cell::Cell::new(false) });
         method.bind_self_calls();
         Some(method)
     }
