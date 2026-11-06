@@ -3577,8 +3577,10 @@ impl Heap {
     /// Classifies a pointee only when field observations are enabled.
     #[inline(always)]
     fn observed_slot_target(&self, value: Value) -> TargetShape {
+        // Only a tracking arena joins targets (`ValueArena::note_slot_target`); any other
+        // store discards it, so it classifies nothing.
         if self.properties.tracks() { observed_target(&self.object_records, value) }
-        else { TargetShape::unclassified(value) }
+        else { TargetShape::NONE }
     }
 
     /// Observes the value before writing the named object's slot.
