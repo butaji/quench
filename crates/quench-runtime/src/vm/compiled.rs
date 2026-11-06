@@ -8594,8 +8594,8 @@ fn run_js_native_entry<H: Host>(
     interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
     native_pcs: &[u8],
 ) -> Option<(u32, u64)> {
-    // Taking the idle slot leaves reentrant calls no access to this live context.
-    let mut context = match unsafe { (*vm).js_native_context.take() } {
+    // Taking an idle context leaves reentrant entries no access to this live one.
+    let mut context = match unsafe { (*vm).js_native_contexts.pop() } {
         Some(mut context) => {
             context.bind_native_adapter(payload, interrupt, poll_page);
             context
@@ -8639,12 +8639,8 @@ fn run_js_native_entry<H: Host>(
         )
     };
     let raised = context.raised.take();
-    // Idle JS adapters own no guest roots or raised completions. Nested
-    // entries may already have returned a reusable context; retain only one.
-    let idle = unsafe { &mut (*vm).js_native_context };
-    if idle.is_none() {
-        *idle = Some(context);
-    }
+    // Idle JS adapters own no guest roots or raised completions.
+    unsafe { (*vm).js_native_contexts.push(context) };
     match raised {
         Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
         Some(Raised::Error(_)) => return None,
@@ -9265,6 +9261,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             } else {
                 None
             };
+            // A pushed call is the shared frame transition however it then completes.
+            let pushed = matches!(in_loop_call, Some(Ok(super::StepResult::PushFrame { .. })));
+            let in_loop_call = in_loop_call.map(|step| vm.complete_pushed_call(program, dispatch.frame, current_instruction, step));
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]
                     .registers
@@ -9299,6 +9298,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             };
             if is_call && diagnostics_enabled {
                 let outcome = match &step {
+                    _ if pushed => super::program_store::JsJitCallOutcome::PushFrame,
                     Ok(super::StepResult::Continue) => {
                         super::program_store::JsJitCallOutcome::Continue
                     }
@@ -15282,6 +15282,49 @@ impl<H: Host> Vm<H> {
         let callee = *self.frames[frame].registers.get(usize::from(instruction.register_b()))?;
         let receiver = *self.frames[frame].registers.get(usize::from(instruction.register_c()))?;
         self.guarded_call_values(program, program_id, callee, receiver)
+    }
+
+    /// Runs the body a native caller's call pushed (`push_in_loop_call`) to its completion on
+    /// the native stack, so the caller continues past the call natively instead of stopping
+    /// for the loop to run the callee and entering again after it; a `call`'s returning from
+    /// the caller's frame returns its value. A callee of another program, or one past the
+    /// native stack budget, stays the loop's push.
+    fn complete_pushed_call(&mut self, program: &ResidualProgram, caller: usize, call: WideInstruction,
+        step: Result<super::StepResult, JsError>) -> Result<super::StepResult, JsError> {
+        let Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Value }) = step
+        else { return step };
+        let callee = self.frames.len() - 1;
+        let stack = (self.frames[callee].program == self.frames[caller].program)
+            .then(crate::stack::StackGuard::enter_optional).flatten();
+        let Some(_stack) = stack else {
+            return Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Value });
+        };
+        // A linked body that returns completes the call without a loop; any other transition
+        // it made is the loop's to continue, as its own entry of the body would.
+        #[cfg(feature = "native-execution")]
+        let result = {
+            let caller_registers = self.active_registers;
+            self.active_registers = self.frames[callee].registers.as_mut_ptr();
+            let result = match self.js_linked_frame_entry(callee, 0, None, true) {
+                Some(JsNativeStep { result: Ok(super::StepResult::Return(value)), .. }) => Ok(super::FrameOutcome::Complete(value)),
+                Some(entered) => self.run_frame_general_after(program, callee, entered),
+                None => self.run_frame_general(program, callee),
+            };
+            self.active_registers = caller_registers;
+            result
+        };
+        #[cfg(not(feature = "native-execution"))]
+        let result = self.run_frame_general(program, callee);
+        let outcome = self.complete_user_frame(program, result, false);
+        drop(call_guard);
+        match outcome? {
+            super::FrameOutcome::Complete(value) if call.returns_from_frame() => Ok(super::StepResult::Return(value)),
+            super::FrameOutcome::Complete(value) => {
+                self.frames[caller].registers[usize::from(destination)] = value;
+                Ok(super::StepResult::Continue)
+            }
+            _ => Err(JsError::validation("an in-loop body completed without its value".into())),
+        }
     }
 
     /// One no-frame, no-GC call operation for linked AOT and JIT regions.

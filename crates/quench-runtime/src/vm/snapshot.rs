@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
             gc_owned_root_count: _,
             frame_pool: _,
             pending_call_stacks: _,
-            js_native_context: _,
+            js_native_contexts: _,
             lane_stack: _,
             execution_mode: _,
             native_execution_rejections: _,

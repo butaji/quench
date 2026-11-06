@@ -80,7 +80,7 @@ impl<H: Host> Vm<H> {
             gc_owned_root_count: 0,
             frame_pool: vec![],
             pending_call_stacks: vec![],
-            js_native_context: None,
+            js_native_contexts: Vec::new(),
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
             native_execution_rejections: 0,
