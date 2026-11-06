@@ -1716,6 +1716,20 @@ const _: () = assert!(
 );
 
 impl ArrayObject {
+    /// A new array of `prototype` with no properties: `new` of `Object::new(prototype)`,
+    /// made with its arena storage at once.
+    #[inline(always)]
+    pub(crate) fn fresh(prototype: Value, elements: super::ArrayElements) -> Self {
+        let mut object = Object {
+            meta: Object::encode_array_proto(prototype) | OBJECT_ARRAY,
+            auxiliary: 0,
+            payload: 0,
+        };
+        object.initialize_properties(ValueVec::new());
+        debug_assert!(object.proto() == prototype);
+        Self { object, elements }
+    }
+
     pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
         let elements = elements.into();
         // Array objects keep named properties in the arena; a fresh object has none inline.
@@ -1747,6 +1761,18 @@ impl ArrayObject {
         self.object.note_prototype_elements_change();
         super::array_proofs::retire_array_storage_proofs();
         &mut self.elements
+    }
+
+    /// Whether a dead array owns anything its drop frees: extras, or an element allocation
+    /// it counts among its backing's owners. Young runs and the empty header need none.
+    pub(crate) fn needs_drop(&self) -> bool {
+        self.object.extras_pointer().is_some() || self.elements.owner_count() != 0
+    }
+
+    /// Copies a young run of elements to an allocation of the array's own
+    /// (`ArrayElements::leave_nursery`): the same values, so no proof or dependent retires.
+    pub(crate) fn leave_nursery(&mut self) {
+        self.elements.leave_nursery();
     }
 
     /// Replaces the present element at `index` in place where this array alone owns its
@@ -2001,6 +2027,15 @@ impl Object {
         match proto.direct_object_index() {
             Some(id) => PROTO_OBJECT_RECORD_BASE + id,
             None => Self::encode_other_proto(proto),
+        }
+    }
+
+    /// `encode_proto` of a direct array, as every realm's `Array.prototype` is.
+    #[inline(always)]
+    fn encode_array_proto(proto: Value) -> u32 {
+        match proto.direct_array_index() {
+            Some(id) => PROTO_ARRAY_RECORD_BASE + id,
+            None => Self::encode_proto(proto),
         }
     }
 
