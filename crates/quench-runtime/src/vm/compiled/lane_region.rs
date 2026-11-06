@@ -5402,7 +5402,7 @@ mod tests {
         let targets = static_call_targets(&program);
         let unit_for = |polymorphic| super::super::lane_unit::unit(&program, caller as u32,
             program.function(caller), &|function, pc| {
-                let mut found: Vec<_> = targets[function as usize].get(pc as usize).copied().flatten()
+                let mut found: Vec<_> = targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                     .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                     .into_iter().collect();
                 if polymorphic && !found.is_empty() {
@@ -5509,7 +5509,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "fold")).unwrap();
             let targets = static_call_targets(&program);
             let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
-                &|function, pc| targets[function as usize].get(pc as usize).copied().flatten()
+                &|function, pc| targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                     .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
@@ -5685,7 +5685,7 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
-                &|function, pc| targets[function as usize].get(pc as usize).copied().flatten()
+                &|function, pc| targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                     .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");

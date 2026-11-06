@@ -2706,7 +2706,7 @@ pub(super) struct StaticTypedRegion {
 }
 
 #[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<Option<u32>>],
+pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<lane_unit::StaticTargets>],
     isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
 {
     if isa.pointer_type() != types::I64 { return Vec::new(); }
@@ -2715,8 +2715,8 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // Both binding-time divisions plan the full call graph. Static bindings use
     // actual function admission and the same exact suspended-frame recovery.
     let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc|
-        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).copied().flatten()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
+            .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
@@ -19720,11 +19720,11 @@ mod tests {
             let targets = static_call_targets(&program);
             let body = program.function(id);
             let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
-                instruction.op() == Op::Call && targets[id][*pc].is_some()).count();
+                instruction.op() == Op::Call && !targets[id][*pc].is_empty()).count();
             assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
             let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
-                (caller == id as u32).then(|| targets[id][pc as usize]).flatten()
-                    .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                (caller == id as u32).then(|| &targets[id][pc as usize]).into_iter().flatten()
+                    .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
@@ -20183,9 +20183,9 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let (caller, callee) = (id("run"), id("step"));
             let targets = static_call_targets(&program);
-            assert!(targets[caller].contains(&Some(callee as u32)), "capture must supply the shared inliner");
+            assert!(targets[caller].iter().any(|site| site.contains(&(callee as u32))), "capture must supply the shared inliner");
             let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc|
-                targets[function as usize].get(pc as usize).copied().flatten()
+                targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                     .map(|function| CallTarget {function, callee: CalleeBinding::Function}).into_iter().collect(),
                 &|function| program.function_get(function as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1);
@@ -20307,7 +20307,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -20366,7 +20366,7 @@ mod tests {
             let targets = static_call_targets(&program);
             if nested {
                 let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|id, pc|
-                    targets[id as usize].get(pc as usize).copied().flatten()
+                    targets[id as usize].get(pc as usize).into_iter().flatten().copied().next()
                         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                     &|id| program.function_get(id as usize)).unwrap();
                 assert!(unit.frames.iter().any(|frame| frame.parent.is_some()), "exercise nested recovery planning");
@@ -20573,7 +20573,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -20613,7 +20613,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -20633,7 +20633,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1, "the static method hint must reach the shared inliner");
