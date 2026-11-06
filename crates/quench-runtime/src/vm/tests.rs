@@ -1068,22 +1068,22 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 #[cfg(not(quench_profiled))]
 #[test]
 fn shape_compaction_clears_own_field_hints() {
-    // Read and store sites warmed on one layout hold its shape id as their own-field hint. A full
+    // Read, nested read and store sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
     // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
-    for body in ["return o.a + 0;", "o.a = v; return v;"] {
+    for body in ["return o.a + 0;", "o.a = v; return v;", "return o.n.a + 0;"] {
         let reads: String = (0..SITES).map(|k| format!("function read{k}(o, v) {{ {body} }}\n")).collect();
         let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
         let source = format!(
             r#"
           {reads}
           var sites = [{calls}], sum = 0;
-          function T(a, b) {{ this.a = a; this.b = b; }}
+          function T(a, b) {{ this.a = a; this.b = b; this.n = this; }}
           function drive(read, o, n, v) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o, v); return s; }}
           function resume() {{
             var result = 0;
-            for (var k = 0; k < sites.length; k++) result += drive(sites[k], {{ before: -1, a: k }}, 50, k);
+            for (var k = 0; k < sites.length; k++) {{ var r = {{ before: -1, a: k }}; r.n = r; result += drive(sites[k], r, 50, k); }}
             return result;
           }}
           for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50, k);
@@ -1120,6 +1120,40 @@ fn shape_compaction_clears_own_field_hints() {
             Value::integer((50 * (0..SITES).sum::<usize>()) as i32),
         );
     }
+}
+
+#[test]
+fn nested_reads_follow_their_first_steps_hint_across_shapes() {
+    // A nested read's record keeps the own entry its first step last hit as its hint
+    // (`lane_nested_own_value`): bases of two layouts holding the first field at different
+    // slots, alternating and in runs, a prototype-held first field, and a parser whose `this`
+    // gains a field mid-run each read the field the layout in hand holds. Expected value is
+    // Node's (v26).
+    let source = r#"
+      function A(t) { this.t = t; }
+      function B(t) { this.pad = 0; this.t = t; }
+      function C() {}
+      C.prototype.t = { label: 5 };
+      var leafA = { label: 7 }, leafB = { label: 9 };
+      function read(o) { return o.t.label; }
+      function Parser(late) { this.type = leafA; this.pos = 0; if (late) this.inTemplate = true; }
+      Parser.prototype.label = function () { return this.type.label; };
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += read(new A(leafA));
+      for (i = 0; i < 300; i++) s += read(new B(leafB));
+      for (i = 0; i < 300; i++) s += read(i & 1 ? new A(leafA) : new B(leafB));
+      for (i = 0; i < 300; i++) s += read(i % 3 ? new C() : new A(leafB));
+      var early = new Parser(false), late = new Parser(true);
+      for (i = 0; i < 600; i++) s += (i < 200 || i > 400 ? early : late).label();
+      late.type = leafB;
+      for (i = 0; i < 300; i++) s += late.label() + early.label();
+      print(String(s));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "nested-read-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["18100"]);
 }
 
 #[test]

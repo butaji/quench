@@ -2145,6 +2145,18 @@ impl<H: Host> Vm<H> {
         self.polymorphic_field_entries_hit::<true>(p, object, site, EMPTY_CACHE).map(|(value, _)| value)
     }
 
+    /// `polymorphic_field_hit` with which entry answered, whose own one a lane record keeps as
+    /// its hint (`LaneInstruction::field_hint`).
+    #[inline(always)]
+    pub(super) fn polymorphic_field_entry_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<(Value, PolymorphicHit)> {
+        self.polymorphic_field_entries_hit::<true>(p, object, site, EMPTY_CACHE)
+    }
+
     /// `polymorphic_field_hit` among the inline entries alone: `None` for a site whose
     /// entries moved to the hash, which the general cached read (`cached_field_polymorphic_hit`)
     /// answers. Its probe keeps few values live, so a lane handler inlining it saves no
