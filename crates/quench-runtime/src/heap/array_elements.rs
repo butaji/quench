@@ -124,11 +124,6 @@ impl ArrayElements {
         elements
     }
 
-    /// `len` copies of `value`, allocated at their final size with no intermediate buffer.
-    pub(crate) fn filled(len: usize, value: Value) -> Self {
-        Self::from_fn(len, |_| value)
-    }
-
     /// The `len` values `value` gives for each index in order, written straight into a
     /// backing allocated at its final size, with no intermediate buffer.
     pub(crate) fn from_fn(len: usize, mut value: impl FnMut(usize) -> Value) -> Self {
@@ -716,7 +711,7 @@ mod tests {
         let ints = || ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
         assert!(ints().holds_only_int32());
         assert!(!ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).holds_only_int32());
-        assert!(ArrayElements::filled(3, Value::integer(0)).holds_only_int32());
+        assert!(ArrayElements::from_fn(3, |_| Value::integer(0)).holds_only_int32());
         assert!(!ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).holds_only_int32());
         let demotions: [(&str, fn(&mut UniqueElements)); 6] = [
             ("set", |elements| elements.set(0, Value::DELETED)),

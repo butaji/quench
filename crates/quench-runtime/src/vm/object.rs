@@ -1248,10 +1248,16 @@ fn field_cache_key(receiver: u32, holder: u32) -> u64 {
 impl<H: Host> Vm<H> {
     /// A fresh array of the active realm holding `length` holes: `MakeArray`'s result.
     pub(super) fn hole_array(&mut self, length: usize) -> Value {
+        self.literal_array(length, |_| Value::DELETED)
+    }
+
+    /// An array literal of `length` elements, each the value `element` gives for its index:
+    /// `hole_array` with each hole's definition (`define_literal_element`) made at once.
+    pub(super) fn literal_array(&mut self, length: usize, element: impl FnMut(usize) -> Value) -> Value {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                crate::heap::ArrayElements::filled(length, Value::DELETED),
+                crate::heap::ArrayElements::from_fn(length, element),
             ),
         })
     }

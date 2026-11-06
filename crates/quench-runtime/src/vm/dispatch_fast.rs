@@ -5614,6 +5614,29 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `MakeArray` whose literal's `DefineArrayElement` records follow it, one per index in
+    /// order (`specialize_array_literals`): the array made with those elements at once
+    /// (`Vm::literal_array`), as their definitions into its holes would leave it, and the
+    /// run goes on past them.
+    fn lane_make_array_elements<>(cx, r, ip, i, view) {
+        let length = i.imm() as usize;
+        r.set(i.a, lane_new_literal_array(unsafe { vm(cx) }, r, ip, length));
+        // SAFETY: `specialize_array_literals` matched the `length` records after this one.
+        next!(cx, r, unsafe { ip.add(length + 1) }, view)
+    }
+}
+
+/// `lane_make_array_elements`'s array of the `length` values the `DefineArrayElement` records
+/// after `ip` read, out of line as `lane_new_object`.
+#[inline(never)]
+fn lane_new_literal_array<H: Host>(vm: &mut Vm<H>, r: Registers, ip: Ip, length: usize) -> Value {
+    // SAFETY: `specialize_array_literals` matched the `length` records after `ip`.
+    let value = vm.literal_array(length, |index| r.get(unsafe { (*ip.add(index + 1)).a }));
+    note_allocation(vm);
+    value
+}
+
 /// `lane_make_object`'s object. Out of line: an allocation whose record space is full falls
 /// back to a heap slot, which takes the new object by its stack address, a temporary the
 /// handler then does not hold.
@@ -20734,6 +20757,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records);
+        specialize_array_literals::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -21477,6 +21501,29 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
         });
         if !shared {
             records[pc].handler = proved as *const ();
+        }
+    }
+}
+
+/// Gives each `MakeArray` of a literal whose elements are defined by the records right after
+/// it, a `DefineArrayElement` of a register value for each index in order, the literal made
+/// at once (`lane_make_array_elements`). The definitions stay: nothing jumps between them,
+/// and a run entered past the `MakeArray` takes them as before.
+fn specialize_array_literals<H: Host>(records: &mut [LaneInstruction]) {
+    let make = lane_make_array::<H> as Handler as *const ();
+    let define = lane_define_array_element::<H> as Handler as *const ();
+    for pc in 0..records.len() {
+        if records[pc].handler != make {
+            continue;
+        }
+        let (array, length) = (records[pc].a, records[pc].imm() as usize);
+        let defines = records.get(pc + 1..pc + 1 + length).is_some_and(|elements| {
+            elements.iter().enumerate().all(|(index, element)| {
+                element.handler == define && element.b == array && element.a != array && element.imm() as usize == index
+            })
+        });
+        if defines {
+            records[pc].handler = lane_make_array_elements::<H> as Handler as *const ();
         }
     }
 }
