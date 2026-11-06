@@ -38,6 +38,31 @@ use crate::wasm::integer::{
 };
 use crate::wasm::memory::{MemoryLoad, MemoryStorage, MemoryStore};
 
+/// The arithmetic operators the lane decides per operator (`lane_operator`,
+/// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`.
+macro_rules! arithmetic_operators {
+    (@with $form:ident ($($args:tt)*)) => {{
+        use super::operations::{
+            ADDITION, BITWISE_AND, BITWISE_OR, BITWISE_XOR, DIVISION, MULTIPLICATION, REMAINDER,
+            SHIFT_LEFT, SHIFT_RIGHT, SHIFT_RIGHT_ZERO_FILL, SUBTRACTION,
+        };
+        $form!($($args)*; ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION, REMAINDER, SHIFT_LEFT,
+            SHIFT_RIGHT, SHIFT_RIGHT_ZERO_FILL, BITWISE_OR, BITWISE_XOR, BITWISE_AND)
+    }};
+    ($operator:expr, $pick:ident) => {
+        arithmetic_operators!(@with arithmetic_match ($operator, $pick))
+    };
+}
+
+macro_rules! arithmetic_match {
+    ($operator:expr, $pick:ident; $($op:ident),*) => {
+        match $operator {
+            $($op => Some($pick!($op)),)*
+            _ => None,
+        }
+    };
+}
+
 /// One instruction of a lane view.
 #[repr(C)]
 pub(super) struct LaneInstruction {
@@ -17716,6 +17741,38 @@ script_handler! {
 }
 
 script_handler! {
+    /// A returning `Binary` of arithmetic operator `OP` on a register and a register or, where
+    /// `CONSTANT`, a constant, resolved when the view was derived
+    /// (`specialize_register_operands`) as `lane_operator` resolves a non-returning one: two
+    /// integers decide it here with no dispatch on the operator, any other operands take
+    /// `lane_returning_operator_other`.
+    fn lane_returning_operator<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
+        let right = if CONSTANT { i.constant() } else { r.get(i.c) };
+        let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), right) else {
+            sibling!(lane_returning_operator_other::<H, OP, CONSTANT>, r, ip, Carried::script(cx))
+        };
+        lane_return_value!(cx, ip, value)
+    }
+}
+
+script_handler! {
+    /// `lane_returning_operator` of operands other than two integers: other Numbers, then the
+    /// concatenation and BigInt values `lane_binary_value` decides; any other takes the
+    /// general path. Out of line, so the integer case keeps few values live.
+    #[inline(never)]
+    fn lane_returning_operator_other<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), if CONSTANT { i.constant() } else { r.get(i.c) });
+        let value = super::operations::number_value_operator::<OP>(left, right)
+            .or_else(|| (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten())
+            .or_else(|| lane_bigint_value(cx, OP, left, right));
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        lane_return_value!(cx, ip, value)
+    }
+}
+
+script_handler! {
     /// A returning `GetField`'s first run: a single read that names neither `name` nor
     /// `length` (`Vm::reads_function_info`) takes `RETURNING_FIELD_OWN`; any other keeps
     /// `RETURNING_FIELD`, whose cached read prepares them.
@@ -20153,8 +20210,13 @@ fn specialize_register_operands<H: Host>(
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
     let unary = lane_unary::<H> as Handler as *const ();
+    let returning_binary = lane_returning::<H, RETURNING_BINARY> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
+        if record.handler == returning_binary {
+            specialize_returning_operator::<H>(instruction, constants, record);
+            continue;
+        }
         if record.handler == unary {
             if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
                 record.handler = lane_typeof_index::<H> as Handler as *const ();
@@ -20903,36 +20965,51 @@ fn load_relation_jump_handler<H: Host>(operator: u32, backward: bool, capture: b
     relation_operators!(operator, pick)
 }
 
-fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {
-    use super::operations::{
-        ADDITION, BITWISE_AND, BITWISE_OR, BITWISE_XOR, DIVISION, MULTIPLICATION, REMAINDER,
-        SHIFT_LEFT, SHIFT_RIGHT, SHIFT_RIGHT_ZERO_FILL, SUBTRACTION,
+/// Gives a returning `Binary` record of an arithmetic operator on a register and a register
+/// or constant its operator's `lane_returning_operator`, its fields resolved as
+/// `specialize_register_operands` resolves a non-returning one's; any other keeps
+/// `lane_returning`.
+fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constants: &[Value], record: &mut LaneInstruction) {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    let (left, right) = (instruction.operand_b(), instruction.operand_c());
+    if left.kind() != Some(Register) || instruction.numeric_local_target().is_some() {
+        return;
+    }
+    let constant = match right.kind() {
+        Some(Register) => None,
+        Some(Constant) => match constants.get(usize::from(right.payload())) {
+            Some(constant) => Some(*constant),
+            None => return,
+        },
+        _ => return,
     };
-    macro_rules! handler {
-        ($($operator:ident),*) => {
-            match operator {
-                $($operator => Some(if CONSTANT {
-                    lane_operator_constant::<H, $operator> as Handler
-                } else {
-                    lane_operator::<H, $operator> as Handler
-                }),)*
-                _ => None,
+    macro_rules! pick {
+        ($op:expr) => {
+            if constant.is_some() {
+                lane_returning_operator::<H, { $op }, true> as Handler
+            } else {
+                lane_returning_operator::<H, { $op }, false> as Handler
             }
         };
     }
-    handler!(
-        ADDITION,
-        SUBTRACTION,
-        MULTIPLICATION,
-        DIVISION,
-        REMAINDER,
-        SHIFT_LEFT,
-        SHIFT_RIGHT,
-        SHIFT_RIGHT_ZERO_FILL,
-        BITWISE_OR,
-        BITWISE_XOR,
-        BITWISE_AND
-    )
+    let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
+        return;
+    };
+    record.handler = handler as *const ();
+    record.b = left.payload();
+    match constant {
+        Some(constant) => record.operand = LaneOperand { constant },
+        None => record.c = right.payload(),
+    }
+}
+
+fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {
+    macro_rules! pick {
+        ($op:expr) => {
+            if CONSTANT { lane_operator_constant::<H, { $op }> as Handler } else { lane_operator::<H, { $op }> as Handler }
+        };
+    }
+    arithmetic_operators!(operator, pick)
 }
 
 /// Whether some loop of `function`, from a backward jump's target through the jump, has no

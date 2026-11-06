@@ -24833,3 +24833,33 @@ var result = out.join(",");
     };
     std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
 }
+
+#[test]
+fn lane_returning_operators_keep_binary_semantics() {
+    // A returning arithmetic `Binary` decided per operator (`lane_returning_operator`) gives
+    // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
+    // `Binary` gives (expected values from Node).
+    let source = r#"
+      function add(a, b) { return a + b; }
+      function sub1(a) { return a - 1; }
+      function or0(a) { return a | 0; }
+      function shr(a, b) { return a >>> b; }
+      function run() {
+        var s = 0, t = "", u = 0n;
+        for (var i = 0; i < 3000; i++) {
+          s = add(s, sub1(i)) | 0;
+          s = (s + or0(i * 1.5) + shr(-i, 28)) | 0;
+        }
+        t = add("a", 1) + add(1.5, 0.25) + add(true, 1);
+        u = add(2n ** 64n, 1n);
+        var v = add({ valueOf: function () { return 40; } }, 2);
+        return s + " " + t + " " + u + " " + v + " " + sub1("7") + " " + or0(2 ** 32 + 5);
+      }
+      print(run());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "returning-operators.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["11287485 a11.752 18446744073709551617 42 6 5"]);
+}
