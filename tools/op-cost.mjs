@@ -57,6 +57,15 @@ const OPERATIONS = [
     "acc = (acc + bump()) | 0;",
     5,
   ],
+  // Leaf callees that store a field of their receiver (a setter method) or read a global.
+  [
+    "setter-call",
+    "function C() { this.v = 0; } C.prototype.set = function (x) { this.v = x; }; var o = new C();",
+    ["o"],
+    "o.set(i); acc = (acc + o.v) | 0;",
+    6,
+  ],
+  ["global-read-call", "globalThis.K = 3; function gk(x) { return (x + K) | 0; }", ["gk"], "acc = gk(acc);", 4],
   ["allocate", "", [], "var p = { x: i, y: acc }; acc = (p.x + p.y) | 0;", 4],
   [
     "construct",

@@ -25317,6 +25317,165 @@ fn lane_leaf_call_sites_meeting_other_callees_call_each() {
 }
 
 #[test]
+fn lane_leaf_calls_store_fields_as_activations() {
+    // A leaf's field store (`SetField`, `SetThisField`) past its caches makes the leaf an
+    // activation first (`lane_set_field_in_place`): a setter runs above it, a frozen or
+    // non-writable target ignores a sloppy store and throws for a strict one, a proxy's trap
+    // sees its receiver, an accessor defined after warm-up runs, and a store to `undefined`
+    // throws from the leaf's frame (expected values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      function setV(o, x) { o.v = x; }
+      function C() { this.v = 0; }
+      C.prototype.set = function (x) { this.v = x; };
+      function strictSet(o, x) { "use strict"; o.v = x; }
+      var log = [];
+      function run(n) {
+        var a = { v: 0 }, c = new C(), s = 0;
+        for (var i = 0; i < n; i++) { setV(a, i); c.set(i); strictSet(a, i); s = (s + a.v + c.v) | 0; }
+        // A setter reached from a leaf's store runs above the leaf.
+        var acc = { set v(x) { log.push("set " + x); if (x === 2) throw new Error("in setter"); } };
+        for (var j = 0; j < 3; j++) {
+          try { setV(acc, j); } catch (e) { log.push(e.message + " " + frames(e)); }
+        }
+        // An accessor defined on a warmed receiver after warm-up.
+        Object.defineProperty(c, "v", { set: function (x) { log.push("c.v=" + x); }, get: function () { return -1; } });
+        c.set(7);
+        // A frozen and a non-writable target: sloppy stores do nothing, strict ones throw.
+        var frozen = Object.freeze({ v: 1 });
+        setV(frozen, 9);
+        log.push("frozen " + frozen.v);
+        try { strictSet(frozen, 9); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        var fixed = {}; Object.defineProperty(fixed, "v", { value: 5, writable: false });
+        setV(fixed, 6);
+        try { strictSet(fixed, 6); } catch (e) { log.push(e.constructor.name + " " + fixed.v); }
+        // A proxy's trap sees the store and its receiver.
+        var p = new Proxy({}, { set: function (t, k, v, r) { log.push("trap " + k + "=" + v + " " + (r === p)); t[k] = v; return true; } });
+        setV(p, 3);
+        // A store to undefined throws from the leaf.
+        try { setV(undefined, 1); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        return s;
+      }
+      print(run(3000));
+      print(log.join("|"));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-stores.js").0, ["8997000", "set 0|set 1|set 2|in setter set,setV|c.v=7|frozen 1|TypeError strictSet,run|TypeError 5|trap v=3 true|TypeError setV,run"]);
+}
+
+#[test]
+fn lane_leaf_calls_read_globals_as_they_change() {
+    // A leaf's global name load (`LoadName`) reads the global as it is at each call: redefined,
+    // deleted (a ReferenceError from the leaf's frame), turned into a getter, which runs above
+    // the leaf, after warm-up (expected values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      var K = 3;
+      globalThis.G = 4;
+      function readK(x) { return (x + K) | 0; }
+      function readG(x) { return (x + G) | 0; }
+      var log = [];
+      function run(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) s = (readK(s) + readG(i)) | 0;
+        log.push(s);
+        K = 10;
+        log.push(readK(0));
+        delete globalThis.G;
+        try { readG(1); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        globalThis.G = 20;
+        log.push(readG(1));
+        Object.defineProperty(globalThis, "G", { get: function () { log.push("get G"); return 30; }, configurable: true });
+        log.push(readG(1));
+        Object.defineProperty(globalThis, "G", { get: function () { throw new Error("getter"); }, configurable: true });
+        try { readG(1); } catch (e) { log.push(e.message + " " + frames(e)); }
+        for (var j = 0; j < n; j++) s = (s + readK(j)) | 0;
+        return s;
+      }
+      print(run(3000));
+      print(log.join("|"));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-globals.js").0, ["9048000", "4519500|10|ReferenceError readG,run|21|get G|31|getter get,readG"]);
+}
+
+#[test]
+fn lane_leaf_calls_share_captures_and_store_their_own_receiver() {
+    // Closures sharing a capture see each other's stores through leaf calls, and a leaf whose
+    // read stores to `this` (`lane_get_field_sink`) makes its receiver its own, not its
+    // caller's (expected values from Node).
+    let source = r#"
+      function make() {
+        var c = 0;
+        return {
+          bump: function () { c = (c + 1) | 0; return c; },
+          reset: function (v) { c = v; },
+          read: function () { return c; },
+        };
+      }
+      function Holder() { this.a = "holder"; }
+      // A sink store (`this.a = o.b.c`) writes the callee's receiver, not its caller's.
+      function sink(o) { this.a = o.b.c; }
+      Holder.prototype.run = function (n) {
+        var k = make(), other = make(), y = { a: 0, sink: sink }, s = 0;
+        for (var i = 0; i < n; i++) {
+          s = (s + k.bump() + other.bump()) | 0;
+          if (i === 1000) k.reset(500);
+          y.sink({ b: { c: i } });
+        }
+        return [s, k.read(), other.read(), y.a, this.a].join(",");
+      };
+      print(new Holder().run(3000));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-captures.js").0, ["8001501,2499,3000,2999,holder"]);
+}
+
+#[test]
+fn lane_leaf_calls_return_field_reads_as_activations() {
+    // A leaf's returning field read (`lane_returning`) keeps its leaf form through every kind
+    // its site takes, and a getter, a proxy or a throw it meets after warm-up makes the leaf an
+    // activation first (expected values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      var Direction = { FORWARD: 1, BACKWARD: 2 };
+      function Pair(a, b) { this.a = a; this.b = b; this.direction = Direction.FORWARD; }
+      Pair.prototype.input = function () { return (this.direction == Direction.FORWARD) ? this.a : this.b; };
+      function pick(o, f) { return f ? o.a : o.b; }
+      var log = [];
+      function run(n) {
+        var p = new Pair(1, 2), q = new Pair(3, 4), s = 0;
+        q.direction = Direction.BACKWARD;
+        for (var i = 0; i < n; i++) s = (s + p.input() + q.input() + pick(p, i & 1) + pick({ a: 5, b: 6 }, i & 1)) | 0;
+        log.push(s);
+        // A getter met by a leaf's returning read after warm-up runs above the leaf.
+        var g = { b: 0 };
+        Object.defineProperty(g, "a", { get: function () { log.push("get a"); return 9; } });
+        log.push(pick(g, 1));
+        var bad = { get a() { throw new Error("getter"); } };
+        try { pick(bad, 1); } catch (e) { log.push(e.message + " " + frames(e)); }
+        // A proxy's trap sees the read.
+        var prox = new Proxy({}, { get: function (t, k) { log.push("trap " + String(k)); return 11; } });
+        log.push(pick(prox, 0));
+        // An accessor added to the prototype after warm-up shadows nothing own, so own reads stay.
+        Object.defineProperty(Pair.prototype, "c", { get: function () { return 0; } });
+        log.push(p.input());
+        // A changed global shape and a redefined global the leaf reads.
+        Direction = { FORWARD: 2, BACKWARD: 1 };
+        log.push(p.input(), q.input());
+        try { pick(undefined, 1); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        return s;
+      }
+      print(run(3000));
+      print(log.join("|"));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-returning-reads.js").0, ["36000", "36000|get a|9|getter get,pick|trap b|11|1|2|3|TypeError pick,run"]);
+}
+
+#[test]
 fn lane_returning_operators_keep_binary_semantics() {
     // A returning arithmetic `Binary` decided per operator (`lane_returning_operator`) gives
     // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
