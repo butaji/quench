@@ -619,11 +619,11 @@ struct Realm {
     promise: PromiseRuntime,
 }
 impl Realm {
-    /// Binds global lexical `atom` to `value`, declaring a name bound for the first time.
-    fn bind_global_lexical(&mut self, atom: Atom, value: Value) {
-        if self.global_lexical_bindings.insert(atom, value).is_none() {
-            self.global_lexical_declarations.insert(atom);
-        }
+    /// Binds global lexical `atom` to `value`, declaring a name bound for the first time;
+    /// whether that declared it.
+    #[must_use]
+    fn bind_global_lexical(&mut self, atom: Atom, value: Value) -> bool {
+        self.global_lexical_bindings.insert(atom, value).is_none() && self.global_lexical_declarations.insert(atom)
     }
 }
 
@@ -2321,6 +2321,21 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
+        self.note_global_lexical_names();
+    }
+
+    /// Binds global lexical `atom` to `value` (`Realm::bind_global_lexical`), noting a name it
+    /// declared (`note_global_lexical_names`).
+    pub(super) fn bind_global_lexical(&mut self, atom: Atom, value: Value) {
+        if self.realm.bind_global_lexical(atom, value) {
+            self.note_global_lexical_names();
+        }
+    }
+
+    /// The global lexical names changed: the by-name loads that read the global object past
+    /// them (`dispatch_fast::lane_load_global_name`) resolve their names again.
+    pub(super) fn note_global_lexical_names(&self) {
+        self.programs.clear_global_name_hints();
     }
 
     /// The VM field holding the active realm's `native.prototype`.
@@ -2395,12 +2410,16 @@ impl<H: Host> Vm<H> {
                     .map(|_| ());
             }
             if self.eval_script_context {
-                self.realm.bind_global_lexical(atom, Value::DELETED);
+                self.bind_global_lexical(atom, Value::DELETED);
             }
         }
+        let declared = self.realm.global_lexical_declarations.len();
         self.realm
             .global_lexical_declarations
             .extend(root.global_lexical_atoms().iter().copied());
+        if self.realm.global_lexical_declarations.len() != declared {
+            self.note_global_lexical_names();
+        }
         self.realm.immutable_global_lexical_bindings.extend(
             root.global_immutable_atoms()
                 .iter()
@@ -2499,7 +2518,7 @@ impl<H: Host> Vm<H> {
         if let Some(atom) = self.root_global_lexical_atom(program, current.function, slot)
             && self.realm.global_lexical_bindings.contains_key(&atom)
         {
-            self.realm.bind_global_lexical(atom, value);
+            self.bind_global_lexical(atom, value);
         }
     }
     /// Publishes a finished script root's global lexical bindings; every other activation
@@ -2524,7 +2543,7 @@ impl<H: Host> Vm<H> {
                     if frame.captured { self.heap.environment_slot(frame.env, slot) }
                     else { frame.locals.get(slot).copied() }
                 }).unwrap_or(Value::DELETED);
-            self.realm.bind_global_lexical(atom, value);
+            self.bind_global_lexical(atom, value);
         }
     }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {

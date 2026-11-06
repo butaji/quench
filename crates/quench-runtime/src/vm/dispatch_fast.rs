@@ -361,6 +361,10 @@ pub(super) struct LaneView {
     /// The `GetField` and `SetField` records past the loop headers its sites hold, whose
     /// own-field hints a shape compaction clears.
     field_records: Box<[u32]>,
+    /// The by-name load records past the loop headers its sites hold, whose global-object
+    /// hints (`lane_load_global_name`) a shape compaction clears, and a change of the global
+    /// lexical names they answer past (`LaneView::clear_name_hints`).
+    name_records: Box<[u32]>,
 }
 
 #[derive(Debug, Default)]
@@ -1145,15 +1149,8 @@ impl LaneView {
         if matches!(body, LaneBody::Retired { .. }) {
             *body = LaneBody::Declined;
         }
-        for &pc in &self.field_records {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: no handler runs during a collection, and each listed record is a
-            // `GetField` or `SetField` one, whose operand is `field`, and no loop's header.
-            unsafe {
-                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
-                (*record).call_link.set(NO_CALL_LINK);
-            }
-        }
+        self.clear_hints(&self.field_records);
+        self.clear_name_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
@@ -1163,13 +1160,41 @@ impl LaneView {
         }
     }
 
+    /// Clears the global-object hints of its by-name loads (`lane_load_global_name`): the
+    /// global lexical names they answer past changed.
+    pub(super) fn clear_name_hints(&self) {
+        self.clear_hints(&self.name_records);
+    }
+
+    fn clear_hints(&self, pcs: &[u32]) {
+        for &pc in pcs {
+            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
+            // SAFETY: each listed record's operand is `field`, and it is no loop's header
+            // (`holds_field_hint`); its handler reads the hint whole, between runs that write it.
+            unsafe {
+                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
+                (*record).call_link.set(NO_CALL_LINK);
+            }
+        }
+    }
+
     /// How many of its records hold an own-field hint. Profiled builds derive no lane views,
     /// so only the unprofiled test reads it.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn held_field_hints(&self) -> usize {
-        self.field_records
-            .iter()
-            // SAFETY: each listed record is a `GetField` or `SetField` one, whose operand is `field`.
+        self.held_hints(&self.field_records)
+    }
+
+    /// How many of its by-name loads hold a global-object hint (`lane_load_global_name`).
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn held_name_hints(&self) -> usize {
+        self.held_hints(&self.name_records)
+    }
+
+    #[cfg(all(test, not(quench_profiled)))]
+    fn held_hints(&self, pcs: &[u32]) -> usize {
+        pcs.iter()
+            // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
             .filter(|&&pc| unsafe { (*self.records[pc as usize].get()).operand.field.shape } != super::NO_FIELD_RECEIVER)
             .count()
     }
@@ -13153,33 +13178,16 @@ script_handler! {
 
 script_handler! {
     /// A `LoadName` where names resolve statically to global bindings (`lane_load_name_first`):
-    /// an initialized global lexical binding of the name, which the general path's search
-    /// finds first there, else the global object's cached field (`Vm::cached_field_hit`), or
-    /// the getter of the accessor its site cached (`Vm::cached_field_getter`), as Node defines
-    /// `Buffer`, activated with the global object as receiver as a field read's is
-    /// (`lane_activate_getter`). Any other read, including an uninitialized binding or a cache
-    /// miss, takes the general path, which raises or caches it. A `LoadNameCall`
-    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding,
-    /// and `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`.
+    /// the global object's own data field its record's hint names (`LaneInstruction::field_hint`),
+    /// one shape test and one load. The hint holds only while no global lexical binding
+    /// shadows the name: a change of those names clears it (`Vm::note_global_lexical_names`),
+    /// and the global object's deletes, redefinitions and storage changes change its exact
+    /// shape. Any other read takes `lane_load_global_name_refresh`. A `LoadNameCall`
+    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding.
     fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let atom = i.imm();
-        if vm.realm.global_lexical_declarations.contains(&atom) {
-            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
-            else {
-                return exit(ip);
-            };
-            r.set(i.a, value);
-            if KIND == LOAD_NAME_CALL {
-                r.set(i.b, Value::UNDEFINED);
-            }
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
-        let globals = vm.realm.globals;
-        let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
-            sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
+        let Some(value) = vm.record_field_entry_hit(i.field_hint(), vm.realm.globals) else {
+            sibling!(lane_load_global_name_refresh::<H, KIND>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
@@ -13190,7 +13198,46 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_load_global_name` past its lexical binding and cached global property: a
+    /// `lane_load_global_name` past its record's hint: an initialized global lexical binding of
+    /// the name, which the general path's search finds first there; else the global object's
+    /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
+    /// (`Vm::cached_field_hit`). Any other read takes `lane_load_global_name_miss`, or the general
+    /// path for an uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as
+    /// `undefined`.
+    #[inline(never)]
+    fn lane_load_global_name_refresh<KIND: u8>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let atom = i.imm();
+        let globals = vm.realm.globals;
+        let value = if vm.realm.global_lexical_declarations.contains(&atom) {
+            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
+            else {
+                return exit(ip);
+            };
+            value
+        } else if let Some(hint) = vm.own_data_field_hint(globals, atom)
+            && let Some(value) = vm.record_field_entry_hit(hint, globals)
+        {
+            set_field_hint(ip, hint);
+            value
+        } else {
+            let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
+                sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
+            };
+            value
+        };
+        r.set(i.a, value);
+        if KIND == LOAD_NAME_CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_load_global_name_refresh` past its lexical binding and global property: a
     /// global accessor's getter, activated in the lane, or a plain global property, recorded
     /// in the site's entry; any other read takes the general path. Out of line: the getter's
     /// activation and the lookups take stack temporaries, which the common read then does not
@@ -19683,7 +19730,7 @@ fn lane_operand(
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,
         },
-        _ if matches!(instruction.op(), Op::GetField | Op::SetField) => LaneOperand {
+        _ if holds_field_hint(instruction.op()) => LaneOperand {
             field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
         },
         _ if is_script_call(instruction.op()) => LaneOperand {
@@ -20981,15 +21028,19 @@ fn derive_lane_view<'live, H: Host>(
             params: function.params,
             initial: function.initial_register.value(),
         });
-    let field_records = decoded
-        .iter()
-        .enumerate()
-        .filter(|&(pc, instruction)| {
-            matches!(instruction.op(), Op::GetField | Op::SetField)
-                && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
-        })
-        .map(|(pc, _)| pc as u32)
-        .collect();
+    let hinted_records = |names: bool| -> Box<[u32]> {
+        decoded
+            .iter()
+            .enumerate()
+            .filter(|&(pc, instruction)| {
+                holds_field_hint(instruction.op())
+                    && is_name_load(instruction.op()) == names
+                    && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
+            })
+            .map(|(pc, _)| pc as u32)
+            .collect()
+    };
+    let (field_records, name_records) = (hinted_records(false), hinted_records(true));
     let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
         records.into_iter().map(std::cell::UnsafeCell::new).collect();
     let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
@@ -21024,7 +21075,36 @@ fn derive_lane_view<'live, H: Host>(
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
+        name_records,
     }
+}
+
+/// Whether an instruction's record holds an own-field hint (`LaneInstruction::field_hint`) in
+/// a `field` operand: a field read or store's of its receiver, a by-name load's of the global
+/// object (`lane_load_global_name`).
+fn holds_field_hint(op: Op) -> bool {
+    matches!(op, Op::GetField | Op::SetField) || is_name_load(op)
+}
+
+/// Whether an instruction's record is a call site a read memo may answer
+/// (`lane_memoize_read`), whose operand is `call`.
+fn is_script_call(op: Op) -> bool {
+    matches!(
+        op,
+        Op::Call
+            | Op::CallArray
+            | Op::CallForwardingArguments
+            | Op::CallKnown
+            | Op::CallMethod
+            | Op::CallSpread
+            | Op::CallThisMethod
+            | Op::Construct
+    )
+}
+
+/// Whether an instruction is a by-name load (`LOAD_NAME`).
+fn is_name_load(op: Op) -> bool {
+    matches!(op, Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
@@ -21042,22 +21122,6 @@ fn holds_no_call_link(op: Op) -> bool {
             | Op::LoadNameCall
             | Op::Construct
             | Op::SuperCallCheck
-    )
-}
-
-/// Whether an instruction's record is a call site a read memo may answer
-/// (`lane_memoize_read`), whose operand is `call`.
-fn is_script_call(op: Op) -> bool {
-    matches!(
-        op,
-        Op::Call
-            | Op::CallArray
-            | Op::CallForwardingArguments
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallSpread
-            | Op::CallThisMethod
-            | Op::Construct
     )
 }
 
