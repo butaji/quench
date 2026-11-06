@@ -4878,6 +4878,59 @@ script_handler! {
     }
 }
 
+/// The double a `lane_operator_double_constant` record carries as its constant: a Number no
+/// integer holds, whose value bits are its double's (`constant_operator_handler`).
+#[inline(always)]
+fn double_constant(i: &LaneInstruction) -> f64 {
+    f64::from_bits(i.constant().to_bits())
+}
+
+script_handler! {
+    /// `lane_operator_constant` of an arithmetic operator (`fused_arithmetic`) whose constant is
+    /// a double no integer holds, proved when the view chose the handler
+    /// (`constant_operator_handler`): no integer step, which such a constant always declines,
+    /// and no tag test of the constant. A left operand other than a Number takes
+    /// `lane_operator_constant_numbers`.
+    fn lane_operator_double_constant<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = r.get(i.b).as_number().and_then(|left| super::operations::number_operator::<OP>(left, double_constant(i)))
+        else {
+            sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, Value::number(value));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_pair` whose first operator takes a double constant
+    /// (`lane_operator_double_constant`), the `a * 0.5 + b` of compiled code: the first double
+    /// feeds the second as it is, so only the pair's result is made a Number; each operator
+    /// rounds once, as the two records do. Other operands run the record whose step declines
+    /// them, which stays in place.
+    fn lane_operator_constant_pair<FIRST: u32, SECOND: u32, FIRST_DEAD: bool>(cx, r, ip, i, view) {
+        use super::operations::number_operator;
+        let Some(first) = r.get(i.b).as_number().and_then(|left| number_operator::<FIRST>(left, double_constant(i)))
+        else {
+            sibling!(lane_operator_constant_numbers::<H, FIRST>, r, ip, Carried::script(cx))
+        };
+        // SAFETY: the pair is two records, the second never the view's last.
+        let second = unsafe { &*following(ip) };
+        let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_number() };
+        let Some(value) = operand(second.b)
+            .zip(operand(second.c))
+            .and_then(|(left, right)| number_operator::<SECOND>(left, right))
+        else {
+            r.set(i.a, Value::number(first));
+            next!(cx, r, following(ip), Carried::script(cx))
+        };
+        if !FIRST_DEAD {
+            r.set(i.a, Value::number(first));
+        }
+        r.set(second.a, Value::number(value));
+        next!(cx, r, following(following(ip)), Carried::script(cx))
+    }
+}
+
 script_handler! {
     /// `lane_operator_constant_numbers` of an addition that concatenates.
     #[inline(never)]
@@ -5658,6 +5711,48 @@ script_handler! {
         let load = unsafe { &*following(ip) };
         r.set(load.a, value);
         next!(cx, r, following(following(ip)), view)
+    }
+}
+
+script_handler! {
+    /// `lane_load_capture`, `lane_operator_int32` of its value and an integer constant, and the
+    /// store of the truncated result to the same capture (`lane_store_capture`, or
+    /// `lane_store_capture_load` with its read where `LOADS`), the `c = (c + 1) | 0` of
+    /// compiled code (`specialize_capture_updates`), as one record: one proof of the slots and
+    /// one bounds test serve the read and the write. Slots that do not admit the store directly,
+    /// or a value other than an integer, run the read's own record, then the others.
+    fn lane_update_capture_int32<OP: u32, LOADS: bool>(cx, r, ip, i, view) {
+        let slot = usize::from(ImmediateLayout::capture_slot(i.imm()));
+        // SAFETY: the run is the read, the operator, its truncation and the store, then the
+        // store's read where `LOADS` (`specialize_capture_updates`).
+        let (operator, truncation) = unsafe { (&*following(ip), &*following(following(ip))) };
+        let store = following(following(following(ip)));
+        let right = operator.imm() as i32;
+        let updated = capture_stores(unsafe { (*cx).capture }).and_then(|slots| {
+            // SAFETY: the running function's dense capture slots, which admit this write
+            // (`CAPTURE_STORES`); an integer needs no barrier and no collection runs in the lane.
+            unsafe {
+                crate::heap::EnvironmentSlots::update_storage(slots, slot, |value| {
+                    let value = value.as_int()?;
+                    Some(Value::integer(if OP == super::operations::SUBTRACTION {
+                        value.wrapping_sub(right)
+                    } else {
+                        value.wrapping_add(right)
+                    }))
+                })
+            }
+        });
+        let Some((old, value)) = updated else {
+            sibling!(lane_load_capture::<H>, r, ip, view)
+        };
+        r.set(i.a, old);
+        r.set(truncation.a, value);
+        if LOADS {
+            // SAFETY: as above.
+            r.set(unsafe { &*following(store) }.a, value);
+            next!(cx, r, following(following(store)), view)
+        }
+        next!(cx, r, following(store), view)
     }
 }
 
@@ -21134,6 +21229,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_store_moves::<H>(&mut records);
         specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
+        specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records);
@@ -21719,6 +21815,21 @@ fn arithmetic_operator<H: Host>(handler: *const ()) -> Option<u32> {
     None
 }
 
+/// The operator of a `lane_operator_double_constant` record (`fused_arithmetic`); `None` for
+/// any other handler.
+fn double_constant_operator<H: Host>(handler: *const ()) -> Option<u32> {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+    macro_rules! find {
+        ($($operator:ident),*) => {
+            $(if handler == lane_operator_double_constant::<H, $operator> as Handler as *const () {
+                return Some($operator);
+            })*
+        };
+    }
+    fused_arithmetic!(find);
+    None
+}
+
 /// Gives each fused update and read (`lane_update_get_index`) whose element the next record,
 /// an arithmetic operator on two registers, takes as an operand the fused update, read and
 /// operation (`lane_update_get_index_operator`). The read and operator records stay as they
@@ -21757,7 +21868,8 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
 }
 
 /// Gives each arithmetic operator whose result the next arithmetic operator takes as an
-/// operand the fused pair (`lane_operator_pair`). Records a fused record before them already
+/// operand the fused pair (`lane_operator_pair`, or `lane_operator_constant_pair` after a
+/// double constant's operator). Records a fused record before them already
 /// runs are skipped, so a pair starts where control arrives; both records stay as they are,
 /// for jumps and for a step the pair leaves to them.
 ///
@@ -21773,8 +21885,9 @@ fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Opt
             continue;
         }
         let (first, second) = (&records[pc], &records[pc + 1]);
+        let constant = double_constant_operator::<H>(first.handler);
         let (Some(left), Some(right)) =
-            (arithmetic_operator::<H>(first.handler), arithmetic_operator::<H>(second.handler))
+            (constant.or_else(|| arithmetic_operator::<H>(first.handler)), arithmetic_operator::<H>(second.handler))
         else {
             pc += 1;
             continue;
@@ -21789,9 +21902,11 @@ fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Opt
                 .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
         macro_rules! seconds {
             ($first:ident; $($second:ident),*) => {
-                match (right, first_dead) {
-                    $(($second, false) => lane_operator_pair::<H, $first, $second, false> as Handler,
-                      ($second, true) => lane_operator_pair::<H, $first, $second, true> as Handler,)*
+                match (right, first_dead, constant.is_some()) {
+                    $(($second, false, false) => lane_operator_pair::<H, $first, $second, false> as Handler,
+                      ($second, true, false) => lane_operator_pair::<H, $first, $second, true> as Handler,
+                      ($second, false, true) => lane_operator_constant_pair::<H, $first, $second, false> as Handler,
+                      ($second, true, true) => lane_operator_constant_pair::<H, $first, $second, true> as Handler,)*
                     _ => unreachable!("an arithmetic operator the lane fuses"),
                 }
             };
@@ -22131,6 +22246,39 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
     }
 }
 
+/// Gives each own capture's read (`lane_load_capture`) whose value an int32 sum or difference
+/// with a constant (`lane_operator_int32`) takes, and whose truncated result the record after
+/// stores back to the same capture (`lane_store_capture`, `lane_store_capture_load`), the fused
+/// update (`lane_update_capture_int32`). The records stay for jumps and for steps the update
+/// leaves to them.
+fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
+    use super::operations::{ADDITION, SUBTRACTION};
+    let load = lane_load_capture::<H> as Handler as *const ();
+    let store = lane_store_capture::<H> as Handler as *const ();
+    let store_load = lane_store_capture_load::<H> as Handler as *const ();
+    let add = lane_operator_int32::<H, ADDITION, true> as Handler as *const ();
+    let subtract = lane_operator_int32::<H, SUBTRACTION, true> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(3) {
+        let (read, operator, truncation, write) = (&records[pc], &records[pc + 1], &records[pc + 2], &records[pc + 3]);
+        if read.handler != load
+            || (operator.handler != add && operator.handler != subtract)
+            || operator.b != read.a
+            || (write.handler != store && write.handler != store_load)
+            || write.imm() != read.imm()
+            || write.a != truncation.a
+        {
+            continue;
+        }
+        let handler: Handler = match (operator.handler == add, write.handler == store_load) {
+            (true, true) => lane_update_capture_int32::<H, ADDITION, true>,
+            (true, false) => lane_update_capture_int32::<H, ADDITION, false>,
+            (false, true) => lane_update_capture_int32::<H, SUBTRACTION, true>,
+            (false, false) => lane_update_capture_int32::<H, SUBTRACTION, false>,
+        };
+        records[pc].handler = handler as *const ();
+    }
+}
+
 /// Gives each frame `LoadLocal` and `StoreLocal` record the handler of its slot's static
 /// binding facts (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self
 /// binding a store must leave, keeps the general handler.
@@ -22325,8 +22473,18 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
 /// its record carries: an integer as the immediate, its tag proved here once
 /// (`lane_operator_integer_constant`); any other value as the constant.
 fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<(Handler, LaneOperand)> {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     let Some(integer) = constant.as_int() else {
-        return Some((operator_handler::<H, true>(operator)?, LaneOperand { constant }));
+        macro_rules! double {
+            ($($op:ident),*) => {
+                match operator {
+                    $($op => lane_operator_double_constant::<H, $op> as Handler,)*
+                    _ => operator_handler::<H, true>(operator)?,
+                }
+            };
+        }
+        let handler = if constant.as_number().is_some() { fused_arithmetic!(double) } else { operator_handler::<H, true>(operator)? };
+        return Some((handler, LaneOperand { constant }));
     };
     macro_rules! pick {
         ($op:expr) => {
