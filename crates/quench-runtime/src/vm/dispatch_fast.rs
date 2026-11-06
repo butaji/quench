@@ -5616,33 +5616,44 @@ fn set_inherited_hint(ip: Ip, index: u32) {
     }
 }
 
-/// Makes `value`, which the immediate prototype of `object` answered for the polymorphic
-/// `GetField` record at `ip`, that record's hint (`Vm::hold_holder_hint`), in place of the
-/// one it holds. Out of line, so the reads that keep their hint keep their registers.
+/// Makes the prototype's answer `hold` keeps (`Vm::hold_holder_hint`, `Vm::hold_string_hint`)
+/// the hint of the `GetField` record at `ip`, in place of the one it holds, which `hold` takes.
+/// Out of line, so the reads that keep their hint keep their registers.
 #[cold]
 #[inline(never)]
-fn set_holder_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, value: Value) {
+fn set_prototype_hint(ip: Ip, hold: impl FnOnce(Option<u16>) -> Option<u16>) {
+    if holds_loop_site(ip) {
+        return;
+    }
     // SAFETY: `ip` is a `GetField` record of a live view.
     let i = unsafe { &*ip };
     let owned = (unsafe { i.operand.field.shape } == HOLDER_HINT).then(|| i.call_link.get());
-    if let Some(index) = vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK) {
+    if let Some(index) = hold(owned) {
         set_record_hint(ip, HOLDER_HINT, index);
     }
 }
 
-/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header, whose
-/// `call_link` names its site (`lane_header_site`): an empty hint's link is `NO_CALL_LINK`,
-/// and a held one's shape a recorded one, `INHERITED_HINT` or `HOLDER_HINT`.
+/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header
+/// (`holds_loop_site`).
 #[inline(always)]
 fn set_record_hint(ip: Ip, shape: u32, link: u16) {
+    if !holds_loop_site(ip) {
+        // SAFETY: as `requicken`; `ip` is a field read/store record of a live view.
+        unsafe {
+            (*ip.cast_mut()).operand.field.shape = shape;
+            (*ip).call_link.set(link);
+        }
+    }
+}
+
+/// Whether the field record at `ip` is a held loop header's, whose `call_link` names its
+/// site (`lane_header_site`), so it keeps no hint: an empty hint's link is `NO_CALL_LINK`,
+/// and a held one's shape a recorded one, `INHERITED_HINT` or `HOLDER_HINT`.
+#[inline(always)]
+fn holds_loop_site(ip: Ip) -> bool {
     // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
-    let header = unsafe { i.operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
-    if !header {
-        // SAFETY: as `requicken`.
-        unsafe { (*ip.cast_mut()).operand.field.shape = shape };
-        i.call_link.set(link);
-    }
+    (unsafe { i.operand.field.shape }) == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
 }
 
 /// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
@@ -5680,7 +5691,7 @@ script_handler! {
                 }
                 let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, super::EMPTY_CACHE)?;
                 if matches!(hit, super::object::PolymorphicHit::Holder) {
-                    set_holder_hint(vm, ip, object, value);
+                    set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
                 }
                 return Some(value);
             }
@@ -5796,15 +5807,32 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_string` of a register base whose `String.prototype` entry answers
-    /// (`Vm::string_prototype_field_hit`): one tag test and the entry's shape before the
-    /// slot. Any other read takes `lane_get_field_string` out of line.
+    /// `lane_get_field_string` of a register base whose read the record's hint answers
+    /// (`Vm::string_hint_hit`): one tag test and the hint's name, prototype and epoch. Any
+    /// other read takes `lane_get_field_string_refresh` out of line.
     fn lane_get_field_string_register<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let Some(value) = vm.heap.is_string(base).then(|| vm.string_hint_hit(i.call_link.get(), i.imm())).flatten() else {
+            sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_string_register` past its hint: the site's `String.prototype` entry
+    /// (`Vm::string_prototype_field_hit`), whose answer becomes the hint. Any other read
+    /// takes `lane_get_field_string`.
+    #[inline(never)]
+    fn lane_get_field_string_refresh<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let base = r.get(i.b);
         let Some(value) = vm.heap.is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
             sibling!(lane_get_field_string::<H>, r, ip, Carried::script(cx))
         };
+        set_prototype_hint(ip, |owned| vm.hold_string_hint(owned, i.imm(), value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }

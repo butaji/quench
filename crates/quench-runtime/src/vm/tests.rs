@@ -1250,6 +1250,32 @@ fn polymorphic_method_reads_follow_their_holder_hint() {
 }
 
 #[test]
+fn string_method_reads_follow_the_prototype_values() {
+    // A string primitive's method read keeps `String.prototype`'s answer as its record's hint
+    // (`Vm::string_hint_hit`): a method replaced by assignment, restored, and redefined each
+    // reads the method `String.prototype` holds then. Expected value is Node's (v26).
+    let source = r#"
+      function code(str, k) { return str.charCodeAt(k); }
+      function tail(str) { return str.slice(1); }
+      var s = 0, i, text = "hello world";
+      for (i = 0; i < 500; i++) s += code(text, i % 11) + tail(i & 1 ? "ab" : "xyz").length;
+      var original = String.prototype.charCodeAt;
+      String.prototype.charCodeAt = function (k) { return 1000 + k; };
+      for (i = 0; i < 300; i++) s += code(text, i % 11);
+      String.prototype.charCodeAt = original;
+      for (i = 0; i < 300; i++) s += code(i & 1 ? text : "QQ", i % 2);
+      Object.defineProperty(String.prototype, "slice", { value: function () { return "zzzz"; }, writable: true, configurable: true });
+      for (i = 0; i < 300; i++) s += tail("ab").length;
+      print(String(s));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "string-read-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["381490"]);
+}
+
+#[test]
 fn call_sites_test_each_target_their_link_names() {
     // One call site links the target cache entry of a plain callee, which dies; after the
     // collection, functions that need another entry (a kept `arguments`, values past their

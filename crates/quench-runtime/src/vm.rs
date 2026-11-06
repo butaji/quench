@@ -756,16 +756,19 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
-/// A polymorphic `GetField` record's read of `atom` that a receiver's immediate prototype
-/// answered (`Vm::holder_hint_hit`): a receiver of exact shape `receiver`, which lacks the
-/// name, whose prototype link is `prototype`, read `value` while the prototype value epoch was
-/// `epoch` (`heap::prototype_value_epoch`), which every change to a marked prototype's layout
-/// or slot values advances.
+/// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
+/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver of exact shape `receiver`, which
+/// lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
+/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` while
+/// the prototype value epoch was `epoch` (`heap::prototype_value_epoch`), which every change
+/// to a marked prototype's layout or slot values advances. `prototype` is `holder` as an
+/// object's header links it, which an object receiver's test compares.
 #[derive(Clone, Copy)]
 struct HolderHint {
     receiver: u32,
     atom: Atom,
     prototype: crate::heap::ProtoLink,
+    holder: Value,
     value: Value,
     epoch: u64,
 }

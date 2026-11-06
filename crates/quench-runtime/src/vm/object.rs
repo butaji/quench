@@ -2203,20 +2203,44 @@ impl<H: Host> Vm<H> {
         .then_some(hint.value)
     }
 
+    /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
+    /// (`hold_string_hint`): the realm's `String.prototype` still, under the epoch the hint
+    /// was read in.
+    #[inline(always)]
+    pub(super) fn string_hint_hit(&self, index: u16, atom: Atom) -> Option<Value> {
+        let hint = self.holder_hints.get(usize::from(index))?;
+        (hint.atom == atom
+            && hint.holder == self.string_proto
+            && hint.epoch == self.prototype_value_epoch())
+        .then_some(hint.value)
+    }
+
     /// Makes `value`, which the immediate prototype of the direct object `object` answered
-    /// for a polymorphic read of `atom`, a record's hint: in place of `owned`, the hint the
-    /// record holds, else as a new one; its index, `None` for another receiver or once the
-    /// indices reach `limit`. The prototype is marked first, so a change to it advances the
-    /// epoch the hint holds under.
+    /// for a polymorphic read of `atom`, a record's hint (`hold_prototype_hint`); `None` for
+    /// another receiver.
     pub(super) fn hold_holder_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
-        let record = object.direct_object_index()?;
-        let prototype = self.heap.object_record_by_id(record).proto();
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let (shape, prototype) = (receiver.exact_shape(), receiver.proto());
+        self.hold_prototype_hint(owned, atom, shape, prototype, value, limit)
+    }
+
+    /// Makes `value`, which `String.prototype` answered for a string primitive's read of
+    /// `atom`, a record's hint (`hold_prototype_hint`).
+    pub(super) fn hold_string_hint(&mut self, owned: Option<u16>, atom: Atom, value: Value, limit: u16) -> Option<u16> {
+        self.hold_prototype_hint(owned, atom, NO_FIELD_RECEIVER, self.string_proto, value, limit)
+    }
+
+    /// Makes `value`, which `prototype` answered for a read of `atom` from a receiver of
+    /// exact shape `receiver`, a record's hint: in place of `owned`, the hint the record
+    /// holds, else as a new one; its index, `None` once the indices reach `limit`. The
+    /// prototype is marked first, so a change to it advances the epoch the hint holds under.
+    fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, receiver: u32, prototype: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_prototype(prototype);
-        let receiver = self.heap.object_record_by_id(record);
         let hint = super::HolderHint {
-            receiver: receiver.exact_shape(),
+            receiver,
             atom,
-            prototype: receiver.proto_link(),
+            prototype: crate::heap::ProtoLink::of(prototype),
+            holder: prototype,
             value,
             epoch: self.prototype_value_epoch(),
         };
