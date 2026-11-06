@@ -1,14 +1,23 @@
-//! An array's dense elements: one copy-on-write allocation that holds a header (owner count,
+//! An array's dense elements: one copy-on-write backing that holds a header (owner count,
 //! length, capacity) followed by the values. Arrays that copy a constant literal or a slice
 //! share one backing until either writes, so an element read is one load from the backing,
 //! and an empty array owns no allocation at all.
+//!
+//! A backing is a heap allocation its owners count, or a young run (`ArrayElements::young`)
+//! that no owner counts: a new small array's elements, bumped from the property arena's
+//! nursery (`ValueArena::young_elements`) beside the young objects' runs, where a dead one
+//! costs nothing to reclaim. Like a shared backing it admits reads only: the first write
+//! copies it to an allocation of its own (`make_mut`), as does the collection its array
+//! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
+//! record its sweep shows.
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
 
 #[repr(C, align(8))]
 struct Header {
-    /// Owners of this backing; zero only in the shared empty header, which no owner counts.
+    /// Owners of this backing; zero where no owner counts it: the shared empty header and
+    /// young runs, which no drop frees.
     owners: u32,
     len: u32,
     capacity: u32,
@@ -48,6 +57,10 @@ fn recounted(others: u32, added: u32, removed: u32) -> u32 {
 
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
+/// The arena values a young run's header takes ahead of its values.
+pub(crate) const HEADER_VALUES: usize = VALUES_OFFSET / size_of::<Value>();
+const _: () = assert!(HEADER_VALUES * size_of::<Value>() == VALUES_OFFSET);
+const _: () = assert!(align_of::<Header>() <= align_of::<Value>());
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length: native code that
@@ -142,6 +155,50 @@ impl ArrayElements {
         elements
     }
 
+    /// The young run (`HEADER_VALUES` and then `len` values) at `run` for the `len` values
+    /// `value` gives for each index in order, admitting reads until a write or a survived
+    /// collection copies it to an allocation (`make_mut`, `leave_nursery`).
+    ///
+    /// # Safety
+    /// `run` starts `HEADER_VALUES + len` values of the arena's nursery that nothing else
+    /// holds, and the array record that takes these elements is made before any collection.
+    pub(crate) unsafe fn young(run: NonNull<Value>, len: usize, mut value: impl FnMut(usize) -> Value) -> Self {
+        debug_assert!(len > 0);
+        let header = run.cast::<Header>();
+        let elements = Self { header };
+        let mut counted = 0;
+        for slot in 0..len {
+            let written = value(slot);
+            counted += other(written);
+            // SAFETY: the run holds `len` values after the header.
+            unsafe { elements.values().add(slot).write(written) };
+        }
+        // SAFETY: the run starts with room for a header, which no owner counts.
+        unsafe {
+            header.as_ptr().write(Header {
+                owners: 0,
+                len: len as u32,
+                capacity: len as u32,
+                others: counted,
+            });
+        }
+        elements
+    }
+
+    /// Whether this backing is a young run (`ArrayElements::young`).
+    #[inline(always)]
+    pub(crate) fn is_young(&self) -> bool {
+        self.header().owners == 0 && self.capacity() != 0
+    }
+
+    /// Copies a young run to an allocation of this array's own, as the collection it
+    /// survives must before the nursery takes the run back; any other backing stays.
+    pub(crate) fn leave_nursery(&mut self) {
+        if self.is_young() {
+            self.detach();
+        }
+    }
+
     fn layout(capacity: usize) -> Layout {
         Layout::from_size_align(
             VALUES_OFFSET + capacity.checked_mul(size_of::<Value>()).expect("array backing overflow"),
@@ -224,7 +281,7 @@ impl ArrayElements {
         self.header.as_ptr().cast()
     }
 
-    /// The owners of this backing; zero for the shared empty one.
+    /// The owners of this backing; zero for the shared empty one and young runs.
     pub(crate) fn owner_count(&self) -> usize {
         self.header().owners as usize
     }
@@ -268,8 +325,8 @@ impl ArrayElements {
         }
     }
 
-    /// This array's values for writing: its own backing, copied first when shared (or when it
-    /// is the shared empty header).
+    /// This array's values for writing: its own backing, copied first when shared or young
+    /// (or when it is the shared empty header).
     #[inline(always)]
     pub(crate) fn make_mut(&mut self) -> &mut UniqueElements {
         if !self.is_unique() && self.capacity() != 0 {
@@ -307,16 +364,21 @@ impl From<Vec<Value>> for ArrayElements {
 
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
-        if self.capacity() != 0 {
-            // Only losing unique ownership can falsify a writable proof. A shared
-            // backing already admits reads only; another owner changes neither its
-            // address nor its bounds.
-            if self.is_unique() {
-                super::array_proofs::retire_array_storage_proofs();
+        match (self.header().owners, self.capacity()) {
+            (0, 0) => {}
+            // A young run has one owner, its array record: a copy owns an allocation.
+            (0, _) => return Self::copied(self, self.header().others),
+            (owners, _) => {
+                // Only losing unique ownership can falsify a writable proof. A shared
+                // backing already admits reads only; another owner changes neither its
+                // address nor its bounds.
+                if self.is_unique() {
+                    super::array_proofs::retire_array_storage_proofs();
+                }
+                let owners = owners.checked_add(1).expect("array backing owners overflow");
+                // SAFETY: arrays are single-threaded; the header is live and only owners write it.
+                unsafe { (*self.header.as_ptr()).owners = owners };
             }
-            let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
-            // SAFETY: arrays are single-threaded; the header is live and only owners write it.
-            unsafe { (*self.header.as_ptr()).owners = owners };
         }
         Self {
             header: self.header,
@@ -326,15 +388,14 @@ impl Clone for ArrayElements {
 
 impl Drop for ArrayElements {
     fn drop(&mut self) {
-        let capacity = self.capacity();
-        if capacity == 0 {
+        // The empty header and young runs count no owner, and no drop frees them.
+        let Some(owners) = self.header().owners.checked_sub(1) else {
             return;
-        }
-        let owners = self.header().owners - 1;
+        };
         if owners == 0 {
             // SAFETY: the last owner frees the allocation `allocate` made for this capacity;
             // values need no drop.
-            unsafe { dealloc(self.header.as_ptr().cast(), Self::layout(capacity)) };
+            unsafe { dealloc(self.header.as_ptr().cast(), Self::layout(self.capacity())) };
         } else {
             // SAFETY: as in `clone`.
             unsafe { (*self.header.as_ptr()).owners = owners };
@@ -751,6 +812,34 @@ mod tests {
         holey.make_mut().remove(0);
         assert!(holey.holds_only_int32());
         assert!(ArrayElements::new().holds_only_int32());
+    }
+
+    #[test]
+    fn young_runs_admit_reads_and_copy_out_on_write_clone_or_survival() {
+        let mut run = vec![Value::UNDEFINED; HEADER_VALUES + 3];
+        let at = NonNull::new(run.as_mut_ptr()).unwrap();
+        let values = [Value::integer(1), Value::DELETED, Value::integer(3)];
+        // SAFETY: the run holds a header and three values, and nothing else uses it.
+        let young = || unsafe { ArrayElements::young(at, 3, |index| values[index]) };
+        let mut written = young();
+        assert!(written.is_young() && !written.holds_only_int32());
+        assert_eq!((&*written, written.owner_count(), written.capacity()), (&values[..], 0, 3));
+        assert!(written.unique_values().is_none() && !written.replace_in_place(0, Value::integer(9)));
+        written.make_mut().set(1, Value::integer(2));
+        assert!(!written.is_young() && written.holds_only_int32());
+        assert_eq!(written.owner_count(), 1);
+        assert_eq!(young()[1], Value::DELETED, "a write copies the run first");
+        let original = young();
+        let copy = original.clone();
+        assert_eq!((copy.owner_count(), &*copy), (1, &values[..]));
+        assert_ne!(copy.as_ptr(), original.as_ptr());
+        let mut survivor = young();
+        survivor.leave_nursery();
+        assert_eq!((survivor.is_young(), survivor.owner_count(), &*survivor), (false, 1, &values[..]));
+        survivor.leave_nursery();
+        assert_eq!(survivor.owner_count(), 1, "an allocation stays where it is");
+        drop((original, young()));
+        assert_eq!(run[HEADER_VALUES], Value::integer(1), "dropping a young run frees nothing");
     }
 
     #[test]

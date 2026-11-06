@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
 use array_proofs::retire_array_storage_proofs;
@@ -1185,9 +1185,16 @@ impl Heap {
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
     /// allocation (`charge_allocation`) for its element storage.
     fn alloc_array(&mut self, object: ArrayObject) -> Value {
+        let prototype = object.proto();
+        self.alloc_array_of(object, prototype)
+    }
+
+    /// `alloc_array` of `object`, whose prototype is `prototype`.
+    #[inline(always)]
+    fn alloc_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
         self.admit_object_contents(&object);
-        self.mark_prototype(object.proto());
-        self.charge_allocation(array_payload_bytes(&object), 0);
+        self.mark_prototype(prototype);
+        self.charge_payload_allocation(array_payload_bytes(&object));
         match self.array_records.try_insert(object) {
             Ok(record_id) => {
                 let value = Value::direct_array(record_id);
@@ -1195,20 +1202,46 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(object) => self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells()),
+            // Only a record's sweep shows a young run's survival (`ArrayElements::young`).
+            Err(mut object) => {
+                object.leave_nursery();
+                self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells())
+            }
         }
+    }
+
+    /// A new array of `prototype`, with no properties, of the `len` elements `element` gives
+    /// for each index, which a young run holds where it can (`ValueArena::young_elements`).
+    #[inline(always)]
+    pub(crate) fn alloc_literal_array(&mut self, prototype: Value, len: usize, element: impl FnMut(usize) -> Value) -> Value {
+        let elements = match self.properties.young_elements(len) {
+            // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
+            Some(run) => unsafe { ArrayElements::young(run, len, element) },
+            None => ArrayElements::from_fn(len, element),
+        };
+        let object = ArrayObject::fresh(prototype, elements);
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Array { object });
+        }
+        self.alloc_array_of(object, prototype)
     }
 
     /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
     /// which `external` are external buffers.
     #[inline(always)]
     fn charge_allocation(&mut self, payload: usize, external: usize) {
+        self.charge_payload_allocation(payload);
+        self.charge_external_growth(external);
+    }
+
+    /// `charge_allocation` of a cell that owns no external buffer, as an array.
+    #[inline(always)]
+    fn charge_payload_allocation(&mut self, payload: usize) {
         self.charge_materialized_text();
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocated += weight;
         self.total_allocations += 1;
-        self.charge_external_growth(external);
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
@@ -1247,7 +1280,10 @@ impl Heap {
                     self.profile_allocation(value);
                     return value;
                 }
-                Err(object) => Cell::Array { object },
+                Err(mut object) => {
+                    object.leave_nursery();
+                    Cell::Array { object }
+                }
             },
             Cell::Promise(promise) => match self.promise_records.try_insert(*promise) {
                 Ok(record_id) => {
@@ -1987,11 +2023,17 @@ impl Heap {
     /// The string operations that make it allocate or return through the places that call
     /// this (generic allocation, native and host calls, each collection); safepoints, which
     /// run far more often, never pay for it.
+    #[inline(always)]
     pub(crate) fn charge_materialized_text(&mut self) {
         let text = crate::vm::wtf16::take_materialized_text();
-        if text == crate::vm::wtf16::MaterializedText::default() {
-            return;
+        if text != crate::vm::wtf16::MaterializedText::default() {
+            self.charge_text(text);
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn charge_text(&mut self, text: crate::vm::wtf16::MaterializedText) {
         // A flattened string's units join the payload ledger (`payload_bytes`), which its
         // sweep releases them from (`JsString::flat_unit_bytes`); text beside them is
         // allocation weight only, as no sweep releases it from the ledger.
@@ -2382,6 +2424,9 @@ impl Heap {
         // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
         // where no compaction moves every run.
         let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
+        // The arrays whose young runs of elements survive, copied out before the young
+        // objects' runs move or compaction moves every run.
+        let mut young_arrays: Vec<RecordId> = Vec::new();
         let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
@@ -2504,10 +2549,29 @@ impl Heap {
                 }
             });
             let mut dead_arrays = Vec::new();
-            let (array_live, array_freed) = self.array_records.sweep(full, age, full, |record| match record {
+            // Every young run of elements is a young array's (`ArrayElements::young`), so
+            // their sweep, which shows its survivors minor or full, lists those it keeps.
+            let young_arrays = &mut young_arrays;
+            // A dead array is released in place; one owning nothing its drop frees is then
+            // forgotten, as a young array whose elements its young cycle takes back is.
+            let sparse = self.sparse_arrays.is_some();
+            let dispose = |record_id: RecordId, array: &ArrayObject| {
+                *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
+                #[cfg(feature = "profile-memory")]
+                memory_profile.freed_array(Value::direct_array(record_id), properties.len(array.properties()), array);
+                properties.release_ordinary(array.properties());
+                if sparse {
+                    dead_arrays.push(Value::direct_array(record_id));
+                }
+                array.needs_drop()
+            };
+            let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {
                         live_payload_bytes += array_payload_bytes(array);
+                    }
+                    if array.elements().is_young() {
+                        young_arrays.push(record_id);
                     }
                     if compacts && array.properties().has_compact_range() {
                         direct_property_owners.push((
@@ -2516,15 +2580,8 @@ impl Heap {
                         ));
                     }
                 }
-                RecordSweep::Dead(record_id, array) => {
-                    *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
-                    #[cfg(feature = "profile-memory")]
-                    let slots = properties.len(array.properties());
-                    properties.release_ordinary(array.properties());
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_array(Value::direct_array(record_id), slots, &array);
-                    dead_arrays.push(Value::direct_array(record_id));
-                }
+                // Released in place: dropping it frees what it owns.
+                RecordSweep::Dead(..) => {}
             });
             if let Some(arrays) = &mut self.sparse_arrays {
                 for array in dead_arrays {
@@ -2587,6 +2644,10 @@ impl Heap {
             // A full sweep recounts the ledger from the survivors: shrinking a live array
             // (truncation, `pop`, `splice`) is not charged back between full collections.
             self.payload_bytes = live_payload_bytes;
+        }
+        for record_id in young_arrays {
+            // SAFETY: the sweep listed these from the records it kept.
+            unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.leave_nursery();
         }
         if compacts {
             // Compaction moves the young survivors with every other run and forgets the

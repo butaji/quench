@@ -26078,3 +26078,57 @@ var result = out.join("|");
     };
     std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
 }
+
+#[test]
+fn young_array_elements_keep_array_semantics_across_collections() {
+    // Small array literals take young runs of elements (`ArrayElements::young`): most die
+    // young, and a few survive, then grow and are written past their run; some are held only
+    // by a weak reference or registered for finalization. Holes, length changes, delete,
+    // sort, splice, concat, spread, freezing, aliasing and int32/double/tagged transitions on
+    // small arrays read as in Node (v22.23).
+    let source = "var big = 0x40000000, keep = [], weak = [], finalized = 0, wrong = '', log = [];\n\
+         var registry = new FinalizationRegistry(function (token) { if (token === 'kept') wrong = 'kept finalized'; else finalized++; });\n\
+         function sum(a) { var s = 0; for (var k = 0; k < a.length; k++) s += (k in a) ? (typeof a[k] === 'number' ? a[k] : 1) : 100; return s; }\n\
+         var result = 'pending';\n\
+         (async function () {\n\
+         for (var i = 0; i < 60000; i++) {\n\
+         var a = [i, i + 1, { x: i }];\n\
+         var b = [i + big, 0.5];\n\
+         if (a[2].x !== i || b[0] !== i + big) wrong = 'fresh ' + i;\n\
+         if (i % 997 === 0) { keep.push(a); registry.register(a, 'kept'); }\n\
+         if (i % 997 === 500) { var q = keep[keep.length - 1]; for (var g = 0; g < 20; g++) q.push(g * 2); q[1] = 'w'; }\n\
+         if (i % 4999 === 0) weak.push([new WeakRef(keep[keep.length - 1]), keep.length - 1]);\n\
+         if (i % 3001 === 0) registry.register([big, i], i);\n\
+         if (i % 1000 === 0) await i;\n\
+         }\n\
+         for (var j = 0; j < 400000 && finalized === 0; j++) await [big, j];\n\
+         for (var k = 0; k < keep.length; k++) {\n\
+         var e = keep[k], n = k * 997;\n\
+         if (e[0] !== n || e[2].x !== n) wrong = 'value of ' + k;\n\
+         if (k < keep.length - 1 && (e.length !== 23 || e[1] !== 'w' || e[22] !== 38)) wrong = 'grown ' + k + ' ' + e.length;\n\
+         }\n\
+         for (var w = 0; w < weak.length; w++) if (weak[w][0].deref() !== keep[weak[w][1]]) wrong = 'weak ' + w;\n\
+         // Holes, length, delete.\n\
+         var h = [1, 2, 3]; h.length = 6; log.push(h.length, 4 in h, sum(h));\n\
+         h.length = 2; log.push(JSON.stringify(h)); delete h[0]; log.push(0 in h, h.length, sum(h));\n\
+         var hh = [1, , 3]; log.push(1 in hh, hh.length, JSON.stringify(hh)); hh[5] = 6; log.push(hh.length, sum(hh));\n\
+         // Sort, splice, concat.\n\
+         var s = [3, 1, 2]; s.sort(); log.push(s.join());\n\
+         var sp = [1, 2, 3, 4]; var removed = sp.splice(1, 2, 'a', 'b', 'c'); log.push(sp.join(), removed.join());\n\
+         var c = [1, 2].concat([3], 4, [[5]]); log.push(c.length, JSON.stringify(c));\n\
+         // Spread.\n\
+         var src = [7, 8]; var sp2 = [0, ...src, 9, ...'ab']; log.push(JSON.stringify(sp2));\n\
+         // Typed and packed transitions.\n\
+         var t = [1, 2, 3]; t[1] = 1.5; log.push(t.join()); t[2] = 'x'; log.push(t.join()); t[1] = 2; t[2] = 3; log.push(t.reduce(function (x, y) { return x + y; }));\n\
+         var u = [1, 2]; u.push(undefined); log.push(u.length, u[2] === undefined, 2 in u); u.pop(); u.pop(); log.push(u.join());\n\
+         var f = Object.freeze([1, 2]); try { f[0] = 9; } catch (err) {} log.push(f[0]);\n\
+         var same = [5, 6]; var alias = same; alias[0] = 50; log.push(same[0]);\n\
+         result = (wrong || 'ok ' + log.join('|')) + (finalized > 0 ? '' : ' none finalized');\n\
+         })();";
+    // Node's log; Node runs no finalization callback between microtasks, where Quench's
+    // collections run one for the dead registered arrays.
+    let expected = "ok 6|false|306|[1,2]|false|2|102|false|3|[1,null,3]|6|310|1,2,3|1,a,b,c,4|2,3|5|[1,2,3,4,[5]]|[0,7,8,9,\"a\",\"b\"]|1,1.5,3|1,1.5,x|6|3|true|true|1|1|50";
+    for policy in crate::MemoryPolicy::ALL {
+        assert_eq!(global_text_under(policy, source, "result"), expected, "{policy:?}");
+    }
+}

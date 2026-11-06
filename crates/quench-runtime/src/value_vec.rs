@@ -64,6 +64,11 @@ const COMPACTED_CAPACITY_FACTOR: usize = 2;
 /// rather than per run. A range keeps its size across collections, so it grows to the largest
 /// cycle of new runs.
 const NURSERY_GROWTH: usize = 1 << 10;
+/// The longest array whose elements a young run holds (`ValueArena::young_elements`): a
+/// young array's elements are copied once more when it survives or is first written, so the
+/// bound keeps that copy as short as the inline element initialization V8 unrolls for
+/// literals (`kElementLoopUnrollLimit`, js-create-lowering.cc).
+const YOUNG_ELEMENTS_MAX: usize = 16;
 
 /// The runs of new objects (`ValueArena::young_run_padded`), bumped from one range of the
 /// arena, `[floor, end)`: those taken since the last collection are `[floor, top)`. A dead
@@ -804,6 +809,31 @@ impl ValueArena {
         self.young_run_slow(capacity)
     }
 
+    /// A young run for the elements of a new array of `len` values (`ArrayElements::young`):
+    /// a header and the values, bumped from the nursery, which grows as `young_run_slow`
+    /// grows it; `None` for an empty array or one longer than `YOUNG_ELEMENTS_MAX`, once the
+    /// nursery cannot take the run, or where the arena's values may move as it grows, which
+    /// would move the run beneath its array. Never an ordinary run: a young array's death
+    /// releases nothing, and the collection it survives copies its elements out
+    /// (`ArrayElements::leave_nursery`).
+    #[inline(always)]
+    pub(crate) fn young_elements(&mut self, len: usize) -> Option<std::ptr::NonNull<Value>> {
+        // An empty array holds the shared empty header.
+        if len.wrapping_sub(1) >= YOUNG_ELEMENTS_MAX || !self.values.keeps_addresses() {
+            return None;
+        }
+        let capacity = crate::heap::ARRAY_HEADER_VALUES + len;
+        let start = self.nursery.top;
+        let start = if capacity <= self.nursery.end - start {
+            self.nursery.top = start + capacity;
+            start
+        } else {
+            self.grow_nursery(capacity)?
+        };
+        // SAFETY: the run lies within the arena's initialized values.
+        Some(unsafe { std::ptr::NonNull::new_unchecked(self.values.as_mut_ptr().add(start)) })
+    }
+
     /// `young_run` past the nursery's end. A released run of its class comes first: it is
     /// resident already, where the nursery's growth extends the arena. While the free lists
     /// held what a full collection released, a nursery that kept growing extended the arena
@@ -818,6 +848,14 @@ impl ValueArena {
         if !self.free[Self::bucket(capacity)].is_empty() {
             return self.allocate(capacity, MAX_ARENA_START);
         }
+        self.grow_nursery(capacity).or_else(|| self.allocate(capacity, MAX_ARENA_START))
+    }
+
+    /// A young run of `capacity` past the nursery's end, where its range ends the arena and
+    /// can grow by `NURSERY_GROWTH`; an empty range, as a compaction leaves it, starts again
+    /// at the arena's end.
+    #[inline(never)]
+    fn grow_nursery(&mut self, capacity: usize) -> Option<usize> {
         let tail = self.values.len();
         if self.nursery.end == self.nursery.floor {
             self.nursery = Nursery { floor: tail, top: tail, end: tail };
@@ -829,7 +867,7 @@ impl ValueArena {
             self.nursery.top = start + capacity;
             return Some(start);
         }
-        self.allocate(capacity, MAX_ARENA_START)
+        None
     }
 
     /// The young runs taken since the last collection, as a sweep reads them beside its
@@ -941,14 +979,22 @@ impl ValueArena {
     }
 
     /// `release` of storage that is no young run: that of any record but a direct object
-    /// (`young_run_padded`), whose sweeps keep the out-of-line call they made before young
-    /// runs, where the inlined range test cost array-callback 4 Ir an array.
+    /// (`young_run_padded`), whose sweeps skip the young range test. Storage that holds no
+    /// arena words, as most arrays' and functions' does, is the inlined test alone, where the
+    /// call cost a dead array 20 Ir (array-callback); a range or dictionary takes the call
+    /// (`release_held`).
+    #[inline(always)]
     pub(crate) fn release_ordinary(&mut self, vector: ValueVec) {
         debug_assert!(!self.holds_young_run(vector));
         // Inline storage and an empty vector without a range hold no arena words.
         if vector.has_inline_property_storage() || (vector.start == EMPTY_START && !vector.is_dictionary()) {
             return;
         }
+        self.release_held(vector);
+    }
+
+    #[inline(never)]
+    fn release_held(&mut self, vector: ValueVec) {
         if vector.is_dictionary() {
             let id = vector.dictionary_id();
             self.dictionaries.remove(&id);
