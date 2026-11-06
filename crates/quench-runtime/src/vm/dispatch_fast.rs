@@ -3626,6 +3626,36 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `lane_inc_dec_jump` whose backward jump enters the loop's own integer register test
+    /// (`lane_jump_binary_false_registers`, `specialize_update_jumps`): the update, the back
+    /// edge's safepoint, then the test, continuing in the body or at the loop's exit, a
+    /// rotated loop's one dispatch per iteration where the pair and the test took two. A pair
+    /// other than two integers runs the test's own record.
+    fn lane_inc_dec_loop<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
+            sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        let jump_ip = following(ip);
+        if below_floor() {
+            resume!(cx, lane_jump::<H>(r, jump_ip, true, Carried::script(cx), None))
+        }
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_update_jumps` matched.
+        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
+        let test = unsafe { &*test_ip };
+        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), r.get(test.c))
+        else {
+            next!(cx, r, test_ip, Carried::script(cx))
+        };
+        if !holds {
+            resume!(cx, lane_jump::<H>(r, test_ip, false, Carried::script(cx), None));
+        }
+        next!(cx, r, following(test_ip), Carried::script(cx))
+    }
+}
+
 /// The update of a BigInt (`Vm::bigint_increment`, which allocates its result); `None` for
 /// any other value. Out of line: its arithmetic keeps stack temporaries a handler inlining
 /// it would hold on its common path.
@@ -19895,7 +19925,7 @@ fn derive_lane_view<'live, H: Host>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_load_branch_pairs::<H>(&mut records);
-        specialize_update_jumps::<H>(&mut records);
+        specialize_update_jumps::<H>(&decoded, &mut records);
         specialize_store_moves::<H>(&mut records);
         specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
         specialize_constant_returns::<H>(&mut records);
@@ -20644,9 +20674,10 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
 }
 
 /// Gives each `IncDec` that an unconditional jump follows the fused update and jump
-/// (`lane_inc_dec_jump`). The jump record stays, for a jump that enters it and for the
-/// update's own slow path.
-fn specialize_update_jumps<H: Host>(records: &mut [LaneInstruction]) {
+/// (`lane_inc_dec_jump`), or, when the jump goes back to the loop's forward integer register
+/// test, the update, jump and test (`lane_inc_dec_loop`). The jump and test records stay, for
+/// a jump that enters them and for the update's own slow path.
+fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
     let updates = [lane_inc_dec::<H, false> as Handler as *const (), lane_inc_dec::<H, true> as Handler as *const ()];
     let jumps = [lane_jump_always::<H, false> as Handler as *const (), lane_jump_always::<H, true> as Handler as *const ()];
     for pc in 0..records.len().saturating_sub(1) {
@@ -20662,7 +20693,13 @@ fn specialize_update_jumps<H: Host>(records: &mut [LaneInstruction]) {
             (true, false) => lane_inc_dec_jump::<H, true, false>,
             (true, true) => lane_inc_dec_jump::<H, true, true>,
         };
-        records[pc].handler = fused as *const ();
+        let test = decoded[pc + 1].imm() as usize;
+        let looped = (backward == 1)
+            .then(|| records.get(test))
+            .flatten()
+            .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
+            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1));
+        records[pc].handler = looped.unwrap_or(fused) as *const ();
     }
 }
 
@@ -20880,6 +20917,21 @@ fn relation_jump_handler<H: Host, const SMALL: bool>(operator: u32, backward: bo
                 (true, false) => lane_jump_binary_false_small::<H, false, { $op }> as Handler,
                 (false, true) => lane_jump_binary_false_registers::<H, true, { $op }> as Handler,
                 (false, false) => lane_jump_binary_false_registers::<H, false, { $op }> as Handler,
+            }
+        };
+    }
+    relation_operators!(operator, pick)
+}
+
+/// The fused update, back edge and register test handler (`lane_inc_dec_loop`) of the test's
+/// `operator`: as `relation_jump_handler` picks, the comparison's own instantiation.
+fn update_loop_handler<H: Host>(operator: u32, decrement: bool) -> Handler {
+    macro_rules! pick {
+        ($op:expr) => {
+            if decrement {
+                lane_inc_dec_loop::<H, true, { $op }> as Handler
+            } else {
+                lane_inc_dec_loop::<H, false, { $op }> as Handler
             }
         };
     }

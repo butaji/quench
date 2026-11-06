@@ -1411,6 +1411,41 @@ fn planned_constructions_store_string_literal_fields() {
 }
 
 #[test]
+fn rotated_loop_updates_keep_their_tests_exits_and_values() {
+    // A loop's update, back edge and integer test run as one record (`lane_inc_dec_loop`):
+    // every relation and direction, a bound the body changes, `continue` and `break`,
+    // counters other than integers (a double, a string bound, a BigInt), an int32 overflow
+    // and loops that never enter keep the values and exits of the separate records.
+    // Expected values are Node's (v22).
+    let source = r#"
+var out = [];
+function up(n) { var s = 0; for (var i = 0; i < n; i++) s = (s + i) | 0; return s + ":" + i; }
+function upLe(n) { var s = 0; for (var i = 0; i <= n; i++) s += i; return s + ":" + i; }
+function down(n) { var s = 0; for (var i = n; i > 0; i--) s += i; return s + ":" + i; }
+function downGe(n) { var s = 0; for (var i = n; i >= 0; i--) s += i; return s + ":" + i; }
+function ne(n) { var c = 0; for (var i = 0; i != n; i++) c++; return c; }
+function moving(n) { var c = 0; for (var i = 0; i < n; i++) { if (i % 3 == 0) n--; c++; } return c + ":" + n; }
+function cont(n) { var s = 0; for (var i = 0; i < n; i++) { if (i & 1) continue; if (i > 50) break; s += i; } return s + ":" + i; }
+function floats(n) { var s = 0; for (var i = 0.5; i < n; i++) s += i; return s + ":" + i; }
+function mixed(n) { var s = 0; for (var i = 0; i < n; i++) s += i; return s + ":" + i; }
+function nested(n) { var s = 0; for (var i = 0; i < n; i++) for (var j = 0; j < i; j++) s = (s + j * i) | 0; return s; }
+function big(n) { var s = 0n; for (var i = 0n; i < n; i++) s += i; return s + ":" + i; }
+function overflow() { var c = 0; for (var i = 2147483640; i < 2147483650; i++) c++; return c + ":" + i; }
+for (var k = 0; k < 300; k++) { up(100); down(100); nested(20); cont(100); moving(60); }
+out.push(up(1000), upLe(10), down(10), downGe(10), ne(17), moving(60), cont(100), floats(5), mixed(5.5), mixed("4"), nested(30), big(10n), overflow(), up(0), down(-1));
+print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "rotated-loop-updates.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["499500:1000 55:11 55:0 55:-1 17 45:45 650:52 12.5:5.5 15:6 6:4 90335 45:10 10:2147483650 0:0 0:-1"]
+    );
+}
+
+#[test]
 fn promoted_locals_preserve_order_and_survive_collection() {
     let source = r#"
       function read(value) {
