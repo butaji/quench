@@ -16,7 +16,8 @@ use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, ProofKind,
+    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, NO_CONSTANT_EPOCH,
+    ProofKind,
 };
 mod cell_access;
 mod buffer_bytes;

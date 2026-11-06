@@ -1157,6 +1157,46 @@ fn nested_reads_follow_their_first_steps_hint_across_shapes() {
 }
 
 #[test]
+fn inherited_reads_follow_their_hint_and_the_prototype_values() {
+    // An inherited read's record keeps the entry that last answered it as its hint, and the
+    // entry its answer while no prototype changes (`Vm::hinted_inherited_field_hit`):
+    // instances of sibling and nested subclasses reading one site, a method replaced on the
+    // base prototype, shadowed on an intermediate one and deleted again, and a receiver moved
+    // to another prototype each read the method the receiver in hand inherits. Expected value
+    // is Node's (v26).
+    let source = r#"
+      class A { m() { return 1; } }
+      class B extends A {}
+      class C extends B { constructor() { super(); this.c = 1; } }
+      class D extends B { constructor() { super(); this.d = 1; this.e = 2; } }
+      class E extends C {}
+      var c = new C(), d = new D(), e = new E();
+      function read(o) { var f = o.m; return f.call(o); }
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += read(c);
+      for (i = 0; i < 300; i++) s += read(i & 1 ? c : d);
+      for (i = 0; i < 300; i++) s += read(i % 3 === 0 ? e : i % 3 === 1 ? d : c);
+      A.prototype.m = function () { return 10; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? c : d);
+      B.prototype.m = function () { return 100; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? e : d);
+      delete B.prototype.m;
+      for (i = 0; i < 300; i++) s += read(i & 1 ? c : e);
+      var moved = new C();
+      Object.setPrototypeOf(moved, { m() { return 1000; } });
+      for (i = 0; i < 300; i++) s += read(i & 1 ? moved : c);
+      A.prototype.m = function () { return 7; };
+      for (i = 0; i < 300; i++) s += read(i % 3 === 0 ? e : i % 3 === 1 ? d : c);
+      print(String(s));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "inherited-read-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["190500"]);
+}
+
+#[test]
 fn call_sites_test_each_target_their_link_names() {
     // One call site links the target cache entry of a plain callee, which dies; after the
     // collection, functions that need another entry (a kept `arguments`, values past their

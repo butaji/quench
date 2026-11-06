@@ -78,13 +78,20 @@ union LaneOperand {
 
 /// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
 /// hint names, `NO_FIELD_RECEIVER` for none. The hint's slot is the record's `call_link`,
-/// which no field record reads otherwise (`holds_no_call_link`).
+/// which no field record reads otherwise (`holds_no_call_link`). An inherited read's record
+/// hints the inherited entry that last answered it instead (`set_inherited_hint`): its shape
+/// is then `INHERITED_HINT` and its `call_link` that entry's index.
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct FieldOperand {
     imm: u32,
     shape: u32,
 }
+
+/// The `FieldOperand::shape` of a record whose hint is an inherited entry
+/// (`Vm::hinted_inherited_field_hit`): no object's exact shape (`Object::exact_shape`, whose id
+/// bits never all hold), so an own-field hint read (`LaneInstruction::field_hint`) misses it.
+const INHERITED_HINT: u32 = super::NO_FIELD_RECEIVER - 1;
 
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
@@ -5590,13 +5597,32 @@ script_handler! {
 /// `NO_CALL_LINK`, a held one's shape a recorded one.
 #[inline(always)]
 fn set_field_hint(ip: Ip, entry: super::FieldCache) {
+    set_record_hint(ip, entry.receiver, entry.slot);
+}
+
+/// Makes inherited entry `index` the hint of the `GetField` record at `ip`
+/// (`Vm::hinted_inherited_field_hit`), where `call_link` can name it.
+#[inline(always)]
+fn set_inherited_hint(ip: Ip, index: u32) {
+    if let Ok(index) = u16::try_from(index)
+        && index != NO_CALL_LINK
+    {
+        set_record_hint(ip, INHERITED_HINT, index);
+    }
+}
+
+/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header, whose
+/// `call_link` names its site (`lane_header_site`): an empty hint's link is `NO_CALL_LINK`,
+/// and a held one's shape a recorded one or `INHERITED_HINT`.
+#[inline(always)]
+fn set_record_hint(ip: Ip, shape: u32, link: u16) {
     // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
     let header = unsafe { i.operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
     if !header {
         // SAFETY: as `requicken`.
-        unsafe { (*ip.cast_mut()).operand.field.shape = entry.receiver };
-        i.call_link.set(entry.slot);
+        unsafe { (*ip.cast_mut()).operand.field.shape = shape };
+        i.call_link.set(link);
     }
 }
 
@@ -5789,14 +5815,13 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
-    /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
-    /// inline while its proof holds (`Vm::proved_inherited_field_hit`); any other read takes
-    /// `lane_get_field_inherited_walk`.
+    /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: the entry
+    /// that last answered it, its hint, inline while its proof holds
+    /// (`Vm::hinted_inherited_field_hit`), as a parser's methods read from instances of
+    /// several plugin classes; any other read takes `lane_get_field_inherited_walk`.
     fn lane_get_field_inherited<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).proved_inherited_field_hit(code, object, i.c))
+            .and_then(|object| (unsafe { vm(cx) }).hinted_inherited_field_hit(object, i.imm(), i.call_link.get()))
         else {
             sibling!(lane_get_field_inherited_walk::<H, THIS>, r, ip, Carried::script(cx))
         };
@@ -5806,17 +5831,19 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_inherited` past its proof: the entry's chain walk, which proves it
-    /// again (`Vm::inherited_field_hit`); any other read takes `lane_get_field_miss`.
+    /// `lane_get_field_inherited` past its hint: the site's entries and their chain walk,
+    /// which proves one again (`Vm::inherited_field_entry_hit`); the entry that answered
+    /// becomes the hint. Any other read takes `lane_get_field_miss`.
     #[inline(never)]
     fn lane_get_field_inherited_walk<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
+        let Some((value, entry)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).inherited_field_entry_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
+        set_inherited_hint(ip, entry);
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
