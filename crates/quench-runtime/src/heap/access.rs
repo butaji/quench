@@ -705,6 +705,11 @@ impl Heap {
     pub(crate) const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
         + crate::value_vec::ValueArena::BUFFER_OFFSET;
 
+    /// Offsets of the charged allocation weight and the weight a collection is due at
+    /// (`Heap::should_collect`), which native back edges compare to reach a safepoint.
+    pub(crate) const ALLOCATED_OFFSET: usize = std::mem::offset_of!(Self, allocated);
+    pub(crate) const COLLECT_AT_OFFSET: usize = std::mem::offset_of!(Self, collect_at);
+
     /// The object of an object, array or promise record, whose field reads the field cache
     /// answers by shape alone (a promise's internal slots change no object operation). A
     /// function's restricted properties (`AtomClass`) need its kind, so a function record,

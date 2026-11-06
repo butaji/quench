@@ -2112,12 +2112,22 @@ fn emit_js_own_field_set(
         JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
         JsFieldReceiver::Value(value) => value,
     };
+    let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
     let atom = builder.ins().iconst(types::I64, i64::from(atom));
     let site = builder.ins().iconst(types::I64, i64::from(site));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_store));
     let stored = emit_lane_helper_call(builder, payload, helper, &[receiver, atom, site, value]);
     let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-    emit_js_guard(builder, stored, fallback);
+    // A store that names no existing slot adds the property by its site's cached transition.
+    let (add, done) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(stored, done, &[], add, &[]);
+    builder.switch_to_block(add);
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_add));
+    let added = emit_lane_helper_call(builder, payload, helper, &[payload, receiver, write, value]);
+    let added = builder.ins().icmp_imm_u(IntCC::NotEqual, added, 0);
+    emit_js_guard(builder, added, fallback);
+    builder.ins().jump(done, &[]);
+    builder.switch_to_block(done);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     }
@@ -2191,6 +2201,17 @@ fn emit_unlogged_property_store_guard(
 /// interruption as the interpreter before consuming the branch.
 fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
+}
+
+/// Whether a back edge leaves for its safepoint: an interrupt is requested, or a collection is
+/// due (`Heap::should_collect`), which the exact step of the edge's `Jump` performs.
+fn emit_js_safepoint_due(builder: &mut RegionCore<'_>, payload: ir::Value) -> ir::Value {
+    let interrupted = emit_js_interrupt_requested(builder);
+    let heap = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, heap));
+    let allocated = builder.ins().load(types::I64, MemFlagsData::trusted(), heap, crate::heap::Heap::ALLOCATED_OFFSET as i32);
+    let collect_at = builder.ins().load(types::I64, MemFlagsData::trusted(), heap, crate::heap::Heap::COLLECT_AT_OFFSET as i32);
+    let due = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, allocated, collect_at);
+    builder.ins().bor(interrupted, due)
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
@@ -3319,8 +3340,8 @@ pub(super) fn lower_js_general_dispatch(
                         {
                             let fallback = builder.create_block();
                             let resume = builder.create_block();
-                            let interrupted = emit_js_interrupt_requested(&mut builder);
-                            builder.ins().brif(interrupted, fallback, &[], resume, &[]);
+                            let due = emit_js_safepoint_due(&mut builder, payload);
+                            builder.ins().brif(due, fallback, &[], resume, &[]);
                             builder.switch_to_block(fallback);
                             emit_js_step_fallback(
                                 &mut builder,
@@ -7612,6 +7633,12 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
+    /// Its cached property add (`lane_field_add`), which a store missing an existing slot
+    /// tries next: the object's shape and storage may change, which only re-proved reads see.
+    field_add: usize,
+    /// The running VM's heap, whose allocation counters a native back edge compares to leave
+    /// for its safepoint when a collection is due (`emit_js_safepoint_due`).
+    heap: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7960,7 +7987,9 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::Preserve) {
         return 1;
     }
-    if vm.heap.should_collect() {
+    // General dispatch reaches the add for any key; the cached add answers only plain keys
+    // of a specialized program, the ones a lane body's lowering admits statically.
+    if vm.heap.should_collect() || !vm.specialized_operations_enabled(residual) || !vm.field_add_atom_eligible(atom) {
         return 0;
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
@@ -8562,6 +8591,8 @@ impl LaneFrame {
                 property_buffer: 0,
                 field_entries: 0,
                 field_store: 0,
+                field_add: 0,
+                heap: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
@@ -8710,7 +8741,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, heap: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8744,6 +8775,8 @@ impl JsStepDispatch {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
         self.field_store = lane_field_set::<H> as *const () as usize;
+        self.field_add = lane_field_add::<H> as *const () as usize;
+        self.heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap)) as usize;
     }
 
     /// Object loads, stores and barriers share these bases in lane and general code.

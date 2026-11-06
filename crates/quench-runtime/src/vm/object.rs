@@ -1858,7 +1858,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> bool {
-        debug_assert!(self.lane_admits(p) && self.field_add_atom_eligible(atom));
+        debug_assert!(self.specialized_operations_enabled(p) && self.field_add_atom_eligible(atom));
         let Some(data) = self.heap.object_record(object) else {
             return false;
         };
