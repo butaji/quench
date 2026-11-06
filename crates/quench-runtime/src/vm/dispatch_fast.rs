@@ -11232,7 +11232,9 @@ impl<H: Host> Vm<H> {
             && !settles
             && !cross
             && !body.rest
-            && !plan.keeps_arguments
+            // A keeping activation places its parameters before its first record, so a lane
+            // body enters it as any other (`lane_body_argument_get` reads the values it kept).
+            && (!plan.keeps_arguments || self.programs.js_jit_lane_methods_enabled())
             && shape.entry == CallEntry::Activates
             && if self.programs.js_jit_lane_methods_enabled() {
                 // SAFETY: as below.
@@ -14066,6 +14068,32 @@ unsafe fn lane_keeping_activation<H: Host>(cx: *mut LaneContext<H>) -> Option<(u
     let activation = unsafe { vm(cx) }.lane_stack.activations.last()?;
     let script = activation.script().filter(|script| script.forwards)?;
     Some((script.argc, activation.function))
+}
+
+/// A lane body's `arguments.length` in its keeping activation (`lane_arguments_length`), or
+/// `DELETED`, which leaves the body at the read. A keeping function's body runs on its own
+/// activation: no direct call or inlined frame names one (`CallEntry::Keeps`).
+pub(super) unsafe extern "C" fn lane_body_arguments_length<H: Host>(_vm: u64, _residual: u64, context: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the running body passes its lane context.
+    match unsafe { lane_keeping_activation(cx) } {
+        Some((argc, _)) => Value::integer(i32::from(argc)).to_bits(),
+        None => Value::DELETED.to_bits(),
+    }
+}
+
+/// A lane body's `arguments[index]` in its keeping activation at an index it kept
+/// (`lane_argument_get`), or `DELETED`, which leaves the body at the read.
+pub(super) unsafe extern "C" fn lane_body_argument_get<H: Host>(_vm: u64, _residual: u64, context: u64, index: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: as `lane_body_arguments_length`.
+    let Some((argc, function)) = (unsafe { lane_keeping_activation(cx) }) else { return Value::DELETED.to_bits() };
+    let Some(index) = Value::from_bits(index).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc) else {
+        return Value::DELETED.to_bits();
+    };
+    // SAFETY: the context's program outlives the lane run, and its registers are the body's.
+    let (code, r) = unsafe { (&*(*cx).code, (*cx).registers) };
+    r.get(code.function(function as usize).registers + index).to_bits()
 }
 
 script_handler! {

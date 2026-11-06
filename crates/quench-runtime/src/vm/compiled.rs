@@ -2054,6 +2054,10 @@ pub(super) struct LaneHelpers {
     pure_native: usize,
     /// A virtual two-property literal's allocation where it escapes (`lane_materialize_pair`).
     materialize_pair: usize,
+    /// A keeping activation's `arguments.length` and `arguments[i]`
+    /// (`dispatch_fast::lane_body_arguments_length`, `lane_body_argument_get`).
+    arguments_length: usize,
+    argument_get: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -7237,6 +7241,8 @@ impl<H: Host> Vm<H> {
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
             pure_native: lane_pure_native::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64, u64) -> u64 as usize,
             materialize_pair: lane_materialize_pair::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
+            arguments_length: super::dispatch_fast::lane_body_arguments_length::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
+            argument_get: super::dispatch_fast::lane_body_argument_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         // The calls a unit still makes (none it inlines) whose callees have bodies; a body

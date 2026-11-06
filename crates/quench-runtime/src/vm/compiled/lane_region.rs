@@ -1511,6 +1511,22 @@ impl Lowering<'_, '_> {
                 state.epoch = None;
                 Some(true)
             }
+            // A keeping activation's own arguments, which only its body reads (`CallEntry::Keeps`).
+            Op::ArgumentsLength | Op::ArgumentGet if plain && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
+                && (instruction.op() == Op::ArgumentsLength || instruction.register_b() < self.unit.registers) => {
+                let exit = self.guard_exit(state, pc32);
+                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let value = if instruction.op() == Op::ArgumentsLength {
+                    emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.arguments_length, &[context])
+                } else {
+                    let index = self.tagged(state, instruction.register_b());
+                    emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.argument_get, &[context, index])
+                };
+                let read = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, read, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+                Some(true)
+            }
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction)
