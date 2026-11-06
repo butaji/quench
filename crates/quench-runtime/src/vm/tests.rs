@@ -20444,6 +20444,86 @@ fn lane_settled_async_calls_keep_their_promises_and_job_order() {
 }
 
 #[test]
+fn lane_awaited_settled_calls_resume_as_their_promises_would() {
+    // A settling call whose result only the `await` after it reads makes its promise only
+    // where something could observe it: primitive, object, thenable and promise returns,
+    // throws, nested awaits and a kept promise resume in the order Node's do (expected
+    // output from Node 22).
+    let source = r#"
+      const out = [];
+      async function prim(x) { return x; }
+      async function none() { }
+      async function obj(x) { return { v: x }; }
+      async function thenable(x) { return { then(r) { out.push("then" + x); r("T" + x); } }; }
+      async function thrower(x) { throw new Error("boom" + x); }
+      async function inner(x) { return Promise.resolve("in" + x); }
+      async function nested(x) { return await prim(x + 1); }
+      async function step(i) {
+        out.push("s" + i);
+        const a = await prim(i);
+        await none();
+        const o = await obj(i);
+        const t = await thenable(i);
+        let e = "";
+        try { await thrower(i); } catch (error) { e = error.message; }
+        const n = await nested(i);
+        const r = await inner(i);
+        const p = prim(i * 10);
+        const q = await p;
+        out.push([a, o.v, t, e, n, r, q, p instanceof Promise].join(":"));
+        return a;
+      }
+      async function ticks(tag) { for (let k = 0; k < 12; k++) { await undefined; out.push(tag + k); } }
+      const done = [];
+      for (let i = 0; i < 40; i++) {
+        done.push(step(i));
+        Promise.resolve().then(() => out.push("p" + i)).then(() => out.push("q" + i));
+      }
+      done.push(ticks("t"));
+      Promise.all(done).then((values) => { const text = out.join(","); let hash = 0; for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0; print(values.length + "|" + out.length + ":" + hash + "|" + out.slice(40, 52).join(",") + "|" + out.slice(-3).join(",")); });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-awaited-settled.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["41|212:887089116|p0,p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11|38:38:T38:boom38:39:in38:380:true,39:39:T39:boom39:40:in39:390:true,t11"]
+    );
+}
+
+#[test]
+fn async_activations_await_again_through_their_spent_state() {
+    // An async function's later awaits suspend into the state its last await's reaction
+    // spent: the state, promoted by collections between awaits, takes young frames past the
+    // write barrier, and rejections and nested settles resume as Node's do (expected output
+    // from Node 22 with --expose-gc).
+    let source = r#"
+      const order = [];
+      async function leaf(i) { return { v: i }; }
+      async function walk(tag, n) {
+        let kept = [];
+        let sum = 0;
+        for (let i = 0; i < n; i++) {
+          const fresh = { tag, i, items: [i, i + 1] };
+          kept.push(fresh);
+          const o = await leaf(i);
+          sum += o.v + fresh.items[1];
+          if (i % 7 === 0) await null;
+          if (i % 25 === 0) $262.gc();
+          if (i % 40 === 39) { kept = kept.slice(-3); order.push(tag + i); }
+        }
+        try { await Promise.reject(new Error(tag)); } catch (e) { sum += e.message.length; }
+        return sum + kept.length + kept[kept.length - 1].items[0];
+      }
+      Promise.all([walk("a", 200), walk("b", 120), walk("c", 80)]).then((sums) => print(sums.join(",") + "|" + order.join(",")));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "await-again.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["40203,14523,6483|a39,b39,c39,a79,b79,c79,a119,b119,a159,a199"]);
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's

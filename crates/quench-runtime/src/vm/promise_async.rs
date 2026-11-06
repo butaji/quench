@@ -6,6 +6,9 @@ use crate::heap::AwaitState;
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
 struct AwaitResume {
+    /// The spent state itself, whose reaction is running: the activation's next await
+    /// suspends into it again (`Vm::await_again`).
+    state: Value,
     promise: Value,
     generator: Option<Value>,
     rejected: bool,
@@ -129,6 +132,16 @@ impl<H: Host> Vm<H> {
         self.promise_settle(p, promise, PromiseState::Rejected, reason)
     }
 
+    /// The rooted promise of a settling lane call (`LaneStack::settling`), made now for a call
+    /// that deferred it to its awaiting caller: something other than the await may read it.
+    /// Without lifecycle hooks, which settling calls exclude, making it runs no guest code.
+    pub(super) fn settling_root(&mut self, root: Option<crate::heap::RootId>) -> crate::heap::RootId {
+        root.unwrap_or_else(|| {
+            let promise = self.promise_object().expect("a promise without lifecycle hooks runs no guest code");
+            self.heap.root(promise)
+        })
+    }
+
     /// The promise an async call pushed in place settles (`PendingGeneralCall::completion`),
     /// unrooted now that the call completes.
     pub(super) fn release_settled_call_root(&mut self, root: crate::heap::RootId) -> Value {
@@ -211,6 +224,27 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `enqueue_async_resume` of an async function's activation that awaits again from the
+    /// reaction of its last await, `resume`: its spent state takes the continuation, as a
+    /// fresh one would. That reaction was the state's only one and is running, so nothing
+    /// else names the state, and an activation keeps one state for all its awaits.
+    fn await_again(
+        &mut self,
+        p: &ResidualProgram,
+        resume: AwaitResume,
+        continuation: Continuation,
+        source: Value,
+    ) -> Result<(), JsError> {
+        let realm = self.realm.globals;
+        let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
+        debug_assert!(state.continuation.is_none() && state.generator.is_none() && !state.yielded);
+        state.continuation = Some(Box::new(continuation));
+        state.realm = realm;
+        self.with_call_roots([resume.state, source], |vm| {
+            vm.attach_await_reactions(p, resume.state, resume.promise, None, source)
+        })
+    }
+
     fn attach_await_reactions(
         &mut self,
         p: &ResidualProgram,
@@ -279,12 +313,14 @@ impl<H: Host> Vm<H> {
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
+        let spent = state;
         let Some(state) = self.heap.await_state_mut(state) else {
             return Err(JsError("await reaction without its state".into()));
         };
         let continuation = state.continuation.take().map(|continuation| *continuation);
         let realm = state.realm;
         let resume = AwaitResume {
+            state: spent,
             promise: state.promise,
             generator: state.generator,
             rejected,
@@ -422,14 +458,18 @@ impl<H: Host> Vm<H> {
                     Some(destination),
                     resume.promise,
                 );
-                self.enqueue_async_resume(
-                    p,
-                    Some(continuation),
-                    resume.promise,
-                    resume.generator,
-                    value,
-                    false,
-                )?;
+                if resume.generator.is_none() {
+                    self.await_again(p, resume, continuation, value)?;
+                } else {
+                    self.enqueue_async_resume(
+                        p,
+                        Some(continuation),
+                        resume.promise,
+                        resume.generator,
+                        value,
+                        false,
+                    )?;
+                }
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..

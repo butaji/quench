@@ -2033,8 +2033,11 @@ pub(super) struct LaneStack {
     forwarders: Vec<SkippedForwarder>,
     /// The rooted promises of the `Completion::SettlesPromise` activations, innermost last:
     /// each activation's return resolves its own, which its frame's pending call takes when
-    /// it materializes (`PendingGeneralCall::completion`).
-    settling: Vec<crate::heap::RootId>,
+    /// it materializes (`PendingGeneralCall::completion`). `None` for a call whose result
+    /// only the `await` after it reads (`ImmediateLayout::LANE_CALL_RESULT_AWAITED_FLAG`): its
+    /// promise is made only where one is observable, and a primitive return reaches the
+    /// `await` as it is.
+    settling: Vec<Option<crate::heap::RootId>>,
     /// The iterators the activations' `for-of` loops would close, each with the index of
     /// the activation whose loop pushed it (`IteratorCleanupPush`), innermost last: a
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
@@ -11088,7 +11091,7 @@ impl<H: Host> Vm<H> {
             let completion = match activation.script().map(|script| script.completion) {
                 Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
                 Some(Completion::SettlesPromise) => CallCompletion::Promise(
-                    settling.next().expect("each settling activation roots its promise")),
+                    self.settling_root(settling.next().expect("each settling activation has its entry"))),
                 _ => CallCompletion::Value,
             };
             // A native's callback is the entry frame of the loop that finishes it.
@@ -12032,11 +12035,15 @@ script_handler! {
         profile_script_call_target(cx, ip, callee, &target);
         // Without lifecycle hooks the promise's allocation runs no guest code and collects
         // nothing (`note_allocation` makes a collection due at the next frame boundary).
-        let Ok(promise) = vm.promise_object() else {
-            return exit(ip);
+        let root = if ImmediateLayout::lane_call_result_awaited(i.imm()) {
+            None
+        } else {
+            let Ok(promise) = vm.promise_object() else {
+                return exit(ip);
+            };
+            note_allocation(vm);
+            Some(vm.heap.root(promise))
         };
-        note_allocation(vm);
-        let root = vm.heap.root(promise);
         vm.lane_stack.settling.push(root);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let (registers, base) = lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false);
@@ -16717,7 +16724,17 @@ fn lane_settled_then<H: Host>(vm: &mut Vm<H>, value: Value) -> Option<Value> {
 #[inline(never)]
 fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value) -> Value {
     let vm = unsafe { vm(cx) };
-    let root = vm.lane_stack.settling.pop().expect("each settling activation roots its promise");
+    let root = match vm.lane_stack.settling.pop().expect("each settling activation has its entry") {
+        Some(root) => root,
+        // Only the `await` after the call reads its promise: a primitive fulfills it, and
+        // awaiting a primitive takes the one job awaiting that fulfilled promise takes.
+        None if !vm.is_object_like(value) => return value,
+        None => {
+            let root = vm.settling_root(None);
+            note_allocation(vm);
+            root
+        }
+    };
     let promise = vm.release_settled_call_root(root);
     // SAFETY: the context's program, the caller's, outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -18443,6 +18460,39 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
     }
 }
 
+/// A `Call` record's operand, flagged when only the `Await` right after the call reads its
+/// result: the await overwrites the result register, or liveness (`live`) shows it dead after
+/// the await. A settling call there makes its promise only where one becomes observable
+/// (`ImmediateLayout::LANE_CALL_RESULT_AWAITED_FLAG`). Liveness is derived only for a call
+/// followed by an `Await`, of a function whose suspension derives it anyway
+/// (`Vm::suspend_activation`).
+fn lane_call_awaited_marked<'live>(
+    operand: LaneOperand,
+    decoded: &[WideInstruction],
+    pc: usize,
+    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+) -> LaneOperand {
+    let call = decoded[pc];
+    let Some(&awaited) = decoded.get(pc + 1) else {
+        return operand;
+    };
+    if call.op() != Op::Call || call.result_flags() != 0 || awaited.op() != Op::Await {
+        return operand;
+    }
+    let result = call.result_register();
+    let feeds = awaited.register_b() == result
+        && (awaited.result_register() == result
+            || live()
+                .and_then(|masks| masks.get(pc + 2))
+                .is_some_and(|live| crate::compile::liveness::register_dead(live, usize::from(result))));
+    if !feeds {
+        return operand;
+    }
+    // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
+    let imm = unsafe { operand.imm };
+    LaneOperand { imm: imm | ImmediateLayout::LANE_CALL_RESULT_AWAITED_FLAG }
+}
+
 /// A `Call` record's operand, flagged when liveness (`live`, the registers live before each
 /// pc) shows its result register dead after the call: nothing reads the value the callee
 /// returns (`ImmediateLayout::lane_call_result_used`).
@@ -18661,7 +18711,8 @@ fn derive_lane_view<'live, H: Host>(
                 .filter(|_| {
                     keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
                 })
-                .map(|operand| lane_call_result_marked(operand, instruction, function, pc));
+                .map(|operand| lane_call_result_marked(operand, instruction, function, pc))
+                .map(|operand| lane_call_awaited_marked(operand, &decoded, pc, live));
             // Control reaches this record only from the previous one when no
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.
