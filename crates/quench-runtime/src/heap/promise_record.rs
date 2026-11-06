@@ -102,12 +102,6 @@ impl PromiseRecord {
             roots.push(reaction.next);
         }
     }
-
-    /// The host job contexts its pending reactions hold, which the host releases when the
-    /// promise dies with them unrun.
-    pub(crate) fn reaction_job_contexts(&self) -> impl Iterator<Item = HostExecutionContext> + '_ {
-        self.reactions.iter().filter_map(|reaction| reaction.execution_context.get())
-    }
 }
 
 /// The host contexts of promises the sweep freed, for the host to release: the job tokens of
@@ -123,8 +117,16 @@ pub(crate) struct AbandonedHostContexts {
 impl AbandonedHostContexts {
     /// The contexts a dead promise's record held.
     pub(crate) fn abandon(&mut self, record: &PromiseRecord) {
-        self.jobs.extend(record.reaction_job_contexts());
-        self.promises.extend(record.host_context.get());
+        // Plain loops: most dead promises are settled, with no reactions, under a host that
+        // gave them no context, and an adapter chain costs each of them its setup.
+        for reaction in &record.reactions {
+            if let Some(context) = reaction.execution_context.get() {
+                self.jobs.push(context);
+            }
+        }
+        if let Some(context) = record.host_context.get() {
+            self.promises.push(context);
+        }
     }
 
     pub(crate) fn append(&mut self, other: Self) {
