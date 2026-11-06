@@ -1383,10 +1383,6 @@ impl Engine {
         drop(allocator);
         let (compiler, module) = emitted?;
         let program = compiler.finish(module)?;
-        // Lazy parsing releases function-body ASTs. Freeze complete diagnostic
-        // facts once from source without forcing their bytecode replay. This
-        // cold metadata parse is shared by dynamic and native publication.
-        crate::vm::freeze_call_sites(&program);
         #[cfg(feature = "aot")]
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]

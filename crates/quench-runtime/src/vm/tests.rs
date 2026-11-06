@@ -24163,3 +24163,19 @@ fn lane_iterator_step_exits_run_the_move_their_jump_absorbs() {
         assert_eq!(vm.to_string(&program, answer).unwrap(), "object", "{mode:?}");
     }
 }
+
+#[test]
+fn non_callable_call_sites_derive_from_source_at_the_first_error() {
+    let source = "const o = { a: { b: 1 } };\n\
+        function call() { try { o.a.b(); } catch (error) { print(error.message); } }\n\
+        call(); call();\n\
+        try { new o.a(); } catch (error) { print(error.message); }";
+    let program = Engine::specialize(source, "call-sites.js").unwrap();
+    assert!(program.source.as_ref().unwrap().call_sites.get().is_none(), "compilation parses no call sites");
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), [
+        "o.a.b is not a function", "o.a.b is not a function", "o.a is not a constructor",
+    ]);
+}
