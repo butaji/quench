@@ -315,6 +315,7 @@ impl Value {
     /// An environment slot that shares its owner environment's slot of the same index
     /// (`EnvironmentSlot::shared`): a `TAG_DELETED` payload of `SHARED_ENVIRONMENT_SLOT_BIT`
     /// and the owner's heap payload, which no guest operation produces.
+    #[inline(always)]
     pub(crate) fn shared_environment_slot(owner: Self) -> Self {
         debug_assert!(owner.is_heap() && owner.0 & SHARED_ENVIRONMENT_SLOT_BIT == 0);
         Self(TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT | (owner.0 & PAYLOAD_MASK))
@@ -323,6 +324,7 @@ impl Value {
     /// A slot index or length inside a sparse environment's slot storage
     /// (`EnvironmentSlots`): a `TAG_DELETED` payload of `ENVIRONMENT_INDEX_BIT` and the number,
     /// which no guest operation produces.
+    #[inline(always)]
     pub(crate) fn environment_index(index: u32) -> Self {
         Self(TAG_DELETED | ENVIRONMENT_INDEX_BIT | u64::from(index))
     }
@@ -353,6 +355,7 @@ impl Value {
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
+    #[inline(always)]
     pub fn number(value: f64) -> Self {
         let integer = truncate_to_i32(value);
         if f64::from(integer).to_bits() == value.to_bits() {
@@ -389,11 +392,13 @@ impl Value {
 
     /// The value's encoding, which a snapshot writes as is: it restores every heap index the
     /// value names at the same index (`crate::snapshot`).
+    #[inline(always)]
     pub(crate) fn to_bits(self) -> u64 {
         self.0
     }
 
     /// A value `to_bits` gave, read back from a snapshot of the same heap layout.
+    #[inline(always)]
     pub(crate) fn from_bits(bits: u64) -> Self {
         Self(bits)
     }
@@ -447,6 +452,7 @@ impl Value {
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
     }
 
+    #[inline(always)]
     pub(crate) fn heap(index: u32) -> Self {
         Self(TAG_HEAP | u64::from(index))
     }
@@ -508,6 +514,7 @@ impl Value {
         Some((left.as_number()?, right.as_number()?))
     }
 
+    #[inline(always)]
     pub fn as_bool(self) -> Option<bool> {
         ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
@@ -607,10 +614,12 @@ impl Value {
             || self.direct_iterator_index().is_some()
     }
 
+    #[inline(always)]
     pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
 
+    #[inline(always)]
     pub fn is_null(self) -> bool {
         self.0 == TAG_NULL
     }
@@ -661,10 +670,12 @@ impl Value {
         Some(!(self.is_null() || self.is_undefined() || self.is_deleted() || self == Self::FALSE))
     }
 
+    #[inline(always)]
     pub fn is_heap(self) -> bool {
         (self.0 & TAG_MASK) == TAG_HEAP
     }
 
+    #[inline(always)]
     pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
     }
