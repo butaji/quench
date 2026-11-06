@@ -2266,12 +2266,12 @@ impl Lowering<'_, '_> {
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
-        let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
         if let Some(constant) = field.inherited {
+            use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+            let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
+            let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
             if state.epoch != Some(constant.epoch) {
                 let address = self.ins().iconst(types::I64, crate::heap::prototype_value_epoch_address() as i64);
                 let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
@@ -2292,31 +2292,11 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, matched, exit);
             return Some(read);
         }
-        let from = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base));
-        let below = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end));
-        let object_proto = self.ins().band(from, below);
-        emit_js_guard(&mut self.builder, object_proto, exit);
-        let id = self.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
-        let id = self.ins().uextend(types::I64, id);
-        let offset = self.ins().imul_imm_u(id, OBJECT.record_size as i64);
+        // The prototype's own value, read as every tier reads it (`staged::holder_slot`).
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let prototype = self.ins().iadd(records, offset);
-        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
-        emit_js_guard(&mut self.builder, same, exit);
-        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`),
-        // which the exact holder shape's storage form proves (`Vm::native_field_entry`).
-        let extras = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
-        let start = self.ins().uextend(types::I64, start);
-        // The prototype's run lies inside the arena, as every live flat object's does
-        // (`object_slots::arena_range`).
-        let entry = self.entry.as_ref().expect("entry facts");
-        let properties = self.builder.use_var(entry.receiver.properties);
-        let index = self.ins().iadd_imm_u(start, i64::from(field.slot));
-        let offset = self.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = self.ins().iadd(properties, offset);
-        Some(self.ins().load(types::I64, MemFlagsData::trusted(), address, 0))
+        let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_base: Some(properties), object_records: Some(records) };
+        crate::vm::staged::holder_slot(&mut stage, record, holder, field.slot, field.storage_len, exit)
     }
 
     /// The record of `owner`'s object (a register's, or `this`'s), proved once until an
@@ -2535,7 +2515,7 @@ impl Lowering<'_, '_> {
         let layout = projection.or_else(|| CheckedObject::prove(&mut self.builder, object, properties, field, PackedAccess::Reload));
         let int = ty.is_subtype(Type::INT32);
         let stored = layout.and_then(|layout| crate::vm::staged::store_slot(
-            &mut super::object_slots::Emit { builder: &mut self.builder, property_base: None }, layout, field.slot, value, int, general));
+            &mut super::object_slots::Emit { builder: &mut self.builder, property_base: None, object_records: None }, layout, field.slot, value, int, general));
         let next = if stored.is_some() { done } else { general };
         self.ins().jump(next, &[]);
     }
@@ -2700,7 +2680,7 @@ struct LaneMachine<'l, 'a, 'f> {
 
 impl<'f> LaneMachine<'_, '_, 'f> {
     fn emit(&mut self) -> super::object_slots::Emit<'_, 'f> {
-        super::object_slots::Emit { builder: &mut self.lowering.builder, property_base: None }
+        super::object_slots::Emit { builder: &mut self.lowering.builder, property_base: None, object_records: None }
     }
 }
 
@@ -2749,6 +2729,9 @@ impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
     fn property_base(&mut self) -> ir::Value {
         let entry = self.lowering.entry.as_ref().expect("entry facts");
         self.lowering.builder.use_var(entry.receiver.properties)
+    }
+    fn object_records(&mut self) -> ir::Value {
+        emit_js_payload_word(&mut self.lowering.builder, self.lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base))
     }
 }
 

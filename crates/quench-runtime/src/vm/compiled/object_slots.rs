@@ -147,13 +147,13 @@ impl NativeFieldLoad {
         // A holder read loads the holder's slot; only an own read's packed receiver bounds it.
         usize::from(self.slot) < self.storage_len
             && (self.holder.is_some()
-                || self.storage() != Some(PlainPropertyStorage::PackedInline)
+                || !self.storage().inline()
                 || self.storage_len <= crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
     }
 
     /// Where a receiver of the exact shape keeps its values (`PlainPropertyStorage::of_exact`),
     /// which the read's shape match proves.
-    pub(super) fn storage(self) -> Option<PlainPropertyStorage> {
+    pub(super) fn storage(self) -> PlainPropertyStorage {
         PlainPropertyStorage::of_exact(self.shape)
     }
 }
@@ -174,6 +174,9 @@ pub(super) struct Emit<'a, 'b> {
     /// The property arena's base the residual reads (`JsStepDispatch::property_values`),
     /// for an operation that addresses the arena.
     pub(super) property_base: Option<ir::Value>,
+    /// The object record reservation's base (`JsStepDispatch::object_record_base`), for an
+    /// operation that locates a prototype's record.
+    pub(super) object_records: Option<ir::Value>,
 }
 
 impl crate::vm::staged::Stage for Emit<'_, '_> {
@@ -231,11 +234,12 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
         Some(())
     }
     fn property_base(&mut self) -> ir::Value { self.property_base.expect("an arena layout's caller passes the arena base") }
+    fn object_records(&mut self) -> ir::Value { self.object_records.expect("a prototype read's caller passes the record base") }
 }
 
 impl CheckedObject {
     /// The projection of a receiver whose identity and exact shape, `plan.shape`, the caller
-    /// proved (`staged::layout`). `None` for values behind extras.
+    /// proved (`staged::layout`); `None` for a plan its shape does not hold.
     pub(super) fn prove(
         builder: &mut FunctionBuilder<'_>,
         record: ir::Value,
@@ -244,12 +248,12 @@ impl CheckedObject {
         access: PackedAccess,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_base: Some(base) };
-        crate::vm::staged::layout(&mut stage, record, plan.shape, plan.storage_len, matches!(access, PackedAccess::Snapshot))
+        let mut stage = Emit { builder, property_base: Some(base), object_records: None };
+        Some(crate::vm::staged::layout(&mut stage, record, plan.shape, plan.storage_len, matches!(access, PackedAccess::Snapshot)))
     }
 
     /// Read fresh contents using only the established layout and slot bound (`staged::read_slot`).
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::vm::staged::read_slot(&mut Emit { builder, property_base: None }, self, slot)
+        crate::vm::staged::read_slot(&mut Emit { builder, property_base: None, object_records: None }, self, slot)
     }
 }

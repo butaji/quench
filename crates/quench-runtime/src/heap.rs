@@ -126,6 +126,8 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) auxiliary_offset: usize,
     pub(crate) payload_offset: usize,
     pub(crate) extras_arena_start_offset: usize,
+    /// Where extras hold the inline values they displaced, as words.
+    pub(crate) extras_inline_offset: usize,
     /// The auxiliary word's storage form bits (`value_vec::STORAGE_FORM`): packed inline values
     /// in the payload word, and extras the payload word names.
     pub(crate) packed_storage_mask: u32,
@@ -154,6 +156,7 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     auxiliary_offset: cell::NATIVE_OBJECT_AUXILIARY_OFFSET,
     payload_offset: cell::NATIVE_OBJECT_PAYLOAD_OFFSET,
     extras_arena_start_offset: cell::NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
+    extras_inline_offset: cell::NATIVE_OBJECT_EXTRAS_INLINE_OFFSET,
     packed_storage_mask: cell::NATIVE_OBJECT_PACKED_STORAGE,
     extras_storage_mask: cell::NATIVE_OBJECT_EXTRAS_STORAGE,
     array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,

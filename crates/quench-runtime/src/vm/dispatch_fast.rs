@@ -2716,10 +2716,9 @@ impl super::staged::RegisterFile for LaneRegisters {
 /// Runs `operation` by the interpreter's semantics (`staged::step`) on the lane's registers,
 /// `accumulated` the register the record reads from the accumulator: the value it produced.
 #[inline(always)]
-fn lane_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, accumulated: Option<(u16, Value)>, operation: super::staged::Operation) -> Value {
-    let arena = unsafe { vm(cx) }.heap.property_arena();
+fn lane_step(r: Registers, accumulated: Option<(u16, Value)>, operation: super::staged::Operation) -> Value {
     let mut frame = super::staged::ConcreteFrame {
-        stage: super::staged::Concrete { arena },
+        stage: super::staged::Concrete::DETACHED,
         registers: LaneRegisters { r, accumulated, produced: Value::UNDEFINED },
     };
     super::staged::step(&mut frame, operation, ()).expect("a lane record's operation runs on any operands");
@@ -2730,14 +2729,14 @@ lane_handler! {
     fn lane_move<ACC: u8>(cx, r, ip, i, view) {
         // SAFETY: as `read`: the view selects an accumulator-reading record only after its producer.
         let accumulated = (ACC == ACC_B).then(|| (i.b, unsafe { view.acc.get() }));
-        let value = lane_step(cx, r, accumulated, super::staged::Operation::Move { destination: i.a, source: i.b });
+        let value = lane_step(r, accumulated, super::staged::Operation::Move { destination: i.a, source: i.b });
         next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..view })
     }
 }
 
 lane_handler! {
     fn lane_load_const<>(cx, r, ip, i, view) {
-        let value = lane_step(cx, r, None, super::staged::Operation::LoadConst { destination: i.a, constant: i.constant() });
+        let value = lane_step(r, None, super::staged::Operation::LoadConst { destination: i.a, constant: i.constant() });
         next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..view })
     }
 }

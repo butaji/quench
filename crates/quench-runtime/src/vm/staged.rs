@@ -49,15 +49,19 @@ pub(crate) trait Stage {
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
     /// The property arena's base, whose values a flat object's run starts at its position.
     fn property_base(&mut self) -> Self::Word;
+    /// The object record reservation's base, which a record id indexes.
+    fn object_records(&mut self) -> Self::Word;
 }
 
 /// Where an object of a proved exact shape keeps its named values: the payload word that packs
-/// them, read at once or at each read, or the address of its arena run.
+/// them, read at once or at each read, the address of its arena run, or of the words its
+/// extras displaced them into.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slots<W> {
     Packed(W),
     PackedRecord(W),
     Arena(W),
+    Displaced(W),
 }
 
 /// The layout a proved exact shape gives an object record (`layout`), and how many values its
@@ -79,22 +83,62 @@ pub(crate) fn exact_shape_is<S: Stage>(stage: &mut S, record: S::Word, exact: u3
 /// The layout of the object record at `record`, whose exact shape the caller proved `exact`:
 /// the form that word names fixes where the values live (`PlainPropertyStorage::of_exact`), so
 /// it reads the payload word once and tests nothing. `snapshot` keeps the packed values as read
-/// here, for a caller no store reaches; else each read loads them again. `None` for values
-/// behind extras, which the VM's own read takes.
+/// here, for a caller no store reaches; else each read loads them again.
 #[inline(always)]
-pub(crate) fn layout<S: Stage>(stage: &mut S, record: S::Word, exact: u32, storage_len: usize, snapshot: bool) -> Option<Layout<S::Word>> {
-    let slots = match PlainPropertyStorage::of_exact(exact)? {
+pub(crate) fn layout<S: Stage>(stage: &mut S, record: S::Word, exact: u32, storage_len: usize, snapshot: bool) -> Layout<S::Word> {
+    let arena_run = |stage: &mut S, start: S::Word| {
+        let offset = stage.mul_imm(start, OBJECT.property_value_size as u64);
+        let base = stage.property_base();
+        Slots::Arena(stage.add(base, offset))
+    };
+    let slots = match PlainPropertyStorage::of_exact(exact) {
         PlainPropertyStorage::PackedInline if snapshot => Slots::Packed(stage.load_u64(record, OBJECT.payload_offset as i32)),
         PlainPropertyStorage::PackedInline => Slots::PackedRecord(record),
+        // A flat object's payload word is its run's position alone (`Object::plain_storage_start`).
         PlainPropertyStorage::Arena => {
-            // A flat object's payload word is its run's position alone (`Object::plain_storage_start`).
             let start = stage.load_u64(record, OBJECT.payload_offset as i32);
-            let offset = stage.mul_imm(start, OBJECT.property_value_size as u64);
-            let base = stage.property_base();
-            Slots::Arena(stage.add(base, offset))
+            arena_run(stage, start)
+        }
+        // An object with extras points its payload word at them, which hold its inline values
+        // or its run's start (`Object::extras_storage_start`).
+        PlainPropertyStorage::ExtrasInline => {
+            let extras = stage.load_u64(record, OBJECT.payload_offset as i32);
+            Slots::Displaced(stage.add_imm(extras, OBJECT.extras_inline_offset as u64))
+        }
+        PlainPropertyStorage::ExtrasArena => {
+            let extras = stage.load_u64(record, OBJECT.payload_offset as i32);
+            let start = stage.load_u32(extras, OBJECT.extras_arena_start_offset as i32);
+            arena_run(stage, start)
         }
     };
-    Some(Layout { slots, storage_len })
+    Layout { slots, storage_len }
+}
+
+/// The record of the immediate prototype of the object record at `record`, where it is an
+/// object record (`ProtoLink::object_record_id`); `miss` for any other prototype.
+#[inline(always)]
+pub(crate) fn prototype_record<S: Stage>(stage: &mut S, record: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
+    let link = stage.and_imm(meta, u64::from(OBJECT.proto_mask));
+    // One unsigned test bounds the link to the object records' range from both sides.
+    let id = stage.add_imm(link, u64::from(OBJECT.proto_record_base).wrapping_neg());
+    let object = stage.below_imm(id, u64::from(OBJECT.proto_record_end - OBJECT.proto_record_base));
+    stage.guard(object, miss)?;
+    let offset = stage.mul_imm(id, OBJECT.record_size as u64);
+    let records = stage.object_records();
+    Some(stage.add(records, offset))
+}
+
+/// Value `slot` of the immediate prototype of the object record at `record`, where that
+/// prototype is an object record of the exact shape `holder` holding `storage_len` values;
+/// `miss` for any other prototype. The read of the prototype's own value is `layout`'s.
+#[inline(always)]
+pub(crate) fn holder_slot<S: Stage>(stage: &mut S, record: S::Word, holder: u32, slot: u16, storage_len: usize, miss: S::Miss) -> Option<S::Word> {
+    let prototype = prototype_record(stage, record, miss)?;
+    let matched = exact_shape_is(stage, prototype, holder);
+    stage.guard(matched, miss)?;
+    let layout = layout(stage, prototype, holder, storage_len, false);
+    Some(read_slot(stage, layout, slot))
 }
 
 /// Value `slot` of an object of `layout`, which holds it.
@@ -102,7 +146,7 @@ pub(crate) fn layout<S: Stage>(stage: &mut S, record: S::Word, exact: u32, stora
 pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word>, slot: u16) -> S::Word {
     debug_assert!(usize::from(slot) < layout.storage_len);
     let payload = match layout.slots {
-        Slots::Arena(base) => return stage.load_u64(base, i32::from(slot) * OBJECT.property_value_size as i32),
+        Slots::Arena(base) | Slots::Displaced(base) => return stage.load_u64(base, i32::from(slot) * OBJECT.property_value_size as i32),
         Slots::Packed(payload) => payload,
         Slots::PackedRecord(record) => stage.load_u64(record, OBJECT.payload_offset as i32),
     };
@@ -126,8 +170,9 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word>, slot:
             stage.store_u64(base, i32::from(slot) * OBJECT.property_value_size as i32, value);
             return Some(());
         }
-        // A snapshot of packed values serves only a caller no store reaches.
-        Slots::Packed(_) => return None,
+        // A snapshot of packed values serves only a caller no store reaches; values extras
+        // displaced take the heap's store, which keeps their barrier.
+        Slots::Packed(_) | Slots::Displaced(_) => return None,
         Slots::PackedRecord(record) => record,
     };
     if !int {
@@ -176,11 +221,18 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
 /// caller's slow path. The property arena gives its base where an operation addresses it.
 pub(crate) struct Concrete {
     pub(crate) arena: *const crate::value_vec::ValueArena,
+    pub(crate) records: *const crate::heap::Object,
 }
 
 impl Concrete {
     /// The stage of an operation that touches no object storage (a number operation).
-    pub(crate) const DETACHED: Self = Self { arena: std::ptr::null() };
+    pub(crate) const DETACHED: Self = Self { arena: std::ptr::null(), records: std::ptr::null() };
+
+    /// The stage over `heap`'s object storage.
+    #[inline(always)]
+    pub(crate) fn of(heap: &crate::heap::Heap) -> Self {
+        Self { arena: heap.property_arena(), records: heap.object_record_base().unwrap_or(std::ptr::null()) }
+    }
 }
 
 impl Stage for Concrete {
@@ -240,19 +292,32 @@ impl Stage for Concrete {
     #[inline(always)]
     // SAFETY: the stage lives within the operation, while the arena lives with its heap.
     fn property_base(&mut self) -> u64 { unsafe { (*self.arena).native_values().0 as u64 } }
+    #[inline(always)]
+    fn object_records(&mut self) -> u64 { self.records as u64 }
 }
 
 /// The own data value `slot` of the object `object` where its exact shape is `exact`, as every
-/// tier reads it (`exact_shape_is`, `layout`, `read_slot`); `None` where the shape differs or
-/// its values sit behind extras, which the caller's general read takes.
+/// tier reads it (`exact_shape_is`, `layout`, `read_slot`); `None` where the shape differs.
 #[inline(always)]
 pub(crate) fn own_field(heap: &crate::heap::Heap, object: &crate::heap::Object, exact: u32, slot: u16, storage_len: usize) -> Option<crate::Value> {
-    let mut stage = Concrete { arena: heap.property_arena() };
+    let mut stage = Concrete::of(heap);
     let record = object as *const crate::heap::Object as u64;
     let matched = exact_shape_is(&mut stage, record, exact);
     stage.guard(matched, ())?;
-    let layout = layout(&mut stage, record, exact, storage_len, false)?;
+    let layout = layout(&mut stage, record, exact, storage_len, false);
     Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
+}
+
+/// The data value `slot` that the immediate prototype of `object` holds, as every tier reads
+/// it (`holder_slot`), where `object`'s exact shape is `exact` and the prototype is an object
+/// record of the exact shape `holder`; `None` otherwise.
+#[inline(always)]
+pub(crate) fn inherited_field(heap: &crate::heap::Heap, object: &crate::heap::Object, exact: u32, holder: u32, slot: u16) -> Option<crate::Value> {
+    let mut stage = Concrete::of(heap);
+    let record = object as *const crate::heap::Object as u64;
+    let matched = exact_shape_is(&mut stage, record, exact);
+    stage.guard(matched, ())?;
+    holder_slot(&mut stage, record, holder, slot, usize::from(slot) + 1, ()).map(crate::Value::from_bits)
 }
 
 /// `store_slot` of `value` at `slot` of `object`, of the exact shape `exact`, into the property
@@ -260,11 +325,10 @@ pub(crate) fn own_field(heap: &crate::heap::Heap, object: &crate::heap::Object, 
 /// does not take it (`store_slot`), the object unchanged.
 #[inline(always)]
 pub(crate) fn store_own_field(arena: &mut crate::value_vec::ValueArena, object: &mut crate::heap::Object, exact: u32, slot: u16, value: crate::Value) -> bool {
-    let mut stage = Concrete { arena };
+    let mut stage = Concrete { arena, ..Concrete::DETACHED };
     let record = object as *mut crate::heap::Object as u64;
-    layout(&mut stage, record, exact, usize::from(slot) + 1, false)
-        .and_then(|layout| store_slot(&mut stage, layout, slot, value.to_bits(), false, ()))
-        .is_some()
+    let layout = layout(&mut stage, record, exact, usize::from(slot) + 1, false);
+    store_slot(&mut stage, layout, slot, value.to_bits(), false, ()).is_some()
 }
 
 /// A stage with a register file: the frame an instruction's semantics reads and writes. The
@@ -338,6 +402,7 @@ impl<R: RegisterFile> Stage for ConcreteFrame<R> {
         below_imm(a: u64, imm: u64) -> bool;
         guard(cond: bool, miss: ()) -> Option<()>;
         property_base() -> u64;
+        object_records() -> u64;
     }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {

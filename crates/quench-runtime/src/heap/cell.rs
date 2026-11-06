@@ -120,6 +120,7 @@ mod cell_layout_tests {
             layout.extras_arena_start_offset,
             NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET
         );
+        assert_eq!(layout.extras_inline_offset, std::mem::offset_of!(ObjectExtras, inline_properties));
     }
 }
 
@@ -1558,6 +1559,7 @@ const _: () = assert!(
 );
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
+#[repr(transparent)]
 struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
 
 impl Default for DisplacedInline {
@@ -1567,25 +1569,33 @@ impl Default for DisplacedInline {
 }
 
 
-/// Storage forms whose complete layout is in the ordinary object's record.
+/// The storage forms of an object outside dictionary storage, the two bits of
+/// `value_vec::STORAGE_FORM`: its inline values packed in the record's payload word, or its
+/// values in an arena run the payload word starts; with extras, which the payload word then
+/// names, the inline values displaced into them as words, or the run's start moved there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainPropertyStorage {
     PackedInline,
     Arena,
+    ExtrasInline,
+    ExtrasArena,
 }
 
 impl PlainPropertyStorage {
     /// The form an object of exact auxiliary `exact` (`Object::exact_shape`) keeps its values
-    /// in, which a match of that word proves (`value_vec::STORAGE_FORM`); `None` where they sit
-    /// behind extras.
-    pub(crate) const fn of_exact(exact: u32) -> Option<Self> {
-        if exact & crate::value_vec::EXTRAS_STORAGE != 0 {
-            None
-        } else if exact & crate::value_vec::PACKED_STORAGE != 0 {
-            Some(Self::PackedInline)
-        } else {
-            Some(Self::Arena)
+    /// in, which a match of that word proves.
+    pub(crate) const fn of_exact(exact: u32) -> Self {
+        match (exact & crate::value_vec::PACKED_STORAGE != 0, exact & crate::value_vec::EXTRAS_STORAGE != 0) {
+            (true, false) => Self::PackedInline,
+            (false, false) => Self::Arena,
+            (true, true) => Self::ExtrasInline,
+            (false, true) => Self::ExtrasArena,
         }
+    }
+
+    /// Whether the form holds at most the inline values.
+    pub(crate) const fn inline(self) -> bool {
+        matches!(self, Self::PackedInline | Self::ExtrasInline)
     }
 }
 
@@ -1599,6 +1609,8 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = std::mem::offset_of!(Ob
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, payload);
 pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
     std::mem::offset_of!(ObjectExtras, arena_start);
+pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_OFFSET: usize =
+    std::mem::offset_of!(ObjectExtras, inline_properties);
 pub(super) const NATIVE_OBJECT_PACKED_STORAGE: u32 = crate::value_vec::PACKED_STORAGE;
 pub(super) const NATIVE_OBJECT_EXTRAS_STORAGE: u32 = crate::value_vec::EXTRAS_STORAGE;
 pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;

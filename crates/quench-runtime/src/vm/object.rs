@@ -1435,14 +1435,8 @@ impl<H: Host> Vm<H> {
     /// `None` where its shape differs.
     #[inline(always)]
     fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
-        // The shared read every tier makes (`staged::own_field`); values behind extras,
-        // where the exact shape still matches, take the heap's general flat read.
-        if let Some(value) = super::staged::own_field(&self.heap, receiver, cache.receiver, cache.slot, usize::from(cache.slot) + 1) {
-            return Some(value);
-        }
-        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
-        // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        (cache.receiver == receiver.exact_shape()).then(|| unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) })
+        // The shared read every tier makes.
+        super::staged::own_field(&self.heap, receiver, cache.receiver, cache.slot, usize::from(cache.slot) + 1)
     }
 
     /// The field cache entry of the active program's `site`.
@@ -1461,8 +1455,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<super::compiled::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
-        // Values behind extras are the VM's to read.
-        crate::heap::PlainPropertyStorage::of_exact(cache.receiver)?;
         let shape = crate::value_vec::logical_shape(cache.receiver);
         let storage_len = self.shapes.get(shape as usize)?.storage_len();
         if usize::from(cache.slot) >= storage_len { return None; }
@@ -1578,16 +1570,7 @@ impl<H: Host> Vm<H> {
     fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
-        // An own read of values behind extras is the VM's to make.
         let inherited = holder.and_then(|holder| self.inherited_constant(holder, entry.slot));
-        // A holder read that loads the slot finds it in the arena behind the prototype's
-        // extras (`Lowering::holder_read`), which the holder's exact shape must say.
-        match holder {
-            None => { crate::heap::PlainPropertyStorage::of_exact(entry.receiver)?; }
-            Some(holder) if inherited.is_none()
-                && holder & crate::value_vec::STORAGE_FORM != crate::value_vec::EXTRAS_STORAGE => return None,
-            Some(_) => {}
-        }
         let owner = crate::value_vec::logical_shape(holder.unwrap_or(entry.receiver));
         let storage_len = self.shapes.get(owner as usize)?.storage_len();
         (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
@@ -1608,12 +1591,7 @@ impl<H: Host> Vm<H> {
         if cache.holder == NO_FIELD_HOLDER {
             return self.own_field_entry_hit(cache, receiver);
         }
-        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
-        if cache.receiver != receiver.exact_shape() || !cached_holder_matches(holder, cache.holder) {
-            return None;
-        }
-        // SAFETY: as `cached_ordinary_holder_field_value`.
-        Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
+        super::staged::inherited_field(&self.heap, receiver, cache.receiver, cache.holder, cache.slot)
     }
 
     /// The store `cached_field_store_hit` makes to an own data field of a direct object that
@@ -2474,22 +2452,22 @@ impl<H: Host> Vm<H> {
     /// `cached_ordinary_holder_field_value` of the site entry `cache`.
     #[inline(always)]
     fn ordinary_holder_entry_value(&self, cache: FieldCache, receiver: &Object) -> Option<FieldCacheHit> {
-        if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.exact_shape() {
+        if cache.holder == NO_FIELD_HOLDER {
             return None;
         }
-        // Most prototypes are object records, read from the stored link without decoding it
-        // or the cell families' dispatch.
-        let holder = match receiver.proto_link().object_record_id() {
-            Some(record) => self.heap.object_record_by_id(record),
-            None => self.heap.object(receiver.proto())?,
+        // Most prototypes are object records, read as every tier reads them.
+        let value = if receiver.proto_link().object_record_id().is_some() {
+            super::staged::inherited_field(&self.heap, receiver, cache.receiver, cache.holder, cache.slot)?
+        } else {
+            let holder = self.heap.object(receiver.proto())?;
+            if cache.receiver != receiver.exact_shape() || !cached_holder_matches(holder, cache.holder) {
+                return None;
+            }
+            // SAFETY: both immutable shapes and the property slot were recorded together after
+            // confirming an immediate-prototype data property; the exact holder match rules out
+            // a dictionary.
+            unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) }
         };
-        if !cached_holder_matches(holder, cache.holder) {
-            return None;
-        }
-        // SAFETY: both immutable shapes and the property slot were recorded together after
-        // confirming an immediate-prototype data property; the exact holder match rules out
-        // a dictionary.
-        let value = unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) };
         Some(FieldCacheHit {
             value,
             tier: 0,
