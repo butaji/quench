@@ -73,6 +73,13 @@ macro_rules! arithmetic_all {
     };
 }
 
+/// The return records' leaf forms (`LaneView::specialize_leaf_returns`): a record of no leaf's
+/// records, of a leaf that runs in its caller's context (`CallEntry::Leaf`), or of one whose
+/// call made the context its own (`CallEntry::ContextLeaf`).
+const NOT_LEAF: u8 = 0;
+const PLAIN_LEAF: u8 = 1;
+const CONTEXT_LEAF: u8 = 2;
+
 /// One instruction of a lane view.
 #[repr(C)]
 pub(super) struct LaneInstruction {
@@ -387,26 +394,39 @@ pub(super) struct OsrSiteDiagnostics {
 }
 
 impl LaneView {
-    /// Gives each return record of a leaf's records (`leaf_body`) its `LEAF` form, which
+    /// Gives each return record of a leaf's records (`leaf_body`) its leaf form (`PLAIN_LEAF`,
+    /// or `CONTEXT_LEAF` where the records read their receiver or captures, `context`), which
     /// completes a running leaf call (`lane_complete_leaf`), so no other function's return
-    /// tests for one.
-    fn specialize_leaf_returns<H: Host>(&self) {
-        macro_rules! pick {
-            ($op:expr) => {
-                [
-                    (lane_returning_operator::<H, { $op }, false, false> as Handler, lane_returning_operator::<H, { $op }, false, true> as Handler),
-                    (lane_returning_operator::<H, { $op }, true, false> as Handler, lane_returning_operator::<H, { $op }, true, true> as Handler),
-                ]
-            };
+    /// tests for one, and a leaf's return restores the context only where its call replaced it.
+    fn specialize_leaf_returns<H: Host>(&self, context: bool) {
+        macro_rules! forms {
+            ($leaf:expr) => {{
+                macro_rules! pick {
+                    ($op:expr) => {
+                        [
+                            (lane_returning_operator::<H, { $op }, false, NOT_LEAF> as Handler, lane_returning_operator::<H, { $op }, false, { $leaf }> as Handler),
+                            (lane_returning_operator::<H, { $op }, true, NOT_LEAF> as Handler, lane_returning_operator::<H, { $op }, true, { $leaf }> as Handler),
+                        ]
+                    };
+                }
+                let returns = [
+                    (lane_return::<H, NOT_LEAF> as Handler, lane_return::<H, { $leaf }> as Handler),
+                    (lane_return_constant::<H, NOT_LEAF>, lane_return_constant::<H, { $leaf }>),
+                    (lane_returning::<H, RETURNING_UNARY, NOT_LEAF>, lane_returning::<H, RETURNING_UNARY, { $leaf }>),
+                    (lane_returning::<H, RETURNING_BINARY, NOT_LEAF>, lane_returning::<H, RETURNING_BINARY, { $leaf }>),
+                    (lane_returning_field_first::<H, NOT_LEAF>, lane_returning_field_first::<H, { $leaf }>),
+                    (lane_returning_field_miss::<H, NOT_LEAF>, lane_returning_field_miss::<H, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_OWN, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_OWN, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_HOLDER, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_INHERITED, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>),
+                ];
+                returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
+            }};
         }
-        let operators = arithmetic_operators!(all pick).into_iter().flatten();
-        let returns = [
-            (lane_return::<H, false> as Handler, lane_return::<H, true> as Handler),
-            (lane_return_constant::<H, false>, lane_return_constant::<H, true>),
-            (lane_returning::<H, RETURNING_UNARY, false>, lane_returning::<H, RETURNING_UNARY, true>),
-            (lane_returning::<H, RETURNING_BINARY, false>, lane_returning::<H, RETURNING_BINARY, true>),
-        ];
-        let forms: Vec<(Handler, Handler)> = returns.into_iter().chain(operators).collect();
+        let forms = if context { forms!(CONTEXT_LEAF) } else { forms!(PLAIN_LEAF) };
         for record in &self.records {
             // SAFETY: as `requicken`: the lane runs on the view's thread, and no reference to
             // the handler field is live.
@@ -1771,11 +1791,12 @@ fn this_read_body(body: &Function) -> bool {
 /// (its general path), or activates a getter, which makes the leaf an activation first; no
 /// backward jump, so no safepoint runs in it. That is a register move or constant, a number
 /// or string operation of registers and constants, a capture's load or store, `this`, a
-/// field read of no private name through a register or `this`, a forward jump and the
-/// return, of a register, a constant or an operator's value. A body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is
-/// none. `private` says whether an atom is a private name, whose read the running function
-/// decides (`lane_cached_field_miss`).
-fn leaf_body(body: &Function, sites: &[crate::bytecode::FieldSite], private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<bool> {
+/// field read or store of no private name through a register or `this`, a global name's
+/// load, a forward jump and the return, of a register, a constant or an operator's value. A
+/// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
+/// `private` says whether an atom is a private name, whose access the running function
+/// decides (`lane_cached_field_miss`, `lane_private_brand`).
+fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<bool> {
     use crate::bytecode::{FieldBase, FieldLookup, Operand, OperandKind};
     if body.is_generator
         || body.is_async
@@ -1806,9 +1827,20 @@ fn leaf_body(body: &Function, sites: &[crate::bytecode::FieldSite], private: imp
                 false
             }
             Op::LoadThis | Op::LoadCapture | Op::StoreCapture => true,
-            // A returning read requickens by its site's tier (`lane_returning_field_first`),
-            // which keeps no leaf return (`LaneView::specialize_leaf_returns`).
-            Op::GetField if instruction.returns_from_frame() => return None,
+            // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
+            // place (`lane_set_field_in_place`) or on the general path, either of which makes
+            // the leaf an activation first.
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => {
+                if private(instruction.imm()) {
+                    return None;
+                }
+                matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)
+            }
+            // A global name's first load finds the running function (`lane_load_name_first`),
+            // which makes the leaf an activation first; its later loads read the realm alone.
+            Op::LoadName if body.names_resolve_statically(code) => false,
+            // A returning read requickens by its site's tier in its leaf form
+            // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
             Op::GetField => match instruction.field_lookup()? {
                 FieldLookup::Atom { atom, base, .. } => {
                     if private(atom) {
@@ -1817,12 +1849,13 @@ fn leaf_body(body: &Function, sites: &[crate::bytecode::FieldSite], private: imp
                     field_base(base)?
                 }
                 FieldLookup::Site(index) => {
-                    let site = sites.get(index)?;
+                    let site = code.field_sites.get(index)?;
                     let atoms = [Some(site.first), site.second, site.sink];
                     if atoms.into_iter().flatten().any(|(atom, _)| private(atom)) {
                         return None;
                     }
-                    field_base(site.base)?
+                    // A sink stores the value to a field of `this` (`lane_get_field_sink`).
+                    field_base(site.base)? || site.sink.is_some()
                 }
             },
             _ => return None,
@@ -4230,7 +4263,7 @@ fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bo
 /// from this record (`lane_frame_return`).
 macro_rules! lane_return_value {
     ($cx:expr, $ip:expr, $value:expr) => {
-        lane_return_value!($cx, $ip, $value, false)
+        lane_return_value!($cx, $ip, $value, NOT_LEAF)
     };
     ($cx:expr, $ip:expr, $value:expr, $leaf:expr) => {{
         let (cx, ip, value): (*mut LaneContext<H>, Ip, Value) = ($cx, $ip, $value);
@@ -6833,8 +6866,8 @@ unsafe fn lane_getter_read<H: Host>(
         // takes the kind its first run would.
         // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
         let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        if unsafe { (*entry).handler } == lane_returning_field_first::<H> as *const () {
-            requicken::<H>(entry, returning_field_first_kind(unsafe { vm(cx) }, code, unsafe { &*entry }));
+        if unsafe { (*entry).handler } == lane_returning_field_first::<H, NOT_LEAF> as *const () {
+            requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
         }
     } else if !target.entry.reads() && target.entry != CallEntry::ForwardsRead {
         return None;
@@ -7014,6 +7047,9 @@ fn lane_set_field_in_place<H: Host>(
     object: Value,
     i: &LaneInstruction,
 ) -> Resumed {
+    // The running function decides the store's strictness: a running leaf's is its
+    // materialized activation's.
+    lane_materialize_running_leaf(cx);
     let vm = unsafe { vm(cx) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
@@ -11956,12 +11992,12 @@ impl<H: Host> Vm<H> {
                 constructs,
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
                 leaf: (entry == CallEntry::Activates)
-                    .then(|| leaf_body(body, &code.field_sites, |atom| self.is_private_name(atom)))
+                    .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    .inspect(|_| {
+                    .inspect(|&context| {
                         if !self.js_tier_runs() {
                             // SAFETY: the program store keeps a derived view alive with its program.
-                            unsafe { &*view }.specialize_leaf_returns::<H>();
+                            unsafe { &*view }.specialize_leaf_returns::<H>(context);
                         }
                     }),
             }
@@ -12255,6 +12291,7 @@ script_handler! {
         // activation's in place, the other leaf form's through it, any other through the
         // full form.
         if target.entry != CallEntry::leaf(CONTEXT) {
+            std::hint::cold_path();
             if target.entry == CallEntry::Activates {
                 lane_plain_activation!(cx, vm, r, ip, i, target, ARGC)
             }
@@ -12333,7 +12370,7 @@ fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) -> Handler 
 /// records and context again, and the call's result in its register, as the plain
 /// activation's return makes them (`lane_return_plain`). `None` while no leaf runs.
 #[inline(always)]
-fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, context: bool) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
     let leaf = unsafe { &mut (*cx).leaf };
     if leaf.call.is_null() {
@@ -12343,7 +12380,8 @@ fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<
     let caller = leaf.caller_registers;
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
-        if (*leaf.target).entry == CallEntry::ContextLeaf {
+        if context {
+            debug_assert!((*leaf.target).entry == CallEntry::ContextLeaf);
             (*cx).this = leaf.caller_this;
             (*cx).env = leaf.caller_env;
             (*cx).capture = leaf.caller_capture;
@@ -12903,6 +12941,9 @@ script_handler! {
             }
             next!(cx, r, following(ip), Carried::script(cx))
         }
+        // The running function decides the name's scope: a running leaf's is its
+        // materialized activation's.
+        lane_materialize_running_leaf(cx);
         let function = vm
             .lane_stack
             .activations
@@ -17157,7 +17198,7 @@ lane_handler! {
     /// Return from an inline call to its caller; returning from the loop's
     /// entry frame belongs to the general loop.
     /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
-    fn lane_return<LEAF: bool>(cx, r, ip, i, view) {
+    fn lane_return<LEAF: u8>(cx, r, ip, i, view) {
         if let Some(resumed) = lane_complete_plain_activation::<H, LEAF>(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
@@ -17170,7 +17211,7 @@ lane_handler! {
     /// (`specialize_constant_returns`): the constant's return in one record, as `return;` and
     /// `return null;` compile. Any return past the common one writes the register and takes
     /// the `Return` record's own path.
-    fn lane_return_constant<LEAF: bool>(cx, r, ip, i, view) {
+    fn lane_return_constant<LEAF: u8>(cx, r, ip, i, view) {
         let value = i.constant();
         if let Some(resumed) = lane_complete_plain_activation::<H, LEAF>(cx, value) {
             resume!(cx, resumed)
@@ -17332,8 +17373,12 @@ fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
 /// `LaneView::specialize_leaf_returns`) completes the running leaf call first
 /// (`lane_complete_leaf`); no other record runs while one does.
 #[inline(always)]
-fn lane_complete_plain_activation<H: Host, const LEAF: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let (registers, next) = match if LEAF { lane_complete_leaf(cx, value) } else { None } {
+fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let completed = match LEAF {
+        NOT_LEAF => None,
+        leaf => lane_complete_leaf::<H>(cx, value, leaf == CONTEXT_LEAF),
+    };
+    let (registers, next) = match completed {
         Some(completed) => completed,
         None => lane_return_plain(cx, value)?,
     };
@@ -17374,7 +17419,7 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
     vm.lane_stack.drop_iterators_from(outermost + 1);
-    lane_complete_plain_activation::<H, false>(cx, value)
+    lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
 }
 
 /// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the
@@ -17775,16 +17820,16 @@ impl LeafRead {
             return Some(Self::Element { base: entry.b, field: FieldHit::of::<H>(entry)?, index: element.c });
         }
         let handler = entry.handler;
-        if handler == lane_returning::<H, RETURNING_FIELD_NESTED, false> as *const () {
+        if handler == lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF> as *const () {
             return Some(Self::Nested { site: entry.imm() });
         }
-        let kind = if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, false> as *const () {
+        let kind = if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF> as *const () {
             RETURNING_FIELD_POLYMORPHIC
-        } else if handler == lane_returning::<H, RETURNING_FIELD_OWN, false> as *const () {
+        } else if handler == lane_returning::<H, RETURNING_FIELD_OWN, NOT_LEAF> as *const () {
             RETURNING_FIELD_OWN
-        } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER, false> as *const () {
+        } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF> as *const () {
             RETURNING_FIELD_HOLDER
-        } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED, false> as *const () {
+        } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF> as *const () {
             RETURNING_FIELD_INHERITED
         } else {
             return None;
@@ -18256,7 +18301,7 @@ script_handler! {
     /// as the record's own handler computes it, then the activation's completion, or the VM
     /// frame's return of it from the general loop (`lane_frame_return`). A value the
     /// handler does not compute takes the general path.
-    fn lane_returning<KIND: u8, LEAF: bool>(cx, r, ip, i, view) {
+    fn lane_returning<KIND: u8, LEAF: u8>(cx, r, ip, i, view) {
         let value = unsafe {
             match KIND {
                 RETURNING_FIELD_OWN
@@ -18274,15 +18319,15 @@ script_handler! {
                     });
                     let Some(value) = value else {
                         if KIND == RETURNING_FIELD_POLYMORPHIC {
-                            sibling!(lane_returning::<H, RETURNING_FIELD, false>, r, ip, Carried::script(cx))
+                            sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx))
                         }
-                        sibling!(lane_returning_field_miss::<H>, r, ip, Carried::script(cx))
+                        sibling!(lane_returning_field_miss::<H, LEAF>, r, ip, Carried::script(cx))
                     };
                     Some(value)
                 }
                 RETURNING_FIELD_NESTED => {
                     let Some(value) = lane_nested_own_value(cx, r, i).or_else(|| lane_nested_polymorphic_value(cx, r, ip)) else {
-                        sibling!(lane_returning::<H, RETURNING_FIELD, false>, r, ip, Carried::script(cx))
+                        sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx))
                     };
                     Some(value)
                 }
@@ -18318,7 +18363,7 @@ script_handler! {
     /// (`specialize_register_operands`) as `lane_operator` resolves a non-returning one: two
     /// integers decide it here with no dispatch on the operator, any other operands take
     /// `lane_returning_operator_other`.
-    fn lane_returning_operator<OP: u32, CONSTANT: bool, LEAF: bool>(cx, r, ip, i, view) {
+    fn lane_returning_operator<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
         let right = if CONSTANT { i.constant() } else { r.get(i.c) };
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), right) else {
             sibling!(lane_returning_operator_other::<H, OP, CONSTANT, LEAF>, r, ip, Carried::script(cx))
@@ -18332,7 +18377,7 @@ script_handler! {
     /// concatenation and BigInt values `lane_binary_value` decides; any other takes the
     /// general path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
-    fn lane_returning_operator_other<OP: u32, CONSTANT: bool, LEAF: bool>(cx, r, ip, i, view) {
+    fn lane_returning_operator_other<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), if CONSTANT { i.constant() } else { r.get(i.c) });
         let value = super::operations::number_value_operator::<OP>(left, right)
             .or_else(|| (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten())
@@ -18347,11 +18392,12 @@ script_handler! {
 script_handler! {
     /// A returning `GetField`'s first run: a single read that names neither `name` nor
     /// `length` (`Vm::reads_function_info`) takes `RETURNING_FIELD_OWN`; any other keeps
-    /// `RETURNING_FIELD`, whose cached read prepares them.
+    /// `RETURNING_FIELD`, whose cached read prepares them. Every kind keeps the record's leaf
+    /// form (`LEAF`, `LaneView::specialize_leaf_returns`).
     #[inline(never)]
-    fn lane_returning_field_first<>(cx, r, ip, i, view) {
+    fn lane_returning_field_first<LEAF: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
-        let handler = returning_field_first_kind(unsafe { vm(cx) }, unsafe { &*(*cx).code }, i);
+        let handler = returning_field_first_kind::<H, LEAF>(unsafe { vm(cx) }, unsafe { &*(*cx).code }, i);
         requicken::<H>(ip, handler);
         sibling!(handler, r, ip, Carried::script(cx))
     }
@@ -18359,17 +18405,17 @@ script_handler! {
 
 /// The kind a returning `GetField` takes on its first run (`lane_returning_field_first`),
 /// which its record and site alone decide.
-fn returning_field_first_kind<H: Host>(
+fn returning_field_first_kind<H: Host, const LEAF: u8>(
     vm: &Vm<H>,
     code: &ResidualProgram,
     i: &LaneInstruction,
 ) -> Handler {
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
-        lane_returning::<H, RETURNING_FIELD_OWN, false>
+        lane_returning::<H, RETURNING_FIELD_OWN, LEAF>
     } else if lane_field_site_tier(vm, code, i) == FieldSiteTier::Nested {
-        lane_returning::<H, RETURNING_FIELD_NESTED, false>
+        lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>
     } else {
-        lane_returning::<H, RETURNING_FIELD, false>
+        lane_returning::<H, RETURNING_FIELD, LEAF>
     }
 }
 
@@ -18379,7 +18425,7 @@ script_handler! {
     /// (`lane_field_site_tier`), as `lane_get_field_miss` moves a plain read; the read itself
     /// takes `RETURNING_FIELD`.
     #[inline(never)]
-    fn lane_returning_field_miss<>(cx, r, ip, i, view) {
+    fn lane_returning_field_miss<LEAF: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         // The single-entry tiers read the object records alone; a receiver in a heap cell
@@ -18389,22 +18435,22 @@ script_handler! {
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
             // A local base has no single-base kind (`is_single_field_base`).
             tier if tier != FieldSiteTier::Nested && !is_single_field_base(i.b) => {
-                Some(lane_returning::<H, RETURNING_FIELD, false>)
+                Some(lane_returning::<H, RETURNING_FIELD, LEAF>)
             }
             FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
-                Some(lane_returning::<H, RETURNING_FIELD, false>)
+                Some(lane_returning::<H, RETURNING_FIELD, LEAF>)
             }
-            FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED, false>),
-            FieldSiteTier::General | FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD, false>),
-            FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, false>),
-            FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER, false>),
-            FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED, false>),
+            FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>),
+            FieldSiteTier::General | FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD, LEAF>),
+            FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, LEAF>),
+            FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER, LEAF>),
+            FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED, LEAF>),
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
             requicken::<H>(ip, handler);
         }
-        sibling!(lane_returning::<H, RETURNING_FIELD, false>, r, ip, Carried::script(cx))
+        sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx))
     }
 }
 
@@ -19083,7 +19129,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
-        Op::Return => Some(lane_return::<H, false>),
+        Op::Return => Some(lane_return::<H, NOT_LEAF>),
         Op::Yield => Some(lane_yield::<H>),
         _ => None,
     }
@@ -19644,12 +19690,12 @@ fn derive_lane_view<'live, H: Host>(
             } else if let Some(kind) = returning_kind(instruction) {
                 Some(LaneHandler {
                     handler: match kind {
-                        RETURNING_FIELD => lane_returning_field_first::<H> as Handler,
-                        RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY, false> as Handler,
-                        RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY, false> as Handler,
-                        RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT, false> as Handler,
-                        RETURNING_OBJECT_LITERAL => lane_returning::<H, RETURNING_OBJECT_LITERAL, false> as Handler,
-                        _ => lane_returning::<H, RETURNING_LITERAL, false> as Handler,
+                        RETURNING_FIELD => lane_returning_field_first::<H, NOT_LEAF> as Handler,
+                        RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY, NOT_LEAF> as Handler,
+                        RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler,
+                        RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT, NOT_LEAF> as Handler,
+                        RETURNING_OBJECT_LITERAL => lane_returning::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF> as Handler,
+                        _ => lane_returning::<H, RETURNING_LITERAL, NOT_LEAF> as Handler,
                     },
                     produces: false,
                 })
@@ -20782,7 +20828,7 @@ fn specialize_register_operands<H: Host>(
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
     let unary = lane_unary::<H> as Handler as *const ();
-    let returning_binary = lane_returning::<H, RETURNING_BINARY, false> as Handler as *const ();
+    let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
         if record.handler == returning_binary {
@@ -20980,10 +21026,10 @@ fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
     let load = lane_load_const::<H> as Handler as *const ();
-    let ret = lane_return::<H, false> as Handler as *const ();
+    let ret = lane_return::<H, NOT_LEAF> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
-            records[pc].handler = lane_return_constant::<H, false> as Handler as *const ();
+            records[pc].handler = lane_return_constant::<H, NOT_LEAF> as Handler as *const ();
         }
     }
 }
@@ -21580,9 +21626,9 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
     macro_rules! pick {
         ($op:expr) => {
             if constant.is_some() {
-                lane_returning_operator::<H, { $op }, true, false> as Handler
+                lane_returning_operator::<H, { $op }, true, NOT_LEAF> as Handler
             } else {
-                lane_returning_operator::<H, { $op }, false, false> as Handler
+                lane_returning_operator::<H, { $op }, false, NOT_LEAF> as Handler
             }
         };
     }
@@ -22615,20 +22661,24 @@ mod leaf_call_tests {
 
     #[test]
     fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
-        // A body of register, capture, `this` and field records with forward jumps is a leaf
-        // (`leaf_body`), whose records read the context or not; a call, a loop, `arguments` or
-        // a private read keeps the activation.
+        // A body of register, capture, `this`, field read and store, global name and returning
+        // read records with forward jumps is a leaf (`leaf_body`), whose records read the
+        // context or not; a call, a loop, `arguments` or a private read keeps the activation.
         let source = r#"
           function plain(x) { return (x + 1) | 0; }
           function branch(x) { return x < 3 ? x : -x; }
           var bump = (function () { var c = 0; return function () { c = (c + 1) | 0; return c; }; })();
           function method(x) { return (x + this.n) | 0; }
+          function setter(x) { this.n = x; }
+          globalThis.G0 = 1;
+          function readsGlobal(x) { return x + G0; }
+          function picks(o, f) { return f ? o.a : o.b; }
           function calls(x) { return plain(x); }
           function loops(x) { var s = 0; for (var i = 0; i < x; i++) s += i; return s; }
           function args(x) { return arguments.length; }
           class P { #v = 1; read() { return this.#v; } }
           var p = new P(), readP = P.prototype.read;
-          for (var i = 0; i < 2; i++) { plain(i); branch(i); bump(); method.call({ n: 1 }, i); calls(i); loops(i); args(i); p.read(); }
+          for (var i = 0; i < 2; i++) { plain(i); branch(i); bump(); method.call({ n: 1 }, i); setter.call({ n: 1 }, i); readsGlobal(i); picks({ a: 1, b: 2 }, i); calls(i); loops(i); args(i); p.read(); }
         "#;
         let program = crate::Engine::specialize(source, "leaf-entries.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
@@ -22639,6 +22689,9 @@ mod leaf_call_tests {
             ("branch", Some(CallEntry::Leaf)),
             ("bump", Some(CallEntry::ContextLeaf)),
             ("method", Some(CallEntry::ContextLeaf)),
+            ("setter", Some(CallEntry::ContextLeaf)),
+            ("readsGlobal", Some(CallEntry::Leaf)),
+            ("picks", Some(CallEntry::Leaf)),
             ("calls", None),
             ("loops", None),
             ("args", None),
