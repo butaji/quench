@@ -63,6 +63,10 @@ pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 /// The values a call roots besides its arguments: the callee and the receiver.
 const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
+/// The arguments a prepared callback's call keeps rooted in its loop's reused slots
+/// (`Vm::with_prepared_callback`): the most an array iteration native passes, a reducer's
+/// four. A call passing more roots them as `call_value` does.
+const PREPARED_ARGUMENT_ROOTS: usize = 4;
 
 #[derive(Clone, Copy, Default)]
 struct RuntimeAtoms {
@@ -259,6 +263,28 @@ use wtf16::JsString;
 mod tests;
 #[cfg(test)]
 mod closure_retention_tests;
+
+/// A native's callback prepared for a loop of calls (`Vm::with_prepared_callback`): the
+/// callee and receiver every call passes, and how its calls run (`CallbackProof`).
+pub(super) struct PreparedCallback<H: Host> {
+    callee: Value,
+    this: Value,
+    proof: CallbackProof<H>,
+}
+
+/// The life of a prepared callback's proof, one transition per loop: its first call runs as
+/// `call_value` runs it, so a loop of one call pays for no proof; the second proves what
+/// the loop's calls share once, in the lane that called the native (`Lane`) or not at all
+/// (`General`), and every later call reads that proof.
+enum CallbackProof<H: Host> {
+    First,
+    Second,
+    /// The lane proof, and the call roots from `roots` on that keep the callee, the receiver
+    /// and, in the `PREPARED_ARGUMENT_ROOTS` after them, each call's arguments.
+    Lane { roots: usize, lane: dispatch_fast::PreparedLaneCallback<H> },
+    General,
+}
+
 #[derive(Clone)]
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
@@ -3367,6 +3393,70 @@ impl<H: Host> Vm<H> {
         let result = self.call_value_with_target_inner(p, callee, this, args, target);
         self.active_call_roots.truncate(start);
         result
+    }
+
+    /// Runs `body`, a native's loop of calls of `callee` with `this` (array iteration, a sort's
+    /// comparisons), with a callback prepared for them (`Vm::call_prepared`): what holds for
+    /// every call of the loop is proved once (`CallbackProof`), as JSC's `CachedCall` does.
+    /// The native keeps the callee and receiver reachable, as its arguments.
+    pub(super) fn with_prepared_callback<R>(
+        &mut self,
+        callee: Value,
+        this: Value,
+        body: impl FnOnce(&mut Self, &mut PreparedCallback<H>) -> R,
+    ) -> R {
+        let mut prepared = PreparedCallback { callee, this, proof: CallbackProof::First };
+        let result = body(self, &mut prepared);
+        if let CallbackProof::Lane { roots, lane } = prepared.proof {
+            self.finish_lane_callback(lane);
+            self.active_call_roots.truncate(roots);
+        }
+        result
+    }
+
+    /// `call_value` of a prepared callback with `args`: in the lane that called the native
+    /// where the loop's proof holds (`Vm::call_prepared_lane`), else the general call. The
+    /// arguments stay rooted for the call, as `call_value` roots them, in the proof's slots,
+    /// which hold while they are the innermost call roots.
+    pub(super) fn call_prepared(
+        &mut self,
+        p: &ResidualProgram,
+        prepared: &mut PreparedCallback<H>,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        match &mut prepared.proof {
+            CallbackProof::Lane { roots, lane } => {
+                let arguments = *roots + CALL_ROOTS_BESIDE_ARGUMENTS;
+                if args.len() <= PREPARED_ARGUMENT_ROOTS
+                    && self.active_call_roots.len() == arguments + PREPARED_ARGUMENT_ROOTS
+                {
+                    let slots = &mut self.active_call_roots[arguments..arguments + PREPARED_ARGUMENT_ROOTS];
+                    for (index, slot) in slots.iter_mut().enumerate() {
+                        *slot = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+                    }
+                    if let Some(result) = self.call_prepared_lane(lane, args) {
+                        return result;
+                    }
+                }
+            }
+            CallbackProof::First => prepared.proof = CallbackProof::Second,
+            CallbackProof::Second => {
+                prepared.proof = match self.prepare_lane_callback(prepared.callee, prepared.this) {
+                    Some(lane) => {
+                        let roots = self.active_call_roots.len();
+                        self.active_call_roots.extend_from_slice(&[prepared.callee, prepared.this]);
+                        self.active_call_roots.extend_from_slice(&[Value::UNDEFINED; PREPARED_ARGUMENT_ROOTS]);
+                        CallbackProof::Lane { roots, lane }
+                    }
+                    None => CallbackProof::General,
+                };
+                if matches!(prepared.proof, CallbackProof::Lane { .. }) {
+                    return self.call_prepared(p, prepared, args);
+                }
+            }
+            CallbackProof::General => {}
+        }
+        self.call_value(p, prepared.callee, prepared.this, args)
     }
 
     fn call_value_from_frame(

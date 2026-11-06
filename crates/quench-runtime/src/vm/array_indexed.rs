@@ -313,72 +313,69 @@ impl<H: Host> Vm<H> {
         };
         let result_root = result.map(|result| self.heap.root(result));
         let mut filtered_value_roots = Vec::new();
-        let outcome = (|| {
-            let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let outcome = self.with_prepared_callback(callback, this_arg, |vm, prepared| {
             let mut result_length = 0;
             let reverse = matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex);
+            let finds_holes = matches!(
+                native,
+                Native::ArrayFind | Native::ArrayFindIndex | Native::ArrayFindLast | Native::ArrayFindLastIndex
+            );
             for offset in 0..length {
                 let index = if reverse { length - offset - 1 } else { offset };
-                let key = Value::number(index as f64);
-                let finds_holes = matches!(
-                    native,
-                    Native::ArrayFind
-                        | Native::ArrayFindIndex
-                        | Native::ArrayFindLast
-                        | Native::ArrayFindLastIndex
-                );
+                let key = Value::length(index);
                 // A present dense element is an own data property: HasProperty holds and Get
                 // reads it, observing nothing.
-                let value = match self.dense_array_element(this, key) {
+                let value = match vm.dense_array_element(this, key) {
                     Some(value) if !typed_array => value,
                     _ => {
-                        if !typed_array && !finds_holes && !self.has_property(p, this, key)? {
+                        if !typed_array && !finds_holes && !vm.has_property(p, this, key)? {
                             continue;
                         }
-                        self.get_index(p, this, key)?
+                        vm.get_index(p, this, key)?
                     }
                 };
-                let callback_args = [value, Value::number(index as f64), this];
-                let mapped = self.call_value(p, callback, this_arg, &callback_args)?;
+                let callback_args = [value, key, this];
+                let mapped = vm.call_prepared(p, prepared, &callback_args)?;
                 match native {
                     Native::ArrayForEach => {}
                     Native::ArrayMap => {
-                        let target = self
+                        let target = vm
                             .heap
                             .root_value(result_root.expect("map result is rooted"))
                             .unwrap();
                         if typed_array {
-                            self.typed_array_set(p, target, index, mapped)?;
+                            vm.typed_array_set(p, target, index, mapped)?;
                         } else if fresh {
-                            self.store_fresh_array_element(target, index, mapped);
+                            vm.store_fresh_array_element(target, index, mapped);
                         } else {
-                            self.create_data_property_or_throw(p, target, index, mapped)?;
+                            vm.create_data_property_or_throw(p, target, index, mapped)?;
                         }
                     }
-                    Native::ArrayFilter if self.truthy(mapped) => {
+                    Native::ArrayFilter if vm.truthy(mapped) => {
                         if typed_array {
-                            filtered_value_roots.push(self.heap.root(value));
+                            filtered_value_roots.push(vm.heap.root(value));
                         } else {
-                            let target = self
+                            let target = vm
                                 .heap
                                 .root_value(result_root.expect("filter result is rooted"))
                                 .unwrap();
                             if fresh {
-                                self.store_fresh_array_element(target, result_length, value);
+                                vm.store_fresh_array_element(target, result_length, value);
                             } else {
-                                self.create_data_property_or_throw(p, target, result_length, value)?;
+                                vm.create_data_property_or_throw(p, target, result_length, value)?;
                             }
                         }
                         result_length += 1;
                     }
-                    Native::ArraySome if self.truthy(mapped) => return Ok(Value::TRUE),
-                    Native::ArrayEvery if !self.truthy(mapped) => return Ok(Value::FALSE),
-                    Native::ArrayFind if self.truthy(mapped) => return Ok(value),
-                    Native::ArrayFindIndex if self.truthy(mapped) => {
+                    Native::ArraySome if vm.truthy(mapped) => return Ok(Value::TRUE),
+                    Native::ArrayEvery if !vm.truthy(mapped) => return Ok(Value::FALSE),
+                    Native::ArrayFind if vm.truthy(mapped) => return Ok(value),
+                    Native::ArrayFindIndex if vm.truthy(mapped) => {
                         return Ok(Value::number(index as f64));
                     }
-                    Native::ArrayFindLast if self.truthy(mapped) => return Ok(value),
-                    Native::ArrayFindLastIndex if self.truthy(mapped) => {
+                    Native::ArrayFindLast if vm.truthy(mapped) => return Ok(value),
+                    Native::ArrayFindLastIndex if vm.truthy(mapped) => {
                         return Ok(Value::number(index as f64));
                     }
                     _ => {}
@@ -388,19 +385,19 @@ impl<H: Host> Vm<H> {
                 Native::ArrayForEach => Ok(Value::UNDEFINED),
                 Native::ArrayFilter if typed_array => {
                     let target =
-                        self.typed_array_species_create_for_writing(p, this, result_length)?;
-                    let target_root = self.heap.root(target);
+                        vm.typed_array_species_create_for_writing(p, this, result_length)?;
+                    let target_root = vm.heap.root(target);
                     let result = (|| {
                         for (index, value_root) in filtered_value_roots.iter().enumerate() {
-                            let value = self.heap.root_value(*value_root).unwrap();
-                            self.typed_array_set(p, target, index, value)?;
+                            let value = vm.heap.root_value(*value_root).unwrap();
+                            vm.typed_array_set(p, target, index, value)?;
                         }
-                        Ok(self.heap.root_value(target_root).unwrap())
+                        Ok(vm.heap.root_value(target_root).unwrap())
                     })();
-                    self.heap.release_root(target_root);
+                    vm.heap.release_root(target_root);
                     result
                 }
-                Native::ArrayMap | Native::ArrayFilter => Ok(self
+                Native::ArrayMap | Native::ArrayFilter => Ok(vm
                     .heap
                     .root_value(result_root.expect("callback result is rooted"))
                     .unwrap()),
@@ -412,7 +409,7 @@ impl<H: Host> Vm<H> {
                 Native::ArrayFindLastIndex => Ok(Value::number(-1.0)),
                 _ => unreachable!("non-callback native routed to callback dispatch"),
             }
-        })();
+        });
         if let Some(root) = result_root {
             self.heap.release_root(root);
         }
@@ -469,42 +466,36 @@ impl<H: Host> Vm<H> {
         let mut accumulator_root = args.get(1).map(|value| self.heap.root(*value));
         let reverse = matches!(native, Native::ArrayReduceRight);
         let mut indices = 0..length;
-        let outcome = (|| {
+        let outcome = self.with_prepared_callback(callback, Value::UNDEFINED, |vm, prepared| {
             while let Some(index) = if reverse {
                 indices.next_back()
             } else {
                 indices.next()
             } {
-                let key = Value::number(index as f64);
-                let object = self.heap.root_value(object_root).unwrap();
-                if !typed_array && !self.has_property(p, object, key)? {
+                let key = Value::length(index);
+                let object = vm.heap.root_value(object_root).unwrap();
+                if !typed_array && !vm.has_property(p, object, key)? {
                     continue;
                 }
-                let object = self.heap.root_value(object_root).unwrap();
-                let value = self.get_index(p, object, key)?;
+                let object = vm.heap.root_value(object_root).unwrap();
+                let value = vm.get_index(p, object, key)?;
                 match accumulator_root {
-                    None => accumulator_root = Some(self.heap.root(value)),
+                    None => accumulator_root = Some(vm.heap.root(value)),
                     Some(root) => {
-                        let accumulator = self.heap.root_value(root).unwrap();
-                        let object = self.heap.root_value(object_root).unwrap();
-                        let callback = self.heap.root_value(callback_root).unwrap();
-                        let result = self.call_value(
-                            p,
-                            callback,
-                            Value::UNDEFINED,
-                            &[accumulator, value, key, object],
-                        )?;
-                        self.heap.update_root(root, result);
+                        let accumulator = vm.heap.root_value(root).unwrap();
+                        let object = vm.heap.root_value(object_root).unwrap();
+                        let result = vm.call_prepared(p, prepared, &[accumulator, value, key, object])?;
+                        vm.heap.update_root(root, result);
                     }
                 }
             }
             match accumulator_root {
-                Some(root) => Ok(self.heap.root_value(root).unwrap()),
+                Some(root) => Ok(vm.heap.root_value(root).unwrap()),
                 None => {
-                    Err(self.type_error(p, "reduce of empty array with no initial value".into()))
+                    Err(vm.type_error(p, "reduce of empty array with no initial value".into()))
                 }
             }
-        })();
+        });
         if let Some(root) = accumulator_root {
             self.heap.release_root(root);
         }
