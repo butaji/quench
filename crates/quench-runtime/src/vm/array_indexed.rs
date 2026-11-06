@@ -305,7 +305,7 @@ impl<H: Host> Vm<H> {
     /// makes, unreachable from guest code until it is returned, so its elements are stored as
     /// its own dense storage (`store_fresh_array_element`): a map's over a dense receiver,
     /// which bounds its length, or a filter's. `None` where the species makes the result.
-    #[inline]
+    #[inline(always)]
     pub(super) fn fresh_array_iteration(
         &mut self,
         native: Native,
@@ -586,6 +586,7 @@ impl ArrayIteration {
     }
 
     /// The method's value once every element was visited without a step ending it.
+    #[inline(always)]
     pub(super) fn completion(&self) -> Value {
         match self.native {
             Native::ArrayMap | Native::ArrayFilter => self.result,
