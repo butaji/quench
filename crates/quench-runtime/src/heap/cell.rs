@@ -981,6 +981,23 @@ impl Native {
             )
     }
 
+    /// `Array.prototype.forEach` and the other array methods that call a callback per index
+    /// (`Vm::array_callback_native`).
+    pub(crate) fn is_array_callback(self) -> bool {
+        matches!(
+            self,
+            Self::ArrayForEach
+                | Self::ArrayMap
+                | Self::ArrayFilter
+                | Self::ArraySome
+                | Self::ArrayEvery
+                | Self::ArrayFind
+                | Self::ArrayFindIndex
+                | Self::ArrayFindLast
+                | Self::ArrayFindLastIndex
+        )
+    }
+
     /// Whether the native observes the frame stack only by calling guest code, capturing an
     /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
     /// for a host's), so a lane calls it with its activations frameless. Each of these reads

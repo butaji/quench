@@ -996,7 +996,9 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         // A Number-only unary Math call neither allocates nor enters guest code. Its
         // ignored receiver and trailing arguments need no roots on that path.
-        let result = if let Some(value) = super::number::math_unary_call(native, args) {
+        let result = if let Some(value) =
+            native.is_math_function().then(|| super::number::math_unary_call(native, args)).flatten()
+        {
             Ok(value)
         } else {
             self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
@@ -1034,6 +1036,10 @@ impl<H: Host> Vm<H> {
         // The string and RegExp methods belong to none of the families below.
         if native.is_string_regexp_or_math() {
             return self.call_native_table(p, native, this, args);
+        }
+        // Nor does an array's callback loop, which calls guest code per index.
+        if native.is_array_callback() {
+            return self.array_callback_native(p, native, this, args);
         }
         if let Some(result) = self.string_html_method(p, native, this, args) {
             return result;

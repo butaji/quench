@@ -1276,6 +1276,69 @@ fn string_method_reads_follow_the_prototype_values() {
 }
 
 #[test]
+fn lane_array_callback_sites_keep_iteration_semantics() {
+    // A call site of an array's callback method calls the native straight from the lane
+    // (`lane_call_array_callback`), whose callbacks run in that lane from their first call
+    // (`Vm::call_prepared`): the arguments and thisArg passed, holes skipped and the length
+    // read once, a throwing and a non-callable callback, an inherited index seen mid-loop, map
+    // and some, a strict callback's this, a redefined forEach, an array-like receiver, a native
+    // callback and a bound one each keep the generic steps. Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function put() { for (var k = 0; k < arguments.length; k++) out[out.length] = arguments[k]; }
+      var sum = 0;
+      function add(x) { sum = (sum + x) | 0; }
+      function each(a, f, t) { return a.forEach(f, t); }
+      function map(a, f) { return a.map(f); }
+      function some(a, f) { return a.some(f); }
+      var i;
+      for (i = 0; i < 300; i++) each([i], add);
+      put(sum);
+      // Receiver, index, array and thisArg passed; holes skipped; length fixed at the start.
+      var seen = [];
+      each([1, , 3], function (v, k, a) { seen.push(v + ":" + k + ":" + a.length + ":" + (this && this.tag)); a.push(9); }, { tag: "t" });
+      put(seen.join(","));
+      // A callback that throws stops the loop; the error reaches the caller.
+      var calls = 0;
+      try { each([1, 2, 3], function (v) { calls++; if (v === 2) throw new RangeError("stop"); }); } catch (e) { put(e.name + " " + e.message + " " + calls); }
+      // A non-callable callback throws TypeError before any element is read.
+      try { each([1], 5); } catch (e) { put(e.constructor.name); }
+      // Elements deleted and indexed prototype values seen mid-loop.
+      Array.prototype[1] = "inherited";
+      var got = [];
+      each([0, , 2], function (v) { got.push(v); });
+      delete Array.prototype[1];
+      put(got.join(","));
+      // map and some at warmed sites; strict callback this.
+      for (i = 0; i < 300; i++) sum += map([i, i], function (v) { return v * 2; })[1] + (some([i], function (v) { return v > 150; }) ? 1 : 0);
+      put(sum, each([1], function () { "use strict"; put(String(this)); }));
+      // Redefined forEach and an array-like receiver through the same site.
+      var saved = Array.prototype.forEach;
+      Array.prototype.forEach = function (f) { return "mine"; };
+      put(each([1], add));
+      Array.prototype.forEach = saved;
+      var like = { length: 2, 0: "a", 1: "b", forEach: saved };
+      var letters = "";
+      each(like, function (v) { letters += v; });
+      put(letters);
+      // A callback that is itself a native, and a bound function.
+      var pushed = [];
+      each([7, 8], pushed.push, pushed);
+      put(pushed.length);
+      each([5], function (v) { put(this.base + v); }.bind({ base: 100 }));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_array_callback_sites_keep_iteration_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["44850|1:0:3:t,3:2:4:t|RangeError stop 2|TypeError|0,inherited,2|undefined|134699||mine|ab|6|105"]
+    );
+}
+
+#[test]
 fn lane_array_and_function_method_reads_follow_their_holder_hint() {
     // An array's or function's method read its prototype answered keeps that read as its record's
     // hint (`Vm::holder_hint_hit`): an array moved to another prototype, the method replaced,

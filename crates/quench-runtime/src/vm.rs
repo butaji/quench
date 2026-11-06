@@ -3507,6 +3507,21 @@ impl<H: Host> Vm<H> {
             }
             CallbackProof::General => {}
         }
+        // A native a lane called runs its user callee in that lane where the lane's own call of
+        // it would, as `call_value_with_target_inner` runs one, without its target resolution
+        // first; the arguments stay rooted as `call_value` roots them.
+        if self.lane_native.is_some()
+            && matches!(self.heap.function(prepared.callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. }))
+        {
+            let start = self.active_call_roots.len();
+            self.active_call_roots.extend_from_slice(&[prepared.callee, prepared.this]);
+            self.active_call_roots.extend_from_slice(args);
+            let result = self.lane_native_callback(prepared.callee, prepared.this, args);
+            self.active_call_roots.truncate(start);
+            if let Some(result) = result {
+                return result;
+            }
+        }
         self.call_value(p, prepared.callee, prepared.this, args)
     }
 

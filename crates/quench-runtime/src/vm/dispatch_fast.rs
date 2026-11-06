@@ -13339,7 +13339,27 @@ fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction) -> Handler 
         Native::ArrayPush => lane_call_array_push::<H>,
         Native::ArrayPop => lane_call_array_pop::<H>,
         native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
+        native if native.is_array_callback() => lane_call_array_callback::<H>,
         _ => lane_native_call::<H>,
+    }
+}
+
+script_handler! {
+    /// A `Call` site whose callee was an array's callback method (`native_call_handler`,
+    /// `Native::is_array_callback`), which no in-place shortcut of `lane_native_value` makes:
+    /// the native's call out of the lane (`lane_call_native_out`), whose callback calls run in
+    /// this lane (`Vm::lane_native_callback`). Any other callee takes `lane_native_call`.
+    #[inline(never)]
+    fn lane_call_array_callback<>(cx, r, ip, i, view) {
+        let callee = r.get(i.b);
+        let native = match (unsafe { vm(cx) }).heap.function(callee) {
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) if native.is_array_callback() => *native,
+            _ => sibling!(lane_native_call::<H>, r, ip, Carried::script(cx)),
+        };
+        // SAFETY: the call's window is registers of the running function, which the native
+        // call copies before anything can move them.
+        let value = lane_call_native_out(cx, ip, native, callee, r.get(i.c), unsafe { lane_call_window(r, i) });
+        resume!(cx, lane_native_complete(cx, ip, i, value))
     }
 }
 
@@ -13679,25 +13699,41 @@ fn lane_call_native<H: Host>(
     receiver: Value,
     args: &[Value],
 ) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
     if !native.runs_from_lane() {
         return None;
     }
-    // A unary Math function of a Number runs no guest code and observes no frame, so it
-    // runs from any activation.
-    if let Some(value) = super::number::math_unary_call(native, args) {
-        return Some(value);
+    // A Math function of Numbers runs no guest code and observes no frame, so it runs from
+    // any activation (`number::math_inline_call`, and `math_numbers` past two arguments).
+    if native.is_math_function() {
+        if let Some(value) = super::number::math_inline_call(native, args) {
+            return Some(value);
+        }
+        if let Some(numbers) = args
+            .iter()
+            .map(|value| value.as_number())
+            .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
+            && let Some(result) = super::number::math_numbers(native, &numbers)
+        {
+            return Some(Value::number(result));
+        }
     }
-    // So do `Math.max` and its kin of Numbers (`math_numbers`).
-    if native.is_math_function()
-        && let Some(numbers) = args
-        .iter()
-        .map(|value| value.as_number())
-        .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
-        && let Some(result) = super::number::math_numbers(native, &numbers)
-    {
-        return Some(Value::number(result));
-    }
+    lane_call_native_out(cx, ip, native, callee, receiver, args)
+}
+
+/// `lane_call_native` past its in-place Math shortcuts: the native's call out of the lane,
+/// beside its activations where the native admits it, else from its frame
+/// (`lane_call_from_frame`), as `lane_call_array_callback` calls an array's callback method,
+/// which no shortcut answers.
+#[inline(always)]
+fn lane_call_native_out<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    native: Native,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
     if !unsafe { (*cx).script_calls } {
         return None;
     }

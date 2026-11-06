@@ -14,15 +14,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayIndexOf => self.array_index_of_native(p, this, args),
             Native::ArrayCopyWithin => self.array_copy_within_native(p, this, args),
             Native::ArrayWith => self.array_copy_native(p, native, this, args),
-            Native::ArrayForEach
-            | Native::ArrayMap
-            | Native::ArrayFilter
-            | Native::ArraySome
-            | Native::ArrayEvery
-            | Native::ArrayFind
-            | Native::ArrayFindIndex
-            | Native::ArrayFindLast
-            | Native::ArrayFindLastIndex => self.array_callback_native(p, native, this, args),
+            native if native.is_array_callback() => self.array_callback_native(p, native, this, args),
             Native::ArrayGroup | Native::ArrayGroupToMap => {
                 self.array_group_native(p, native, this, args)
             }
