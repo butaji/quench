@@ -1313,14 +1313,20 @@ impl Lowering<'_, '_> {
             Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some() => self.typeof_test(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
             // collection leaves first.
-            Op::MakeObject | Op::MakeArray if plain => {
+            Op::MakeObject | Op::MakeArray | Op::MakeObject2 if plain => {
                 let exit = self.guard_exit(state, pc32);
                 let payload = self.payload;
-                let value = if instruction.op() == Op::MakeObject {
-                    emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_object, &[payload])
-                } else {
-                    let length = self.ins().iconst(types::I64, instruction.array_length() as i64);
-                    emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_array, &[payload, length])
+                let value = match instruction.op() {
+                    Op::MakeObject => emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_object, &[payload]),
+                    Op::MakeArray => {
+                        let length = self.ins().iconst(types::I64, instruction.array_length() as i64);
+                        emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_array, &[payload, length])
+                    }
+                    _ => {
+                        let site = self.ins().iconst(types::I64, i64::from(instruction.imm()));
+                        let (first, second) = (self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c()));
+                        emit_lane_helper_call(&mut self.builder, payload, self.helpers.new_object_pair, &[payload, site, first, second])
+                    }
                 };
                 let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, made, exit);

@@ -582,6 +582,9 @@ enum LaneBody {
     /// for the direct callers that name it until they retire with it at a shape compaction.
     Retired { _method: Box<super::compiled::LaneMethod> },
     Declined,
+    /// Its specializer is running: a request to specialize it meanwhile, from a callee it
+    /// specializes first (`lane_prepare_callees`), finds it here and does nothing.
+    Specializing,
 }
 
 /// The most distinct places a body's leaves may go for them to be its specialization's
@@ -725,6 +728,7 @@ impl LaneView {
             LaneBody::Specialized { .. } => "specialized",
             LaneBody::Retired { .. } => "retired",
             LaneBody::Declined => "declined",
+            LaneBody::Specializing => "specializing",
         }
     }
 
@@ -734,7 +738,7 @@ impl LaneView {
         // no body of this view runs and no reference into it is held.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { method, .. } => Some(method),
-            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
+            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined | LaneBody::Specializing => None,
         }
     }
 
@@ -751,7 +755,11 @@ impl LaneView {
             if *entries >= LANE_BODY_WARMUP_ENTRIES {
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                *body = match specialize(&generic) {
+                *body = LaneBody::Specializing;
+                let specialized = specialize(&generic);
+                // SAFETY: as above; the specializer has returned.
+                let body = unsafe { &mut *self.tier_lane.get() };
+                *body = match specialized {
                     Some(method) => {
                         // An exit inside an inlined callee makes its activation; the entry
                         // proves the stack holds the largest of them (`lane_activation_room`).
@@ -782,6 +790,7 @@ impl LaneView {
                     }
                     None => LaneBody::Declined,
                 };
+                return !matches!(body, LaneBody::Declined);
             }
         }
         !matches!(body, LaneBody::Declined)
@@ -885,7 +894,7 @@ impl LaneView {
         // SAFETY: as `lane_body`.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { room, .. } => *room,
-            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => 0,
+            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined | LaneBody::Specializing => 0,
         }
     }
 
@@ -7444,6 +7453,9 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         // A function whose loop runs in its region (`LoopSite::runs_region`) keeps it there:
         // a body would only leave for the region at each of the loop's entries.
         if own.loops.iter().any(LoopSite::runs_region) { return None; }
+        if let Some(body) = code.function_get(function as usize) {
+            lane_prepare_callees(cx, own, body);
+        }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
         if diagnostics && let Some(method) = &method {
@@ -14516,18 +14528,41 @@ pub(super) unsafe extern "C" fn lane_env_capture<H: Host>(vm: u64, _residual: u6
 /// specialized and the lane would activate it in place, with an ordinary `this`, from a
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
 /// (`compiled::DirectCallee`).
+/// The script function the plain call at `pc` of `body` links, where its record links one.
+fn lane_call_target<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function, pc: usize) -> Option<ScriptCallTarget> {
+    let instruction = decoded_instruction(body, *body.code.get(pc)?);
+    (instruction.op() == Op::Call && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+    // SAFETY: the view holds a record per PC; reading its link changes nothing.
+    let record = unsafe { &*view.records.get(pc)?.get() };
+    vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).copied()
+}
+
+/// Specializes the bodies of the functions `body`'s calls link that have none yet, before
+/// `body` itself: a call names its callee's body only where that body exists
+/// (`lane_direct_callees`). A callee whose specializer is running is left as it is
+/// (`LaneBody::Specializing`).
+fn lane_prepare_callees<H: Host>(cx: *mut LaneContext<H>, view: &LaneView, body: &crate::bytecode::Function) {
+    let vm = unsafe { vm(cx) };
+    for pc in 0..body.code.len() {
+        let Some(target) = lane_call_target(vm, view, body, pc) else { continue };
+        if target.program != unsafe { (*cx).program } || std::ptr::eq(target.view, view) {
+            continue;
+        }
+        // SAFETY: the program's views outlive the lane run.
+        let callee = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
+        if let Some(callee) = callee && callee.lane_body().is_none() {
+            lane_specialize(cx, callee, target.function, None, true);
+        }
+    }
+}
+
 fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::DirectCallee>> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
-    body.code
-        .iter()
-        .enumerate()
-        .map(|(pc, packed)| {
-            let instruction = decoded_instruction(body, *packed);
-            (instruction.op() == Op::Call && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
-            (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
-            // SAFETY: the view holds a record per PC; reading its link changes nothing.
-            let record = unsafe { &*view.records.get(pc)?.get() };
-            let target = *vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
+    (0..body.code.len())
+        .map(|pc| {
+            let target = lane_call_target(vm, view, body, pc)?;
+            (!(tail_calls && decoded_instruction(body, body.code[pc]).returns_from_frame())).then_some(())?;
+            let instruction = decoded_instruction(body, body.code[pc]);
             let sloppy = match target.this_binding {
                 ThisBinding::Sloppy => Some(vm.realm.globals),
                 ThisBinding::Strict => None,

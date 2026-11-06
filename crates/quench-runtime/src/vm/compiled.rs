@@ -2020,6 +2020,8 @@ pub(super) struct LaneHelpers {
     capture_set: usize,
     /// An object literal's and an array literal's allocation (`lane_new_object`, `lane_new_array`).
     new_object: usize,
+    /// A two-property object literal's allocation (`lane_new_object_pair`).
+    new_object_pair: usize,
     new_array: usize,
     /// A store that may add its property (`lane_field_add`).
     field_add: usize,
@@ -7015,6 +7017,21 @@ unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: 
     object.to_bits()
 }
 
+/// A lane body's two-property object literal of the literal site `site`, holding `first` and
+/// `second`, as the lane's own (`dispatch_fast::lane_make_object2`); `DELETED` where a
+/// collection is due, as `lane_new_object`.
+unsafe extern "C" fn lane_new_object_pair<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, first: u64, second: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running one.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let object = vm.object_pair(residual, site as usize, Value::from_bits(first), Value::from_bits(second));
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_allocation_bases(vm);
+    object.to_bits()
+}
+
 /// A lane body's array literal of `length` holes, as the lane's own
 /// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
 /// `lane_new_object`.
@@ -7138,6 +7155,7 @@ impl<H: Host> Vm<H> {
             construct: lane_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             construct_call: super::dispatch_fast::lane_body_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             new_object: lane_new_object::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
+            new_object_pair: lane_new_object_pair::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             new_array: lane_new_array::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_add: lane_field_add::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
