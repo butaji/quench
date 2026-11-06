@@ -22607,6 +22607,40 @@ fn lane_parser_node_constructions_build_like_the_interpreter() {
 }
 
 #[test]
+fn lane_nested_lengths_read_like_the_interpreter() {
+    // A tokenizer's `this.input.length`: a nested read whose last step is a string's own
+    // `length`, of empty, ASCII and wide strings, and an array's at the same sites, which
+    // read what the interpreter reads.
+    let source = r#"
+      function Tokenizer(input) { this.input = input; this.pos = 0; }
+      Tokenizer.prototype.remaining = function () { return this.input.length - this.pos; };
+      function scan(t) { let n = 0; while (t.pos < t.input.length) { t.pos++; n++; } return n; }
+      const inputs = ["", "abc", "x".repeat(70), "é€😀", [1, 2, 3, 4], [], new Array(9)];
+      let total = 0;
+      for (let r = 0; r < 300; r++) {
+        for (const input of inputs) {
+          const t = new Tokenizer(input);
+          total += t.remaining() * 3 + scan(t) + t.remaining() + t.input.length;
+        }
+      }
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-nested-lengths.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(135000.0); 2]);
+}
+
+#[test]
 fn lane_capture_stores_write_like_the_interpreter() {
     // A lane body stores to captures of enclosing scopes, and a callee it calls directly
     // resolves its own captures in its closure's scope, not its caller's.

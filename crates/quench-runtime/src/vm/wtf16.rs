@@ -1089,6 +1089,7 @@ impl JsString {
         }
     }
 
+    #[inline]
     pub(crate) fn len(&self) -> usize {
         match &self.repr {
             Repr::Flat(units) => units.len(),

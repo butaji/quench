@@ -2498,7 +2498,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let text = self.heap.string(object)?;
         if atom == self.length_atom {
-            return Some(Value::number(text.len() as f64));
+            return Some(Value::length(text.len()));
         }
         if !self.string_field_site_cacheable(p, atom) {
             return None;
