@@ -2038,6 +2038,8 @@ pub(super) struct LaneHelpers {
     field_add: usize,
     /// A native's call that completes or changes nothing (`lane_pure_native`).
     pure_native: usize,
+    /// A virtual two-property literal's allocation where it escapes (`lane_materialize_pair`).
+    materialize_pair: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -7060,6 +7062,20 @@ unsafe extern "C" fn lane_pure_native<H: Host>(vm: u64, _residual: u64, callee: 
     vm.pure_native_value(*native, Value::from_bits(this), &args[..count as usize]).unwrap_or(Value::DELETED).to_bits()
 }
 
+/// `lane_new_object_pair` of a literal the body kept virtual, where it escapes: it allocates
+/// even where a collection is due, which the lane makes at its next safe point, as the
+/// body's state there names the object only once it exists.
+unsafe extern "C" fn lane_materialize_pair<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, first: u64, second: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running one.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let object = vm.object_pair(residual, site as usize, Value::from_bits(first), Value::from_bits(second));
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_allocation_bases(vm);
+    object.to_bits()
+}
+
 /// A lane body's array literal of `length` holes, as the lane's own
 /// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
 /// `lane_new_object`.
@@ -7203,6 +7219,7 @@ impl<H: Host> Vm<H> {
             field_add: lane_field_add::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
             pure_native: lane_pure_native::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64, u64) -> u64 as usize,
+            materialize_pair: lane_materialize_pair::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         // The calls a unit still makes (none it inlines) whose callees have bodies; a body

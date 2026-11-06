@@ -85,6 +85,18 @@ struct State {
     /// value each names: a read of the same object's field again, with no store of the atom or
     /// effect on objects between, is the value read (`Lowering::read_once`).
     loads: BTreeMap<(u32, Atom), (ir::Value, u32)>,
+    /// Registers holding an object literal not yet allocated, by its identity: its fields'
+    /// values are known, so a read of one is that value, and it is allocated only where it
+    /// escapes (`Lowering::materialize`), every register naming it then the one object.
+    virtuals: BTreeMap<Register, VirtualObject>,
+}
+
+/// A two-property object literal the body has not allocated (`State::virtuals`).
+#[derive(Clone, Copy, PartialEq)]
+struct VirtualObject {
+    identity: u32,
+    site: u32,
+    fields: [ir::Value; 2],
 }
 
 /// The logical value of the activation's receiver (`State::origins`).
@@ -94,7 +106,7 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(),
             readable: BTreeSet::new(), layouts: BTreeMap::new(), receivers: BTreeSet::new(), epoch: None,
-            origins: BTreeMap::new(), loads: BTreeMap::new() }
+            origins: BTreeMap::new(), loads: BTreeMap::new(), virtuals: BTreeMap::new() }
     }
 }
 
@@ -240,6 +252,9 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn tagged(&mut self, state: &mut State, register: Register) -> ir::Value {
+        if let Some(object) = state.virtuals.get(&register).copied() {
+            self.materialize(state, object);
+        }
         let index = usize::from(register);
         let fact = state.values[index];
         if !fact.tagged_current {
@@ -270,6 +285,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         };
         self.builder.def_var(variable, value);
         state.values[index] = fact;
+        state.virtuals.remove(&register);
         state.origins.remove(&register);
         state.shapes.remove(&Some(register));
         state.layouts.retain(|(owner, _), _| *owner != Some(register));
@@ -392,6 +408,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn continue_at(&mut self, state: &mut State, pc: usize) {
+        self.materialize_live(state, pc);
         // A block before this one that no edge entered was not lowered.
         let lowered = pc > self.at || self.entered.get(pc).copied().unwrap_or(false);
         match self.blocks.get(pc).copied().flatten().filter(|_| lowered) {
@@ -881,6 +898,7 @@ fn lower(
     for (pc, instruction) in instructions.iter().copied().enumerate() {
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
+                lowering.materialize_live(&mut state, pc);
                 lowering.hoist_reads(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
@@ -1209,6 +1227,7 @@ impl Lowering<'_, '_> {
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        self.settle_virtuals(state, pc, instruction);
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
@@ -1422,6 +1441,21 @@ impl Lowering<'_, '_> {
             Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some() => self.typeof_test(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
             // collection leaves first.
+            // A two-property literal is allocated only where it escapes (`State::virtuals`).
+            Op::MakeObject2 if plain && instruction.register_b() < self.unit.registers && instruction.register_c() < self.unit.registers
+                && self.program.object_sites.get(instruction.imm() as usize).is_some_and(|site| site.atoms.len() == 2) => {
+                let fields = [self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c())];
+                let destination = instruction.result_register();
+                let identity = self.next_origin;
+                self.next_origin += 1;
+                let object = VirtualObject { identity, site: instruction.imm(), fields };
+                // Defined as a placeholder no read takes: every read of it materializes first.
+                let placeholder = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+                self.define(state, destination, placeholder, RegisterFact::definition(Type::language(crate::ValueType::Object), Representation::Tagged));
+                state.values[usize::from(destination)].tagged_current = false;
+                state.virtuals.insert(destination, object);
+                Some(true)
+            }
             Op::MakeObject | Op::MakeArray | Op::MakeObject2 if plain => {
                 let exit = self.guard_exit(state, pc32);
                 let payload = self.payload;
@@ -1766,6 +1800,16 @@ impl Lowering<'_, '_> {
 
     /// `source`'s value into `destination`, with every fact proved of it.
     fn copy(&mut self, state: &mut State, destination: Register, source: Register) {
+        if let Some(object) = state.virtuals.get(&source).copied() {
+            state.values[usize::from(destination)] = state.values[usize::from(source)];
+            state.origins.remove(&destination);
+            state.shapes.remove(&Some(destination));
+            state.readable.remove(&Some(destination));
+            state.layouts.retain(|(owner, _), _| *owner != Some(destination));
+            state.receivers.remove(&destination);
+            state.virtuals.insert(destination, object);
+            return;
+        }
         let fact = state.values[usize::from(source)];
         let variable = match fact.value.representation {
             Representation::Tagged => self.registers.tagged[usize::from(source)],
@@ -2189,6 +2233,10 @@ impl Lowering<'_, '_> {
             }
             return Some(true);
         }
+        if let Some(value) = self.virtual_field(state, instruction) {
+            self.set_tagged(state, instruction.result_register(), value);
+            return Some(true);
+        }
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
@@ -2287,6 +2335,60 @@ impl Lowering<'_, '_> {
         state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         Some(true)
+    }
+
+    /// The value of a plain read of a virtual object's own field (`State::virtuals`).
+    fn virtual_field(&self, state: &State, instruction: WideInstruction) -> Option<ir::Value> {
+        if instruction.op() != Op::GetField || instruction.result_flags() != 0 || instruction.writes_current_this() {
+            return None;
+        }
+        let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() else { return None };
+        let object = state.virtuals.get(&base.register_index()?)?;
+        let slot = self.program.object_sites.get(object.site as usize)?.atoms.iter().position(|name| *name == atom)?;
+        Some(object.fields[slot])
+    }
+
+    /// Allocates the live virtual objects `instruction` would take as values: all but where
+    /// it reads a virtual object's field, copies a register, or reads none of them.
+    fn settle_virtuals(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) {
+        if state.virtuals.is_empty() || self.virtual_field(state, instruction).is_some() {
+            return;
+        }
+        let reads_none = matches!(instruction.op(), Op::Move | Op::LoadConst | Op::Nop)
+            || (instruction.op().js_denotation() == JsDenotation::NumericBinary
+                && [instruction.operand_b(), instruction.operand_c()].iter()
+                    .all(|operand| operand.register_index().is_none_or(|register| !state.virtuals.contains_key(&register))));
+        if reads_none && !matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump | ControlFlowLayout::Terminal) {
+            return;
+        }
+        self.materialize_live(state, pc);
+    }
+
+    /// Allocates the virtual objects live at `pc`; the dead ones are gone. A block's entry
+    /// starts with none (`State::virtuals`).
+    fn materialize_live(&mut self, state: &mut State, pc: usize) {
+        if state.virtuals.is_empty() {
+            return;
+        }
+        state.virtuals.retain(|register, _| self.is_live(pc, *register));
+        while let Some(object) = state.virtuals.values().next().copied() {
+            self.materialize(state, object);
+        }
+    }
+
+    /// Allocates `object` (`compiled::lane_materialize_pair`), which every register naming it
+    /// then holds.
+    fn materialize(&mut self, state: &mut State, object: VirtualObject) {
+        let payload = self.payload;
+        let site = self.ins().iconst(types::I64, i64::from(object.site));
+        let value = emit_lane_helper_call(&mut self.builder, payload, self.helpers.materialize_pair, &[payload, site, object.fields[0], object.fields[1]]);
+        self.reload_property_arena();
+        state.layouts.clear();
+        let registers: Vec<Register> = state.virtuals.iter().filter(|(_, known)| known.identity == object.identity).map(|(register, _)| *register).collect();
+        for register in registers {
+            state.virtuals.remove(&register);
+            self.define(state, register, value, RegisterFact::definition(Type::language(crate::ValueType::Object), Representation::Tagged));
+        }
     }
 
     /// The field `atom` of the object whose bits are `object`, read by `read` once: a read of
