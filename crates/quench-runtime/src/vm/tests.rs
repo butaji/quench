@@ -20557,6 +20557,63 @@ print(JSON.stringify(Object.keys(o).map((k) => Array.from(k, (ch) => ch.charCode
 }
 
 #[test]
+fn promise_jobs_run_short_handlers_in_the_lane_as_frames_would() {
+    // Reaction handlers a job calls run their bodies in the lane from their first
+    // instruction (`Vm::run_frame_from_lane`, `LaneView::returns_from_entry`) once their
+    // deferred runs complete: returns, throws, a returned call's completion, `this` and
+    // `arguments`, collections, thenables, async, generator and class handlers, and job order
+    // stay as Node runs them (expected output from Node 22).
+    let source = r#"
+      const gc = $262.gc;
+      const out = [];
+      let c = 0;
+      const count = () => { c++; };
+      const add = (v) => v + 1;
+      const thrower = (v) => { if (v % 3 === 0) throw new Error("t" + v); return v; };
+      function tail(v) { return add(v * 2); }
+      function sloppyThis() { return this === globalThis; }
+      function strictThis() { "use strict"; return this === undefined; }
+      function argc() { return arguments.length; }
+      const collect = (v) => { if (v % 4 === 0) gc(); return [v]; };
+      const thenable = (v) => ({ then(resolve) { out.push("then" + v); resolve(v * 10); } });
+      async function asyncHandler(v) { await null; return v + 0.5; }
+      function* gen() { yield 1; }
+      class K {}
+      for (let i = 0; i < 12; i++) {
+        const p = Promise.resolve(i);
+        p.then(count);
+        p.then(add).then((v) => out.push("a" + v));
+        p.then(thrower).then((v) => out.push("ok" + v), (e) => out.push(e.message));
+        p.then(tail).then((v) => out.push("t" + v));
+        p.then(sloppyThis).then((v) => out.push(v ? "S" : "s"));
+        p.then(strictThis).then((v) => out.push(v ? "U" : "u"));
+        p.then(argc).then((v) => out.push("n" + v));
+        p.then(collect).then((v) => out.push("g" + v[0]));
+        p.then(thenable).then((v) => out.push("th" + v));
+        p.then(asyncHandler).then((v) => out.push("as" + v));
+        p.then(gen).then((g) => out.push("gen" + g.next().value));
+        p.then(K).catch((e) => out.push(e.constructor.name));
+        Promise.reject(i).then(null, (r) => out.push("r" + r));
+      }
+      let last = Promise.resolve();
+      for (let k = 0; k < 10; k++) last = last.then(() => {});
+      last.then(() => {
+        let hash = 0;
+        const text = out.join(",");
+        for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+        print(c + "|" + out.length + "|" + hash + "|" + out.slice(0, 16).join(",") + "|" + out.slice(-6).join(","));
+      });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "lane-promise-jobs.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["12|156|314161342|r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,a1,t0,t1,S|as6.5,as7.5,as8.5,as9.5,as10.5,as11.5"]
+    );
+}
+
+#[test]
 fn lane_settled_async_calls_keep_their_promises_and_job_order() {
     // Non-suspending async callees run as settling lane activations
     // (`Completion::SettlesPromise`): returns, throws, thenables, an impure `then` read

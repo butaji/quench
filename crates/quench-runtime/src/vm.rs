@@ -3350,11 +3350,24 @@ impl<H: Host> Vm<H> {
         unsafe { (&*self.active_constants).get(index).copied() }
     }
 
+    /// Makes `program` the executing program and returns the one it replaces, which
+    /// `restore_active_program` makes executing again. The active program's projections hold
+    /// while it stays active (`active_constant`, `active_cache_layout`), so a call within the
+    /// running program re-derives nothing.
     #[inline(always)]
     pub(super) fn replace_active_program(&mut self, program: ProgramId) -> ProgramId {
         let previous = self.active_program;
-        self.set_active_program(program);
+        self.restore_active_program(program);
         previous
+    }
+
+    /// `set_active_program` of `previous`, the program `replace_active_program` replaced,
+    /// where it is not still the executing one.
+    #[inline(always)]
+    pub(super) fn restore_active_program(&mut self, previous: ProgramId) {
+        if self.active_program != previous {
+            self.set_active_program(previous);
+        }
     }
 
     #[inline(always)]
@@ -3590,7 +3603,7 @@ impl<H: Host> Vm<H> {
                         CallContext::user_function(id, callee),
                     )
                 };
-                self.set_active_program(active_program);
+                self.restore_active_program(active_program);
                 self.switch_realm_global(current_global);
                 result
             }

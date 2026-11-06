@@ -388,7 +388,7 @@ impl<H: Host> Vm<H> {
         let active_program = self.replace_active_program(continuation.frame.program);
         let result =
             self.resume_async_continuation_in_program(&program, resume, continuation, value);
-        self.set_active_program(active_program);
+        self.restore_active_program(active_program);
         result
     }
 
