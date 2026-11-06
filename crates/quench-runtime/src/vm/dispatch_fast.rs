@@ -13910,18 +13910,29 @@ fn lane_begin_array_iteration<H: Host>(
 /// the call completes with the method's value; else the rest of its loop on the native's
 /// path from the caller's frame (`Vm::array_iteration_run`), which reads holes and anything
 /// else generically.
+#[inline(always)]
 fn lane_resume_array_iteration<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    iteration: super::array_indexed::ArrayIteration,
+) -> Resumed {
+    if iteration.visited == iteration.length {
+        // SAFETY: `ip` is the call record of the running function's view.
+        return lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion()));
+    }
+    lane_run_array_iteration_from_frame(cx, ip, iteration)
+}
+
+/// `lane_resume_array_iteration` of an iteration with elements left: the native's loop.
+#[inline(never)]
+fn lane_run_array_iteration_from_frame<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     mut iteration: super::array_indexed::ArrayIteration,
 ) -> Resumed {
-    // SAFETY: `ip` is the call record of the running function's view.
-    let i = unsafe { &*ip };
-    if iteration.visited == iteration.length {
-        return lane_native_complete(cx, ip, i, Some(iteration.completion()));
-    }
     let value = lane_call_from_frame(cx, ip, |vm, code| vm.array_iteration_run(code, &mut iteration));
-    lane_native_complete(cx, ip, i, value)
+    // SAFETY: `ip` is the call record of the running function's view.
+    lane_native_complete(cx, ip, unsafe { &*ip }, value)
 }
 
 /// The return of an array callback method's callback `activation` with `mapped`, its
@@ -13969,7 +13980,12 @@ fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: 
     if applied.is_none() && depth < vm.lane_stack.activation_limit.get() {
         if let Some(index) = step.iteration.advance() {
             let receiver = step.iteration.receiver;
-            let element = vm.heap.array_elements(receiver).and_then(|elements| elements.get(index)).copied();
+            // A direct array's record is found inline, as `own_array_length` finds it.
+            let elements = match vm.heap.record_array(receiver) {
+                Some(object) => Some(object.elements()),
+                None => vm.heap.array_elements(receiver),
+            };
+            let element = elements.and_then(|elements| elements.get(index)).copied();
             if let Some(element) = element.filter(|element| !element.is_deleted()) {
                 step.element = element;
                 step.index = index;
@@ -13978,7 +13994,8 @@ fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: 
                 // SAFETY: an activation runs, the innermost, at `depth`.
                 let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window;
                 // SAFETY: the window the activation held, which its return left in place.
-                let start = unsafe { lane_enter_prepared(cx, &step.entry, &[element, Value::length(index), receiver], window) };
+                let values = [element, Value::length(index), receiver];
+                let start = unsafe { lane_enter_prepared_values(cx, &step.entry, values, window) };
                 return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
             }
             step.iteration.visited -= 1;
@@ -14000,6 +14017,7 @@ fn lane_retire_array_step<H: Host>(cx: *mut LaneContext<H>, applied: Option<Valu
 /// The iteration of the call `activation` made, its caller restored, after a step that
 /// `applied`: the iteration retires, and the call completes with the method's value where
 /// the step ended it, else goes on as `lane_resume_array_iteration` does.
+#[inline(always)]
 fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, applied: Option<Value>) -> Resumed {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.steps.len() - 1;
@@ -17439,11 +17457,14 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
         Some(ActivationKind::Script(script)) => Some(script.completion),
         _ => None,
     };
+    // An array step, a return per element, is tested first.
+    if completion == Some(Completion::ArrayStep) {
+        return lane_step_array_iteration_in_place(cx, value);
+    }
     let common = match completion {
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
         Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
-        Some(Completion::ArrayStep) => lane_step_array_iteration_in_place(cx, value),
         _ => None,
     };
     if common.is_some() {
@@ -22603,16 +22624,60 @@ unsafe fn lane_enter_prepared<H: Host>(
     args: &[Value],
     window: usize,
 ) -> Ip {
-    let vm = unsafe { vm(cx) };
-    let stack = &mut vm.lane_stack;
     unsafe {
-        let registers = stack.values.as_mut_ptr().add(window);
+        let registers = vm(cx).lane_stack.values.as_mut_ptr().add(window);
         fill_window(registers, entry.registers, Value::UNDEFINED);
         copy_arguments(registers, args.as_ptr(), entry.passed);
         if entry.keeps {
             copy_arguments(registers.add(entry.registers), args.as_ptr(), entry.argc);
         }
-        stack.values.set_len(window + entry.size);
+        lane_enter_filled(cx, entry, registers, window)
+    }
+}
+
+/// `lane_enter_prepared` of a call passing `values`, written from where the caller holds
+/// them (an array step's element, index and array) rather than copied from memory.
+///
+/// # Safety
+/// As `lane_enter_prepared`'s, for `entry.argc == N`.
+#[inline(always)]
+unsafe fn lane_enter_prepared_values<H: Host, const N: usize>(
+    cx: *mut LaneContext<H>,
+    entry: &PreparedEntry,
+    values: [Value; N],
+    window: usize,
+) -> Ip {
+    debug_assert_eq!(usize::from(entry.argc), N);
+    unsafe {
+        let registers = vm(cx).lane_stack.values.as_mut_ptr().add(window);
+        fill_window(registers, entry.registers, Value::UNDEFINED);
+        for (index, value) in values.into_iter().enumerate() {
+            if index < usize::from(entry.passed) {
+                registers.add(index).write(value);
+            }
+        }
+        if entry.keeps {
+            registers.add(entry.registers).cast::<[Value; N]>().write_unaligned(values);
+        }
+        lane_enter_filled(cx, entry, registers, window)
+    }
+}
+
+/// The activation `entry` enters whose window at the lane-stack index `window`, at
+/// `registers`, is filled: the context made the callee's. Its first record.
+///
+/// # Safety
+/// As `lane_enter_prepared`'s; the window's values are written.
+#[inline(always)]
+unsafe fn lane_enter_filled<H: Host>(
+    cx: *mut LaneContext<H>,
+    entry: &PreparedEntry,
+    registers: *mut Value,
+    window: usize,
+) -> Ip {
+    let vm = unsafe { vm(cx) };
+    unsafe {
+        vm.lane_stack.values.set_len(window + entry.size);
         (*cx).registers = Registers(registers);
         (*cx).base = (*entry.view).records();
         (*cx).this = entry.this;
