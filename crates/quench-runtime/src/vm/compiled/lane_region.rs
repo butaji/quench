@@ -125,7 +125,7 @@ struct Lowering<'a, 'f> {
     /// runs by the call protocol (`Lowering::construct`).
     generic: &'a [usize],
     /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
-    direct: &'a BTreeMap<usize, *const DirectCallee>,
+    direct: &'a BTreeMap<usize, Vec<*const DirectCallee>>,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
     /// callee's identity, which its call guards; null where they are not dense.
     frame_captures: &'a [super::FrameCaptures],
@@ -660,7 +660,7 @@ pub(super) fn compile(
     global_reads: &BTreeSet<usize>,
     vm: VmFacts,
     generic: &[usize],
-    direct: &BTreeMap<usize, *const DirectCallee>,
+    direct: &BTreeMap<usize, Vec<*const DirectCallee>>,
     frame_captures: &[super::FrameCaptures],
     loop_entry: Option<usize>,
 ) -> Result<LaneRegion, LaneDecline> {
@@ -683,7 +683,7 @@ fn lower(
     global_reads: &BTreeSet<usize>,
     vm: VmFacts,
     generic: &[usize],
-    direct: &BTreeMap<usize, *const DirectCallee>,
+    direct: &BTreeMap<usize, Vec<*const DirectCallee>>,
     frame_captures: &[super::FrameCaptures],
     loop_entry: Option<usize>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
@@ -1826,11 +1826,16 @@ impl Lowering<'_, '_> {
         }
         let completed = self.builder.create_block();
         let generic = self.builder.create_block();
-        match self.direct.get(&pc).copied().filter(|_| instruction.op() == Op::Call) {
+        // Each callee the site has a body for, tested by identity in turn; any other takes the
+        // lane's call.
+        let callees = self.direct.get(&pc).filter(|_| instruction.op() == Op::Call).cloned().unwrap_or_default();
+        for (index, callee) in callees.iter().enumerate() {
+            let next = if index + 1 == callees.len() { generic } else { self.builder.create_block() };
             // SAFETY: the body owns the callee for as long as its code runs.
-            Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => { self.ins().jump(generic, &[]); }
+            self.direct_call(instruction, unsafe { &**callee }, next, completed);
+            if next != generic { self.builder.switch_to_block(next); }
         }
+        if callees.is_empty() { self.ins().jump(generic, &[]); }
         self.builder.switch_to_block(generic);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
         let call_word = self.ins().iconst(types::I64, i64::from(call_pc));

@@ -7154,7 +7154,7 @@ impl<H: Host> Vm<H> {
         function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         captures: &dyn Fn(Value) -> FrameCaptures,
-        direct: Vec<Option<DirectCallee>>,
+        direct: Vec<Vec<DirectCallee>>,
         loop_header: Option<u32>,
         generic: &[LaneExit],
     ) -> Option<Box<LaneMethod>> {
@@ -7182,7 +7182,7 @@ impl<H: Host> Vm<H> {
         let body = program.function_get(function as usize)?;
         // The calls a unit still makes (none it inlines) whose callees have bodies; a body
         // keeps those it names.
-        let mut direct: Vec<Option<Box<DirectCallee>>> = direct.into_iter().map(|callee| callee.map(Box::new)).collect();
+        let mut direct: Vec<Vec<Box<DirectCallee>>> = direct.into_iter().map(|callees| callees.into_iter().map(Box::new).collect()).collect();
         // A unit whose code exceeds the lane body budget is planned again with half the
         // inlining, down to the function alone.
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
@@ -7221,12 +7221,12 @@ impl<H: Host> Vm<H> {
             let sites: std::collections::BTreeMap<usize, usize> = unit.instructions.iter().enumerate()
                 .filter(|(_, instruction)| instruction.op() == Op::Call)
                 .filter_map(|(pc, _)| match unit.origins[pc] {
-                    lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().map(|_| (pc, origin as usize)),
+                    lane_unit::Origin::Caller(origin) => (!direct.get(origin as usize)?.is_empty()).then_some((pc, origin as usize)),
                     lane_unit::Origin::Inlined { .. } => None,
                 })
                 .collect();
-            let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> = sites.iter()
-                .filter_map(|(pc, origin)| direct[*origin].as_deref().map(|callee| (*pc, callee as *const DirectCallee)))
+            let direct_sites: std::collections::BTreeMap<usize, Vec<*const DirectCallee>> = sites.iter()
+                .map(|(pc, origin)| (*pc, direct[*origin].iter().map(|callee| &**callee as *const DirectCallee).collect()))
                 .collect();
             let frame_captures: Vec<FrameCaptures> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
             match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, self.vm_facts(), &generic, &direct_sites, &frame_captures, loop_entry) {
@@ -7264,7 +7264,7 @@ impl<H: Host> Vm<H> {
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         // A body that names a callee's body retires with it (`DirectCallee::method`).
-        let mut _direct: Vec<Box<DirectCallee>> = sites.values().filter_map(|origin| direct[*origin].take()).collect();
+        let mut _direct: Vec<Box<DirectCallee>> = sites.values().flat_map(|origin| std::mem::take(&mut direct[*origin])).collect();
         for callee in _direct.iter_mut().filter(|callee| callee.method.is_null()) {
             callee.entry = entry as usize;
         }

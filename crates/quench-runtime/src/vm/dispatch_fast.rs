@@ -14558,64 +14558,90 @@ fn lane_call_target<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode
 fn lane_prepare_callees<H: Host>(cx: *mut LaneContext<H>, view: &LaneView, body: &crate::bytecode::Function) {
     let vm = unsafe { vm(cx) };
     for pc in 0..body.code.len() {
-        let Some(target) = lane_call_target(vm, view, body, pc) else { continue };
-        if target.program != unsafe { (*cx).program } || std::ptr::eq(target.view, view) {
-            continue;
-        }
-        // SAFETY: the program's views outlive the lane run.
-        let callee = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
-        if let Some(callee) = callee && callee.lane_body().is_none() {
-            lane_specialize(cx, callee, target.function, None, true);
+        // Every callee the site keeps, as `lane_direct_callees` takes them.
+        if lane_call_target(vm, view, body, pc).is_none() { continue }
+        for site in lane_site_targets(vm, view, pc as u32) {
+            let Some(target) = vm.script_call_entry(site.callee) else { continue };
+            // SAFETY: as `Vm::script_call_entry`; the specializations below resolve no target.
+            let target = unsafe { *target };
+            if target.program != unsafe { (*cx).program } || std::ptr::eq(target.view, view) {
+                continue;
+            }
+            // SAFETY: the program's views outlive the lane run.
+            let callee = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
+            if let Some(callee) = callee && callee.lane_body().is_none() {
+                lane_specialize(cx, callee, target.function, None, true);
+            }
         }
     }
 }
 
-fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::DirectCallee>> {
+fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Vec<super::compiled::DirectCallee>> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     (0..body.code.len())
         .map(|pc| {
-            let target = lane_call_target(vm, view, body, pc)?;
-            (!(tail_calls && decoded_instruction(body, body.code[pc]).returns_from_frame())).then_some(())?;
             let instruction = decoded_instruction(body, body.code[pc]);
-            let sloppy = match target.this_binding {
-                ThisBinding::Sloppy => Some(vm.realm.globals),
-                ThisBinding::Strict => None,
-                _ => return None,
-            };
-            (target.generation == vm.lane_stack.generation
-                && target.program == vm.active_program
-                && target.entry == CallEntry::Activates
-                && !target.view.is_null()
-                && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
-                .then_some(())?;
-            // A call of the body being specialized names it once it exists: its descriptor
-            // takes the body's entry, method and room then (`LaneMethod::bind_self_calls`).
-            // SAFETY: a resolved target's view outlives its program.
-            let (method, entry, reserve) = if std::ptr::eq(target.view, view) {
-                (std::ptr::null(), 0, 0)
-            } else {
-                let callee = unsafe { &*target.view };
-                let method = callee.lane_body().filter(|method| method.calls_only_natively())?;
-                (method as *const super::compiled::LaneMethod, method.entry_address(), callee.lane_body_room())
-            };
-            // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-            let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
-                .and_then(crate::heap::EnvironmentSlots::native_dense_view)
-                .unwrap_or((std::ptr::null(), 0));
-            Some(super::compiled::DirectCallee {
-                target,
-                method,
-                entry,
-                call: view.records().wrapping_add(pc).addr(),
-                callee: target.callee,
-                registers: target.registers,
-                reserve,
-                sloppy,
-                capture_values,
-                capture_len,
-            })
+            let Some(linked) = lane_call_target(vm, view, body, pc) else { return Vec::new() };
+            if tail_calls && instruction.returns_from_frame() {
+                return Vec::new();
+            }
+            // The site's callees, the linked one first, then those its history keeps: a
+            // polymorphic site calls each that has a body directly, by its identity.
+            let mut targets = vec![linked];
+            for site in lane_site_targets(vm, view, pc as u32) {
+                if targets.iter().all(|target| target.callee != site.callee)
+                    && let Some(target) = vm.script_call_entry(site.callee)
+                {
+                    // SAFETY: as `Vm::script_call_entry`; nothing here resolves a target.
+                    targets.push(unsafe { *target });
+                }
+            }
+            targets.into_iter().filter_map(|target| lane_direct_callee(vm, view, pc, instruction, target)).take(CALL_SITE_TARGETS).collect()
         })
         .collect()
+}
+
+/// The direct call of `target` from the call at `pc` of `view` (`compiled::DirectCallee`):
+/// a callee of the running program the call activates, with at most its parameters, whose
+/// body calls only natively, or the body being specialized itself; `None` for any other.
+fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, pc: usize, instruction: WideInstruction, target: ScriptCallTarget) -> Option<super::compiled::DirectCallee> {
+    let sloppy = match target.this_binding {
+        ThisBinding::Sloppy => Some(vm.realm.globals),
+        ThisBinding::Strict => None,
+        _ => return None,
+    };
+    (target.generation == vm.lane_stack.generation
+        && target.program == vm.active_program
+        && target.entry == CallEntry::Activates
+        && !target.view.is_null()
+        && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
+        .then_some(())?;
+    // A call of the body being specialized names it once it exists: its descriptor
+    // takes the body's entry, method and room then (`LaneMethod::bind_self_calls`).
+    // SAFETY: a resolved target's view outlives its program.
+    let (method, entry, reserve) = if std::ptr::eq(target.view, view) {
+        (std::ptr::null(), 0, 0)
+    } else {
+        let callee = unsafe { &*target.view };
+        let method = callee.lane_body().filter(|method| method.calls_only_natively())?;
+        (method as *const super::compiled::LaneMethod, method.entry_address(), callee.lane_body_room())
+    };
+    // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
+    let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
+        .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+        .unwrap_or((std::ptr::null(), 0));
+    Some(super::compiled::DirectCallee {
+        target,
+        method,
+        entry,
+        call: view.records().wrapping_add(pc).addr(),
+        callee: target.callee,
+        registers: target.registers,
+        reserve,
+        sloppy,
+        capture_values,
+        capture_len,
+    })
 }
 
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
