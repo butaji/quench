@@ -2616,6 +2616,37 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
     assert_eq!(&*vm.to_string(&program, taken).unwrap(), "1:1");
 }
 
+#[test]
+fn young_runs_of_survivors_keep_their_values_across_collections() {
+    // Pairs whose values the inline slots cannot hold and three-field receivers take young
+    // runs (`ValueArena::young_run_padded`); most die young and a few survive, some growing
+    // past their run after it moved, some held only by a weak reference or registered for
+    // finalization. Survivors' values, identity and weak targets survive every collection;
+    // the dead ones' finalization runs; kept ones never finalize.
+    let source = "function P(a, b, c) { this.a = a; this.b = b; this.c = c; }\n\
+         var big = 0x40000000, keep = [], weak = [], finalized = 0, wrong = '';\n\
+         var registry = new FinalizationRegistry(function (token) { if (token === 'kept') wrong = 'kept finalized'; else finalized++; });\n\
+         var result = 'pending';\n\
+         function check(p, i) { return p.a === i && p.b.x === i * 3 + big && p.b.y === i && p.c === i + big && (p.d === undefined || p.d === i * 2); }\n\
+         (async function () {\n\
+           for (var i = 0; i < 60000; i++) {\n\
+             var p = new P(i, { x: i * 3 + big, y: i }, i + big);\n\
+             if (i % 997 === 0) { keep.push(p); registry.register(p, 'kept'); }\n\
+             if (i % 997 === 500) { var q = keep[keep.length - 1]; q.d = q.a * 2; q.e = 'grown'; }\n\
+             if (i % 4999 === 0) weak.push([new WeakRef(keep[keep.length - 1]), keep[keep.length - 1].a]);\n\
+             if (i % 3001 === 0) registry.register({ x: big + i, y: i }, i);\n\
+             if (i % 1000 === 0) await i;\n\
+           }\n\
+           for (var j = 0; j < 400000 && finalized === 0; j++) await { x: big + j, y: j };\n\
+           for (var k = 0; k < keep.length; k++) if (!check(keep[k], k * 997)) wrong = 'value of ' + k;\n\
+           for (var w = 0; w < weak.length; w++) { var t = weak[w][0].deref(); if (t !== keep[weak[w][1] / 997] || !check(t, weak[w][1])) wrong = 'weak ' + w; }\n\
+           result = wrong || (finalized > 0 ? 'ok' : 'none finalized');\n\
+         })();";
+    for policy in crate::MemoryPolicy::ALL {
+        assert_eq!(global_text_under(policy, source, "result"), "ok", "{policy:?}");
+    }
+}
+
 fn global_text(source: &str, name: &str) -> String {
     global_text_under(crate::MemoryPolicy::default(), source, name)
 }

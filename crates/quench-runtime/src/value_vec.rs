@@ -44,12 +44,19 @@ const fn capacity_class(len: usize) -> usize {
     let step = power / 2 + power / 4;
     if len <= step { step } else { power }
 }
+/// The largest size class (`capacity_class`) of at most `room` values, `room` at least
+/// `MIN_CAPACITY`.
+const fn largest_class_within(room: usize) -> usize {
+    let power = 1 << room.ilog2();
+    let step = power + power / 2;
+    if power >= MIN_CAPACITY && step <= room { step } else { power }
+}
 /// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
 /// make a full collection compact the arena. Freed ranges are reused within their size class,
 /// so compaction recovers only what other classes leave idle; rewriting every live object's
 /// storage on each full collection cost source-map-wtb 3 s of 27 (TOD-137).
 /// The values each size class adds to the one before it up to `2 * MIN_CAPACITY`, the
-/// unit `run_of_padded` copies past `MIN_CAPACITY`.
+/// unit `young_run_padded` copies past `MIN_CAPACITY`.
 const CAPACITY_CLASS_STEP: usize = capacity_class(MIN_CAPACITY + 1) - MIN_CAPACITY;
 const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
 /// The arena capacity a compaction keeps, as a multiple of the values it kept: the room one
@@ -59,6 +66,53 @@ const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
 /// peak 40.7 -> 37.8 MB (median of 8 rounds, bombardier, board phases, plain x86_64 build,
 /// 2026-10-26); V8-v7 RSS and Score and the npm-perf fastify workload were unchanged.
 const COMPACTED_CAPACITY_FACTOR: usize = 2;
+/// The values the nursery (`Nursery`) adds to its range at a time once its runs reach the end
+/// of it, while it ends the arena: one resize and one fill of `undefined` per that many values
+/// rather than per run. A range keeps its size across collections, so it grows to the largest
+/// cycle of new runs.
+const NURSERY_GROWTH: usize = 1 << 10;
+
+/// The runs of new objects (`ValueArena::young_run_padded`), bumped from one range of the
+/// arena, `[floor, end)`: those taken since the last collection are `[floor, top)`. A dead
+/// young object releases nothing; its collection moves the few young runs whose owners
+/// survive (`ValueArena::evacuate_young`) and takes back the rest of `[floor, top)` at once,
+/// so a dead young object's storage costs nothing to reclaim and the collection's cost follows
+/// its survivors (a scavenger's bump allocation and evacuation, over immix's line reclaim).
+///
+/// Only an object's creation takes a young run: any other range comes from `allocate`, so
+/// every owner of a young run is a young object, which the sweep shows (`RecordSweep::Keep`).
+/// Young runs are ordinary size-class runs, so forgetting the nursery (`Nursery::default`) is
+/// always sound: its dead runs then wait for a compaction.
+#[derive(Clone, Copy, Debug, Default)]
+struct Nursery {
+    floor: usize,
+    top: usize,
+    end: usize,
+    /// Whether a young run of this cycle found the range full and took an ordinary run.
+    overflowed: bool,
+}
+
+/// The nursery's young range, `[floor, top)`, which a collection's releases leave as it is.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct YoungRuns {
+    floor: usize,
+    top: usize,
+}
+
+impl YoungRuns {
+    /// Whether `vector` holds one of these runs.
+    #[inline(always)]
+    pub(crate) fn hold(self, vector: ValueVec) -> bool {
+        !vector.is_dictionary() && vector.start().wrapping_sub(self.floor) < self.top - self.floor
+    }
+
+    /// Whether `ValueArena::release` of `vector` frees nothing: inline storage, an empty
+    /// vector without a range, or one of these runs.
+    #[inline(always)]
+    pub(crate) fn release_nothing(self, vector: ValueVec) -> bool {
+        (!vector.is_dictionary() && vector.start() >= INLINE_PROPERTY_START as usize) || self.hold(vector)
+    }
+}
 
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
@@ -218,6 +272,7 @@ pub(crate) struct ValueArena {
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
+    nursery: Nursery,
 }
 
 impl Default for ValueArena {
@@ -237,6 +292,7 @@ impl Default for ValueArena {
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
+            nursery: Nursery::default(),
         }
     }
 }
@@ -256,7 +312,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, targets: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, targets: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _ } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -316,6 +372,7 @@ impl ValueArena {
         self.dictionaries.clear();
         self.free_dictionaries.clear();
         self.next_dictionary = 0;
+        self.nursery = Nursery::default();
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
@@ -723,15 +780,17 @@ impl ValueArena {
         Some(start as u32)
     }
 
-    /// `run_of` the first `len` of `values`, whose values past `len` are `undefined`, as a
-    /// run's unused values start: the run's whole capacity is copied, as the smallest class
-    /// and then the pairs of values each larger class adds (`capacity_class`), moves of fixed
-    /// size rather than a copy of variable length, which is a call.
+    /// A young run (`Nursery`) for a new object, holding the first `len` of `values`, whose
+    /// values past `len` are `undefined`, as a run's unused values start; `None` once the
+    /// arena's positions are spent. Its owner must be a direct object record, whose survival
+    /// the sweep shows. The run's whole capacity is copied, as the smallest class and then the
+    /// pairs of values each larger class adds (`capacity_class`), moves of fixed size rather
+    /// than a copy of variable length, which is a call.
     #[inline(always)]
-    pub(crate) fn run_of_padded<const N: usize>(&mut self, values: &[Value; N], len: usize) -> Option<u32> {
+    pub(crate) fn young_run_padded<const N: usize>(&mut self, values: &[Value; N], len: usize) -> Option<u32> {
         let capacity = capacity_class(len);
         debug_assert!(len <= N && capacity <= N && values[len..].iter().all(|value| *value == Value::UNDEFINED));
-        let start = self.allocate(capacity, MAX_ARENA_START)?;
+        let start = self.young_run(capacity)?;
         let run = &mut self.values[start..start + capacity];
         let (first, mut rest) = run.split_at_mut(MIN_CAPACITY);
         <&mut [Value; MIN_CAPACITY]>::try_from(first).unwrap().copy_from_slice(&values[..MIN_CAPACITY]);
@@ -742,6 +801,106 @@ impl ValueArena {
             rest = tail;
         }
         Some(start as u32)
+    }
+
+    /// A young run of `capacity`, bumped from the nursery's range.
+    #[inline(always)]
+    fn young_run(&mut self, capacity: usize) -> Option<usize> {
+        let start = self.nursery.top;
+        if capacity <= self.nursery.end - start {
+            self.nursery.top = start + capacity;
+            return Some(start);
+        }
+        self.young_run_slow(capacity)
+    }
+
+    /// `young_run` past the nursery's end: a range that ends the arena grows by
+    /// `NURSERY_GROWTH`, and one without young runs first moves to the arena's end; else the
+    /// run is an ordinary one (`allocate`), which its owner's death releases.
+    #[inline(never)]
+    fn young_run_slow(&mut self, capacity: usize) -> Option<usize> {
+        let tail = self.values.len();
+        if self.nursery.top == self.nursery.floor && self.nursery.end != tail {
+            self.retire_nursery();
+            self.nursery = Nursery { floor: tail, top: tail, end: tail, overflowed: false };
+        }
+        let end = self.nursery.top + capacity.max(NURSERY_GROWTH);
+        if self.nursery.end == tail && end <= MAX_ARENA_START && self.values.resize(end) {
+            self.nursery.end = end;
+            let start = self.nursery.top;
+            self.nursery.top = start + capacity;
+            return Some(start);
+        }
+        self.nursery.overflowed = true;
+        self.allocate(capacity, MAX_ARENA_START)
+    }
+
+    /// The young runs taken since the last collection, as a sweep reads them beside its
+    /// releases.
+    #[inline(always)]
+    pub(crate) fn young_runs(&self) -> YoungRuns {
+        YoungRuns { floor: self.nursery.floor, top: self.nursery.top }
+    }
+
+    /// Whether `vector` holds a young run (`Nursery`).
+    #[inline(always)]
+    pub(crate) fn holds_young_run(&self, vector: ValueVec) -> bool {
+        self.young_runs().hold(vector)
+    }
+
+    /// Moves the young run of `vector`, whose owner survives the collection under way, out of
+    /// the young range: to a released run of its size class, else down to the nursery's
+    /// floor, which rises past it. Survivors must come in the order of their starts, so each
+    /// one moved to the floor lands at or below its source.
+    pub(crate) fn evacuate_young(&mut self, vector: &mut ValueVec) {
+        debug_assert!(self.holds_young_run(*vector));
+        let capacity = Self::ordered_capacity(*vector, self.len(*vector));
+        let source = vector.start();
+        let target = match self.free[Self::bucket(capacity)].pop() {
+            Some(target) => {
+                self.released_values -= capacity;
+                target as usize
+            }
+            None => {
+                let target = self.nursery.floor;
+                debug_assert!(target <= source);
+                self.nursery.floor += capacity;
+                target
+            }
+        };
+        self.values.copy_within(source..source + capacity, target);
+        vector.relocate(target);
+    }
+
+    /// Ends a collection's young cycle once its survivors have left (`evacuate_young`): the
+    /// dead young runs are free at once. A range that no longer ends the arena cannot grow:
+    /// once its cycle outgrew it, it is retired, and the next young run starts a range at the
+    /// arena's end. Retiring every such range handed its unused values to the free lists at
+    /// every collection, which made compactions due more than twice as often (acorn-wtb).
+    pub(crate) fn finish_young_cycle(&mut self) {
+        self.nursery.top = self.nursery.floor;
+        if self.nursery.overflowed && self.nursery.end != self.values.len() {
+            self.retire_nursery();
+        }
+        self.nursery.overflowed = false;
+    }
+
+    /// Hands the nursery's unused range, `[top, end)`, to the free lists as runs of the
+    /// largest size classes it holds, and forgets the nursery. Classes are even, so only a
+    /// remainder of half the smallest class, which no class fits, stays idle until a
+    /// compaction.
+    fn retire_nursery(&mut self) {
+        let Nursery { mut top, end, .. } = std::mem::take(&mut self.nursery);
+        while end - top >= MIN_CAPACITY {
+            let room = end - top;
+            let mut capacity = largest_class_within(room);
+            if room - capacity == MIN_CAPACITY / 2 {
+                capacity = largest_class_within(capacity - 1);
+            }
+            self.free[Self::bucket(capacity)].push(top as u32);
+            self.released_values += capacity;
+            top += capacity;
+        }
     }
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
@@ -800,11 +959,17 @@ impl ValueArena {
         copy
     }
 
+    /// Frees `vector`'s storage. Inline storage and an empty vector without a range hold no
+    /// arena words, and a young run (`Nursery`) returns with the rest of the young range when
+    /// its collection ends, so their release is the tests alone.
+    #[inline(always)]
     pub(crate) fn release(&mut self, vector: ValueVec) {
-        // Inline storage and an empty vector without a range hold no arena words.
-        if vector.has_inline_property_storage() || (vector.start == EMPTY_START && !vector.is_dictionary()) {
-            return;
+        if !self.young_runs().release_nothing(vector) {
+            self.release_storage(vector);
         }
+    }
+
+    fn release_storage(&mut self, vector: ValueVec) {
         if vector.is_dictionary() {
             let id = vector.dictionary_id();
             self.dictionaries.remove(&id);
@@ -821,8 +986,9 @@ impl ValueArena {
     /// Whether released ranges have grown enough that compaction is worth rewriting every
     /// live object's storage.
     pub(crate) fn compaction_due(&self) -> bool {
+        let idle_nursery = self.nursery.end - self.nursery.top;
         self.released_values > 0
-            && self.released_values >= self.values.len() / COMPACTION_RELEASED_SHARE_DIVISOR
+            && self.released_values >= (self.values.len() - idle_nursery) / COMPACTION_RELEASED_SHARE_DIVISOR
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
@@ -856,6 +1022,8 @@ impl ValueArena {
             bucket.clear();
         }
         self.released_values = 0;
+        // Compaction moved every live run below `length`, young ones too.
+        self.nursery = Nursery::default();
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
@@ -1094,6 +1262,77 @@ mod tests {
         assert_eq!(buckets, (0..8).collect::<Vec<_>>());
         // A range grows to the next class.
         assert_eq!(capacity_class(12 + 1), 16);
+    }
+
+    #[test]
+    fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 3);
+        let values = |n: f64| [Value::number(n), Value::number(n + 0.5), Value::number(n + 0.25), Value::UNDEFINED];
+        let young = |arena: &mut ValueArena, n: f64| ValueVec { start: arena.young_run_padded(&values(n), 3).unwrap(), auxiliary: 1 };
+        let ordinary = arena.with_values(1, &values(9.0)[..3]);
+        let mut runs: Vec<ValueVec> = (0..8).map(|n| young(&mut arena, f64::from(n))).collect();
+        assert!(runs.iter().all(|run| arena.holds_young_run(*run)));
+        assert!(!arena.holds_young_run(ordinary));
+        let floor = runs[0].start();
+        assert_eq!(floor, MIN_CAPACITY, "the nursery starts at the arena's end");
+        // A dead young run releases nothing.
+        arena.release(runs[1]);
+        assert_eq!(arena.stats().2, 0);
+        // Survivors 3 and 6 move down to the floor in start order; the rest is reclaimed.
+        for index in [3, 6] {
+            arena.evacuate_young(&mut runs[index]);
+        }
+        arena.finish_young_cycle();
+        assert_eq!((runs[3].start(), runs[6].start()), (floor, floor + MIN_CAPACITY));
+        for index in [3, 6] {
+            assert!(!arena.holds_young_run(runs[index]));
+            assert_eq!(arena.get(runs[index], 2).unwrap().as_number(), Some(index as f64 + 0.25));
+        }
+        // The next cycle's runs reuse the reclaimed range above the survivors.
+        assert_eq!(young(&mut arena, 20.0).start(), floor + 2 * MIN_CAPACITY);
+        // A survivor takes a released run of its class before the floor.
+        arena.release(runs[3]);
+        let mut survivor = young(&mut arena, 30.0);
+        arena.evacuate_young(&mut survivor);
+        assert_eq!(survivor.start(), floor);
+        assert_eq!(arena.get(survivor, 1).unwrap().as_number(), Some(30.5));
+        // A range that no longer ends the arena serves young runs up to its end, then ordinary
+        // runs take over; a cycle that outgrew it retires it, and the next range starts at the
+        // arena's end.
+        arena.release(ordinary);
+        let late = arena.with_values(1, &values(40.0)[..3]);
+        assert_eq!(late.start(), 0, "an ordinary run reuses its class's released run");
+        let _ = arena.with_values(1, &[Value::number(1.0); 5][..3]);
+        arena.finish_young_cycle();
+        let kept = young(&mut arena, 50.0);
+        assert!(arena.holds_young_run(kept), "a range that did not overflow stays");
+        let overflows = (0..NURSERY_GROWTH).any(|n| {
+            let run = young(&mut arena, n as f64);
+            !arena.holds_young_run(run)
+        });
+        assert!(overflows, "a range that cannot grow overflows into ordinary runs");
+        arena.finish_young_cycle();
+        let tail = arena.stats().0;
+        assert_eq!(young(&mut arena, 60.0).start(), tail);
+    }
+
+    #[test]
+    fn retired_nursery_ranges_become_runs_of_size_classes() {
+        // Every range is a sum of size classes, which are even.
+        for room in (MIN_CAPACITY..200).step_by(2) {
+            let mut arena = ValueArena::default();
+            arena.values.resize(room);
+            arena.nursery = Nursery { end: room, ..Nursery::default() };
+            arena.retire_nursery();
+            let held: usize = (0..BUCKETS).filter(|&bucket| !arena.free[bucket].is_empty()).map(|bucket| arena.free[bucket].len() * capacity_of_bucket(bucket)).sum();
+            assert_eq!(held, arena.released_values);
+            assert!(room - held < MIN_CAPACITY / 2, "{room}: {held}");
+        }
+    }
+
+    fn capacity_of_bucket(bucket: usize) -> usize {
+        (MIN_CAPACITY..).find(|&capacity| capacity_class(capacity) == capacity && ValueArena::bucket(capacity) == bucket).unwrap()
     }
 
     #[test]
