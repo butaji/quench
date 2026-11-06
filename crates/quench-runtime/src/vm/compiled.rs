@@ -1114,13 +1114,27 @@ fn emit_js_tagged_truthiness(
     builder.switch_to_block(known_block);
     builder.ins().jump(join, &[ir::BlockArg::Value(is_true)]);
 
+    // An object, a function or an array is truthy (ToBoolean); a string is the fallback's.
     builder.switch_to_block(number_block);
+    let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+    let array = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
+    let object = emit_object_or_function(builder, bits);
+    let object = builder.ins().bor(object, array);
+    let object_block = builder.create_block();
+    let numeric_block = builder.create_block();
+    builder.ins().brif(object, object_block, &[], numeric_block, &[]);
+    builder.switch_to_block(object_block);
+    let truthy = builder.ins().iconst(types::I8, 1);
+    builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);
+    builder.switch_to_block(numeric_block);
     let number = emit_js_tagged_number(builder, bits, fallback);
     let truthy = emit_number_truthiness(builder, number);
     builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);
 
     builder.seal_block(known_block);
     builder.seal_block(number_block);
+    builder.seal_block(object_block);
+    builder.seal_block(numeric_block);
     builder.seal_block(join);
     builder.switch_to_block(join);
     builder.block_params(join)[0]

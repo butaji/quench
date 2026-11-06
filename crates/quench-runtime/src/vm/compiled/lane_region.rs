@@ -682,6 +682,11 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &[bool], starts: &[u
     edges
 }
 
+/// The unit PC a run starts at: the loop entry's, else the function's first.
+fn starts_at(loop_entry: Option<usize>) -> usize {
+    loop_entry.unwrap_or(0)
+}
+
 /// Why a unit has no lane body: it does not lower, or its machine code is rejected.
 #[derive(Debug)]
 pub(super) enum LaneDecline {
@@ -819,7 +824,10 @@ fn lower(
         lowering.written.extend(writes(*instruction).into_iter().filter(|r| usize::from(*r) < count));
     }
     let mut initial = vec![Type::ANY; count];
-    for instruction in &instructions {
+    // A body that left at its entry met parameters its speculation did not hold for: the
+    // next takes them as they come.
+    let speculates = !generic.contains(&starts_at(loop_entry));
+    for instruction in instructions.iter().filter(|_| speculates) {
         let (operands, required) = match instruction.op() {
             Op::JumpBinaryFalse if nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
             Op::JumpBinaryFalse => {
