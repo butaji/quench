@@ -2062,7 +2062,8 @@ impl Lowering<'_, '_> {
                 && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.receivers.contains(&register)));
             let (value, int32) = match register.filter(|_| atom == self.vm.length) {
                 Some(register) => {
-                    let length = self.array_length(state, register, (atom, cache_site), exit);
+                    let base = self.tagged(state, register);
+                    let length = self.array_length(base, (atom, cache_site), exit);
                     (int_tagged(&mut self.builder, length), true)
                 }
                 None => {
@@ -2165,17 +2166,26 @@ impl Lowering<'_, '_> {
         let receiver = !self.native_calls
             && (base == crate::bytecode::FieldBase::THIS
                 || register.is_some_and(|register| state.receivers.contains(&register)));
-        let (first, rest) = parts.split_first()?;
-        if let (Some(register), [], None, None) = (register, rest, sink, completes)
-            && first.0 == self.vm.length
-        {
-            let length = self.array_length(state, register, *first, exit);
-            self.set_int(state, destination, length);
-            return Some(true);
-        }
-        let mut value = self.base_field_read(state, register, receiver, *first, exit);
-        for site in rest {
+        // A chain's last `length` read is an array's length, read from its record
+        // (`array_length`); the reads before it are the object reads below.
+        let (last, init) = parts.split_last()?;
+        let length = last.0 == self.vm.length && sink.is_none();
+        let reads = if length { init } else { &parts[..] };
+        let mut value = match (reads.split_first(), register) {
+            (None, Some(register)) => self.tagged(state, register),
+            (None, None) => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+            (Some((first, _)), _) => self.base_field_read(state, register, receiver, *first, exit),
+        };
+        for site in reads.iter().skip(1) {
             value = self.object_field_read(state, value, *site, exit)?;
+        }
+        if length {
+            let length = self.array_length(value, *last, exit);
+            if completes.is_none() {
+                self.set_int(state, destination, length);
+                return Some(true);
+            }
+            value = int_tagged(&mut self.builder, length);
         }
         if let Some((atom, site)) = sink {
             self.store_field(state, sink_owner, atom, site, value, Type::ANY, exit)?;
@@ -2204,8 +2214,7 @@ impl Lowering<'_, '_> {
     /// The `length` read through `read` of the value `register` holds, as an int32: a direct
     /// array's from its record (`emit_array_length_read`), any other's the VM's read, which
     /// leaves through `exit` where it misses or is not an int32.
-    fn array_length(&mut self, state: &mut State, register: Register, read: (Atom, u16), exit: ir::Block) -> ir::Value {
-        let base = self.tagged(state, register);
+    fn array_length(&mut self, base: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let (generic, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(generic);
         let length = self.builder.append_block_param(join, types::I32);
@@ -2338,11 +2347,38 @@ impl Lowering<'_, '_> {
             };
             return Some(projection.read(&mut self.builder, field.slot));
         }
-        // Several shapes: the shared dispatch over the site's cases (`staged::field_read`).
-        // A holder case that folds to its prototype's constant is the lowering's own.
-        if shapes.iter().any(|field| field.inherited.is_some() || !field.valid()) {
+        if shapes.iter().any(|field| !field.valid()) {
             return None;
         }
+        // Several shapes, some reading a prototype's constant (a polymorphic method load):
+        // a switch over the shapes, each case read as its single shape is. The constants'
+        // epoch is proved once, before the switch, so it holds past it.
+        if shapes.iter().any(|field| field.inherited.is_some()) {
+            let mut epochs = shapes.iter().filter_map(|field| field.inherited).map(|constant| constant.epoch);
+            let epoch = epochs.next()?;
+            if epochs.any(|other| other != epoch) {
+                return None;
+            }
+            self.prove_epoch(state, epoch, exit);
+            let join = self.builder.create_block();
+            let value = self.builder.append_block_param(join, types::I64);
+            for field in shapes {
+                let (hit, next) = (self.builder.create_block(), self.builder.create_block());
+                let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+                self.ins().brif(same, hit, &[], next, &[]);
+                self.builder.switch_to_block(hit);
+                let read = match field.holder {
+                    Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
+                    None => CheckedObject::prove(&mut self.builder, object, properties, *field, PackedAccess::Reload)?.read(&mut self.builder, field.slot),
+                };
+                self.ins().jump(join, &[ir::BlockArg::Value(read)]);
+                self.builder.switch_to_block(next);
+            }
+            self.ins().jump(exit, &[]);
+            self.builder.switch_to_block(join);
+            return Some(value);
+        }
+        // Several shapes: the shared dispatch over the site's cases (`staged::field_read`).
         let cases: Vec<_> = shapes.iter().map(|field| field.case()).collect();
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::PropertyValues, properties).with(crate::vm::staged::Table::ObjectRecords, records);
@@ -2360,6 +2396,19 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Guards that no prototype changed since `epoch` (`heap::prototype_value_epoch`), once:
+    /// the proof holds until an effect retires it.
+    fn prove_epoch(&mut self, state: &mut State, epoch: u64, exit: ir::Block) {
+        if state.epoch == Some(epoch) {
+            return;
+        }
+        let address = self.ins().iconst(types::I64, crate::heap::prototype_value_epoch_address() as i64);
+        let current = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        let unchanged = self.ins().icmp_imm_u(IntCC::Equal, current, epoch as i64);
+        emit_js_guard(&mut self.builder, unchanged, exit);
+        state.epoch = Some(epoch);
+    }
+
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
@@ -2369,13 +2418,7 @@ impl Lowering<'_, '_> {
             use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
             let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
             let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
-            if state.epoch != Some(constant.epoch) {
-                let address = self.ins().iconst(types::I64, crate::heap::prototype_value_epoch_address() as i64);
-                let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-                let unchanged = self.ins().icmp_imm_u(IntCC::Equal, epoch, constant.epoch as i64);
-                emit_js_guard(&mut self.builder, unchanged, exit);
-                state.epoch = Some(constant.epoch);
-            }
+            self.prove_epoch(state, constant.epoch, exit);
             // The receiver's link selects its prototype's value; one prototype's is a constant.
             let ((first, value), rest) = constant.values().split_first()?;
             let mut matched = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*first));
