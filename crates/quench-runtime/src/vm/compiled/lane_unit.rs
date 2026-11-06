@@ -154,9 +154,17 @@ fn returns_or_keeps(instruction: WideInstruction) -> bool {
 /// The unit PCs an inlined call takes past its marker and its callee's: in the caller, a
 /// returning call's completion is a `Return` of its register; an inlined callee's returning
 /// call completes the callee itself.
-fn call_length(instruction: WideInstruction, root: bool, alternatives: &[InlinedPlan]) -> u32 {
+fn call_length(instruction: WideInstruction, root: bool, through: bool, alternatives: &[InlinedPlan]) -> u32 {
     alternatives.iter().map(|callee| 1 + callee.plan.length(false)).sum::<u32>()
         + u32::from(root && instruction.returns_from_frame())
+        + u32::from(falls_back(root, through))
+}
+
+/// Whether a call whose callees a unit inlines makes the call itself for any other callee:
+/// the caller's own call can (`Lowering::call`), not a call an inlined callee makes, nor one
+/// through `call`, which the plan rewrote to the call it makes.
+fn falls_back(root: bool, through: bool) -> bool {
+    root && !through
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers
@@ -221,10 +229,11 @@ impl Plan {
         self.code
             .iter()
             .zip(&self.calls)
-            .map(|(instruction, calls)| match calls.as_slice() {
+            .zip(&self.through_call)
+            .map(|((instruction, calls), through)| match calls.as_slice() {
                 [] if root => 1,
                 [] => completion_length(*instruction),
-                alternatives => call_length(*instruction, root, alternatives),
+                alternatives => call_length(*instruction, root, through.is_some(), alternatives),
             })
             .sum()
     }
@@ -366,12 +375,12 @@ impl Emitter {
         let root = frame.is_none();
         let mut flat = Vec::with_capacity(plan.code.len() + 1);
         let mut at = self.unit.instructions.len() as u32;
-        for (instruction, calls) in plan.code.iter().zip(&plan.calls) {
+        for ((instruction, calls), through) in plan.code.iter().zip(&plan.calls).zip(&plan.through_call) {
             flat.push(at);
             at += match calls.as_slice() {
                 [] if root => 1,
                 [] => completion_length(*instruction),
-                alternatives => call_length(*instruction, root, alternatives),
+                alternatives => call_length(*instruction, root, through.is_some(), alternatives),
             };
         }
         flat.push(at);
@@ -392,12 +401,16 @@ impl Emitter {
                     (true, true) => (register(instruction.result_register()), flat[pc + 1] - 1),
                     (false, _) => (register(instruction.result_register()), flat[pc + 1]),
                 };
+                // The caller's own call after the alternatives takes any other callee: past the
+                // last, a miss continues there, else leaves at the call, before its effects.
+                let fallback = falls_back(root, plan.through_call[pc].is_some())
+                    .then(|| (flat[pc + 1] - 1 - u32::from(returns)) as usize);
                 for (alternative, call) in calls.iter().enumerate() {
                     let index = self.unit.frames.len();
                     let marker = self.unit.instructions.len();
                     self.unit.markers.push(marker);
                     let callee_base = Register::try_from(call.base).ok()?;
-                    let next = (alternative + 1 < calls.len()).then(|| marker + 1 + call.plan.length(false) as usize);
+                    let next = if alternative + 1 < calls.len() { Some(marker + 1 + call.plan.length(false) as usize) } else { fallback };
                     let frame_record = Frame {
                         parent: frame,
                         call: pc as u32,
@@ -419,6 +432,11 @@ impl Emitter {
                     self.unit.instructions.push(WideInstruction::new(Op::Nop, 0, 0, 0, 0));
                     self.unit.origins.push(origin);
                     self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
+                }
+                if let Some(fallback) = fallback {
+                    debug_assert_eq!(self.unit.instructions.len(), fallback);
+                    self.unit.instructions.push(instruction);
+                    self.unit.origins.push(origin);
                 }
                 if returns && root {
                     self.unit.instructions.push(WideInstruction::new(Op::Return, instruction.result_register(), 0, 0, 0));
