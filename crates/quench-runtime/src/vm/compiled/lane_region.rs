@@ -536,7 +536,16 @@ impl<'a, 'f> Lowering<'a, 'f> {
             }
             (frame, at) = (inlined.parent, inlined.call);
         }
-        register < self.unit.caller_registers && self.live.is_none_or(|live| live.is_live(at as usize, register))
+        self.caller_live(at as usize, register)
+    }
+
+    /// Whether caller `register` is live at caller PC `at`: a window local wherever the unit
+    /// uses it (the window outlives every PC), any other by the function's masks.
+    fn caller_live(&self, at: usize, register: Register) -> bool {
+        match self.unit.window {
+            Some(window) if register >= window.base - super::super::dispatch_fast::WINDOW_LOCALS => window.holds(register),
+            _ => register < self.unit.caller_registers && self.live.is_none_or(|live| live.is_live(at, register)),
+        }
     }
 
     /// An operand's tagged bits: its register's, or its immediate constant's.
@@ -922,8 +931,7 @@ fn lower(
         };
         let undefined = lowering.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
         for register in 0..count {
-            let bits = if register < usize::from(lowering.unit.caller_registers)
-                && lowering.live.is_none_or(|live| live.is_live(origin, register as Register)) {
+            let bits = if lowering.caller_live(origin, register as Register) {
                 lowering.builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
             } else {
                 undefined
@@ -1535,6 +1543,11 @@ impl Lowering<'_, '_> {
                 state.epoch = None;
                 Some(true)
             }
+            // An environment activation's locals the unit does not hold as registers, and its
+            // closures, through its window (`lane_unit::Window`).
+            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal | Op::MakeClosure
+                if self.unit.window.is_some() && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) =>
+                self.window_access(state, pc, instruction),
             // A keeping activation's own arguments, which only its body reads (`CallEntry::Keeps`).
             Op::ArgumentsLength | Op::ArgumentGet if plain && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
                 && (instruction.op() == Op::ArgumentsLength || instruction.register_b() < self.unit.registers) => {
@@ -2483,6 +2496,56 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
+    /// A local load or store, or a closure, through an environment activation's window
+    /// (`dispatch_fast::lane_body_window_load`); a miss leaves at `pc`.
+    fn window_access(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        use super::super::dispatch_fast::{window_access, WINDOW_LOCALS};
+        let window = self.unit.window?;
+        if instruction.result_flags() != 0 { return None; }
+        let registers = window.base - WINDOW_LOCALS;
+        let exit = self.guard_exit(state, pc as u32);
+        let base = self.registers_base;
+        let captured = |slot: usize| slot < u64::BITS as usize && window.captured & 1 << slot != 0;
+        match instruction.op() {
+            Op::MakeClosure => {
+                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let access = self.ins().iconst(types::I64, window_access(instruction.imm(), registers, false, false) as i64);
+                let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.window_closure, &[context, base, access]);
+                let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, made, exit);
+                // Making the closure allocates, which may move the property arena.
+                self.reload_property_arena();
+                state.layouts.clear();
+                self.set_tagged(state, instruction.result_register(), value);
+            }
+            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal => {
+                if instruction.numeric_local_target().is_some() { return None; }
+                let slot = instruction.local_slot();
+                let access = self.ins().iconst(types::I64, window_access(slot as u32, registers, captured(slot), false) as i64);
+                let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.window_load, &[base, access]);
+                let read = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, read, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+            }
+            _ => {
+                let slot = instruction.local_slot();
+                let result = instruction.register_b().checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
+                if instruction.register_a() >= self.unit.registers || result.is_some_and(|register| register >= self.unit.registers) {
+                    return None;
+                }
+                let value = self.tagged(state, instruction.register_a());
+                let access = self.ins().iconst(types::I64, window_access(slot as u32, registers, captured(slot), instruction.boolean_flag() == Some(true)) as i64);
+                let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.window_store, &[base, access, value]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+                emit_js_guard(&mut self.builder, hit, exit);
+                if let Some(register) = result {
+                    self.set_tagged(state, register, value);
+                }
+            }
+        }
+        Some(true)
+    }
+
     /// The value of a plain read of a virtual object's own field (`State::virtuals`).
     fn virtual_field(&self, state: &State, instruction: WideInstruction) -> Option<ir::Value> {
         if instruction.op() != Op::GetField || instruction.result_flags() != 0 || instruction.writes_current_this() {
@@ -3121,7 +3184,7 @@ mod tests {
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None, None).unwrap();
         let (native, _) = lower(&program, id as u32,
             &unit, LaneHelpers::default(), &fields, &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -3146,7 +3209,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None, None).unwrap();
         let (native, count) = lower(&program, id as u32,
             &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);

@@ -69,16 +69,61 @@ impl Frame {
     }
 }
 
+/// An environment activation's window (`dispatch_fast::lane_activate_environment`): the
+/// function's locals in registers from `base`, after its own and its environment's. A `direct`
+/// local (one bit per slot), which its environment does not hold and no dead zone guards, is
+/// that register to the unit; `used` names the ones the unit reads or writes, and `captured`
+/// the ones the environment holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Window {
+    pub(crate) base: Register,
+    pub(crate) locals: u16,
+    pub(crate) direct: u64,
+    pub(crate) used: u64,
+    pub(crate) captured: u64,
+}
+
+impl Window {
+    /// The register of `slot` where the unit reads and writes it as one.
+    fn register(&self, slot: usize) -> Option<Register> {
+        (slot < u64::BITS as usize && self.direct & 1 << slot != 0).then(|| self.base + slot as Register)
+    }
+
+    /// Whether unit `register` is a window local the unit reads or writes.
+    pub(crate) fn holds(&self, register: Register) -> bool {
+        register.checked_sub(self.base).is_some_and(|slot| slot < self.locals && self.used & 1 << slot != 0)
+    }
+
+    /// `instruction` as the `Move` of its local's register: a plain load or a store that
+    /// writes no other register.
+    fn moved(&mut self, instruction: WideInstruction) -> Option<WideInstruction> {
+        let slot = instruction.local_slot();
+        let moved = match instruction.op() {
+            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal
+                if instruction.result_flags() == 0 && instruction.numeric_local_target().is_none() =>
+                WideInstruction::new(Op::Move, instruction.result_register(), self.register(slot)?, 0, 0),
+            Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal
+                if instruction.register_b() < crate::bytecode::OPTIONAL_REGISTER_BIAS =>
+                WideInstruction::new(Op::Move, self.register(slot)?, instruction.register_a(), 0, 0),
+            _ => return None,
+        };
+        self.used |= 1 << slot;
+        Some(moved)
+    }
+}
+
 pub(crate) struct Unit {
     pub(crate) instructions: Vec<WideInstruction>,
     pub(crate) origins: Vec<Origin>,
     pub(crate) frames: Vec<Frame>,
     /// The unit PC of each frame's call marker, where the call's guards and bindings run.
     pub(crate) markers: Vec<usize>,
+    /// The caller's registers: its own, and its window's where it runs in one.
     pub(crate) caller_registers: u16,
     pub(crate) registers: u16,
     /// The caller PC past its last instruction, where falling off the unit resumes.
     pub(crate) end: u32,
+    pub(crate) window: Option<Window>,
 }
 
 impl Unit {
@@ -445,6 +490,11 @@ impl Emitter {
                 }
                 continue;
             }
+            if let Some(moved) = self.unit.window.as_mut().filter(|_| root).and_then(|window| window.moved(instruction)) {
+                self.unit.instructions.push(moved);
+                self.unit.origins.push(origin);
+                continue;
+            }
             if root {
                 // A caller instruction keeps its registers; a jump goes to its target's unit PC.
                 let retargeted = if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
@@ -500,8 +550,9 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
     call: Option<crate::bytecode::Atom>,
+    window: Option<Window>,
 ) -> Option<Unit> {
-    let caller_registers = function.registers;
+    let caller_registers = window.map_or(function.registers, |window| window.base + window.locals);
     let mut planner = Planner { targets, body, registers: u32::from(caller_registers), budget, call };
     let plan = planner.plan(function_id, decoded(function), 0);
     let registers = u16::try_from(planner.registers).ok()?;
@@ -514,6 +565,7 @@ pub(crate) fn unit<'f>(
             caller_registers,
             registers,
             end: plan.code.len() as u32,
+            window,
         },
     };
     emitter.emit(&plan, None, 0, 0, 0, 0)?;

@@ -8,8 +8,17 @@
 // semantics and cost together. The C column is the work a C programmer's loop would do for
 // the same body (loop control included), the target the native tiers are judged against.
 //
-// Usage: tools/op-cost.mjs <quench-node> [--tiers interp,jit,lane] [--baseline file.json]
-//        [--save file.json] [ops...]
+// Tiers: `no-jit` compiles nothing at run time; `jit` runs every runtime compilation layer;
+// `aot` compiles the fixture before the run (`quench-node compile`, with the native SDK
+// report `--sdk-report` names) and keeps runtime compilation. A tier with no way to run here
+// prints `-`.
+//
+// Usage: tools/op-cost.mjs <quench-node> [--tiers no-jit,jit,aot] [--sdk-report file.jsonl]
+//        [--baseline file.json] [--save file.json] [--attribute] [ops...]
+//
+// `--attribute` also prints, per cell, the functions that spend each operation's instructions:
+// the same 2N-minus-N difference, per function (`callgrind_annotate`), so a cell's cost names
+// the handlers and helpers to change.
 
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -64,12 +73,12 @@ console.log(typeof r === "number" && !Number.isInteger(r) ? r.toFixed(6) : Strin
 `;
 }
 
+// name, quench arguments, environment, whether the fixture is compiled ahead of the run.
+const JIT_ENV = { QUENCH_JS_JIT_LANE_METHODS: "1" };
 const ALL_TIERS = [
-  ["interp", [], {}],
-  ["jit", ["--jit"], {}],
-  ["lane", ["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1" }],
-  // The lane-body compiler alone: every loop in its function's body, no loop region.
-  ["body", ["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1", QUENCH_JS_JIT_LOOP_REGIONS: "0" }],
+  ["no-jit", [], {}, false],
+  ["jit", ["--jit"], JIT_ENV, false],
+  ["aot", ["--jit"], JIT_ENV, true],
 ];
 
 function run(command, args, env) {
@@ -85,14 +94,38 @@ function run(command, args, env) {
   });
 }
 
-async function instructions(quench, args, env, file) {
+// The instructions of a run, and with `profile` a file to keep its callgrind profile in.
+async function instructions([program, args], env, profile = "/dev/null") {
   const { err } = await run(
     "valgrind",
-    ["--tool=callgrind", "--callgrind-out-file=/dev/null", quench, ...args, file],
+    ["--tool=callgrind", `--callgrind-out-file=${profile}`, program, ...args],
     env,
   );
   const match = err.match(/refs:\s*([\d,]+)/);
   return match ? Number(match[1].replaceAll(",", "")) : NaN;
+}
+
+// Exclusive instructions per function of a callgrind profile.
+function functionCosts(profile) {
+  const out = execFileSync("callgrind_annotate", ["--auto=no", "--inclusive=no", "--threshold=100", profile],
+    { maxBuffer: 1 << 28 }).toString();
+  const costs = new Map();
+  for (const line of out.split("\n")) {
+    const match = line.match(/^\s*([\d,]+)\s+\([^)]*\)\s+(.*)$/);
+    if (!match || match[2].includes("PROGRAM TOTALS")) continue;
+    // Monomorphized paths and recursion markers name one function.
+    const name = match[2].replace(/ \[.*$/, "").replace(/<[^<>]*>/g, "").replace(/<[^<>]*>/g, "")
+      .replace(/'\d+$/, "").replace(/^.*?:/, "");
+    costs.set(name, (costs.get(name) ?? 0) + Number(match[1].replaceAll(",", "")));
+  }
+  return costs;
+}
+
+// The functions spending most of one operation's instructions: `twice` minus `once`, per N.
+function attribution(once, twice) {
+  const [a, b] = [functionCosts(once), functionCosts(twice)];
+  return [...b].map(([name, cost]) => [name, (cost - (a.get(name) ?? 0)) / N])
+    .filter(([, cost]) => cost >= 0.5).sort((x, y) => y[1] - x[1]).slice(0, 12);
 }
 
 // A bounded pool: the host's cores run the valgrind jobs.
@@ -117,9 +150,23 @@ const option = (name) => {
   return at < 0 ? undefined : argv.splice(at, 2)[1];
 };
 const tierNames = option("--tiers");
+const sdkReport = option("--sdk-report");
+const attributes = argv.includes("--attribute");
+if (attributes) argv.splice(argv.indexOf("--attribute"), 1);
 const baselineFile = option("--baseline");
 const saveFile = option("--save");
-const TIERS = tierNames ? ALL_TIERS.filter(([tier]) => tierNames.split(",").includes(tier)) : ALL_TIERS;
+const TIERS = (tierNames ? ALL_TIERS.filter(([tier]) => tierNames.split(",").includes(tier)) : ALL_TIERS)
+  .filter(([, , , ahead]) => !ahead || sdkReport);
+
+// The command a tier runs `file` with: quench itself, or the executable `quench-node compile`
+// made of it ahead of the run.
+async function command(file, args, ahead) {
+  if (!ahead) return [quench, [...args, file]];
+  const binary = file.replace(/\.js$/, ".bin");
+  const { code, err } = await run(quench, ["compile", file, "-o", binary, "--profile", "iteration", "--sdk-report", sdkReport], {});
+  if (code !== 0) throw new Error(`compile ${file}: ${err}`);
+  return [binary, []];
+}
 const chosen = argv.length ? OPERATIONS.filter(([name]) => argv.includes(name)) : OPERATIONS;
 const directory = mkdtempSync(join(tmpdir(), "op-cost-"));
 const width = Number(execFileSync("nproc").toString().trim());
@@ -133,15 +180,14 @@ for (const [name, setup, names, body] of chosen) {
   writeFileSync(double, fixture(setup, names, body, 2 * N));
   const expected = execFileSync("node", [single]).toString().trim();
   cells[name] = { expected };
-  for (const [tier, args, env] of TIERS) {
+  for (const [tier, args, env, ahead] of TIERS) {
     jobs.push(async () => {
-      const result = await run(quench, [...args, single], env);
+      const [once, twice] = await Promise.all([command(single, args, ahead), command(double, args, ahead)]);
+      const result = await run(once[0], once[1], env);
       const ok = result.code === 0 && result.out === expected;
-      const [a, b] = await Promise.all([
-        instructions(quench, args, env, single),
-        instructions(quench, args, env, double),
-      ]);
-      cells[name][tier] = { ok, cost: (b - a) / N, got: result.out };
+      const profiles = attributes ? [join(directory, `${name}-${tier}-1.cg`), join(directory, `${name}-${tier}-2.cg`)] : [];
+      const [a, b] = await Promise.all([instructions(once, env, profiles[0]), instructions(twice, env, profiles[1])]);
+      cells[name][tier] = { ok, cost: (b - a) / N, got: result.out, by: attributes ? attribution(...profiles) : undefined };
     });
   }
 }
@@ -166,5 +212,13 @@ const wrong = chosen.flatMap(([name]) =>
   )
 );
 for (const line of wrong) console.log(`WRONG ${line}`);
+if (attributes) {
+  for (const [name] of chosen) {
+    for (const [tier] of TIERS) {
+      console.log(`\n${name} / ${tier}: ${cells[name][tier].cost.toFixed(1)}`);
+      for (const [fn, cost] of cells[name][tier].by) console.log(`  ${cost.toFixed(1).padStart(7)}  ${fn.slice(0, 120)}`);
+    }
+  }
+}
 if (saveFile) writeFileSync(saveFile, JSON.stringify(cells, null, 1));
 process.exitCode = wrong.length ? 1 : 0;

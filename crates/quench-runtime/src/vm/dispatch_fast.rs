@@ -441,7 +441,7 @@ const WINDOW_ENVIRONMENT: u16 = 0;
 const WINDOW_SLOTS: u16 = 1;
 const WINDOW_CAPTURED: u16 = 2;
 const WINDOW_STORAGE: u16 = 3;
-const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
+pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
     fn captured(self, slot: usize) -> bool {
@@ -7468,6 +7468,20 @@ script_handler! {
 }
 
 
+/// The window a lane body of `body` runs in (`lane_unit::Window`): an environment activation's,
+/// whose locals no dead zone guards nor its environment holds are the unit's registers.
+fn lane_unit_window(code: &ResidualProgram, body: &Function, own: &LaneView) -> Option<super::compiled::lane_unit::Window> {
+    let plan = body.call_plan(code);
+    let window = own.environment_window.filter(|_| plan.environment_activation && !plan.registers_only)?;
+    let guarded = body.code.iter().map(|packed| decoded_instruction(body, *packed))
+        .filter(|instruction| instruction.op() == Op::InitializeTdz)
+        .fold(0_u64, |mask, instruction| mask | 1_u64.checked_shl(instruction.local_slot() as u32).unwrap_or(0));
+    let direct = (0..usize::from(window.locals))
+        .filter(|slot| !window.captured(*slot) && !body.is_self_binding_slot(*slot))
+        .fold(0_u64, |mask, slot| mask | 1 << slot) & !guarded;
+    Some(super::compiled::lane_unit::Window { base: body.registers + WINDOW_LOCALS, locals: window.locals, direct, used: 0, captured: window.captured })
+}
+
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now; with
 /// a second entry at `loop_header`, where a loop's backward jump enters it. Whether the body
@@ -7485,7 +7499,8 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
             lane_prepare_callees(cx, own, body);
         }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(cx, own, body)).unwrap_or_default();
-        let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
+        let window = code.function_get(function as usize).and_then(|body| lane_unit_window(code, body, own));
+        let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic, window);
         if diagnostics && let Some(method) = &method {
             own.body_stats.compiled(function, method.inlined.len());
         }
@@ -11228,13 +11243,15 @@ impl<H: Host> Vm<H> {
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
             }
         });
-        if !environment
-            && !settles
+        if !settles
             && !cross
             && !body.rest
             // A keeping activation places its parameters before its first record, so a lane
             // body enters it as any other (`lane_body_argument_get` reads the values it kept).
             && (!plan.keeps_arguments || self.programs.js_jit_lane_methods_enabled())
+            // An environment activation makes its window before its first record; its body
+            // runs on it (`lane_unit::Window`).
+            && (!environment || self.programs.js_jit_lane_methods_enabled())
             && shape.entry == CallEntry::Activates
             && if self.programs.js_jit_lane_methods_enabled() {
                 // SAFETY: as below.
@@ -14096,6 +14113,90 @@ pub(super) unsafe extern "C" fn lane_body_argument_get<H: Host>(_vm: u64, _resid
     r.get(code.function(function as usize).registers + index).to_bits()
 }
 
+/// The fields a lane body's window access packs into one word (`window_access`): the local
+/// slot or closure function below, the function's register count above, and whether the
+/// slot lives in the environment or the store initializes it.
+const WINDOW_ACCESS_REGISTERS_SHIFT: u32 = u32::BITS;
+const WINDOW_ACCESS_FIELD: u64 = u32::MAX as u64;
+const WINDOW_ACCESS_ENVIRONMENT: u64 = 1 << (u64::BITS - 1);
+const WINDOW_ACCESS_INITIALIZES: u64 = 1 << (u64::BITS - 2);
+
+/// The packed word of a lane body's window access (`lane_body_window_load`).
+pub(super) fn window_access(field: u32, registers: u16, environment: bool, initializes: bool) -> u64 {
+    u64::from(field) | u64::from(registers) << WINDOW_ACCESS_REGISTERS_SHIFT
+        | if environment { WINDOW_ACCESS_ENVIRONMENT } else { 0 }
+        | if initializes { WINDOW_ACCESS_INITIALIZES } else { 0 }
+}
+
+/// A window access's field and register count (`window_access`).
+fn window_access_fields(access: u64) -> (usize, u16) {
+    ((access & WINDOW_ACCESS_FIELD) as usize, (access >> WINDOW_ACCESS_REGISTERS_SHIFT) as u16)
+}
+
+/// A lane body's read of local `slot` of its environment activation's window, as
+/// `lane_load_window_local_general` reads it there: `DELETED` for an uninitialized binding,
+/// which leaves the body at the read.
+pub(super) unsafe extern "C" fn lane_body_window_load<H: Host>(vm: u64, _residual: u64, registers: u64, access: u64) -> u64 {
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    // SAFETY: a windowed body passes its activation's registers (`LaneMethod::windowed`).
+    let r = Registers(registers as usize as *mut Value);
+    let (slot, registers) = window_access_fields(access);
+    let value = if access & WINDOW_ACCESS_ENVIRONMENT != 0 {
+        // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
+        let storage = unsafe {
+            &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS)) as *const crate::heap::EnvironmentSlots)
+        };
+        storage.dense().and_then(|dense| dense.dense_plain(slot))
+            .or_else(|| vm.heap.environment_slot(r.get(registers + WINDOW_ENVIRONMENT), slot))
+    } else {
+        Some(r.get(registers + WINDOW_LOCALS + slot as u16))
+    };
+    value.unwrap_or(Value::DELETED).to_bits()
+}
+
+/// A lane body's store of `value` to local `slot` of its environment activation's window, as
+/// `lane_store_window_local_general` makes it there, after the environment's barrier: nonzero
+/// where stored; zero for an uninitialized binding a plain store reaches.
+pub(super) unsafe extern "C" fn lane_body_window_store<H: Host>(vm: u64, _residual: u64, registers: u64, access: u64, value: u64) -> u64 {
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    // SAFETY: as `lane_body_window_load`.
+    let r = Registers(registers as usize as *mut Value);
+    let (slot, registers) = window_access_fields(access);
+    let binding = if access & WINDOW_ACCESS_ENVIRONMENT != 0 {
+        let environment = r.get(registers + WINDOW_ENVIRONMENT);
+        vm.heap.remember_cell(environment);
+        // SAFETY: as `lane_store_window_local_general`'s write through the window's storage.
+        let storage = unsafe {
+            &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS)) as *mut crate::heap::EnvironmentSlots)
+        };
+        match storage.owned_mut(slot) {
+            Some(binding) => Some(binding),
+            None => vm.heap.environment_slot_mut(environment, slot),
+        }
+    } else {
+        // SAFETY: an environment activation's window holds its locals after its storage.
+        Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
+    };
+    match binding {
+        Some(binding) if access & WINDOW_ACCESS_INITIALIZES != 0 || !binding.is_deleted() => {
+            *binding = Value::from_bits(value);
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// A lane body's closure of `function` over its environment activation's environment, as
+/// `lane_make_window_closure` makes it there: `DELETED` where none is made, which leaves the
+/// body at the record.
+pub(super) unsafe extern "C" fn lane_body_window_closure<H: Host>(_vm: u64, _residual: u64, context: u64, registers: u64, access: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: as `lane_body_window_load`.
+    let r = Registers(registers as usize as *mut Value);
+    let (function, registers) = window_access_fields(access);
+    lane_window_closure_value(cx, r, function as u32, registers).unwrap_or(Value::DELETED).to_bits()
+}
+
 script_handler! {
     /// `lane_arguments_length_general` in a keeping activation: the count of the values it
     /// kept, saving no registers.
@@ -14407,6 +14508,19 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
+        // A completion ended every native frame the run made: it resumes no activation and
+        // is no leave, so it counts the run and returns.
+        if let super::compiled::LaneExit::Returned { pc, value } = exit {
+            // SAFETY: the running lane's context; the run that ended set it.
+            unsafe { (*cx).callee_warming = false };
+            if vm.programs.js_jit_diagnostics_enabled() {
+                own.body_stats.ended(exit, &method.inlined, super::compiled::take_lane_exit_line());
+            }
+            own.note_lane_body_run(false);
+            own.note_lane_body_end(exit);
+            // SAFETY: the record that completes the activation is one of its function's.
+            lane_return_value!(cx, unsafe { base.add(pc) }, value, true)
+        }
         let counts = lane_leave_counts(cx, exit);
         let (resumed, innermost) = lane_body_left(cx, r, own, method, exit);
         // A leave inside a callee is the callee's: the run's own code ran as compiled.
@@ -14733,13 +14847,17 @@ fn lane_materialize_frames<H: Host>(
     innermost
 }
 
-/// Whether a run of `own`'s specialized body may start: the one thing per run it cannot
-/// prove at specialization, that the lane can make the activation of a call it inlines
-/// should it leave inside one (`lane_body_inlined_activation`).
+/// Whether a run of `own`'s specialized body may start: what it cannot prove per run at
+/// specialization, that the lane can make the activation of a call it inlines should it leave
+/// inside one (`lane_body_inlined_activation`), and for a windowed body, that the run is an
+/// environment activation's, not a frame's (`LaneMethod::windowed`).
 #[inline(always)]
 fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, own: &LaneView) -> bool {
     let room = usize::from(own.lane_body_room());
     let vm = unsafe { vm(cx) };
+    if own.lane_body().is_some_and(|method| method.windowed) && unsafe { (*cx).env }.is_deleted() {
+        return false;
+    }
     room == 0
         || (vm.lane_stack.activations.len() < vm.lane_stack.activation_limit.get()
             && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= room

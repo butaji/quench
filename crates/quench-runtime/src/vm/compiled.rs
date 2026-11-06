@@ -55,7 +55,7 @@ mod facts;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
-mod lane_unit;
+pub(super) mod lane_unit;
 pub(super) use lane_unit::{CallTarget, Frame as InlinedCall};
 mod object_slots;
 pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
@@ -2058,6 +2058,11 @@ pub(super) struct LaneHelpers {
     /// (`dispatch_fast::lane_body_arguments_length`, `lane_body_argument_get`).
     arguments_length: usize,
     argument_get: usize,
+    /// An environment activation's window locals and closures past its registers
+    /// (`dispatch_fast::lane_body_window_load`, `lane_body_window_store`, `lane_body_window_closure`).
+    window_load: usize,
+    window_store: usize,
+    window_closure: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -6800,6 +6805,8 @@ pub(super) struct LaneMethod {
     /// Whether its view no longer runs it, retired or specialized again: its direct callers,
     /// which keep its code, call the function through the lane instead (`direct_call`).
     pub(super) retired: std::cell::Cell<bool>,
+    /// Whether it runs on an environment activation's window (`lane_unit::Window`).
+    pub(super) windowed: bool,
 }
 
 impl LaneMethod {
@@ -7222,6 +7229,7 @@ impl<H: Host> Vm<H> {
         direct: Vec<Vec<DirectCallee>>,
         loop_header: Option<u32>,
         generic: &[LaneExit],
+        window: Option<lane_unit::Window>,
     ) -> Option<Box<LaneMethod>> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers {
@@ -7247,6 +7255,9 @@ impl<H: Host> Vm<H> {
             materialize_pair: lane_materialize_pair::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             arguments_length: super::dispatch_fast::lane_body_arguments_length::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
             argument_get: super::dispatch_fast::lane_body_argument_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            window_load: super::dispatch_fast::lane_body_window_load::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            window_store: super::dispatch_fast::lane_body_window_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
+            window_closure: super::dispatch_fast::lane_body_window_closure::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         // The calls a unit still makes (none it inlines) whose callees have bodies; a body
@@ -7267,7 +7278,7 @@ impl<H: Host> Vm<H> {
                 eprintln!("QUENCH_LANE_DECLINE {{\"function\":{function},\"reason\":\"{reason}\"}}");
             };
             let Some(unit) = lane_unit::unit(function, body, budget, &called, &|callee| program.function_get(callee as usize),
-                self.vm_facts().function_call.map(|(atom, _)| atom)) else { declined(self, "unit"); return None };
+                self.vm_facts().function_call.map(|(atom, _)| atom), window) else { declined(self, "unit"); return None };
             let loop_entry = match loop_header {
                 Some(header) => match unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)) {
                     Some(entry) => Some(entry),
@@ -7347,7 +7358,7 @@ impl<H: Host> Vm<H> {
                 self.lane_code_roots.push(callee);
             }
         }
-        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed, retired: std::cell::Cell::new(false) });
+        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed, retired: std::cell::Cell::new(false), windowed: window.is_some() });
         method.bind_self_calls();
         Some(method)
     }
