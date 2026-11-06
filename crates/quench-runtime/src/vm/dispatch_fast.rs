@@ -156,6 +156,9 @@ pub(super) struct LoopSite {
     hookable: bool,
     /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
     taken: std::cell::Cell<u32>,
+    /// Whether the loop was given to its function's lane body (`lane_loop_body_or_retire`),
+    /// which runs it from then on, so its region never does.
+    given_to_body: std::cell::Cell<bool>,
     /// Native runs that left at an instruction the general path executes.
     exits: std::cell::Cell<u32>,
     /// Entries declined since the last that ran native code.
@@ -176,6 +179,18 @@ pub(super) struct LoopSite {
 impl LoopSite {
     fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
+    }
+
+    /// Whether the site has given up its region: it kept leaving, or its entry kept
+    /// declining.
+    fn retired(&self) -> bool {
+        self.exits.get() >= LOOP_TIER_MAX_EXITS || self.declines.get() >= LOOP_TIER_MAX_DECLINES
+    }
+
+    /// Whether the loop runs in its region rather than its function's lane body: a region
+    /// the site has not retired or given to the body, which does not leave at each call.
+    fn runs_region(&self) -> bool {
+        !self.given_to_body.get() && !self.retired() && self.active_region().is_some_and(|region| !region.leaves_at_calls())
     }
 
     fn is_admitted(&self) -> bool {
@@ -7269,11 +7284,9 @@ script_handler! {
             lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.exits.get() >= LOOP_TIER_MAX_EXITS
-            || site.declines.get() >= LOOP_TIER_MAX_DECLINES
-            || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
-        {
-            lane_loop_retire::<H>(cx, ip, site);
+        // A region the site gave up leaves the loop to its function's lane body, where one runs.
+        if site.retired() || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy()) {
+            lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         let region = match site.region.get() {
@@ -7428,10 +7441,9 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = |generic: &[super::compiled::LaneExit]| {
-        // A function whose loop the loop tier admitted runs that loop in its region, which
-        // a body would only leave for at each of the loop's entries; a region that leaves at
-        // each call yields its loop to the body.
-        if own.loops.iter().any(|site| site.active_region().is_some_and(|region| !region.leaves_at_calls())) { return None; }
+        // A function whose loop runs in its region (`LoopSite::runs_region`) keeps it there:
+        // a body would only leave for the region at each of the loop's entries.
+        if own.loops.iter().any(LoopSite::runs_region) { return None; }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
         if diagnostics && let Some(method) = &method {
@@ -7454,8 +7466,9 @@ fn lane_loop_body_or_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &Loo
     let vm = unsafe { vm(cx) };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view);
-    let entered = vm.programs.js_jit_lane_methods_enabled()
-        && !vm.programs.js_jit_general_dispatch_enabled()
+    let lane_bodies = vm.programs.js_jit_lane_methods_enabled() && !vm.programs.js_jit_general_dispatch_enabled();
+    site.given_to_body.set(lane_bodies);
+    let entered = lane_bodies
         && own.is_some_and(|own| {
             lane_specialize(cx, own, site.function, Some(site.header), true);
             own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
@@ -19404,6 +19417,7 @@ fn install_loop_sites<'live, H: Host>(
                     header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     taken: std::cell::Cell::new(0),
+                    given_to_body: std::cell::Cell::new(false),
                     exits: std::cell::Cell::new(0),
                     declines: std::cell::Cell::new(0),
                     diagnostics,
