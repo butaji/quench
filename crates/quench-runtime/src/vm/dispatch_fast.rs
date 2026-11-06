@@ -14988,6 +14988,27 @@ fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
     let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return LANE_CALL_MISSED };
+    // A forwarding constructor's (`this.initialize.apply(this, arguments)`) as the lane's own
+    // keeping construction makes it: the receiver its initializer's adds finished, else its
+    // activation, which the lane continues in.
+    if target.constructs && target.forwards() {
+        return match lane_construct_keeping_activation(cx, r, ip, i) {
+            Ok(KeepingConstruction::Finished(this)) => {
+                r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+                LANE_CALL_COMPLETED
+            }
+            // Its initializer's activation, run by the initializer's body where it has one.
+            Ok(KeepingConstruction::Activated(registers, start)) => {
+                let function = vm.lane_stack.activations.last().map(|activation| activation.function);
+                let this = unsafe { (*cx).this };
+                match function {
+                    Some(function) => lane_run_activation(cx, ip, function, registers, start, if this.is_deleted() { Value::DELETED } else { this }, true),
+                    None => LANE_CALL_MISSED,
+                }
+            }
+            Err(_) => LANE_CALL_MISSED,
+        };
+    }
     if !target.constructs
         || target.forwards()
         || target.entry != CallEntry::Activates
@@ -15031,9 +15052,27 @@ fn lane_body_activate<H: Host>(
     this: Value,
     constructs: bool,
 ) -> u64 {
+    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
+    let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
+    lane_run_activation(cx, ip, target.function, registers, start, receiver, constructs)
+}
+
+/// Runs the activation of `function` a lane body's call or construction (`completes_by_kind`:
+/// one whose completion its kind decides, `lane_complete_activation`) at `ip` made, its
+/// registers `registers` and first record `start`, by its own body where it has one: its
+/// completion completes the call (`LANE_CALL_COMPLETED`), and any other end leaves the lane in
+/// the activation (`LANE_CALL_LEFT`).
+fn lane_run_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    function: u32,
+    registers: Registers,
+    start: Ip,
+    receiver: Value,
+    completes_by_kind: bool,
+) -> u64 {
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
     let vm = unsafe { vm(cx) };
-    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
     let leave = move |resume: Ip, acc: Value| {
         unsafe {
             (*cx).callee_resume = resume;
@@ -15042,20 +15081,19 @@ fn lane_body_activate<H: Host>(
         LANE_CALL_LEFT
     };
     // SAFETY: the program's views outlive the lane run.
-    let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
     // A target without a body warms toward one by these entries too, as by the lane's own
     // (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
     if own.respecializes() {
-        lane_specialize(cx, own, target.function, None, true);
+        lane_specialize(cx, own, function, None, true);
     } else if own.lane_body().is_none() {
-        lane_specialize(cx, own, target.function, None, false);
+        lane_specialize(cx, own, function, None, false);
     }
     let Some(method) = own.lane_body().filter(|_| lane_body_admits(cx, own)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };
-    let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
@@ -15066,7 +15104,7 @@ fn lane_body_activate<H: Host>(
     match resumed {
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
         // A construction's completion yields its returned object or the receiver.
-        LaneBodyLeft::Completed(_, value) if constructs => {
+        LaneBodyLeft::Completed(_, value) if completes_by_kind => {
             lane_complete_activation(cx, ip, value).expect("the construction made an activation");
             LANE_CALL_COMPLETED
         }

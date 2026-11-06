@@ -1600,12 +1600,13 @@ impl Lowering<'_, '_> {
 
     fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        // A construction a previous body left at runs as a call does
-        // (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
-        if self.generic.contains(&pc)
-            && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
+        // The caller's own construction a previous body left at runs as a call does
+        // (`dispatch_fast::lane_body_construct`): the callee's plan, else a forwarding
+        // constructor's, else its activation.
+        let callable = matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
             && window.base + window.count <= self.unit.caller_registers
-            && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
+            && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER);
+        if callable && self.generic.contains(&pc) {
             return Some(self.call(state, pc, instruction, self.helpers.construct_call));
         }
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
@@ -1629,6 +1630,27 @@ impl Lowering<'_, '_> {
         let payload = self.payload;
         let this = emit_lane_helper_call(&mut self.builder, payload, self.helpers.construct, &[payload, callee, arguments, argc]);
         let built = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
+        // A construction the plan does not finish, of the caller's own, runs as a call does,
+        // on the cold path; any other leaves.
+        if callable && completes.is_none() {
+            let (planned, slow, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+            self.builder.set_cold_block(slow);
+            self.ins().brif(built, planned, &[], slow, &[]);
+            self.builder.switch_to_block(slow);
+            let mut called = state.clone();
+            if self.call(&mut called, pc, instruction, self.helpers.construct_call) {
+                self.ins().jump(join, &[]);
+            }
+            self.builder.switch_to_block(planned);
+            self.reload_property_arena();
+            self.after_guest_code();
+            self.set_tagged(state, instruction.result_register(), this);
+            self.ins().jump(join, &[]);
+            self.builder.switch_to_block(join);
+            // Past both, what the call's path proves: it proves the less.
+            *state = called;
+            return Some(true);
+        }
         emit_js_guard(&mut self.builder, built, exit);
         self.reload_property_arena();
         // The constructor's code may store any object's field.
