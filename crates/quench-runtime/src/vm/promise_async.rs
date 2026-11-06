@@ -129,6 +129,16 @@ impl<H: Host> Vm<H> {
         self.promise_settle(p, promise, PromiseState::Rejected, reason)
     }
 
+    /// The rooted promise of a settling lane call (`LaneStack::settling`), made now for a call
+    /// that deferred it to its awaiting caller: something other than the await may read it.
+    /// Without lifecycle hooks, which settling calls exclude, making it runs no guest code.
+    pub(super) fn settling_root(&mut self, root: Option<crate::heap::RootId>) -> crate::heap::RootId {
+        root.unwrap_or_else(|| {
+            let promise = self.promise_object().expect("a promise without lifecycle hooks runs no guest code");
+            self.heap.root(promise)
+        })
+    }
+
     /// The promise an async call pushed in place settles (`PendingGeneralCall::completion`),
     /// unrooted now that the call completes.
     pub(super) fn release_settled_call_root(&mut self, root: crate::heap::RootId) -> Value {

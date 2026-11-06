@@ -20444,6 +20444,54 @@ fn lane_settled_async_calls_keep_their_promises_and_job_order() {
 }
 
 #[test]
+fn lane_awaited_settled_calls_resume_as_their_promises_would() {
+    // A settling call whose result only the `await` after it reads makes its promise only
+    // where something could observe it: primitive, object, thenable and promise returns,
+    // throws, nested awaits and a kept promise resume in the order Node's do (expected
+    // output from Node 22).
+    let source = r#"
+      const out = [];
+      async function prim(x) { return x; }
+      async function none() { }
+      async function obj(x) { return { v: x }; }
+      async function thenable(x) { return { then(r) { out.push("then" + x); r("T" + x); } }; }
+      async function thrower(x) { throw new Error("boom" + x); }
+      async function inner(x) { return Promise.resolve("in" + x); }
+      async function nested(x) { return await prim(x + 1); }
+      async function step(i) {
+        out.push("s" + i);
+        const a = await prim(i);
+        await none();
+        const o = await obj(i);
+        const t = await thenable(i);
+        let e = "";
+        try { await thrower(i); } catch (error) { e = error.message; }
+        const n = await nested(i);
+        const r = await inner(i);
+        const p = prim(i * 10);
+        const q = await p;
+        out.push([a, o.v, t, e, n, r, q, p instanceof Promise].join(":"));
+        return a;
+      }
+      async function ticks(tag) { for (let k = 0; k < 12; k++) { await undefined; out.push(tag + k); } }
+      const done = [];
+      for (let i = 0; i < 40; i++) {
+        done.push(step(i));
+        Promise.resolve().then(() => out.push("p" + i)).then(() => out.push("q" + i));
+      }
+      done.push(ticks("t"));
+      Promise.all(done).then((values) => { const text = out.join(","); let hash = 0; for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0; print(values.length + "|" + out.length + ":" + hash + "|" + out.slice(40, 52).join(",") + "|" + out.slice(-3).join(",")); });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-awaited-settled.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["41|212:887089116|p0,p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11|38:38:T38:boom38:39:in38:380:true,39:39:T39:boom39:40:in39:390:true,t11"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's

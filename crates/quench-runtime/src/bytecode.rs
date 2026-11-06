@@ -689,6 +689,15 @@ impl ImmediateLayout {
         imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
+    /// A lane `Call` record whose result only the `Await` right after it reads
+    /// (`derive_lane_view`). Lane call records carry no eval flags, so the flag reuses the
+    /// parameter-eval bit; a settling callee there needs no promise for a primitive result.
+    pub(crate) const LANE_CALL_RESULT_AWAITED_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_awaited(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
+    }
+
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
