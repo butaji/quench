@@ -572,8 +572,8 @@ enum LaneBody {
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
-        /// Whether any run of it completed, natively called ones included.
-        completed: std::cell::Cell<bool>,
+        /// Its runs that completed, natively called ones included, since it specialized.
+        completed: std::cell::Cell<u32>,
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
@@ -709,6 +709,12 @@ impl LaneBodyStats {
 const LANE_BODY_REOPTIMIZE_EXITS: u16 = 64;
 const LANE_BODY_MAX_RECOMPILES: u8 = 4;
 
+/// The completed runs per leave past which a body keeps its code instead of specializing
+/// again: a leave resumes in the lane for some hundred instructions, a compile of a unit
+/// costs some ten million (DeltaBlue's `satisfy`: 13k IR instructions, about 100M host
+/// instructions), so leaving on fewer than one run in this many is cheaper than compiling.
+const LANE_BODY_LEAVE_SHARE: u32 = 32;
+
 /// The runs over which a specialized body proves it completes more often than it leaves:
 /// a body whose runs mostly leave pays its entry and the lane's resumption for work the
 /// lane does anyway (`LaneView::note_lane_body_run`).
@@ -783,7 +789,7 @@ impl LaneView {
                             leaves: std::cell::Cell::new(0),
                             exits: std::cell::Cell::new(0),
                             leaves_at: std::cell::Cell::new(LaneLeaves::NONE),
-                            completed: std::cell::Cell::new(false),
+                            completed: std::cell::Cell::new(0),
                             recompiles,
                             stuck,
                         }
@@ -842,14 +848,19 @@ impl LaneView {
         let body = unsafe { &mut *self.tier_lane.get() };
         let LaneBody::Specialized { exits, leaves_at, completed, recompiles, tier_prologue, stuck, .. } = body else { return };
         if matches!(exit, super::compiled::LaneExit::Returned { .. }) {
-            completed.set(true);
+            completed.set(completed.get().saturating_add(1));
             return;
         }
         exits.set(exits.get().saturating_add(1));
         leaves_at.set(leaves_at.get().with(exit));
-        if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES {
+        // A body whose runs mostly complete pays a leave's resumption seldom, less than
+        // another compile of it costs (`LANE_BODY_LEAVE_SHARE`).
+        if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES
+            || u32::from(exits.get()) * LANE_BODY_LEAVE_SHARE < completed.get()
+        {
             return;
         }
+        let completed = completed.get() != 0;
         // A body that left at few places takes them, and its predecessors', generically next
         // (`specialize_lane_body`); one that left only where they did, or left from many
         // places and never completed, gains nothing from another compile.
@@ -857,12 +868,12 @@ impl LaneView {
         // A body whose runs complete and that left only where its predecessors did gains
         // nothing from another compile, and loses nothing by keeping its code: it stays,
         // and reoptimizes no more.
-        if completed.get() && leaves != LaneLeaves::NONE && leaves.within(stuck) {
+        if completed && leaves != LaneLeaves::NONE && leaves.within(stuck) {
             *recompiles = LANE_BODY_MAX_RECOMPILES;
             return;
         }
         let unmoved = (leaves != LaneLeaves::NONE && leaves.within(stuck))
-            || (leaves == LaneLeaves::Scattered && !completed.get());
+            || (leaves == LaneLeaves::Scattered && !completed);
         let feedback = stuck.union(leaves);
         let recompiles = *recompiles + 1;
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.

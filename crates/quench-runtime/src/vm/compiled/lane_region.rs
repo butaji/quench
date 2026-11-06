@@ -78,12 +78,23 @@ struct State {
     /// The `heap::prototype_value_epoch` this block proved current. Only a helper that may
     /// run JavaScript or write a prototype changes it; each such helper retires the proof.
     epoch: Option<u64>,
+    /// The logical value each register holds, where a read or copy named it: the receiver's
+    /// is `THIS_ORIGIN`; a register defined any other way names none until a read of it.
+    origins: BTreeMap<Register, u32>,
+    /// The field values this block read, by the object's logical value and the atom, with the
+    /// value each names: a read of the same object's field again, with no store of the atom or
+    /// effect on objects between, is the value read (`Lowering::read_once`).
+    loads: BTreeMap<(u32, Atom), (ir::Value, u32)>,
 }
+
+/// The logical value of the activation's receiver (`State::origins`).
+const THIS_ORIGIN: u32 = 0;
 
 impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(),
-            readable: BTreeSet::new(), layouts: BTreeMap::new(), receivers: BTreeSet::new(), epoch: None }
+            readable: BTreeSet::new(), layouts: BTreeMap::new(), receivers: BTreeSet::new(), epoch: None,
+            origins: BTreeMap::new(), loads: BTreeMap::new() }
     }
 }
 
@@ -178,6 +189,8 @@ struct Lowering<'a, 'f> {
     /// Whether a run can do anything but leave: complete natively or run a loop natively. A
     /// body that can do neither declines (`lower`).
     finishes: bool,
+    /// The next logical value a read or register names (`State::origins`).
+    next_origin: u32,
     /// The instructions it leaves at for want of a lowering, for the decline diagnostic.
     unlowered: Vec<(usize, Op)>,
     /// The one epilogue every stop shares: it returns its status parameter.
@@ -257,6 +270,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         };
         self.builder.def_var(variable, value);
         state.values[index] = fact;
+        state.origins.remove(&register);
         state.shapes.remove(&Some(register));
         state.layouts.retain(|(owner, _), _| *owner != Some(register));
         state.receivers.remove(&register);
@@ -404,8 +418,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// a block no other edge enters: each was made in a block over all of them, so over this.
     fn keep_shared_proofs(&mut self, state: &mut State, pc: usize) {
         let Some(edges) = self.forward.get(pc).copied().flatten() else { return };
+        // Every forward edge leaves a PC before this one, lowered already: one that did not
+        // arrive left native code first (a call that always leaves), so the edges that arrived
+        // are all that enter it.
         let Some(arrived) = self.arrived.remove(&pc) else { return };
-        let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
+        let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() <= edges) else { return };
         state.shapes = first.shapes.iter().filter(|(owner, proof)| rest.iter()
             .all(|other| other.shapes.get(owner) == Some(proof))).map(|(owner, proof)| (*owner, *proof)).collect();
         state.readable = arrived.iter().flat_map(|arrived| arrived.readable.iter().copied()).collect();
@@ -414,6 +431,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
         state.receivers = first.receivers.iter().filter(|register| rest.iter()
             .all(|other| other.receivers.contains(register))).copied().collect();
         state.epoch = first.epoch.filter(|epoch| rest.iter().all(|other| other.epoch == Some(*epoch)));
+        state.origins = first.origins.iter().filter(|(register, origin)| rest.iter()
+            .all(|other| other.origins.get(register) == Some(origin))).map(|(register, origin)| (*register, *origin)).collect();
+        state.loads = first.loads.iter().filter(|(key, value)| rest.iter()
+            .all(|other| other.loads.get(key) == Some(value))).map(|(key, value)| (*key, *value)).collect();
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -771,6 +792,7 @@ fn lower(
         arrived: BTreeMap::new(),
         entered: vec![false; unit.instructions.len()],
         finishes: false,
+        next_origin: THIS_ORIGIN + 1,
         unlowered: Vec::new(),
         leave,
         stop,
@@ -870,6 +892,11 @@ fn lower(
                 continue;
             }
             lowering.builder.switch_to_block(block);
+            // A block only earlier PCs enter has all its predecessors now: sealed, its
+            // variables resolve to the values that reach it rather than new parameters.
+            if lowering.forward.get(pc).copied().flatten().is_some() {
+                lowering.builder.seal_block(block);
+            }
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
             reachable = true;
@@ -1562,6 +1589,8 @@ impl Lowering<'_, '_> {
         let built = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, built, exit);
         self.reload_property_arena();
+        // The constructor's code may store any object's field.
+        state.loads.clear();
         state.layouts.clear();
         state.epoch = None;
         self.after_guest_code();
@@ -1756,6 +1785,7 @@ impl Lowering<'_, '_> {
         if state.readable.contains(&Some(source)) { state.readable.insert(Some(destination)); }
         for (shape, projection) in layouts { state.layouts.insert((Some(destination), shape), projection); }
         if receiver { state.receivers.insert(destination); }
+        if let Some(origin) = state.origins.get(&source).copied() { state.origins.insert(destination, origin); }
     }
 
     /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
@@ -1877,6 +1907,7 @@ impl Lowering<'_, '_> {
 
     /// The callee may have changed any object: block-local proofs of them retire.
     fn after_call(&mut self, state: &mut State) {
+        state.loads.clear();
         state.shapes.clear();
         state.layouts.clear();
         state.epoch = None;
@@ -2208,13 +2239,22 @@ impl Lowering<'_, '_> {
         let (last, init) = parts.split_last()?;
         let length = last.0 == self.vm.length && sink.is_none();
         let reads = if length { init } else { &parts[..] };
-        let mut value = match (reads.split_first(), register) {
-            (None, Some(register)) => self.tagged(state, register),
-            (None, None) => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
-            (Some((first, _)), _) => self.base_field_read(state, register, receiver, *first, exit),
+        let base = match register {
+            Some(register) => self.tagged(state, register),
+            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+        };
+        let mut origin = self.origin(state, register);
+        let mut value = match reads.split_first() {
+            None => base,
+            Some((first, _)) => {
+                let read;
+                (read, origin) = self.read_once(state, origin, first.0, |lowering, state| Some(lowering.base_field_read(state, register, receiver, *first, exit)))?;
+                read
+            }
         };
         for site in reads.iter().skip(1) {
-            value = self.object_field_read(state, value, *site, exit)?;
+            let object = value;
+            (value, origin) = self.read_once(state, origin, site.0, |lowering, state| lowering.object_field_read(state, object, *site, exit))?;
         }
         if length {
             let length = self.array_length(value, *last, exit);
@@ -2235,6 +2275,7 @@ impl Lowering<'_, '_> {
         // here, once, and a value it no longer holds leaves before the read is defined.
         if !int32_read(self.program, self.fields, instruction) {
             self.set_tagged(state, destination, value);
+            state.origins.insert(destination, origin);
             return Some(true);
         }
         let integer = is_int_tagged(&mut self.builder, value);
@@ -2246,6 +2287,33 @@ impl Lowering<'_, '_> {
         state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         Some(true)
+    }
+
+    /// The field `atom` of the object whose bits are `object`, read by `read` once: a read of
+    /// it this block already made, with no store of the atom or effect on objects since
+    /// (`State::loads`), is its value.
+    fn read_once(&mut self, state: &mut State, object: u32, atom: Atom,
+        read: impl FnOnce(&mut Self, &mut State) -> Option<ir::Value>) -> Option<(ir::Value, u32)> {
+        if let Some(known) = state.loads.get(&(object, atom)) {
+            return Some(*known);
+        }
+        let value = read(self, state)?;
+        let named = self.next_origin;
+        self.next_origin += 1;
+        state.loads.insert((object, atom), (value, named));
+        Some((value, named))
+    }
+
+    /// The logical value `register` holds (`this` for `None`), named now if nothing named it.
+    fn origin(&mut self, state: &mut State, register: Option<Register>) -> u32 {
+        let Some(register) = register.filter(|register| !state.receivers.contains(register)) else { return THIS_ORIGIN };
+        if let Some(origin) = state.origins.get(&register) {
+            return *origin;
+        }
+        let named = self.next_origin;
+        self.next_origin += 1;
+        state.origins.insert(register, named);
+        named
     }
 
     /// The `length` read through `read` of the value `register` holds, as an int32: a direct
@@ -2591,6 +2659,8 @@ impl Lowering<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
         value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
+        // Another object's field of the atom may be this one's.
+        state.loads.retain(|(_, read), _| *read != atom);
         let receiver = !self.native_calls
             && (register.is_none() || register.is_some_and(|register| state.receivers.contains(&register)));
         let owner = if receiver { None } else { register };
@@ -2707,6 +2777,7 @@ impl Lowering<'_, '_> {
         let stored = emit_lane_helper_call(&mut self.builder, payload, self.helpers.field_add, &[payload, object, write, value]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
         emit_js_guard(&mut self.builder, hit, exit);
+        state.loads.clear();
         state.shapes.clear();
         state.layouts.clear();
         state.epoch = None;
