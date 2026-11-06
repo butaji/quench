@@ -21902,6 +21902,101 @@ print(JSON.stringify(out));
 }
 
 #[test]
+fn json_parse_syntax_errors_match_node_messages_and_positions() {
+    // Malformed JSON reports V8's messages, positions, line and column, and quoted context, as
+    // Node prints them, from byte, UTF-16 and decoded UTF-8 sources.
+    let source = r##"
+const out = [];
+for (const text of ['', ' ', '{', '[1,', '{"a"', '{"a":1', '{"a":1,', '{"a":1 "b":2}', 'x', 'nul', 'tr"', 't1', '1x', '[1 2]', '{a:1}', '"abc', '"a\\x"', '"\\u12g4"', '"\\u12', '"\\é"', '"\\一"', '"a\u0001"', '-', '-01', '1.', '1.e', '1e+', '[1,]', '"\\', 'undefined', 'NaN', '{"a":1}}', 'aaaaaaaaaaaaaaaaaaaaaaaaa', '[1,2,3,4,5,6,7,8,9,10,11,12,tx]', '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,x]', '{"aaaaaaaaaaaaaaaa":x, "bbbbbbbbbbbbbbbbbbbbbbb":1}', '\r\n[1,\r\n  x]', '\n\n  [1,\n  2 3]', '{"κ":1,"name":"ω" x}', '["ωωωωωωωωωωωωωωωωωωωωω", tru]']) {
+  try { JSON.parse(text); out.push('ok'); } catch (e) { out.push(e.constructor.name + ': ' + e.message); }
+}
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_syntax_errors_match_node_messages_and_positions.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["SyntaxError: Unexpected end of JSON input","SyntaxError: Unexpected end of JSON input","SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)","SyntaxError: Unexpected end of JSON input","SyntaxError: Expected ':' after property name in JSON at position 4 (line 1 column 5)","SyntaxError: Expected ',' or '}' after property value in JSON at position 6 (line 1 column 7)","SyntaxError: Expected double-quoted property name in JSON at position 7 (line 1 column 8)","SyntaxError: Expected ',' or '}' after property value in JSON at position 7 (line 1 column 8)","SyntaxError: Unexpected token 'x', \"x\" is not valid JSON","SyntaxError: Unexpected end of JSON input","SyntaxError: Unexpected string in JSON at position 2 (line 1 column 3)","SyntaxError: Unexpected number in JSON at position 1 (line 1 column 2)","SyntaxError: Unexpected non-whitespace character after JSON at position 1 (line 1 column 2)","SyntaxError: Expected ',' or ']' after array element in JSON at position 3 (line 1 column 4)","SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)","SyntaxError: Unterminated string in JSON at position 4 (line 1 column 5)","SyntaxError: Bad escaped character in JSON at position 3 (line 1 column 4)","SyntaxError: Bad Unicode escape in JSON at position 5 (line 1 column 6)","SyntaxError: Bad Unicode escape in JSON at position 5 (line 1 column 6)","SyntaxError: Bad escaped character in JSON at position 2 (line 1 column 3)","SyntaxError: Unexpected token '一', \"\"\\一\"\" is not valid JSON","SyntaxError: Bad control character in string literal in JSON at position 2 (line 1 column 3)","SyntaxError: No number after minus sign in JSON at position 1 (line 1 column 2)","SyntaxError: Unexpected number in JSON at position 2 (line 1 column 3)","SyntaxError: Unterminated fractional number in JSON at position 2 (line 1 column 3)","SyntaxError: Unterminated fractional number in JSON at position 2 (line 1 column 3)","SyntaxError: Exponent part is missing a number in JSON at position 3 (line 1 column 4)","SyntaxError: Unexpected token ']', \"[1,]\" is not valid JSON","SyntaxError: Unexpected end of JSON input","SyntaxError: \"undefined\" is not valid JSON","SyntaxError: \"NaN\" is not valid JSON","SyntaxError: Unexpected non-whitespace character after JSON at position 7 (line 1 column 8)","SyntaxError: Unexpected token 'a', \"aaaaaaaaaa\"... is not valid JSON","SyntaxError: Unexpected token 'x', ...\"10,11,12,tx]\" is not valid JSON","SyntaxError: Unexpected token 'x', ...\",18,19,20,x]\" is not valid JSON","SyntaxError: Unexpected token 'x', ...\"aaaaaaaa\":x, \"bbbbbb\"... is not valid JSON","SyntaxError: Unexpected token 'x', \"\r\n[1,\r\n  x]\" is not valid JSON","SyntaxError: Expected ',' or ']' after array element in JSON at position 12 (line 4 column 5)","SyntaxError: Expected ',' or '}' after property value in JSON at position 18 (line 1 column 19)","SyntaxError: Unexpected token ']', ...\"ωωωω\", tru]\" is not valid JSON"]"##]);
+}
+
+#[test]
+fn json_parse_revivers_see_holders_deletions_and_source_text() {
+    // A reviver walks in V8's order with its holder as `this`; it may delete or add members,
+    // reads each primitive's source text, and stores `__proto__` and repeated keys as data.
+    let source = r##"
+const out = [];
+const log = [];
+const root = JSON.parse('{"a":[1,{"b":2}],"c":"d","e":{"f":null}}', function (k, v) {
+  log.push(k + ':' + JSON.stringify(v) + ':' + (Array.isArray(this) ? 'array' : typeof this));
+  return k === 'c' ? undefined : k === 'b' ? v * 10 : v;
+});
+out.push(log.join('|'), JSON.stringify(root));
+let holder;
+const top = JSON.parse('[1]', function (k, v) { if (k === '') holder = this; return v; });
+out.push(Object.keys(holder).join(), holder[''] === top, Object.getPrototypeOf(holder) === Object.prototype);
+out.push(JSON.stringify(JSON.parse('{"a":1,"b":2,"c":3}', function (k, v) { if (k === 'a') delete this.b; return v; })));
+out.push(JSON.stringify(JSON.parse('{"a":1,"b":2}', function (k, v) { if (k === 'a') this.z = 9; return v; })));
+out.push(JSON.stringify(JSON.parse('[1,2,3]', (k, v) => (v === 2 ? undefined : v))));
+out.push(JSON.stringify(JSON.parse('[1.0, "x", null, {"a": 1e2}]', (k, v, context) => (context && context.source !== undefined ? context.source : v))));
+const proto = JSON.parse('{"__proto__":1}', (k, v) => v);
+out.push(Object.keys(proto).join(), Object.getPrototypeOf(proto) === Object.prototype);
+out.push(JSON.stringify(JSON.parse('{"a":1,"a":2}', (k, v) => v)));
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_revivers_see_holders_deletions_and_source_text.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["0:1:array|b:2:object|1:{\"b\":20}:array|a:[1,{\"b\":20}]:object|c:\"d\":object|f:null:object|e:{\"f\":null}:object|:{\"a\":[1,{\"b\":20}],\"e\":{\"f\":null}}:object","{\"a\":[1,{\"b\":20}],\"e\":{\"f\":null}}","",true,true,"{\"a\":1,\"c\":3}","{\"a\":1,\"b\":2,\"z\":9}","[1,null,3]","[\"1.0\",\"\\\"x\\\"\",\"null\",{\"a\":\"1e2\"}]","__proto__",true,"{\"a\":2}"]"##]);
+}
+
+#[test]
+fn json_parse_values_follow_layouts_strings_numbers_and_depth() {
+    // Keys the parse predicts from earlier objects (prefixes, escapes, alternation, repeats,
+    // index keys) build the layouts Node does; repeated strings stay equal values while
+    // containers stay distinct; numbers round as Node's; nesting is bounded by memory only.
+    let source = r##"
+const out = [];
+const keys = (text) => JSON.parse(text).map((o) => Object.keys(o).join('|') + '=' + Object.values(o).join('|')).join(' ');
+out.push(keys('[{"ab":1},{"abc":2},{"ab":3},{"a":4},{"abc":5,"ab":6}]'));
+out.push(keys('[{"a\\"b":1},{"a\\"b":2},{"a\\\\b":3},{"\\u0061":5},{"a":6},{"\\u0061":7}]'));
+out.push(keys('[{"x":1,"y":2},{"x":1,"z":3},{"x":1,"y":4},{"y":1,"x":2},{"x":0}]'));
+out.push(keys('[{"a":1,"b":2},{"a":1,"b":2,"a":3},{"a":1,"b":2},{"b":1,"a":2,"b":3,"c":4}]'));
+out.push(keys('[{"":1},{"":2,"a":3},{"é":4},{"é":5,"k":6}]'));
+out.push(keys('[{"b":1,"2":2,"a":3,"1":4},{"b":1,"2":2,"a":3,"1":4}]'));
+out.push(keys('[{"p":1,"q":2},{"p":3},{"q":4,"p":5}]'));
+const nested = JSON.parse('{"list":[{"id":1,"tags":["a","b"]},{"id":2,"tags":[]},{"tags":["c"],"id":3}]}');
+out.push(nested.list.map((o) => Object.keys(o).join()).join(' '));
+const proto = JSON.parse('[{"__proto__":{"x":1},"a":2},{"__proto__":null}]');
+out.push(proto.map((o) => Object.keys(o).join() + ':' + (Object.getPrototypeOf(o) === Object.prototype) + ':' + o.x).join(' '));
+const strings = JSON.parse('["same","same","other","","","https://example.org/a/very/long/repeated/string","https://example.org/a/very/long/repeated/string","x\\ny","x\\ny"]');
+out.push(strings.join('|'), strings[0] === strings[1], strings[5] === strings[6]);
+const shared = JSON.parse('[[1,2],[1,2],{"a":1},{"a":1}]');
+shared[0].push(3); shared[2].b = 2; delete shared[3].a;
+out.push(JSON.stringify(shared));
+out.push(JSON.parse('"\\ud83d\\ude00\\ud800x\\udc00\\u00e9\\/\\b\\f\\n\\r\\t"').split('').map((c) => c.charCodeAt(0).toString(16)).join(','));
+out.push(JSON.parse('"\ud800"').charCodeAt(0), JSON.parse('{"é":"ü€😀"}')['é']);
+out.push(JSON.parse('[0,-0,1.0,-1.5e-3,1e400,-1e400,9007199254740993,123456789012345678e-5,5e-324,0.1,1e22,1e23,2147483648,-2147483649]').map((n) => (Object.is(n, -0) ? '-0' : String(n))).join(','));
+let deep = '';
+for (let i = 0; i < 100000; i++) deep += '[';
+for (let i = 0; i < 100000; i++) deep += ']';
+let value = JSON.parse(deep), depth = 0;
+while (value.length) { value = value[0]; depth++; }
+out.push(depth);
+deep = '';
+for (let i = 0; i < 20000; i++) deep += '{"a":';
+deep += 'null';
+for (let i = 0; i < 20000; i++) deep += '}';
+value = JSON.parse(deep); depth = 0;
+while (value !== null) { value = value.a; depth++; }
+out.push(depth);
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_values_follow_layouts_strings_numbers_and_depth.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["ab=1 abc=2 ab=3 a=4 abc|ab=5|6","a\"b=1 a\"b=2 a\\b=3 a=5 a=6 a=7","x|y=1|2 x|z=1|3 x|y=1|4 y|x=1|2 x=0","a|b=1|2 a|b=3|2 a|b=1|2 b|a|c=3|2|4","=1 |a=2|3 é=4 é|k=5|6","1|2|b|a=4|2|1|3 1|2|b|a=4|2|1|3","p|q=1|2 p=3 q|p=4|5","id,tags id,tags tags,id","__proto__,a:true:undefined __proto__:true:undefined","same|same|other|||https://example.org/a/very/long/repeated/string|https://example.org/a/very/long/repeated/string|x\ny|x\ny",true,true,"[[1,2,3],[1,2],{\"a\":1,\"b\":2},{}]","d83d,de00,d800,78,dc00,e9,2f,8,c,a,d,9",55296,"ü€😀","0,-0,1,-0.0015,Infinity,-Infinity,9007199254740992,1234567890123.4568,5e-324,0.1,1e+22,1e+23,2147483648,-2147483649",99999,20000]"##]);
+}
+
+#[test]
 fn lane_closures_of_one_function_keep_their_own_lexical_this() {
     // Arrows made by one function share its derived lane target; each keeps the `this` of
     // the call that made it, and a closure-making method's arrows see that method's receiver.
