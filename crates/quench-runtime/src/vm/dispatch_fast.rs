@@ -587,6 +587,27 @@ unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
     }
 }
 
+/// `fill_window` of a plain activation's `count` registers with `undefined`, whose admission
+/// reserved whole `SCRIPT_FILL_BLOCK`s past them (`ScriptCallTarget::room`): a window within
+/// one `WINDOW_FILL_BLOCK` takes that block's fixed stores, the values past the live range
+/// landing in the reserved room, which no frame reads, so it makes no test of its count.
+///
+/// # Safety
+/// `registers` has writable storage for `fill_room::<SCRIPT_FILL_BLOCK>(count)` values, none
+/// of them live.
+#[inline(always)]
+unsafe fn fill_admitted_window(registers: *mut Value, count: usize) {
+    const _: () = assert!(WINDOW_FILL_BLOCK <= SCRIPT_FILL_BLOCK);
+    if count > WINDOW_FILL_BLOCK {
+        // SAFETY: the function's contract.
+        return unsafe { fill_window(registers, count, Value::UNDEFINED) };
+    }
+    for index in 0..WINDOW_FILL_BLOCK {
+        // SAFETY: the admitted room holds a whole block.
+        unsafe { registers.add(index).write_unaligned(Value::UNDEFINED) };
+    }
+}
+
 /// A function's register window as a lane activation starts it: every
 /// register its initial value, then the parameters at their base.
 #[derive(Clone, Copy)]
@@ -15551,12 +15572,12 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     let count = usize::from(target.registers);
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
-    // SAFETY: capacity holds the window; each slot is written before the length covers
-    // it, and no activation's window moves. Parameter `k` lives in register `k` of a
-    // plain activation (`Vm::place_plain_parameters`).
+    // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); each
+    // slot is written before the length covers it, and no activation's window moves.
+    // Parameter `k` lives in register `k` of a plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, count, Value::UNDEFINED);
+        fill_admitted_window(registers, count);
         copy_arguments(registers, passed, argc);
         stack.values.set_len(window + count);
         Registers(registers)
