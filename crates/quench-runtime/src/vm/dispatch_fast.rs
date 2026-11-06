@@ -13950,34 +13950,51 @@ fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Opt
 /// the activation is entered again for it in place, as the lane's own loop of calls would
 /// make its next one (`lane_enter_prepared`); otherwise the activation retires to its
 /// caller first.
+///
+/// The step runs inside the returning handler: a `forEach` applies nothing, and the next
+/// element is read from the receiver's dense storage by its index alone.
+#[inline(always)]
 fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Option<Resumed> {
-    let applied = lane_apply_array_step(cx, mapped);
     let vm = unsafe { vm(cx) };
+    let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
+    // SAFETY: the entry stays in place while the step, which reads no lane stack, runs and
+    // the callback's window is filled again.
+    let step = unsafe { &mut *step };
+    let applied = if step.iteration.native == Native::ArrayForEach {
+        None
+    } else {
+        lane_apply_array_step(cx, mapped)
+    };
     let depth = vm.lane_stack.activations.len() - 1;
-    if applied.is_none()
-        && depth < vm.lane_stack.activation_limit.get()
-    {
-        let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
-        // SAFETY: the entry stays in place while the callback's window is filled again.
-        let step = unsafe { &mut *step };
+    if applied.is_none() && depth < vm.lane_stack.activation_limit.get() {
         if let Some(index) = step.iteration.advance() {
-            let (key, receiver) = (Value::length(index), step.iteration.receiver);
-            if let Some(element) = vm.dense_array_element(receiver, key) {
+            let receiver = step.iteration.receiver;
+            let element = vm.heap.array_elements(receiver).and_then(|elements| elements.get(index)).copied();
+            if let Some(element) = element.filter(|element| !element.is_deleted()) {
                 step.element = element;
                 step.index = index;
                 // The callback's completed loops close nothing more.
                 vm.lane_stack.drop_iterators_from(depth);
-                let window = vm.lane_stack.activations[depth].window;
+                // SAFETY: an activation runs, the innermost, at `depth`.
+                let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window;
                 // SAFETY: the window the activation held, which its return left in place.
-                let start = unsafe { lane_enter_prepared(cx, &step.entry, &[element, key, receiver], window) };
+                let start = unsafe { lane_enter_prepared(cx, &step.entry, &[element, Value::length(index), receiver], window) };
                 return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
             }
             step.iteration.visited -= 1;
         }
     }
-    let activation = vm.lane_stack.pop_activation()?;
+    Some(lane_retire_array_step(cx, applied))
+}
+
+/// `lane_step_array_iteration_in_place` past the in-place step: the callback's activation
+/// retires to its caller, then the iteration finishes (`lane_finish_array_step`).
+#[inline(never)]
+fn lane_retire_array_step<H: Host>(cx: *mut LaneContext<H>, applied: Option<Value>) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    let activation = vm.lane_stack.pop_activation().expect("an array step's activation runs");
     lane_restore_caller(cx, &activation);
-    Some(lane_finish_array_step(cx, &activation, applied))
+    lane_finish_array_step(cx, &activation, applied)
 }
 
 /// The iteration of the call `activation` made, its caller restored, after a step that
