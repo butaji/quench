@@ -80,7 +80,8 @@ union LaneOperand {
 /// hint names, `NO_FIELD_RECEIVER` for none. The hint's slot is the record's `call_link`,
 /// which no field record reads otherwise (`holds_no_call_link`). An inherited read's record
 /// hints the inherited entry that last answered it instead (`set_inherited_hint`): its shape
-/// is then `INHERITED_HINT` and its `call_link` that entry's index.
+/// is then `INHERITED_HINT` and its `call_link` that entry's index; a polymorphic read's, the
+/// prototype-held read that last answered it (`set_holder_hint`), `HOLDER_HINT` and its index.
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct FieldOperand {
@@ -92,6 +93,10 @@ struct FieldOperand {
 /// (`Vm::hinted_inherited_field_hit`): no object's exact shape (`Object::exact_shape`, whose id
 /// bits never all hold), so an own-field hint read (`LaneInstruction::field_hint`) misses it.
 const INHERITED_HINT: u32 = super::NO_FIELD_RECEIVER - 1;
+
+/// The `FieldOperand::shape` of a polymorphic read's record whose hint is a prototype-held
+/// read (`Vm::holder_hint_hit`), as `INHERITED_HINT` no object's exact shape.
+const HOLDER_HINT: u32 = super::NO_FIELD_RECEIVER - 2;
 
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
@@ -5611,9 +5616,23 @@ fn set_inherited_hint(ip: Ip, index: u32) {
     }
 }
 
+/// Makes `value`, which the immediate prototype of `object` answered for the polymorphic
+/// `GetField` record at `ip`, that record's hint (`Vm::hold_holder_hint`), in place of the
+/// one it holds. Out of line, so the reads that keep their hint keep their registers.
+#[cold]
+#[inline(never)]
+fn set_holder_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, value: Value) {
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let owned = (unsafe { i.operand.field.shape } == HOLDER_HINT).then(|| i.call_link.get());
+    if let Some(index) = vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK) {
+        set_record_hint(ip, HOLDER_HINT, index);
+    }
+}
+
 /// Writes a field record's hint, `shape` and `link`, unless it is a held loop header, whose
 /// `call_link` names its site (`lane_header_site`): an empty hint's link is `NO_CALL_LINK`,
-/// and a held one's shape a recorded one or `INHERITED_HINT`.
+/// and a held one's shape a recorded one, `INHERITED_HINT` or `HOLDER_HINT`.
 #[inline(always)]
 fn set_record_hint(ip: Ip, shape: u32, link: u16) {
     // SAFETY: `ip` is a field read/store record of a live view.
@@ -5646,7 +5665,9 @@ script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
     /// (`Vm::field_site_polymorphic`): its inline megamorphic entries, after its hint where
     /// `HINTED` (`polymorphic_read`), which a read a prototype's entry answers drops for good,
-    /// since its site's receivers keep no own hint; any other read takes
+    /// since its site's receivers keep no own hint: the record then hints the last read a
+    /// prototype answered instead, with its value (`Vm::holder_hint_hit`), as a parser whose
+    /// shape grows while it runs reads its methods. Any other read takes
     /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
     fn lane_get_field_polymorphic<THIS: bool, HINTED: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -5654,7 +5675,14 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
             if !HINTED {
-                return vm.inline_polymorphic_field_hit(code, object, i.c);
+                if let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
+                    return Some(value);
+                }
+                let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, super::EMPTY_CACHE)?;
+                if matches!(hit, super::object::PolymorphicHit::Holder) {
+                    set_holder_hint(vm, ip, object, value);
+                }
+                return Some(value);
             }
             let (value, holder) = polymorphic_read(vm, code, ip, object)?;
             if holder {

@@ -2129,7 +2129,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let depth = u16::from(cache.depth);
-        let epoch = crate::heap::prototype_value_epoch();
+        let epoch = self.prototype_value_epoch();
         let value = if cache.constant_epoch == epoch {
             cache.constant
         } else {
@@ -2186,6 +2186,47 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         self.polymorphic_field_entries_hit::<true>(p, object, site, EMPTY_CACHE).map(|(value, _)| value)
+    }
+
+    /// The value prototype-held hint `index` (`hold_holder_hint`) holds for a read of `atom`
+    /// from the direct object `object`: a receiver of its shape and prototype under the epoch
+    /// it was read in reads it again, whose prototype, marked, has changed neither layout nor
+    /// values since. `None` for any other receiver, name or epoch, or no such hint.
+    #[inline(always)]
+    pub(super) fn holder_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
+        let hint = self.holder_hints.get(usize::from(index))?;
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        (hint.atom == atom
+            && hint.receiver == receiver.exact_shape()
+            && hint.prototype == receiver.proto_link()
+            && hint.epoch == self.prototype_value_epoch())
+        .then_some(hint.value)
+    }
+
+    /// Makes `value`, which the immediate prototype of the direct object `object` answered
+    /// for a polymorphic read of `atom`, a record's hint: in place of `owned`, the hint the
+    /// record holds, else as a new one; its index, `None` for another receiver or once the
+    /// indices reach `limit`. The prototype is marked first, so a change to it advances the
+    /// epoch the hint holds under.
+    pub(super) fn hold_holder_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
+        let record = object.direct_object_index()?;
+        let prototype = self.heap.object_record_by_id(record).proto();
+        self.heap.mark_prototype(prototype);
+        let receiver = self.heap.object_record_by_id(record);
+        let hint = super::HolderHint {
+            receiver: receiver.exact_shape(),
+            atom,
+            prototype: receiver.proto_link(),
+            value,
+            epoch: self.prototype_value_epoch(),
+        };
+        if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.len()) {
+            self.holder_hints[usize::from(index)] = hint;
+            return Some(index);
+        }
+        let index = u16::try_from(self.holder_hints.len()).ok().filter(|&index| index < limit)?;
+        self.holder_hints.push(hint);
+        Some(index)
     }
 
     /// `polymorphic_field_hit` with which entry answered, whose own one a lane record keeps as

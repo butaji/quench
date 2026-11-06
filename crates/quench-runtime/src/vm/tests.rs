@@ -1197,6 +1197,59 @@ fn inherited_reads_follow_their_hint_and_the_prototype_values() {
 }
 
 #[test]
+fn polymorphic_method_reads_follow_their_holder_hint() {
+    // A polymorphic read a prototype answered keeps that read, with its value, as its record's
+    // hint (`Vm::holder_hint_hit`): receivers of two shapes sharing a prototype, a method
+    // replaced on it, another prototype, an own method shadowing it, a receiver moved to
+    // another prototype, and a method deleted and added again each read the method the
+    // receiver in hand inherits. Expected value is Node's (v26).
+    let source = r#"
+      function P(late) { this.pos = 1; if (late) this.inTemplate = true; }
+      P.prototype.step = function () { return 1; };
+      function Q() { this.pos = 1; }
+      Q.prototype.step = function () { return 100; };
+      var early = new P(false), late = new P(true), other = new Q();
+      function read(o) { var f = o.step; return f.call(o); }
+      var s = 0, i;
+      for (i = 0; i < 400; i++) s += read(i < 100 || i > 300 ? early : late);
+      P.prototype.step = function () { return 10; };
+      for (i = 0; i < 400; i++) s += read(i & 1 ? early : late);
+      for (i = 0; i < 400; i++) s += read(i % 3 ? other : late);
+      var shadow = new P(true);
+      shadow.step = function () { return 1000; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? shadow : late);
+      var moved = new P(false);
+      Object.setPrototypeOf(moved, Q.prototype);
+      for (i = 0; i < 300; i++) s += read(i & 1 ? moved : early);
+      delete P.prototype.step;
+      P.prototype.step = function () { return 7; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? early : late);
+      print(String(s));
+    "#;
+    // A store site that cached the prototype's layout before any read marked it writes the
+    // method the hint holds, which moves the epoch the hint holds under.
+    let stores = r#"
+      function P(late) { this.pos = 1; if (late) this.inTemplate = true; }
+      var one = function () { return 1; }, two = function () { return 2; };
+      function put(p, f) { p.step = f; }
+      for (var k = 0; k < 200; k++) put(P.prototype, k & 1 ? one : two);
+      var early = new P(false), late = new P(true);
+      function read(o) { var f = o.step; return f.call(o); }
+      var s = 0, i;
+      for (i = 0; i < 400; i++) s += read(i < 100 || i > 300 ? early : late);
+      for (i = 0; i < 400; i++) { put(P.prototype, i & 2 ? one : two); s += read(i & 1 ? early : late); }
+      print(String(s));
+    "#;
+    for (source, expected) in [(source, "202440"), (stores, "1000")] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(source, "holder-read-hints.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected]);
+    }
+}
+
+#[test]
 fn call_sites_test_each_target_their_link_names() {
     // One call site links the target cache entry of a plain callee, which dies; after the
     // collection, functions that need another entry (a kept `arguments`, values past their
