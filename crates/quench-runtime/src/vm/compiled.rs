@@ -1101,15 +1101,22 @@ fn emit_js_tagged_truthiness(
     let known_primitive = builder.ins().bor(is_true, is_false);
     let known_primitive = builder.ins().bor(known_primitive, is_null);
     let known_primitive = builder.ins().bor(known_primitive, is_undefined);
+    // A direct object or array record is truthy: neither family holds the IsHTMLDDA object.
+    let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let array = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
+    let record = builder.ins().bor(object, array);
+    let known = builder.ins().bor(known_primitive, record);
+    let truthy_known = builder.ins().bor(is_true, record);
 
     let known_block = builder.create_block();
     let number_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::I8);
-    builder.ins().brif(known_primitive, known_block, &[], number_block, &[]);
+    builder.ins().brif(known, known_block, &[], number_block, &[]);
 
     builder.switch_to_block(known_block);
-    builder.ins().jump(join, &[ir::BlockArg::Value(is_true)]);
+    builder.ins().jump(join, &[ir::BlockArg::Value(truthy_known)]);
 
     builder.switch_to_block(number_block);
     let number = emit_js_tagged_number(builder, bits, fallback);
