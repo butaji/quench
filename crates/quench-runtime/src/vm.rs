@@ -1964,6 +1964,10 @@ pub(crate) struct Vm<H> {
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
+    /// The JSON text buffer `JSON.stringify` writes into, kept between calls: a payload's
+    /// text otherwise regrows from empty on each call, copying and faulting in its pages
+    /// again at every doubling (`json::JSON_RETAINED_OUTPUT_BYTES` bounds what it keeps).
+    json_output: Vec<u8>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,

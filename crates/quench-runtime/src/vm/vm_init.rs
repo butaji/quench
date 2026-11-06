@@ -124,6 +124,7 @@ impl<H: Host> Vm<H> {
             array_iteration_proof: None,
             array_species_proof: None,
             for_in_own_keys: None,
+            json_output: Vec::new(),
             species_slot_proof: Default::default(),
             promise_species_proof: Default::default(),
             enumerable_keys: Default::default(),

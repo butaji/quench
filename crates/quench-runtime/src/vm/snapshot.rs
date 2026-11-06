@@ -340,6 +340,7 @@ impl<H: Host> Vm<H> {
             array_iteration_proof: _,
             array_species_proof: _,
             for_in_own_keys: _,
+            json_output: _,
             species_slot_proof: _,
             promise_species_proof: _,
             function_name_shapes: _,

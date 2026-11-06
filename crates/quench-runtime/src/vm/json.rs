@@ -166,6 +166,16 @@ type JsonText = Vec<u8>;
 /// A completed JSON text as a string. Every writer appends UTF-8: ASCII punctuation,
 /// literals and numbers, host strings, and JavaScript strings whose lone surrogates it
 /// escapes (`write_json_string`).
+/// The most text capacity `Vm::json_output` keeps between calls: enough for a multi-megabyte
+/// payload's serialization, bounded so one huge result does not stay resident.
+const JSON_RETAINED_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+fn json_text_str(text: &[u8]) -> &str {
+    debug_assert!(std::str::from_utf8(text).is_ok(), "JSON text is written as UTF-8");
+    // SAFETY: as above, every byte sequence written is UTF-8.
+    unsafe { std::str::from_utf8_unchecked(text) }
+}
+
 fn json_text_string(text: JsonText) -> String {
     debug_assert!(std::str::from_utf8(&text).is_ok(), "JSON text is written as UTF-8");
     // SAFETY: as above, every byte sequence written is UTF-8.
@@ -1253,12 +1263,19 @@ impl<H: Host> Vm<H> {
         let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         if replacer.is_undefined() && space.is_undefined() {
             let mut plain = JsonPlainWrite::new(self.intern_atom("toJSON"));
-            if let Some(written) = self.json_write_plain(value, &mut plain) {
-                if !written {
-                    return Ok(Value::UNDEFINED);
-                }
-                let text = json_text_string(plain.output);
-                return Ok(self.heap.alloc_string(text.into()));
+            plain.output = std::mem::take(&mut self.json_output);
+            let written = self.json_write_plain(value, &mut plain);
+            let text = written
+                .filter(|&written| written)
+                .map(|_| JsString::from_str(json_text_str(&plain.output)));
+            plain.output.clear();
+            if plain.output.capacity() <= JSON_RETAINED_OUTPUT_BYTES {
+                self.json_output = plain.output;
+            }
+            match (written, text) {
+                (Some(_), Some(text)) => return Ok(self.heap.alloc_string(text)),
+                (Some(_), None) => return Ok(Value::UNDEFINED),
+                (None, _) => {}
             }
         }
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
