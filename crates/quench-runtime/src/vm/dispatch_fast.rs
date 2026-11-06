@@ -4722,6 +4722,38 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_operator_constant` of an integer constant, which the view proved when it chose
+    /// the handler (`constant_operator_handler`) and carries as the record's immediate: only
+    /// the register operand's tag is tested.
+    fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = super::operations::integer_constant_operator::<OP>(r.get(i.b), i.imm() as i32)
+        else {
+            requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
+            sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_constant_numbers` and `lane_operator_constant_concatenation` of
+    /// `lane_operator_integer_constant`'s integer, out of line.
+    #[inline(never)]
+    fn lane_operator_integer_constant_numbers<OP: u32>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), Value::integer(i.imm() as i32));
+        let value = super::operations::number_value_operator::<OP>(left, right).or_else(|| {
+            (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten()
+        });
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `lane_operator_numbers` with a constant right operand; a concatenation takes
     /// `lane_operator_constant_concatenation`, out of line.
     #[inline(never)]
@@ -21143,10 +21175,13 @@ fn specialize_register_operands<H: Host>(
                             lane_relation_value::<H, true> as Handler
                         }
                     } else {
-                        let Some(handler) = operator_handler::<H, true>(operator) else {
+                        let Some((handler, operand)) = constant_operator_handler::<H>(operator, *constant) else {
                             continue;
                         };
-                        handler
+                        record.handler = handler as *const ();
+                        record.operand = operand;
+                        record.b = left.payload();
+                        continue;
                     };
                     record.handler = handler as *const ();
                     record.operand = LaneOperand {
@@ -21927,6 +21962,21 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
         };
     }
     arithmetic_operators!(operator, pick)
+}
+
+/// The handler of an arithmetic operator whose right operand is `constant`, with the operand
+/// its record carries: an integer as the immediate, its tag proved here once
+/// (`lane_operator_integer_constant`); any other value as the constant.
+fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<(Handler, LaneOperand)> {
+    let Some(integer) = constant.as_int() else {
+        return Some((operator_handler::<H, true>(operator)?, LaneOperand { constant }));
+    };
+    macro_rules! pick {
+        ($op:expr) => {
+            lane_operator_integer_constant::<H, { $op }> as Handler
+        };
+    }
+    Some((arithmetic_operators!(operator, pick)?, LaneOperand { imm: integer as u32 }))
 }
 
 /// Whether some loop of `function`, from a backward jump's target through the jump, has no

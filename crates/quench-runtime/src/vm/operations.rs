@@ -849,6 +849,13 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 
+/// `integer_operator` of a right operand the caller proved an integer: only the left's tag
+/// is tested.
+#[inline(always)]
+pub(super) fn integer_constant_operator<const OP: u32>(left: Value, right: i32) -> Option<Value> {
+    numeric_integer_result(numeric_binary_operator(OP)?, left.as_int()?, right)
+}
+
 #[inline(always)]
 fn number_arithmetic_values(
     operation: NumberArithmetic,
