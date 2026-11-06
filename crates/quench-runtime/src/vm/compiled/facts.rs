@@ -140,10 +140,16 @@ fn transfer(
                         set(types, instruction.result_register(), result);
                     }
                 }
-                None if super::super::operations::NumberArithmetic::from_js_instruction(op, operator).is_some() => {
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
+                None if let Some(arithmetic) = super::super::operations::NumberArithmetic::from_js_instruction(op, operator) => {
+                    let operands = [instruction.operand_b(), instruction.operand_c()];
+                    // Int operands' sum, difference, product or remainder is the int the
+                    // speculating lowering guards exact (`staged::numbers::arithmetic`).
+                    let ints = arithmetic != super::super::operations::NumberArithmetic::Divide
+                        && operands.iter().all(|operand| operand_type(constants, *operand,
+                            |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_subtype(Type::INT32));
+                    prove_number(types, operands);
                     if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::NUMBER);
+                        set(types, instruction.result_register(), if ints { Type::INT32 } else { Type::NUMBER });
                     }
                 }
                 None => {

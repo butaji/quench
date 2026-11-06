@@ -172,6 +172,8 @@ struct Lowering<'a, 'f> {
     facts: super::facts::Facts,
     /// The PCs whose int32 sum or difference may wrap (`Lowering::wraps_at`), resolved once.
     wrapping: PcSet,
+    /// The PCs whose results lose the sign of a zero wherever they are read (`zero_signless_at`).
+    zero_signless: PcSet,
     /// The caller's register liveness, by its PCs; per inlined frame, its callee's
     /// (`Lowering::is_live`). A function without masks keeps every register live.
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
@@ -599,8 +601,17 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         Op::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
         Op::GetIndex => !instruction.returns_from_frame(),
+        // A Number's own value; any other operand leaves (`Op::ToNumeric`'s lowering).
+        Op::ToNumeric => !instruction.returns_from_frame(),
         op => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
+}
+
+/// Whether `instruction` replaces an element in place, as a loop whose arrays are hoisted
+/// stores them (`Lowering`'s `SetIndex`): any other store leaves first, so the arrays keep
+/// their elements' backing and length.
+fn stores_element(instruction: WideInstruction) -> bool {
+    instruction.op() == Op::SetIndex && !instruction.returns_from_frame()
 }
 
 /// Whether `instruction` is a store natively: of its atom, into a slot the object already
@@ -643,7 +654,7 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if entries != 1 || side
-            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)) { continue }
+            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate) || stores_element(*candidate)) { continue }
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
@@ -652,8 +663,8 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
                 && base.register_index().is_some_and(|register| !written.contains(&register)) => Some(header + offset),
             _ => None,
         }).collect();
-        // A loop that only reads stores no element, so an array it never rebinds keeps its
-        // elements' backing.
+        // A loop that reads elements and replaces them in place keeps an array it never
+        // rebinds on its elements' backing.
         let arrays: BTreeSet<Register> = body.iter().filter(|candidate| candidate.op() == Op::GetIndex)
             .filter_map(|candidate| candidate.operand_b().register_index())
             .filter(|register| !written.contains(register)).collect();
@@ -682,10 +693,8 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &[bool], starts: &[u
     edges
 }
 
-/// The unit PC a run starts at: the loop entry's, else the function's first.
-fn starts_at(loop_entry: Option<usize>) -> usize {
-    loop_entry.unwrap_or(0)
-}
+/// How many sums a product's zero sign is followed through (`Lowering::zero_signless_at`).
+const ZERO_SIGN_DEPTH: usize = 4;
 
 /// Why a unit has no lane body: it does not lower, or its machine code is rejected.
 #[derive(Debug)]
@@ -802,6 +811,7 @@ fn lower(
         native_calls: unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
         facts: super::facts::Facts::default(),
         wrapping: PcSet::default(),
+        zero_signless: PcSet::default(),
         live,
         frame_live,
         valid: true,
@@ -824,10 +834,7 @@ fn lower(
         lowering.written.extend(writes(*instruction).into_iter().filter(|r| usize::from(*r) < count));
     }
     let mut initial = vec![Type::ANY; count];
-    // A body that left at its entry met parameters its speculation did not hold for: the
-    // next takes them as they come.
-    let speculates = !generic.contains(&starts_at(loop_entry));
-    for instruction in instructions.iter().filter(|_| speculates) {
+    for instruction in &instructions {
         let (operands, required) = match instruction.op() {
             Op::JumpBinaryFalse if nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
             Op::JumpBinaryFalse => {
@@ -840,6 +847,21 @@ fn lower(
                 let floating = operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
                     && super::facts::operand_type(&program.constants, *operand, |_| Type::ANY) == Type::NUMBER);
                 (operands, if floating { Type::NUMBER } else { Type::INT32 })
+            }
+            // A count stepped by one (`--n`, `i++`, whose old value `ToNumeric` takes) or an
+            // element's index is an int while it stays one.
+            Op::IncDec if instruction.numeric_local_target().is_none() => {
+                let register = Operand::register(instruction.register_b());
+                ([register, register], Type::INT32)
+            }
+            Op::ToNumeric => {
+                let register = Operand::register(instruction.register_b());
+                ([register, register], Type::INT32)
+            }
+            Op::GetIndex => ([instruction.operand_c(), instruction.operand_c()], Type::INT32),
+            Op::SetIndex => {
+                let register = Operand::register(instruction.register_c());
+                ([register, register], Type::INT32)
             }
             op if op.js_denotation() == JsDenotation::NumericBinary => {
                 let operator = instruction.binary_operator();
@@ -854,17 +876,17 @@ fn lower(
             && program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)
                 .and_then(Value::as_number).is_none()) { continue; }
         for register in operands.into_iter().filter_map(Operand::register_index)
-            .filter(|r| (function.parameter_registers.is_some_and(|base|
+            .filter(|r| function.parameter_registers.is_some_and(|base|
                 *r >= base && *r - base < function.params)
                 || function.local_registers.iter().any(|entry|
-                    entry.local < function.params && entry.register == *r))
-                && !lowering.written.contains(r)) {
+                    entry.local < function.params && entry.register == *r)) {
             let current = &mut initial[usize::from(register)];
             if *current != Type::INT32 { *current = required; }
         }
     }
     lowering.facts = super::facts::analyze(&initial, &instructions, &leaders, &program.constants, &writes);
     lowering.wrapping = PcSet::from_fn(instructions.len(), |pc| lowering.wraps_at(pc));
+    lowering.zero_signless = PcSet::from_fn(instructions.len(), |pc| lowering.zero_signless_at(pc, ZERO_SIGN_DEPTH));
     lowering.entry = Some(lowering.entry_facts(&instructions));
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
@@ -1081,6 +1103,45 @@ impl Lowering<'_, '_> {
     /// ToInt32 of its exact double for any others. Not through a further sum: ToInt32 does not
     /// commute with adding a non-integer (trunc(-3 + 0.5) differs from trunc(-3 + 2^32 + 0.5)
     /// mod 2^32), so V8 truncates chains only of int32 inputs.
+    /// Whether the numeric result at `pc` loses the sign of a zero wherever it is read before
+    /// its block ends or it dies: through ToInt32 (a bitwise operator), a relation, or a sum
+    /// or difference whose own result does, `depth` levels down.
+    fn zero_signless_at(&self, pc: usize, depth: usize) -> bool {
+        let instructions = &self.unit.instructions;
+        let instruction = instructions[pc];
+        if depth == 0 || instruction.op().js_denotation() != JsDenotation::NumericBinary || instruction.returns_from_frame() {
+            return false;
+        }
+        let register = instruction.result_register();
+        for at in pc + 1..instructions.len() {
+            if !self.is_live(at, register) { return true; }
+            if self.blocks.get(at).copied().flatten().is_some() { return false; }
+            let next = instructions[at];
+            let reads = [next.operand_b(), next.operand_c()].iter().any(|operand| operand.register_index() == Some(register));
+            let numeric = next.op().js_denotation() == JsDenotation::NumericBinary && !next.returns_from_frame();
+            if !numeric {
+                // A read of something else, which neither takes the register nor writes it.
+                let other = matches!(next.op(), Op::GetIndex | Op::GetField | Op::LoadConst | Op::LoadCapture | Op::ToNumeric)
+                    && ![next.register_b(), next.register_c()].contains(&register)
+                    && [next.operand_b(), next.operand_c()].iter().all(|operand| operand.register_index() != Some(register));
+                if !other || next.result_register() == register { return other; }
+                continue;
+            }
+            if reads {
+                let operator = next.binary_operator();
+                let signless = super::operations::NumberBitwise::from_js_instruction(next.op(), operator)
+                    .is_some_and(|bitwise| bitwise != super::operations::NumberBitwise::ShiftRightUnsigned)
+                    || super::operations::NumberRelation::from_operator(operator).is_some()
+                    || matches!(super::operations::NumberArithmetic::from_js_instruction(next.op(), operator),
+                        Some(super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract))
+                        && self.zero_signless_at(at, depth - 1);
+                if !signless { return false; }
+            }
+            if next.result_register() == register { return true; }
+        }
+        false
+    }
+
     fn truncated(&self, pc: usize, register: Register) -> bool {
         let Some(next) = self.unit.instructions.get(pc + 1).copied() else { return false };
         if next.op() != Op::Binary || next.returns_from_frame() || next.writes_current_this() { return false; }
@@ -1422,22 +1483,30 @@ impl Lowering<'_, '_> {
                 let value = self.tagged(state, instruction.register_a());
                 let base = self.tagged(state, instruction.register_b());
                 let key = self.tagged(state, instruction.register_c());
+                // A store to an array whose elements' view a loop hoisted only replaces one: any
+                // other leaves, so the view holds (`stores_element`).
+                let hoisted = self.hoisted_arrays.get(&instruction.register_b()).is_some_and(|(_, _, range)| range.contains(&pc));
                 let (general, done) = (self.builder.create_block(), self.builder.create_block());
                 self.builder.set_cold_block(general);
-                let index = crate::vm::staged::index(&mut LaneMachine { lowering: self, state, pc }, crate::vm::staged::Source::Register(instruction.register_c()), general)
+                let missed = if hoisted { exit } else { general };
+                let index = crate::vm::staged::index(&mut LaneMachine { lowering: self, state, pc }, crate::vm::staged::Source::Register(instruction.register_c()), missed)
                     .expect("an emitting stage's guards continue");
                 let index = self.ins().uextend(types::I64, index);
                 let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
                 let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::ArrayRecords, records);
-                crate::vm::staged::array_record(&mut stage, base, general)
-                    .and_then(|record| crate::vm::staged::dense_element_store(&mut stage, record, index, value, general))
+                crate::vm::staged::array_record(&mut stage, base, missed)
+                    .and_then(|record| crate::vm::staged::dense_element_store(&mut stage, record, index, value, missed))
                     .expect("an emitting stage's guards continue");
                 self.ins().jump(done, &[]);
                 self.builder.switch_to_block(general);
-                let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.index_set, &[base, key, value]);
-                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-                emit_js_guard(&mut self.builder, hit, exit);
-                self.ins().jump(done, &[]);
+                if hoisted {
+                    self.ins().jump(exit, &[]);
+                } else {
+                    let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.index_set, &[base, key, value]);
+                    let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+                    emit_js_guard(&mut self.builder, hit, exit);
+                    self.ins().jump(done, &[]);
+                }
                 self.builder.switch_to_block(done);
                 state.epoch = None;
                 Some(true)
@@ -3217,6 +3286,7 @@ impl crate::vm::staged::Numbers for LaneMachine<'_, '_, '_> {
     }
     fn speculates(&self) -> bool { true }
     fn wraps(&self) -> bool { self.lowering.wrapping.contains(self.pc) }
+    fn zero_signless(&self) -> bool { self.lowering.zero_signless.contains(self.pc) }
     fn int_register(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.int(self.state, register, miss)) }
     fn float_register(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.number(self.state, register, miss)) }
     fn int_held(&mut self, register: Register) -> ir::Value {

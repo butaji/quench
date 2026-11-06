@@ -41,6 +41,9 @@ pub(crate) trait Numbers: Stage {
     /// Whether the current operation's int32 sum or difference may wrap: its result is read
     /// only through ToInt32 (`| 0` and its kin), or proved within int32.
     fn wraps(&self) -> bool;
+    /// Whether the operation's result is read only where the sign of a zero is lost (ToInt32,
+    /// a relation, a sum read so): a product then needs no negative-zero test.
+    fn zero_signless(&self) -> bool { false }
     fn int_register(&mut self, register: Register, miss: Self::Miss) -> Option<Self::Int>;
     fn float_register(&mut self, register: Register, miss: Self::Miss) -> Option<Self::Float>;
     /// Whether `register` holds an int32.
@@ -176,7 +179,7 @@ fn negative_zero_product<N: Numbers>(machine: &mut N, result: N::Int, left: N::I
 #[inline(always)]
 fn int_arithmetic<N: Numbers>(machine: &mut N, operation: NumberArithmetic, left: N::Int, right: N::Int) -> (N::Int, N::Cond) {
     let (result, overflow) = machine.int_checked(operation, left, right);
-    if operation != NumberArithmetic::Multiply {
+    if operation != NumberArithmetic::Multiply || machine.zero_signless() {
         return (result, overflow);
     }
     let negative_zero = negative_zero_product(machine, result, left, right);
