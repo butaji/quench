@@ -323,7 +323,12 @@ pub(crate) fn capture_job_context(
 /// Node's promise before/after hooks, a job running once a hook is installed gives its
 /// Promise one on demand, without an init event or destroy tracking.
 fn tracked_job(state: &mut super::async_hooks_state::SharedAsyncHooksState, token: u64) -> JobContext {
-    let job = state.job_resources.get(&token).copied().unwrap_or(UNOBSERVED_JOB);
+    // Only jobs captured under a Promise hook are recorded: without one, every job is unobserved.
+    let job = if state.job_resources.is_empty() {
+        UNOBSERVED_JOB
+    } else {
+        state.job_resources.get(&token).copied().unwrap_or(UNOBSERVED_JOB)
+    };
     if job.resource.is_some() || !state.tracks_promises() {
         return job;
     }
@@ -369,11 +374,12 @@ pub(crate) fn release_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     token: u64,
 ) -> Vec<RootId> {
-    shared_state
-        .borrow_mut()
-        .async_hooks
-        .job_resources
-        .remove(&token);
+    {
+        let state = &mut shared_state.borrow_mut().async_hooks;
+        if !state.job_resources.is_empty() {
+            state.job_resources.remove(&token);
+        }
+    }
     take_store_context(shared_state, StoreContext::Job(token))
 }
 
@@ -528,6 +534,9 @@ fn inherit_stores(
     source_id: impl Into<StoreContext>,
     target_id: impl Into<StoreContext>,
 ) {
+    if async_hooks.local_stores.is_empty() {
+        return;
+    }
     let source_id = source_id.into();
     let target_id = target_id.into();
     let Some(inherited) = async_hooks.local_stores.get(&source_id).cloned() else {
