@@ -7660,8 +7660,8 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
-    /// Its cached property add (`lane_field_add`), which a store missing an existing slot
-    /// tries next: the object's shape and storage may change, which only re-proved reads see.
+    /// What a store missing its existing slot tries next (`lane_store_miss`): the object's
+    /// shape and storage may change, which only re-proved reads see.
     field_add: usize,
     /// The running VM's heap, whose allocation counters a native back edge compares to leave
     /// for its safepoint when a collection is due (`emit_js_safepoint_due`).
@@ -8014,15 +8014,38 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::Preserve) {
         return 1;
     }
-    // General dispatch reaches the add for any key; the cached add answers only plain keys
-    // of a specialized program, the ones a lane body's lowering admits statically.
-    if vm.heap.should_collect() || !vm.specialized_operations_enabled(residual) || !vm.field_add_atom_eligible(atom) {
+    if vm.heap.should_collect() {
         return 0;
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
     // object's storage; the body retires its proofs after this store either way.
     if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_none()
         && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+        return 0;
+    }
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    1
+}
+
+/// A general-dispatch store that missed its existing slot (`lane_field_set`): the site's cached
+/// add, by its inline proved entry first (`Vm::proved_field_add_hit`), else with its chain proof
+/// (`Vm::primary_field_add_hit`), else a polymorphic site's own-slot store. Zero where none hits,
+/// a collection is due, or the program or key takes no cached add (a lane body's lowering
+/// admits only those statically). An add may move the property arena, which the dispatch reads again.
+unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_field_add`.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
+    if vm.heap.should_collect() || !vm.specialized_operations_enabled(residual) || !vm.field_add_atom_eligible(atom) {
+        return 0;
+    }
+    let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
+    if !(vm.proved_field_add_hit(receiver, atom, value, site)
+        || vm.primary_field_add_hit(residual, receiver, atom, value, site)
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_some()) {
         return 0;
     }
     super::dispatch_fast::note_allocation(vm);
@@ -8802,7 +8825,7 @@ impl JsStepDispatch {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
         self.field_store = lane_field_set::<H> as *const () as usize;
-        self.field_add = lane_field_add::<H> as *const () as usize;
+        self.field_add = lane_store_miss::<H> as *const () as usize;
         self.heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap)) as usize;
     }
 
