@@ -510,7 +510,8 @@ impl<H: Host> Vm<H> {
             let called = if await_reaction {
                 vm.resume_await(p, reaction.handler, reaction.rejected, value)
             } else {
-                vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
+                // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
+                vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
             };
             let (state, result) = match called {
                 Ok(result) => (PromiseState::Fulfilled, result),
