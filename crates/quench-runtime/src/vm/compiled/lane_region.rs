@@ -2201,7 +2201,10 @@ impl Lowering<'_, '_> {
             if matches!(self.helpers, LaneHelpers::Bound(..)) {
                 let mut uses = smallvec::SmallVec::<[(u16, bool, Type); INLINE_FIELD_BINDINGS]>::new();
                 for (pc, instruction) in instructions.iter().enumerate() {
-                    if !self.facts.reached(pc) { continue; }
+                    // An inlined call's later alternatives are entered by its switch, an edge
+                    // the bytecode facts do not see: their sites bind too, or they would read
+                    // through the VM's caches for the whole run.
+                    if !self.facts.reached(pc) && !matches!(self.unit.origins[pc], super::lane_unit::Origin::Inlined { .. }) { continue; }
                     // A field chain names sequential sites, not alternatives for
                     // one polymorphic access. Bind each distinct column once.
                     let mut sites = smallvec::SmallVec::<[u16; 3]>::new();
