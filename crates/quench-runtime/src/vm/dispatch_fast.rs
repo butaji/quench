@@ -12656,6 +12656,25 @@ unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value]
     unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) }
 }
 
+impl<H: Host> Vm<H> {
+    /// The natives whose common case completes with no guest code, allocation of cells or
+    /// effect where it misses: dense `push` and `pop`, `charCodeAt` and `charAt` of a flat
+    /// string, collection lookups. `None` changes nothing, so a caller may then make the
+    /// call any other way, or leave for it (`compiled::lane_pure_native`).
+    pub(super) fn pure_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        match native {
+            Native::ArrayPush => self.array_push_dense(receiver, args),
+            Native::ArrayPop => self.array_pop_dense(receiver),
+            Native::StringCharCodeAt => string_char_code_at(self, receiver, *args.first()?),
+            Native::StringCharAt => string_char_at_ascii(self, receiver, *args.first()?),
+            Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas | Native::WeakSetHas => {
+                self.pure_collection_lookup(native, receiver, args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
 /// `receiver` and `args`: dense `push` and `pop`, `charCodeAt` and collection lookups in
 /// place, else `lane_string_or_native_call`. `None` leaves the call to the general path,
@@ -12677,6 +12696,9 @@ fn lane_native_value<H: Host>(
     let FunctionKind::Native(native) = kind else {
         return None;
     };
+    if let Some(value) = vm.pure_native_value(native, receiver, args) {
+        return Some(value);
+    }
     // Each shortcut answers its native's common case; a miss falls through to the one call of
     // `lane_string_or_native_call` below.
     match native {
@@ -12692,29 +12714,7 @@ fn lane_native_value<H: Host>(
                 return value;
             }
         }
-        Native::ArrayPush => return vm.array_push_dense(receiver, args),
-        Native::ArrayPop => return vm.array_pop_dense(receiver),
-        Native::StringCharCodeAt if !args.is_empty() => {
-            if let Some(value) = string_char_code_at(vm, receiver, args[0]) {
-                return Some(value);
-            }
-        }
-        Native::StringCharAt if !args.is_empty() => {
-            if let Some(value) = string_char_at_ascii(vm, receiver, args[0]) {
-                return Some(value);
-            }
-        }
-        Native::MapGet
-        | Native::MapHas
-        | Native::SetHas
-        | Native::WeakMapGet
-        | Native::WeakMapHas
-        | Native::WeakSetHas => {
-            let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-            if let Some(value) = vm.pure_collection_lookup(native, receiver, key) {
-                return Some(value);
-            }
-        }
+        Native::ArrayPush | Native::ArrayPop => return None,
         Native::MapSet if vm.map_set(receiver, args) => {
             note_allocation(vm);
             return Some(receiver);

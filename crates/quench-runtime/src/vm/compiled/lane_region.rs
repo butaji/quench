@@ -178,6 +178,8 @@ struct Lowering<'a, 'f> {
     /// Whether a run can do anything but leave: complete natively or run a loop natively. A
     /// body that can do neither declines (`lower`).
     finishes: bool,
+    /// The instructions it leaves at for want of a lowering, for the decline diagnostic.
+    unlowered: Vec<(usize, Op)>,
     /// The one epilogue every stop shares: it returns its status parameter.
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
@@ -769,6 +771,7 @@ fn lower(
         arrived: BTreeMap::new(),
         entered: vec![false; unit.instructions.len()],
         finishes: false,
+        unlowered: Vec::new(),
         leave,
         stop,
     };
@@ -931,7 +934,9 @@ fn lower(
     lowering.builder.ins().return_(&[status]);
     if !lowering.valid || !lowering.finishes {
         if lowering.vm.diagnostics {
-            eprintln!("QUENCH_LANE_DECLINE {{\"function\":{function_id},\"invalid_at\":{},\"finishes\":{}}}", lowering.invalid_at, lowering.finishes);
+            let name = program.function(function_id as usize).name.map(|atom| program.atoms[atom as usize].to_string()).unwrap_or_default();
+            let at = program.function(function_id as usize).source_span.map_or(0, |span| span.start);
+            eprintln!("QUENCH_LANE_DECLINE {{\"function\":{function_id},\"name\":\"{name}\",\"at\":{at},\"invalid_at\":{},\"finishes\":{},\"unlowered\":\"{:?}\"}}", lowering.invalid_at, lowering.finishes, lowering.unlowered);
         }
         return None;
     }
@@ -1452,6 +1457,9 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
+                if self.vm.diagnostics {
+                    self.unlowered.push((pc, instruction.op()));
+                }
                 self.exit(state, pc32);
                 false
             }
@@ -1812,8 +1820,7 @@ impl Lowering<'_, '_> {
     /// whose base and length the body reloads.
     fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, helper: usize) -> bool {
         let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
-            self.exit(state, pc as u32);
-            return false;
+            return self.inlined_call(state, pc, instruction);
         };
         let missed = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
@@ -1861,16 +1868,49 @@ impl Lowering<'_, '_> {
             self.return_value(call_pc, value);
             return false;
         }
-        // The callee may have changed any object: block-local proofs of them retire.
+        self.after_call(state);
+        let destination = instruction.result_register();
+        let base = self.registers_base;
+        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
+        self.set_tagged(state, destination, bits);
+        true
+    }
+
+    /// The callee may have changed any object: block-local proofs of them retire.
+    fn after_call(&mut self, state: &mut State) {
         state.shapes.clear();
         state.layouts.clear();
         state.epoch = None;
         self.reload_property_arena();
         self.after_guest_code();
-        let destination = instruction.result_register();
-        let base = self.registers_base;
-        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
-        self.set_tagged(state, destination, bits);
+    }
+
+    /// A call inside an inlined frame, which has no record of its own for the lane's call:
+    /// a native's that completes in place (`compiled::lane_pure_native`), else a leave at it,
+    /// which the miss's unchanged state allows.
+    fn inlined_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        const ARGUMENTS: u16 = 2;
+        let imm = instruction.imm();
+        let (window, count) = (crate::bytecode::ImmediateLayout::call_window_base(imm), crate::bytecode::ImmediateLayout::argument_count(imm));
+        if instruction.op() != Op::Call || instruction.returns_from_frame() || count > ARGUMENTS
+            || instruction.register_b().max(instruction.register_c()) >= self.unit.registers
+            || window + count > self.unit.registers
+        {
+            self.exit(state, pc as u32);
+            return false;
+        }
+        let exit = self.guard_exit(state, pc as u32);
+        let callee = self.tagged(state, instruction.register_b());
+        let this = self.tagged(state, instruction.register_c());
+        let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+        let [first, second] = [0, 1].map(|index| if index < count { self.tagged(state, window + index) } else { undefined });
+        let count = self.ins().iconst(types::I64, i64::from(count));
+        let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.pure_native, &[callee, this, count, first, second]);
+        let completed = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, completed, exit);
+        self.after_call(state);
+        self.set_tagged(state, instruction.result_register(), value);
+        self.native += 1;
         true
     }
 

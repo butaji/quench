@@ -2027,6 +2027,8 @@ pub(super) struct LaneHelpers {
     new_array: usize,
     /// A store that may add its property (`lane_field_add`).
     field_add: usize,
+    /// A native's call that completes or changes nothing (`lane_pure_native`).
+    pure_native: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -7036,6 +7038,19 @@ unsafe extern "C" fn lane_new_object_pair<H: Host>(vm: u64, residual: u64, paylo
     object.to_bits()
 }
 
+/// A call of `callee` with `this` and the first `count` of `first` and `second`, where
+/// it is a native whose call completes with no guest code or effect where it misses
+/// (`Vm::pure_native_value`): its value, else `DELETED`, having changed nothing.
+unsafe extern "C" fn lane_pure_native<H: Host>(vm: u64, _residual: u64, callee: u64, this: u64, count: u64, first: u64, second: u64) -> u64 {
+    // SAFETY: as `lane_new_object`.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(Value::from_bits(callee)) else {
+        return Value::DELETED.to_bits();
+    };
+    let args = [Value::from_bits(first), Value::from_bits(second)];
+    vm.pure_native_value(*native, Value::from_bits(this), &args[..count as usize]).unwrap_or(Value::DELETED).to_bits()
+}
+
 /// A lane body's array literal of `length` holes, as the lane's own
 /// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
 /// `lane_new_object`.
@@ -7178,6 +7193,7 @@ impl<H: Host> Vm<H> {
             new_array: lane_new_array::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_add: lane_field_add::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
+            pure_native: lane_pure_native::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         // The calls a unit still makes (none it inlines) whose callees have bodies; a body
@@ -7419,12 +7435,21 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         let frame = lane_frame();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
-        let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        let (saved, stack) = unsafe {
+            let dispatch = &(*frame).dispatch;
+            (LaneEntry::of(dispatch), (dispatch.native_top, dispatch.native_end))
+        };
         let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
-        // SAFETY: as above; the callee's run may have grown the scratch window.
+        // SAFETY: as above; the callee's run may have grown the scratch window. The caller's
+        // free stack is its own again: the callee's run placed its direct callees from where
+        // its activation ended, past the caller's, where the caller's next direct call's
+        // registers would not be the activation a leave makes of them (`lane_materialize_frames`).
+        // Its shadow frames are the materializing call's to restore (`lane_body_call_over_frames`).
         unsafe {
-            saved.install(&mut (*frame).dispatch);
-            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
+            let dispatch = &mut (*frame).dispatch;
+            saved.install(dispatch);
+            (dispatch.native_top, dispatch.native_end) = stack;
+            dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
         }
         exit
     }
