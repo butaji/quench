@@ -24179,3 +24179,27 @@ fn non_callable_call_sites_derive_from_source_at_the_first_error() {
         "o.a.b is not a function", "o.a.b is not a function", "o.a is not a constructor",
     ]);
 }
+
+#[test]
+fn literal_templates_hold_int32_elements_in_their_steps() {
+    let source = "const t = { a: [1, -0, 2147483647, -2147483648, 2147483648, 1.5, null, 's', -7], b: [[0, -1], []] };\n\
+        print(Object.is(t.a[1], -0) + ' ' + t.a.join() + ' ' + t.b[0][1] + ' ' + t.b.length);\n\
+        const u = { a: [1, -0, 2147483647, -2147483648, 2147483648, 1.5, null, 's', -7], b: [[0, -1], []] };\n\
+        print(t.a !== u.a && JSON.stringify(t) === JSON.stringify(u));";
+    let program = Engine::specialize(source, "int-steps.js").unwrap();
+    let steps: Vec<_> = program.literal_templates.iter().flat_map(|steps| steps.iter().copied()).collect();
+    for value in [1, 2147483647, -2147483648, 0, -1] {
+        assert!(steps.contains(&crate::bytecode::LiteralStep::Int(value)), "{value}: {steps:?}");
+    }
+    let held = |number: f64| program.constants.iter().any(|constant| {
+        matches!(constant, crate::bytecode::Constant::Number(value) if value.to_bits() == number.to_bits())
+    });
+    assert!(held(-0.0) && held(2147483648.0) && held(1.5) && !held(2147483647.0), "{:?}", program.constants);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), [
+        "true 1,0,2147483647,-2147483648,2147483648,1.5,,s,-7 -1 2",
+        "true",
+    ]);
+}

@@ -40,6 +40,7 @@ const MODULE_LINK_PLAN_SOME: u8 = 1;
 const LITERAL_STEP_CONSTANT: u8 = 0;
 const LITERAL_STEP_ARRAY: u8 = 1;
 const LITERAL_STEP_OBJECT: u8 = 2;
+const LITERAL_STEP_INT: u8 = 3;
 
 fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String> {
     Ok(EvalBinding {
@@ -376,6 +377,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
                 LiteralStep::Constant(index) => (LITERAL_STEP_CONSTANT, index),
                 LiteralStep::Array(count) => (LITERAL_STEP_ARRAY, count),
                 LiteralStep::Object(site) => (LITERAL_STEP_OBJECT, site),
+                LiteralStep::Int(value) => (LITERAL_STEP_INT, value.cast_unsigned()),
             };
             out.u8(tag);
             out.u32(operand);
@@ -691,6 +693,7 @@ fn decode_program(
                     LITERAL_STEP_CONSTANT => LiteralStep::Constant(operand),
                     LITERAL_STEP_ARRAY => LiteralStep::Array(operand),
                     LITERAL_STEP_OBJECT => LiteralStep::Object(operand),
+                    LITERAL_STEP_INT => LiteralStep::Int(operand.cast_signed()),
                     _ => return Err("invalid residual literal template step".into()),
                 })
             })?

@@ -1297,6 +1297,7 @@ impl<H: Host> Vm<H> {
                         JsError::validation("literal constant is outside program".into())
                     })?
                 }
+                crate::bytecode::LiteralStep::Int(value) => Value::integer(value),
                 crate::bytecode::LiteralStep::Array(count) => {
                     let elements = values.split_off(values.len() - count as usize);
                     self.heap.alloc(Cell::Array {

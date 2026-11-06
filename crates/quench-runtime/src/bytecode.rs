@@ -3339,6 +3339,10 @@ pub(crate) struct ObjectSite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LiteralStep {
     Constant(u32),
+    /// A Number that is an int32 (`Value::integer`), held in the step: the elements of a
+    /// bundle's data tables (text-encoding indexes: about 80K in JetStream web-ssr's) then
+    /// neither enter nor search the constant table.
+    Int(i32),
     /// An array of the given number of elements.
     Array(u32),
     /// An object of an object site's keys, one value each.
@@ -4366,7 +4370,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 132;
+    pub const FORMAT_VERSION: u8 = 133;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

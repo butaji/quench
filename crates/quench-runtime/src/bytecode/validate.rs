@@ -962,6 +962,7 @@ function.plain_local_slots(&self.superinstructions)
                 super::LiteralStep::Constant(index) => {
                     (0, (index as usize) < self.constants.len())
                 }
+                super::LiteralStep::Int(_) => (0, true),
                 super::LiteralStep::Array(count) => (count as usize, true),
                 super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
                     Some(site) => (site.atoms.len(), true),

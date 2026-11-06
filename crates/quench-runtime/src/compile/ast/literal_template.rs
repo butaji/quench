@@ -70,10 +70,13 @@ impl FunctionCompiler<'_, '_> {
                 self.owner.object_sites.push(ObjectSite { atoms });
                 steps.push(LiteralStep::Object(site));
             }
-            value => {
-                let constant = binding_time::expression(value).expect("an admitted leaf is a constant");
-                steps.push(LiteralStep::Constant(self.owner.constant(constant)));
-            }
+            value => steps.push(match binding_time::expression(value).expect("an admitted leaf is a constant") {
+                // The bits of an int32 other than -0 survive the round trip, as in `Value::number`.
+                Constant::Number(number) if f64::from(number as i32).to_bits() == number.to_bits() => {
+                    LiteralStep::Int(number as i32)
+                }
+                constant => LiteralStep::Constant(self.owner.constant(constant)),
+            }),
         }
     }
 }
