@@ -1954,7 +1954,7 @@ impl ConstructPlan {
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        heap.alloc_object_from_run_header(self.header, self.prototype, &values[..fields])
+        heap.alloc_object_from_run_header(self.header, self.prototype, &values, fields)
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.

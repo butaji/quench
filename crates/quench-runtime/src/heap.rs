@@ -1337,17 +1337,18 @@ impl Heap {
     /// slots: `header`, derived once for `prototype` and an arena shape
     /// (`InlineObjectHeader::of_run`), over a new run of `values`.
     #[inline(always)]
-    pub(crate) fn alloc_object_from_run_header(
+    pub(crate) fn alloc_object_from_run_header<const N: usize>(
         &mut self,
         header: InlineObjectHeader,
         prototype: Value,
-        values: &[Value],
+        values: &[Value; N],
+        len: usize,
     ) -> Value {
-        debug_assert!(values.len() > INLINE_PROPERTY_COUNT);
-        self.properties.assert_shape_length(header.shape(), values.len());
-        match self.properties.run_of(values) {
+        debug_assert!(len > INLINE_PROPERTY_COUNT);
+        self.properties.assert_shape_length(header.shape(), len);
+        match self.properties.run_of_padded(values, len) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
-            None => self.alloc_object_with_properties(prototype, header.shape(), values),
+            None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
     }
 

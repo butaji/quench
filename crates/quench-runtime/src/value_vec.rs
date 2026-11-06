@@ -48,6 +48,9 @@ const fn capacity_class(len: usize) -> usize {
 /// make a full collection compact the arena. Freed ranges are reused within their size class,
 /// so compaction recovers only what other classes leave idle; rewriting every live object's
 /// storage on each full collection cost source-map-wtb 3 s of 27 (TOD-137).
+/// The values each size class adds to the one before it up to `2 * MIN_CAPACITY`, the
+/// unit `run_of_padded` copies past `MIN_CAPACITY`.
+const CAPACITY_CLASS_STEP: usize = capacity_class(MIN_CAPACITY + 1) - MIN_CAPACITY;
 const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
 /// The arena capacity a compaction keeps, as a multiple of the values it kept: the room one
 /// doubling of the compacted arena would give. Before, a load burst's growth stayed resident
@@ -720,6 +723,27 @@ impl ValueArena {
         Some(start as u32)
     }
 
+    /// `run_of` the first `len` of `values`, whose values past `len` are `undefined`, as a
+    /// run's unused values start: the run's whole capacity is copied, as the smallest class
+    /// and then the pairs of values each larger class adds (`capacity_class`), moves of fixed
+    /// size rather than a copy of variable length, which is a call.
+    #[inline(always)]
+    pub(crate) fn run_of_padded<const N: usize>(&mut self, values: &[Value; N], len: usize) -> Option<u32> {
+        let capacity = capacity_class(len);
+        debug_assert!(len <= N && capacity <= N && values[len..].iter().all(|value| *value == Value::UNDEFINED));
+        let start = self.allocate(capacity, MAX_ARENA_START)?;
+        let run = &mut self.values[start..start + capacity];
+        let (first, mut rest) = run.split_at_mut(MIN_CAPACITY);
+        <&mut [Value; MIN_CAPACITY]>::try_from(first).unwrap().copy_from_slice(&values[..MIN_CAPACITY]);
+        let mut copied = MIN_CAPACITY;
+        while let Some((pair, tail)) = rest.split_first_chunk_mut::<CAPACITY_CLASS_STEP>() {
+            *pair = *values[copied..].first_chunk::<CAPACITY_CLASS_STEP>().unwrap();
+            copied += CAPACITY_CLASS_STEP;
+            rest = tail;
+        }
+        Some(start as u32)
+    }
+
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
     /// other immediates and deleted slots are not references.
     pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
@@ -787,7 +811,7 @@ impl ValueArena {
             self.free_dictionaries.push(id);
             return;
         }
-        let capacity = self.capacity(vector);
+        let capacity = Self::ordered_capacity(vector, self.len(vector));
         if capacity != 0 {
             self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
             self.released_values += capacity;
@@ -904,8 +928,7 @@ impl ValueArena {
     }
 
     pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
-        let expected = self.shape_lengths[shape as usize] as usize;
-        assert_eq!(length, expected, "property values must match shape");
+        debug_assert_eq!(length, self.shape_lengths[shape as usize] as usize, "property values must match shape");
     }
 
     fn capacity(&self, vector: ValueVec) -> usize {
@@ -961,12 +984,20 @@ impl ValueArena {
         unsafe { *self.values.get_unchecked_mut(vector.start() + len) = value };
     }
 
+    /// A range of `capacity`: a released one of its size class, else, out of line, one past
+    /// the arena's end (`allocate_fresh`).
+    #[inline(always)]
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
         if let Some(start) = self.free[bucket].pop() {
             self.released_values -= capacity;
             return Some(start as usize);
         }
+        self.allocate_fresh(capacity, max_start)
+    }
+
+    #[inline(never)]
+    fn allocate_fresh(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let start = self.values.len();
         if start >= max_start {
             return None;
@@ -1001,6 +1032,7 @@ impl ValueArena {
 
     /// The free list of a size class (`capacity_class`): two per doubling, the power of two
     /// and the three-quarter step below the next one.
+    #[inline(always)]
     fn bucket(capacity: usize) -> usize {
         debug_assert_eq!(capacity_class(capacity), capacity, "a range capacity is a size class");
         let octave = (capacity.ilog2() - MIN_CAPACITY.ilog2()) as usize;
