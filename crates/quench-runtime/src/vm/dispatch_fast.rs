@@ -2722,7 +2722,7 @@ fn lane_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, accumulated: Option
         stage: super::staged::Concrete { arena },
         registers: LaneRegisters { r, accumulated, produced: Value::UNDEFINED },
     };
-    super::staged::step(&mut frame, operation);
+    super::staged::step(&mut frame, operation, ()).expect("a lane record's operation runs on any operands");
     frame.registers.produced
 }
 

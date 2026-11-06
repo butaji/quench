@@ -187,6 +187,17 @@ pub(super) fn emit_number_relation(
     right: ir::Value,
     domain: NumberRelationDomain,
 ) -> Option<ir::Value> {
+    Some(emit_relation(builder, crate::vm::operations::NumberRelation::from_operator(operator)?, left, right, domain))
+}
+
+/// `relation` of two int32s or two doubles, as `domain` says they are.
+pub(super) fn emit_relation(
+    builder: &mut FunctionBuilder<'_>,
+    relation: crate::vm::operations::NumberRelation,
+    left: ir::Value,
+    right: ir::Value,
+    domain: NumberRelationDomain,
+) -> ir::Value {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
         domain: NumberRelationDomain,
@@ -258,13 +269,7 @@ pub(super) fn emit_number_relation(
         }
     }
 
-    Some(
-        crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut Emit { builder, domain },
-            left,
-            right,
-        ),
-    )
+    relation.apply(&mut Emit { builder, domain }, left, right)
 }
 
 /// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
@@ -7480,18 +7485,36 @@ impl ShadowFrame {
 }
 
 /// The meaning `staged::step` interprets (`staged::Operation`) of a bytecode `instruction`, for
-/// the operations it covers; `None` for any other instruction, or a `LoadConst` of a value with
-/// a heap cell.
+/// the operations it covers; `None` for any other instruction, a constant with a heap cell, or
+/// a Number operator with a constant operand that is no Number.
 pub(super) fn lane_operation(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<super::staged::Operation> {
-    use super::staged::Operation;
+    use super::staged::{NumberOperator, Operation};
+    let source = |operand| lane_source(constants, operand);
     Some(match instruction.op() {
         Op::Move => Operation::Move { destination: instruction.result_register(), source: instruction.register_b() },
         Op::LoadConst => Operation::LoadConst {
             destination: instruction.result_register(),
             constant: constants.get(instruction.constant_index()).and_then(facts::immediate)?,
         },
-        _ => return None,
+        op => Operation::Binary {
+            operator: NumberOperator::from_js_instruction(op, instruction.binary_operator())?,
+            destination: instruction.result_register(),
+            left: source(instruction.operand_b())?,
+            right: source(instruction.operand_c())?,
+        },
     })
+}
+
+/// A Number operator's operand as the semantics reads it (`staged::Source`): a register, or
+/// a constant Number; `None` for any other operand.
+pub(super) fn lane_source(constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand) -> Option<super::staged::Source> {
+    use super::staged::Source;
+    match operand.kind()? {
+        crate::bytecode::OperandKind::Register => Some(Source::Register(operand.register_index()?)),
+        crate::bytecode::OperandKind::Constant => constants.get(usize::from(operand.payload()))
+            .and_then(facts::immediate).filter(|value| value.as_number().is_some()).map(Source::Constant),
+        crate::bytecode::OperandKind::Field | crate::bytecode::OperandKind::Local => None,
+    }
 }
 
 /// What an inlined frame's captures read (`Lowering::frame_captures`): its closure

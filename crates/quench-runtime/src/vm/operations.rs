@@ -33,7 +33,7 @@ pub(super) trait NumberRelationStage<T> {
 macro_rules! number_relations {
     ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum NumberRelation { $($relation),+ }
+        pub(crate) enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
             #[inline(always)]
@@ -277,7 +277,7 @@ pub(super) trait NumberBitwiseStage<T> {
 macro_rules! number_bitwise {
     ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum NumberBitwise { $($operation),+ }
+        pub(crate) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
             #[cfg(feature = "aot")]
@@ -381,6 +381,18 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
     } else {
         f64::from(bits)
     }
+}
+
+/// `relation` of two Numbers, or of two int32s, which compare as the Numbers they denote.
+#[inline(always)]
+pub(super) fn ordered<T: PartialOrd>(relation: NumberRelation, left: T, right: T) -> bool {
+    relation.apply(&mut PartialOrderStage, left, right)
+}
+
+/// `operation` on int32 bits.
+#[inline(always)]
+pub(super) fn int32_bitwise(operation: NumberBitwise, left: i32, right: i32) -> i32 {
+    operation.apply(&mut I32BitwiseStage, left, right)
 }
 
 /// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
@@ -491,9 +503,7 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
 /// numbers they denote.
 #[inline(always)]
 fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
-    NumberRelation::from_operator(op)
-        .expect("comparison operators end at GreaterEqualThan")
-        .apply(&mut PartialOrderStage, a, b)
+    ordered(NumberRelation::from_operator(op).expect("comparison operators end at GreaterEqualThan"), a, b)
 }
 
 const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
@@ -549,12 +559,8 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     if op > LAST_COMPARISON_OPERATOR {
         return None;
     }
-    if let Some((a, b)) = Value::int_pair(left, right) {
-        return Some(number_comparison(op, a, b));
-    }
-    // Equality, strict equality and the relational operators agree with IEEE 754
-    // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
-    Some(number_comparison(op, left.as_number()?, right.as_number()?))
+    let holds = super::staged::binary_values::<false>(super::staged::NumberOperator::Relation(NumberRelation::from_operator(op)?), left, right)?;
+    Some(holds == Value::TRUE)
 }
 
 #[inline(always)]
@@ -706,13 +712,8 @@ mod numeric_instruction_tests {
 
 #[inline(always)]
 fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, right: i32) -> Value {
-    match operation.apply(&mut CheckedInt32Stage, left, right) {
-        Some(0) if operation == NumberArithmetic::Multiply
-            && int32_zero_product_sign!(left, right, |l, r| l | r, |signs| signs < 0) =>
-                Value::number(-0.0),
-        Some(integer) => Value::integer(integer),
-        None => Value::number(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
-    }
+    super::staged::binary_values::<false>(super::staged::NumberOperator::Arithmetic(operation), Value::integer(left), Value::integer(right))
+        .expect("int32s are Numbers")
 }
 
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
@@ -738,6 +739,9 @@ pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) ->
     if let Some(value) = bitwise_value_operator::<OP>(left, right) {
         return Some(value);
     }
+    if let Some(operation) = NumberArithmetic::from_operator(OP) {
+        return super::staged::binary_values::<false>(super::staged::NumberOperator::Arithmetic(operation), left, right);
+    }
     let (left, right) = Value::number_pair(left, right)?;
     number_operator::<OP>(left, right).map(Value::number)
 }
@@ -749,23 +753,29 @@ pub(super) fn number_operator<const OP: u32>(left: f64, right: f64) -> Option<f6
     Some(numeric_number_result(numeric_binary_operator(OP)?, left, right))
 }
 
-/// A bitwise operator `OP` of two Numbers, each taken to int32 from its own representation
-/// (an integer as it is, a double by ToInt32), its result made as `number_bitwise_result`
-/// makes it, without the round trip through doubles `numeric_number_result` takes. `None`
+/// A bitwise operator `OP` of two Numbers by the shared semantics (`staged::binary`), each
+/// taken to int32 from its own representation, without the round trip through doubles
+/// `numeric_number_result` takes. `None`
 /// for any other operator, which folds away for a constant `OP`, and for other operands.
 #[inline(always)]
 fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
-    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
-    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
+    super::staged::binary_values::<false>(super::staged::NumberOperator::Bitwise(operation), left, right)
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
 /// `None` otherwise, leaving other Numbers to `number_binary`.
 #[inline(always)]
 pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    // One operand at a time: each tag test needs a single scratch register, which keeps the
-    // lane's integer handlers free of saved registers.
+    // The shared semantics specialized to the guess that both are int32s; one operand at a
+    // time: each tag test needs a single scratch register, which keeps the lane's integer
+    // handlers free of saved registers.
+    if let Some(operation) = NumberArithmetic::from_operator(OP) {
+        return super::staged::binary_values::<true>(super::staged::NumberOperator::Arithmetic(operation), left, right);
+    }
+    if let Some(operation) = NumberBitwise::from_operator(OP) {
+        return super::staged::binary_values::<true>(super::staged::NumberOperator::Bitwise(operation), left, right);
+    }
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
@@ -1853,8 +1863,8 @@ impl<H: Host> Vm<H> {
             return self.tabled_number_binary(op, left, right);
         };
         // The interpreter's own semantics of Number arithmetic, which the specializer
-        // specializes too (`staged::arithmetic`).
-        let value = super::staged::arithmetic_values(operation, left, right)?;
+        // specializes too (`staged::binary`).
+        let value = super::staged::binary_values::<false>(super::staged::NumberOperator::Arithmetic(operation), left, right)?;
         let path = if operation != NumberArithmetic::Divide && Value::int_pair(left, right).is_some() {
             crate::profile::BinaryValuePath::IntegerFastPath
         } else {
