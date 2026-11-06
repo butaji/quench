@@ -5714,14 +5714,15 @@ script_handler! {
     }
 }
 
-/// How a fused capture update (`lane_update_capture_int32`) ends: the store alone
-/// (`lane_store_capture`)...
+/// How the run of a fused capture update (`lane_update_capture_int32`) ends, which records it
+/// covers after the store (`specialize_capture_updates`).
 type UpdateForm = u8;
+/// The store alone (`lane_store_capture`).
 const UPDATE_STORES: UpdateForm = 0;
-/// ... the store and its read of the capture (`lane_store_capture_load`) ...
+/// The store and its read of the capture (`lane_store_capture_load`).
 const UPDATE_LOADS: UpdateForm = 1;
-/// ... or those, then a `Return` of the read's register: a body that is the update, as
-/// `function () { c = (c + 1) | 0; return c; }` compiles, whose plain call the call record
+/// `UPDATE_LOADS` followed by a `Return` of the read's register: a body that is the update,
+/// as `function () { c = (c + 1) | 0; return c; }` compiles, whose plain call the call record
 /// answers (`lane_script_call_update_capture`).
 const UPDATE_RETURNS: UpdateForm = 2;
 

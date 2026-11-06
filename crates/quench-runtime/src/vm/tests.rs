@@ -1466,6 +1466,201 @@ fn lane_array_callback_sites_keep_iteration_semantics() {
 }
 
 #[test]
+fn for_each_of_one_element_with_a_dead_result_keeps_callback_semantics() {
+    // A `forEach` site whose result nothing reads calls the callback of a one-element array as
+    // a plain call (`lane_call_for_each_once`), and an array step re-enters its callback in
+    // place (`lane_reenter_prepared_values`): a live or returned result, the arguments and
+    // this passed, a callback mutating its array, a hole, a length past the storage with an
+    // inherited index, a throwing callback's error and frames, generator, async and bound
+    // callbacks, a redefined forEach and nested iterations keep the generic steps. Expected
+    // value is Node's (v22), whose frames also name the native's.
+    let source = r#"
+      var out = [];
+      var sum = 0;
+      function add(x) { sum = (sum + x) | 0; return "ignored"; }
+      function each(a, f, t) { a.forEach(f, t); }
+      function value(a, f) { return a.forEach(f); }
+      function kept(a, f) { var r = a.forEach(f); return r; }
+      var i;
+      for (i = 0; i < 400; i++) each([i], add);
+      out.push(sum);
+      // A live result stays undefined whatever the callback returns.
+      for (i = 0; i < 400; i++) if (value([i], add) !== undefined || kept([i], add) !== undefined) out.push("defined");
+      out.push(sum);
+      // Element, index, array and thisArg passed; sloppy and strict this.
+      var seen = [];
+      for (i = 0; i < 3; i++) each([i], function (v, k, a) { seen.push(v + ":" + k + ":" + a.length + ":" + this.tag); }, { tag: "t" });
+      each([1], function () { seen.push(this === globalThis); });
+      each([1], function () { "use strict"; seen.push(this); });
+      each([1], function () { "use strict"; seen.push(typeof this); }, 5);
+      each([1], function () { seen.push(typeof this); }, 5);
+      each([1], function () { seen.push(arguments.length + ":" + arguments[2].length); });
+      out.push(seen.join(","));
+      // A callback that mutates the array: the length read first bounds the loop.
+      var grown = [1];
+      each(grown, function (v, k, a) { a.push(v + 1); a.push(v + 2); });
+      var shrunk = [1];
+      each(shrunk, function (v, k, a) { a.length = 0; });
+      out.push(grown.join(","), shrunk.length);
+      // A hole, an array whose length passes its storage, and an inherited index.
+      var holes = 0;
+      each([, ], function () { holes++; });
+      var long = [1]; long.length = 3;
+      Array.prototype[2] = "inherited";
+      var got = [];
+      each(long, function (v, k) { got.push(k + "=" + v); });
+      delete Array.prototype[2];
+      out.push(holes, got.join(","));
+      // A callback that throws stops the loop, and its error reaches the caller with the frames
+      // of the callback and the caller (Node also names the native's frame, which no Quench
+      // trace includes).
+      function thrower(v) { if (v === 350) throw new RangeError("stop " + v); }
+      function walk() { for (var j = 0; j < 400; j++) each([j], thrower); }
+      try { walk(); } catch (e) {
+        var frames = e.stack.split("\n").slice(1).map(function (line) { return line.trim().split(" ")[1]; }).filter(function (name) { return name !== "Array.forEach"; });
+        out.push(e.name + " " + e.message + " " + frames.slice(0, 3).join(">"));
+      }
+      // A generator, an async and a bound callback.
+      var generated = 0;
+      each([1], function* () { generated++; });
+      var settled = [];
+      each([1], async function (v) { settled.push(v); });
+      each([5], function (v) { out.push(this.base + v); }.bind({ base: 100 }));
+      out.push(generated, settled.join(","));
+      // A redefined forEach at a warmed site, then the native again.
+      var saved = Array.prototype.forEach;
+      Array.prototype.forEach = function (f) { out.push("mine"); };
+      each([1], add);
+      Array.prototype.forEach = saved;
+      each([1], add);
+      out.push(sum);
+      // A forEach inside the callback of another.
+      var nested = [];
+      for (i = 0; i < 3; i++) each([i], function (v) { each([v * 10], function (w) { nested.push(w); }); });
+      out.push(nested.join(","));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "for_each_of_one_element_with_a_dead_result_keeps_callback_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["79800|239400|0:0:1:t,1:0:1:t,2:0:1:t,true,,number,object,3:1|1,2,3|0|0|0=1,2=inherited|RangeError stop 350 thrower>each>walk|105|0|1|mine|239401|0,10,20"]);
+}
+
+#[test]
+fn capture_update_calls_keep_closure_semantics() {
+    // A capture's int32 update by a constant is one record (`lane_update_capture_int32`), and a
+    // plain call of a capture leaf whose body is that update and its return is answered in
+    // place (`lane_script_call_update_capture`): the int32 wrap both ways, extra values and a
+    // receiver, a returned call, shared captures, recreated closures, captures holding other
+    // values, a call in the binding's TDZ, a const binding and an arrow keep closure semantics.
+    // Expected value is Node's (v22).
+    let source = r#"
+      var out = [];
+      function counter(start) { var c = start; return function () { c = (c + 1) | 0; return c; }; }
+      function down(start) { var c = start; return function () { c = (c - 3) | 0; return c; }; }
+      function drive(f, n) { var acc = 0; for (var i = 0; i < n; i++) acc = (acc + f()) | 0; return acc; }
+      function tail(f) { return f(); }
+      var bump = counter(0);
+      out.push(drive(bump, 500), bump(), tail(bump));
+      // The int32 wrap at both bounds, and a difference.
+      var high = counter(2147483640);
+      out.push(drive(high, 400), high());
+      var low = down(-2147483640);
+      out.push(drive(low, 400), low());
+      // Extra values passed, and a receiver.
+      out.push(bump(1, 2, 3), bump.call({}), drive(function () { return bump(7); }, 300));
+      // Shared captures: two closures of one scope see each other's stores.
+      function pair() { var c = 0; return [function () { c = (c + 1) | 0; return c; }, function () { c = (c + 10) | 0; return c; }, function () { return c; }]; }
+      var p = pair();
+      out.push(drive(p[0], 300), drive(p[1], 300), p[2]());
+      // Recreated closures each start from their own scope.
+      var made = 0;
+      for (var k = 0; k < 300; k++) made = (made + drive(counter(k), 3)) | 0;
+      out.push(made);
+      // A capture holding other values: a string, a double, undefined, an object.
+      function loose(v) { var c = v; return [function () { c = (c + 1) | 0; return c; }, function (x) { c = x; }]; }
+      var l = loose(0);
+      drive(l[0], 300);
+      l[1]("12"); out.push(l[0]());
+      l[1](2.75); out.push(l[0]());
+      l[1](undefined); out.push(l[0]());
+      l[1]({ valueOf: function () { return 41; } }); out.push(l[0]());
+      l[1](4294967296 + 5); out.push(l[0]());
+      // TDZ: a call before the binding's initialization throws, after it counts.
+      function early() {
+        var f = function () { c = (c + 1) | 0; return c; };
+        var r = [];
+        try { f(); } catch (e) { r.push(e.name); }
+        let c = 0;
+        for (var j = 0; j < 300; j++) f();
+        r.push(f());
+        return r.join(" ");
+      }
+      out.push(early(), early());
+      // A const capture's update throws.
+      function fixed() { const c = 1; var f = function () { c = (c + 1) | 0; return c; }; try { for (var j = 0; j < 300; j++) f(); } catch (e) { return e.name + " " + c; } }
+      out.push(fixed());
+      // An arrow counter and a counter whose result is unused.
+      var n = 0;
+      var arrow = () => (n = (n + 1) | 0);
+      for (var a = 0; a < 300; a++) arrow();
+      var quiet = counter(0);
+      for (a = 0; a < 300; a++) quiet();
+      out.push(n, quiet());
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "capture_update_calls_keep_closure_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["125250|501|502|77000|-2147483255|-237400|2147482453|503|504|196350|45150|541500|3300|136350|121|3|0|42|6|ReferenceError 301|ReferenceError 301|TypeError 1|300|301"]);
+}
+
+#[test]
+fn double_constant_operator_pairs_keep_two_roundings() {
+    // An operator with a double constant runs without an integer step
+    // (`lane_operator_double_constant`), and with the operator after it as one record
+    // (`lane_operator_constant_pair`) that rounds each result as the two records do: signed
+    // zero, NaN, the infinities, subnormals, the largest double, coercible and BigInt operands,
+    // and a sum no fused multiply-add would give keep Number semantics. Expected value is
+    // Node's (v22).
+    let source = r#"
+      var out = [];
+      function show(x) { return Object.is(x, -0) ? "-0" : String(x); }
+      function mulAdd(x, y) { return x * 0.999 + y; }
+      function addMul(x, y) { return (x + 0.5) * y; }
+      function subDiv(x, y) { return y / (x - 1.25); }
+      function divSub(x, y) { return x / 0.1 - y; }
+      function scaled(x) { var t = x * 2.5; return t + t; }
+      function loop(n) { var acc = 0; for (var i = 0; i < n; i++) acc = acc * 0.999 + i; return acc; }
+      for (var k = 0; k < 400; k++) { mulAdd(k, k); addMul(k, k); subDiv(k, k); divSub(k, k); scaled(k); }
+      var vals = [-0, 1, 0.1, NaN, Infinity, -Infinity, 5e-324, 1.7976931348623157e308, "2", null, 7n];
+      for (var x of vals) {
+        for (var y of [-0, 1e-320, -1]) {
+          var row = [];
+          for (var f of [mulAdd, addMul, subDiv, divSub]) {
+            try { row.push(show(f(x, y))); } catch (e) { row.push(e.constructor.name); }
+          }
+          try { row.push(show(scaled(x))); } catch (e) { row.push(e.constructor.name); }
+          out.push(row.join(" "));
+        }
+      }
+      // Two roundings, never a fused multiply-add: 0.1 * 0.999 + -0.0999 is not the fused result.
+      out.push(show(mulAdd(0.1, -0.0999)), show(mulAdd(1 / 3, -1 / 3)), show(mulAdd(1e308, 1e308)));
+      // Subnormal products round once before the sum.
+      out.push(show(mulAdd(5e-324, 0)), show(mulAdd(1.5e-323, 0)), show(mulAdd(-5e-324, -0)), show(scaled(5e-324)));
+      out.push(loop(1000).toFixed(6), loop(10));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "double_constant_operator_pairs_keep_two_roundings.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["-0 -0 0 0 -0|1e-320 5e-321 -8e-321 -1e-320 -0|-1 -0.5 0.8 1 -0|0.999 -0 0 10 5|0.999 1.5e-320 -4e-320 10 5|-0.0010000000000000009 -1.5 4 11 5|0.0999 -0 0 1 0.5|0.0999 6e-321 -8.696e-321 1 0.5|-0.9001 -0.6 0.8695652173913044 2 0.5|NaN NaN NaN NaN NaN|NaN NaN NaN NaN NaN|NaN NaN NaN NaN NaN|Infinity NaN -0 Infinity Infinity|Infinity Infinity 0 Infinity Infinity|Infinity -Infinity -0 Infinity Infinity|-Infinity NaN 0 -Infinity -Infinity|-Infinity -Infinity -0 -Infinity -Infinity|-Infinity Infinity 0 -Infinity -Infinity|5e-324 -0 0 5e-323 2e-323|1.0005e-320 5e-321 -8e-321 -9.95e-321 2e-323|-1 -0.5 0.8 1 2e-323|1.7958954417274534e+308 -0 -0 Infinity Infinity|1.7958954417274534e+308 1.7976731214730533e-12 0 Infinity Infinity|1.7958954417274534e+308 -1.7976931348623157e+308 -5.562684646268003e-309 Infinity Infinity|1.998 -0 -0 20 10|1.998 2.05e-319 1.3335e-320 20 10|0.998 -20.5 -1.3333333333333333 21 10|0 -0 0 0 0|1e-320 5e-321 -8e-321 -1e-320 0|-1 -0.5 0.8 1 0|TypeError TypeError TypeError TypeError TypeError|TypeError TypeError TypeError TypeError TypeError|TypeError TypeError TypeError TypeError TypeError|0|-0.00033333333333335213|Infinity|5e-324|1.5e-323|-5e-324|2e-323|367695.424771|44.880209748209886"]);
+}
+
+#[test]
 fn lane_array_and_function_method_reads_follow_their_holder_hint() {
     // An array's or function's method read its prototype answered keeps that read as its record's
     // hint (`Vm::holder_hint_hit`): an array moved to another prototype, the method replaced,
