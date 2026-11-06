@@ -7352,7 +7352,13 @@ impl<H: Host> Vm<H> {
             callee.entry = entry as usize;
         }
         let names_shapes = !fields.is_empty() || !_direct.is_empty();
-        let scratch_width = usize::from(unit.registers - unit.caller_registers);
+        // A leave inside a direct callee's inlined frames fills the same scratch window
+        // (`lane_body_inlined_activation`): the window covers every body it calls directly.
+        // A callee specialized again later retires, and is then called through the lane.
+        let scratch_width = _direct.iter().filter(|callee| !callee.method.is_null())
+            // SAFETY: the body keeps the callees it names (`DirectCallee::method`).
+            .map(|callee| unsafe { &*callee.method }.scratch_width)
+            .fold(usize::from(unit.registers - unit.caller_registers), usize::max);
         let caller_registers = unit.caller_registers;
         let closed = unit.instructions.iter().enumerate()
             .all(|(pc, instruction)| instruction.op() != Op::Call || sites.contains_key(&pc));
@@ -7599,6 +7605,14 @@ pub(super) fn lane_operation(constants: &[crate::bytecode::Constant], instructio
         Op::Unary if instruction.unary_operator() == super::coercion::LOGICAL_NOT => Operation::Not {
             destination: instruction.result_register(),
             source: instruction.register_b(),
+        },
+        // `-x` of a Number is `-1 * x`: the product's own rules give `-0` for zero and a
+        // double past int32's range.
+        Op::Unary if instruction.unary_operator() == super::coercion::UNARY_NEGATION => Operation::Binary {
+            operator: NumberOperator::Arithmetic(super::operations::NumberArithmetic::Multiply),
+            destination: instruction.result_register(),
+            left: Source::Constant(Value::integer(-1)),
+            right: Source::Register(instruction.register_b()),
         },
         Op::JumpFalse | Op::JumpTrue => Operation::JumpIf {
             register: instruction.register_a(),

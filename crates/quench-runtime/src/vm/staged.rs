@@ -346,15 +346,20 @@ pub(crate) fn element_in<S: Stage>(stage: &mut S, elements: Elements<S::Word>, i
 
 /// Replaces the present element `index` (unsigned) of the array record at `record` with
 /// `value`, as the interpreter's in-place replacement does (`Vm::try_replace_record_element`):
-/// elements this array alone owns, of an array neither frozen nor with extras (indexed
-/// descriptors, an arguments map), and a value no write barrier logs, an immediate; `miss`
-/// for any other store, which then changes nothing.
+/// elements this array alone owns (`writable_elements`), and a value no write barrier logs
+/// (`element_store_in`); `miss` for any other store, which then changes nothing.
 #[inline(always)]
 pub(crate) fn dense_element_store<S: Stage>(stage: &mut S, record: S::Word, index: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    let elements = writable_elements(stage, record, miss)?;
+    element_store_in(stage, elements, index, value, miss)
+}
+
+/// The dense elements of the array record at `record` that a store may replace in place: of
+/// an array neither frozen nor with extras (indexed descriptors, an arguments map), whose
+/// backing it alone owns; `miss` for any other. Replacing elements keeps all of it.
+#[inline(always)]
+pub(crate) fn writable_elements<S: Stage>(stage: &mut S, record: S::Word, miss: S::Miss) -> Option<Elements<S::Word>> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-    let immediate = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
-    stage.guard(immediate, miss)?;
     let meta = stage.load_u32(record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
     let frozen = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
     let thawed = stage.eq_imm(frozen, 0);
@@ -368,6 +373,19 @@ pub(crate) fn dense_element_store<S: Stage>(stage: &mut S, record: S::Word, inde
     let owned = stage.eq_imm(owners, 1);
     stage.guard(owned, miss)?;
     let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    Some(Elements { header, length })
+}
+
+/// Replaces present element `index` (unsigned) of writable `elements` (`writable_elements`)
+/// with `value`, an immediate no write barrier logs; `miss` past their end, at a hole, or for
+/// a heap value.
+#[inline(always)]
+pub(crate) fn element_store_in<S: Stage>(stage: &mut S, elements: Elements<S::Word>, index: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let immediate = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
+    stage.guard(immediate, miss)?;
+    let Elements { header, length } = elements;
     let within = stage.below(index, length);
     stage.guard(within, miss)?;
     let offset = stage.mul_imm(index, std::mem::size_of::<u64>() as u64);

@@ -187,6 +187,9 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Hoist>,
+    /// Per register a loop proves an object once (`Hoist::objects`), the variable holding its
+    /// record's address, zero where it names none, and the loop's PCs.
+    hoisted_objects: BTreeMap<Register, (Variable, std::ops::RangeInclusive<usize>)>,
     /// The calls that leave instead of calling, a hoisting loop's inlined fallbacks.
     leaving_calls: BTreeSet<usize>,
     hoisted: BTreeMap<usize, (Variable, bool)>,
@@ -194,7 +197,7 @@ struct Lowering<'a, 'f> {
     /// entry (`Lowering::hoist_reads`): a header and a length, zero where the register held
     /// no direct array, so every read of it takes the general one.
     /// Its loop's extent bounds the reads that take it.
-    hoisted_arrays: BTreeMap<Register, (Variable, Variable, std::ops::RangeInclusive<usize>)>,
+    hoisted_arrays: BTreeMap<Register, (Variable, Variable, std::ops::RangeInclusive<usize>, bool)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -652,11 +655,15 @@ fn stores_own(instruction: WideInstruction) -> bool {
 #[derive(Clone, Default)]
 struct Hoist {
     reads: Vec<usize>,
-    arrays: Vec<Register>,
+    /// Each array register, and whether the loop stores its elements (a writable view).
+    arrays: Vec<(Register, bool)>,
     /// The loop's last PC, its backward jump.
     back: usize,
     /// Its inlined calls' fallbacks, which leave at the call (`invariant_reads`).
     fallbacks: Vec<usize>,
+    /// The registers whose fields it reads or stores and which it never writes: each names
+    /// one object every iteration, whose record it proves once (`Lowering::object_record`).
+    objects: Vec<Register>,
 }
 
 /// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
@@ -696,12 +703,26 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
         }).collect();
         // A loop that reads elements and replaces them in place keeps an array it never
         // rebinds on its elements' backing.
-        let arrays: BTreeSet<Register> = body.iter().filter(|candidate| candidate.op() == Op::GetIndex)
+        let read_arrays: BTreeSet<Register> = body.iter().filter(|candidate| candidate.op() == Op::GetIndex)
             .filter_map(|candidate| candidate.operand_b().register_index())
             .filter(|register| !written.contains(register)).collect();
-        if !reads.is_empty() || !arrays.is_empty() {
+        // An array it stores elements of is proved writable once (`staged::writable_elements`).
+        let stored_arrays: BTreeSet<Register> = body.iter().filter(|candidate| stores_element(**candidate))
+            .map(|candidate| candidate.register_b())
+            .filter(|register| !written.contains(register)).collect();
+        let arrays: BTreeSet<(Register, bool)> = read_arrays.iter().chain(&stored_arrays)
+            .map(|register| (*register, stored_arrays.contains(register))).collect();
+        let objects: BTreeSet<Register> = body.iter().filter_map(|candidate| match candidate.op() {
+            Op::GetField => match candidate.field_lookup() {
+                Some(FieldLookup::Atom { base, .. }) => base.register_index(),
+                _ => None,
+            },
+            Op::SetField | Op::SetFieldStrict => Some(candidate.register_b()),
+            _ => None,
+        }).filter(|register| !written.contains(register)).collect();
+        if !reads.is_empty() || !arrays.is_empty() || !objects.is_empty() {
             let fallbacks = fallbacks.range(header..=back).copied().collect();
-            hoists.insert(header, Hoist { reads, arrays: arrays.into_iter().collect(), back, fallbacks });
+            hoists.insert(header, Hoist { reads, arrays: arrays.into_iter().collect(), back, fallbacks, objects: objects.into_iter().collect() });
         }
     }
     hoists
@@ -850,6 +871,7 @@ fn lower(
         invalid_at: 0,
         hoists: BTreeMap::new(),
         leaving_calls: BTreeSet::new(),
+        hoisted_objects: BTreeMap::new(),
         hoisted: BTreeMap::new(),
         hoisted_arrays: BTreeMap::new(),
         at: 0,
@@ -1406,7 +1428,7 @@ impl Lowering<'_, '_> {
             // The interpreter's own semantics, run on the register state (`staged::step`).
             Op::LoadConst | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue if plain =>
                 super::lane_operation(&self.program.constants, instruction).and_then(|operation| self.run(state, pc, operation)),
-            Op::Unary if plain && instruction.unary_operator() == super::super::coercion::LOGICAL_NOT =>
+            Op::Unary if plain && [super::super::coercion::LOGICAL_NOT, super::super::coercion::UNARY_NEGATION].contains(&instruction.unary_operator()) =>
                 super::lane_operation(&self.program.constants, instruction).and_then(|operation| self.run(state, pc, operation)),
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
@@ -1501,7 +1523,7 @@ impl Lowering<'_, '_> {
                     let read = self.builder.append_block_param(join, types::I64);
                     // A view its loop proved at entry, else this read's own.
                     let hoisted = instruction.operand_b().register_index().and_then(|register| self.hoisted_arrays.get(&register))
-                        .filter(|(_, _, extent)| extent.contains(&pc)).map(|(header, length, _)| (*header, *length));
+                        .filter(|(_, _, extent, _)| extent.contains(&pc)).map(|(header, length, _, _)| (*header, *length));
                     let value = match hoisted {
                         Some((header, length)) => {
                             let elements = crate::vm::staged::Elements { header: self.builder.use_var(header), length: self.builder.use_var(length) };
@@ -1533,7 +1555,21 @@ impl Lowering<'_, '_> {
                 let key = self.tagged(state, instruction.register_c());
                 // A store to an array whose elements' view a loop hoisted only replaces one: any
                 // other leaves, so the view holds (`stores_element`).
-                let hoisted = self.hoisted_arrays.get(&instruction.register_b()).is_some_and(|(_, _, range)| range.contains(&pc));
+                let hoisted = self.hoisted_arrays.get(&instruction.register_b()).filter(|(_, _, range, _)| range.contains(&pc)).map(|(header, length, _, writable)| (*header, *length, *writable));
+                // A loop's writable view, proved at its entry: the store is the bound, the
+                // present element and the write (`staged::element_store_in`).
+                if let Some((header_var, length_var, true)) = hoisted {
+                    let index = crate::vm::staged::index(&mut LaneMachine { lowering: self, state, pc }, crate::vm::staged::Source::Register(instruction.register_c()), exit)
+                        .expect("an emitting stage's guards continue");
+                    let index = self.ins().uextend(types::I64, index);
+                    let elements = crate::vm::staged::Elements { header: self.builder.use_var(header_var), length: self.builder.use_var(length_var) };
+                    let mut stage = super::object_slots::Emit::new(&mut self.builder);
+                    crate::vm::staged::element_store_in(&mut stage, elements, index, value, exit)
+                        .expect("an emitting stage's guards continue");
+                    state.epoch = None;
+                    Some(true)
+                } else {
+                let hoisted = hoisted.is_some();
                 let (general, done) = (self.builder.create_block(), self.builder.create_block());
                 self.builder.set_cold_block(general);
                 let missed = if hoisted { exit } else { general };
@@ -1558,6 +1594,7 @@ impl Lowering<'_, '_> {
                 self.builder.switch_to_block(done);
                 state.epoch = None;
                 Some(true)
+                }
             }
             // An environment activation's locals the unit does not hold as registers, and its
             // closures, through its window (`lane_unit::Window`).
@@ -2330,17 +2367,44 @@ impl Lowering<'_, '_> {
     /// Each read's value is one variable every entering edge defines; a guard that fails
     /// leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
-        let Some(Hoist { reads, arrays, back, .. }) = self.hoists.get(&header).cloned() else { return };
-        for register in arrays {
+        let Some(Hoist { reads, arrays, back, objects, .. }) = self.hoists.get(&header).cloned() else { return };
+        for register in objects {
+            // A field access of a non-object leaves at it, as the access would; the loop's own
+            // proof is only that the register names an object record, whose address holds.
             let bits = self.tagged(state, register);
-            let (header_bits, length) = self.array_view(bits);
+            let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            let (proved, unproved, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+            let record = self.builder.append_block_param(join, types::I64);
+            self.ins().brif(object, proved, &[], unproved, &[]);
+            self.builder.switch_to_block(proved);
+            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+            let id = self.ins().ireduce(types::I32, bits);
+            let id = self.ins().uextend(types::I64, id);
+            let offset = self.ins().imul_imm_u(id, crate::heap::NATIVE_OBJECT_LAYOUT.record_size as i64);
+            let address = self.ins().iadd(records, offset);
+            self.ins().jump(join, &[address.into()]);
+            self.builder.switch_to_block(unproved);
+            let none = self.ins().iconst(types::I64, 0);
+            self.ins().jump(join, &[none.into()]);
+            self.builder.switch_to_block(join);
+            let variable = match self.hoisted_objects.get(&register) {
+                Some((variable, _)) => *variable,
+                None => self.builder.declare_var(types::I64),
+            };
+            self.builder.def_var(variable, record);
+            self.hoisted_objects.insert(register, (variable, header..=back));
+        }
+        for (register, writable) in arrays {
+            let bits = self.tagged(state, register);
+            let (header_bits, length) = if writable { self.writable_view(bits) } else { self.array_view(bits) };
             let (header_var, length_var) = match self.hoisted_arrays.get(&register) {
-                Some((header_var, length_var, _)) => (*header_var, *length_var),
+                Some((header_var, length_var, _, _)) => (*header_var, *length_var),
                 None => (self.builder.declare_var(types::I64), self.builder.declare_var(types::I64)),
             };
             self.builder.def_var(header_var, header_bits);
             self.builder.def_var(length_var, length);
-            self.hoisted_arrays.insert(register, (header_var, length_var, header..=back));
+            self.hoisted_arrays.insert(register, (header_var, length_var, header..=back, writable));
         }
         for pc in reads {
             let instruction = self.unit.instructions[pc];
@@ -2393,6 +2457,27 @@ impl Lowering<'_, '_> {
         let header = stage.choose(viewed, |stage| Some(view(stage).header), |stage| Some(stage.constant(0))).expect("both arms make a word");
         let length = stage.choose(viewed, |stage| Some(stage.load_u32(header, crate::heap::NATIVE_ARRAY_LAYOUT.header_length_offset as i32)),
             |stage| Some(stage.constant(0))).expect("both arms make a word");
+        (header, length)
+    }
+
+    /// `array_view` of elements a store may replace (`staged::writable_elements`): none, which
+    /// no index is within, for any other value.
+    fn writable_view(&mut self, bits: ir::Value) -> (ir::Value, ir::Value) {
+        let (viewed, none, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let header = self.builder.append_block_param(join, types::I64);
+        let length = self.builder.append_block_param(join, types::I64);
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+        let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::ArrayRecords, records);
+        let elements = crate::vm::staged::array_record(&mut stage, bits, none)
+            .and_then(|record| crate::vm::staged::writable_elements(&mut stage, record, none))
+            .expect("an emitting stage's guards continue");
+        self.ins().jump(viewed, &[]);
+        self.builder.switch_to_block(viewed);
+        self.ins().jump(join, &[elements.header.into(), elements.length.into()]);
+        self.builder.switch_to_block(none);
+        let zero = self.ins().iconst(types::I64, 0);
+        self.ins().jump(join, &[zero.into(), zero.into()]);
+        self.builder.switch_to_block(join);
         (header, length)
     }
 
@@ -2490,7 +2575,7 @@ impl Lowering<'_, '_> {
             value = int_tagged(&mut self.builder, length);
         }
         if let Some((atom, site)) = sink {
-            self.store_field(state, sink_owner, atom, site, value, Type::ANY, exit)?;
+            self.store_field(state, sink_owner, atom, site, value, Type::ANY, exit, false)?;
         }
         if let Some(record) = completes {
             self.return_value(record, value);
@@ -2937,6 +3022,23 @@ impl Lowering<'_, '_> {
             }
             return known;
         }
+        // A loop's object, proved at its entry: its record's shape, read where it may change.
+        if let Some(register) = owner
+            && let Some((variable, range)) = self.hoisted_objects.get(&register).cloned()
+            && range.contains(&self.at)
+        {
+            let record = self.builder.use_var(variable);
+            let present = self.ins().icmp_imm_u(IntCC::NotEqual, record, 0);
+            emit_js_guard(&mut self.builder, present, exit);
+            let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+            let shape = self.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
+            let inline = self.ins().band_imm_u(shape, i64::from(layout.packed_storage_mask));
+            let projection = (record, shape, inline);
+            state.readable.remove(&owner);
+            state.shapes.insert(owner, projection);
+            state.values[usize::from(register)] = RegisterFact::definition(Type::language(crate::ValueType::Object), Representation::Tagged);
+            return projection;
+        }
         let bits = bits(self, state);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let header = if read {
@@ -2994,7 +3096,7 @@ impl Lowering<'_, '_> {
             self.add_helper(state, object, instruction.atom_index(), site, value, exit);
             return Some(true);
         }
-        self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
+        self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit, !self.generic.contains(&pc))?;
         Some(true)
     }
 
@@ -3027,10 +3129,11 @@ impl Lowering<'_, '_> {
     /// (`this` for `None`): the site's one proved shape and slot written directly, with the
     /// object's record proved once (the receiver's at entry, in a body that makes no call),
     /// else the VM's own-field store hit; anything else leaves through `exit`. A value of
-    /// type `ty` the slot's representation may not hold takes the hit too, which joins it.
+    /// type `ty` the slot's representation may not hold takes the hit too, which joins it;
+    /// where it `speculates` (no run left at the store), it leaves instead.
     #[allow(clippy::too_many_arguments)]
     fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
-        value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
+        value: ir::Value, ty: Type, exit: ir::Block, speculates: bool) -> Option<()> {
         // Another object's field of the atom may be this one's.
         state.loads.retain(|(_, read), _| *read != atom);
         let receiver = !self.native_calls
@@ -3097,8 +3200,15 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(direct);
         self.store_direct(field, object_bits, object, properties, projection, value, ty, done, general);
         self.builder.switch_to_block(general);
-        self.store_helper(state, object_bits, atom, site, value, exit);
-        self.ins().jump(done, &[]);
+        // A miss of a site no run left at leaves, keeping the VM's call (and the registers it
+        // would spill) off the path; one that left takes the VM's store hit.
+        if speculates {
+            self.builder.set_cold_block(general);
+            self.ins().jump(exit, &[]);
+        } else {
+            self.store_helper(state, object_bits, atom, site, value, exit);
+            self.ins().jump(done, &[]);
+        }
         self.builder.switch_to_block(done);
         Some(())
     }

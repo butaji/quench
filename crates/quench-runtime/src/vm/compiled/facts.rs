@@ -167,6 +167,12 @@ fn transfer(
             set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
             Flow::Next
         }
+        // A negation computes a Number from a Number, or leaves (`staged::step`).
+        Op::Unary if instruction.unary_operator() == super::super::coercion::UNARY_NEGATION && instruction.result_flags() == 0 => {
+            prove_number(types, [Operand::register(instruction.register_b()), Operand::register(instruction.register_b())]);
+            set(types, instruction.result_register(), Type::NUMBER);
+            Flow::Next
+        }
         Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(vec![instruction.jump_target() as usize])
