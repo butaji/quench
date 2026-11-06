@@ -997,9 +997,12 @@ fn rewrite_once(
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    // Decoded once for the rules that record their sources.
-    let positions = function.source_positions.iter().collect::<Vec<_>>();
+    // Decoded at most once, for the rules that record their sources.
+    let positions = std::cell::OnceCell::new();
+    let positions = || positions.get_or_init(|| function.source_positions.iter().collect::<Vec<_>>()).as_slice();
     let mut code = Vec::with_capacity(old.len());
+    // The old instruction each new one is, or `None` for a pair's replacement.
+    let mut kept = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
     let mut changed = false;
@@ -1034,10 +1037,12 @@ fn rewrite_once(
         if let Some(instruction) = rewritten {
             map[index + 1] = code.len();
             code.push(instruction);
+            kept.push(None);
             index += 2;
             changed = true;
         } else {
             code.push(old[index]);
+            kept.push(Some(index));
             index += 1;
         }
     }
@@ -1049,7 +1054,6 @@ fn rewrite_once(
         }
         return false;
     }
-    *current = None;
     relocate(
         &mut code,
         &mut function.wide,
@@ -1061,21 +1065,40 @@ fn rewrite_once(
         &old,
     );
     function.code = code;
+    // A kept instruction keeps its transfer masks, which name registers and not positions;
+    // only a replacement's are derived.
+    *current = analysis.map(|analysis| {
+        CodeFacts::Transfers(
+            kept.iter()
+                .enumerate()
+                .map(|(pc, kept)| match kept {
+                    Some(old_pc) => analysis.transfers[*old_pc],
+                    None => liveness::transfer(
+                        fixed_width(function.code[pc], &function.wide),
+                        methods,
+                        field_sites.as_slice(),
+                        superinstructions,
+                    ),
+                })
+                .collect(),
+        )
+    });
     true
 }
 
-fn apply_rule(
+fn apply_rule<'p>(
     rule: Rule,
     first: Instr,
     second: Instr,
     field_sites: &mut SiteTable<'_, FieldSite>,
-    positions: &[crate::bytecode::SourcePosition],
+    positions: &impl Fn() -> &'p [crate::bytecode::SourcePosition],
     pc: usize,
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
+            let positions = positions();
             let at = |pc: usize| {
                 positions
                     .partition_point(|p| p.pc as usize <= pc)
