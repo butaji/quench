@@ -25345,3 +25345,148 @@ fn lane_returning_operators_keep_binary_semantics() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["11287485 a11.752 18446744073709551617 42 6 5"]);
 }
+
+#[test]
+fn lane_array_iterations_keep_callback_method_semantics() {
+    // An array callback method over a dense array runs its callbacks as activations of the
+    // calling lane (`lane_begin_array_iteration`), each return stepping the loop: the
+    // arguments and thisArg, holes, the length read once and the array mutated under the
+    // loop, throws, collections inside callbacks, map and filter results and species, the
+    // early answers, nesting and recursion, generator, async and bound callbacks, a redefined
+    // forEach, and callbacks whose activations become frames mid-iteration behave as Node's;
+    // so do array literals made at once (`lane_make_array_elements`). Expected value is
+    // Node's (`node --expose-gc`).
+    let source = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
+var out = [];
+function each(a, f, t) { return a.forEach(f, t); }
+function map(a, f, t) { return a.map(f, t); }
+function filter(a, f) { return a.filter(f); }
+function some(a, f) { return a.some(f); }
+function every(a, f) { return a.every(f); }
+function find(a, f) { return a.find(f); }
+function findIndex(a, f) { return a.findIndex(f); }
+function findLast(a, f) { return a.findLast(f); }
+function findLastIndex(a, f) { return a.findLastIndex(f); }
+function run(round) {
+  // arguments, index, array and thisArg; a strict callback's primitive this; an arrow's this
+  var seen = [];
+  each([4, 5, 6], function (v, k, a) { seen.push(v + ":" + k + ":" + (a.length) + ":" + this.tag + ":" + arguments.length); }, { tag: "t" });
+  each([1], function () { "use strict"; seen.push(typeof this); }, 7);
+  each([1], () => seen.push(this === globalThis));
+  out.push(seen.join(","));
+  // holes skipped, with and without an inherited index
+  var got = [];
+  each([0, , 2, , 4], function (v, k) { got.push(k); });
+  Array.prototype[3] = "p";
+  each([0, , 2, , 4], function (v, k) { got.push(v); });
+  delete Array.prototype[3];
+  out.push(got.join(","));
+  // length read once; elements pushed are not visited; removed and deleted ones are skipped
+  var m = [1, 2, 3, 4, 5];
+  var visits = [];
+  each(m, function (v, k) { visits.push(v); if (k === 0) { m.push(9); } if (k === 1) { m.length = 4; } if (k === 2) { delete m[3]; } });
+  var g = [1, 2, 3];
+  each(g, function (v, k) { visits.push("g" + v); if (k === 0) g[2] = 30; });
+  out.push(visits.join(","));
+  // a throw after some elements propagates and stops the loop
+  var calls = 0;
+  try { each([1, 2, 3, 4], function (v) { calls++; if (v === 3) throw new TypeError("at" + v); }); }
+  catch (e) { out.push(e.name + ":" + e.message + ":" + calls); }
+  try { map([1, 2, 3], function (v) { if (v === 2) throw "plain"; return v; }); } catch (e) { out.push(e); }
+  // a collection inside the callback keeps the result, the element and the receiver alive
+  var objs = []; for (var i = 0; i < 40; i++) objs.push({ v: i });
+  var kept = filter(objs, function (o, k) { var keep = o.v % 3 === 0; o = null; objs[k] = null; if (k % 9 === 0) gc(); var junk = []; for (var j = 0; j < 50; j++) junk.push({ j: j }); return keep; });
+  out.push(kept.map(function (o) { return o.v; }).join("."));
+  var mapped = map([{ v: 1 }, { v: 2 }, { v: 3 }], function (o) { gc(); return { w: o.v * 2 }; });
+  out.push(mapped.map(function (o) { return o.w; }).join("."));
+  // map and filter results: fresh arrays of the realm's Array, species respected
+  var src = [1, 2, 3, 4];
+  var doubled = map(src, function (v) { return v * 2; });
+  var evens = filter(src, function (v) { return v % 2 === 0; });
+  out.push(doubled.join("."), evens.join("."), doubled !== src, Array.isArray(doubled), Object.getPrototypeOf(evens) === Array.prototype, doubled.length, evens.length);
+  class Sub extends Array {}
+  var sub = Sub.from([1, 2, 3]);
+  var subMapped = map(sub, function (v) { return v + 1; });
+  out.push(subMapped instanceof Sub, subMapped.join("."), filter(sub, function (v) { return v > 1; }) instanceof Sub);
+  var specied = [1, 2];
+  specied.constructor = { [Symbol.species]: function (n) { var o = { length: n, made: true }; return o; } };
+  var sp = map(specied, function (v) { return v * 3; });
+  out.push(sp.made, sp[0], sp[1], Array.isArray(sp));
+  // map over holes keeps the holes in the result
+  var holed = map([1, , 3], function (v) { return v * 10; });
+  out.push(holed.length, 1 in holed, holed.join("."));
+  // some, every and the finds answer early and from the right end
+  var order = [];
+  out.push(some([1, 2, 3, 4], function (v) { order.push(v); return v === 2; }), every([1, 2, 3], function (v) { order.push("e" + v); return v < 2; }));
+  out.push(find([5, 6, 7], function (v) { return v > 5; }), findIndex([5, 6, 7], function (v) { return v > 9; }));
+  out.push(findLast([5, 6, 7], function (v) { order.push("l" + v); return v < 7; }), findLastIndex([5, 6, 7], function (v) { return v === 5; }));
+  out.push(find([1, , 3], function (v, k) { order.push("f" + k + v); return false; }));
+  out.push(order.join(","));
+  // a nested iteration in the callback, and a callback that recurses through forEach
+  var nested = [];
+  each([1, 2], function (x) { each([10, 20], function (y) { nested.push(x * y); }); nested.push(map([x], function (z) { return -z; })[0]); });
+  out.push(nested.join(","));
+  var depth = 0;
+  function down(n) { if (n < 50) each([n], function (k) { depth = k; down(k + 1); }); }
+  down(0);
+  out.push(depth);
+  // generator, async and bound callbacks; a stack read inside the callback
+  each([1, 2], function* (x) { out.push("never"); });
+  each([1, 2], async function (x) { out.push("a" + x); await null; out.push("late" + x); });
+  each([3], function (x) { out.push(this.b + x); }.bind({ b: 100 }));
+  var stack = "";
+  each([1], function inner() { stack = new Error("s").stack; });
+  out.push(stack.indexOf("inner") >= 0);
+  // a redefined Array.prototype.forEach, while the site runs and after it
+  var original = Array.prototype.forEach;
+  each([1, 2], function (x) { Array.prototype.forEach = function () { out.push("replaced"); }; out.push("o" + x); });
+  each([1], function () { out.push("never"); });
+  Array.prototype.forEach = original;
+  // the callback returns early many times through the same site
+  var sum = 0;
+  for (var r = 0; r < 200; r++) each([r, r + 1, r + 2], function (v) { sum += v; });
+  var big = []; for (var b = 0; b < 2000; b++) big.push(b);
+  out.push(sum, map(big, function (v) { return v & 7; }).length, filter(big, function (v) { if (v % 500 === 0) gc(); return v % 3 === 0; }).length);
+  // callbacks whose frames become frames mid-iteration: a direct eval, legacy caller
+  // reflection, a throw caught inside the callback, and a getter on a later element's path
+  var framed = [];
+  each([1, 2, 3], function (v) { framed.push(eval("v * 2")); });
+  function reflect(v) { framed.push(typeof reflect.caller); }
+  each([1, 2], reflect);
+  each([1, 2, 3], function (v) { try { if (v === 2) throw v; framed.push("t" + v); } catch (e) { framed.push("c" + e); } });
+  var getterArray = [1, 2, 3];
+  Object.defineProperty(getterArray, 2, { get: function () { framed.push("get"); return 30; } });
+  framed.push(map(getterArray, function (v) { return v + 1; }).join("."));
+  out.push(framed.join(","));
+  // array literals made at once: values, holes, nesting and elements read before the array
+  var x = round + 1;
+  var lit = [x, x + 1, "s", { k: x }, [x, [x]], null, undefined];
+  var holes = [x, , x];
+  out.push(lit.length, lit[3].k, lit[4][1][0], lit[6] === undefined, 6 in lit, holes.length, 1 in holes, JSON.stringify(lit));
+  return round;
+}
+for (var round = 0; round < 3; round++) run(round);
+var result = out.join("|");
+"#;
+    let run = move || for specialized in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = if specialized {
+            Engine::specialize(source, "lane-array-iterations.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source,
+                name: "lane-array-iterations.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let name = vm.intern_atom("result");
+        let value = vm.own_property(vm.realm.globals, name).unwrap();
+        assert_eq!(
+            vm.to_string(&program, value).unwrap().to_string(),
+            r#"4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|1|1|true|true|3|false|[1,2,"s",{"k":1},[1,[1]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|2|2|true|true|3|false|[2,3,"s",{"k":2},[2,[2]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|3|3|true|true|3|false|[3,4,"s",{"k":3},[3,[3]],null,null]"#
+        );
+    };
+    std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
+}

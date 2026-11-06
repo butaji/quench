@@ -2559,6 +2559,20 @@ impl<H: Host> Vm<H> {
                             }
                             value = promise;
                         }
+                        // A lane's array iteration whose callback this frame ran steps and
+                        // finishes on the native's path, from the caller's frame.
+                        if let Some(step) = pending.completion.take_array_step() {
+                            // SAFETY: as for `p` at the top of the loop.
+                            let caller_code = unsafe { &*executing_residual };
+                            match self.finish_array_step(caller_code, step, value) {
+                                Ok(result) => value = result,
+                                Err(error) => settle_error = Some((pending.call_pc, error)),
+                            }
+                            self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                            if self.active_program != executing_program {
+                                self.set_active_program(executing_program);
+                            }
+                        }
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
                             self.general_cursor(
@@ -2807,6 +2821,9 @@ impl<H: Host> Vm<H> {
                     // A generator resumed in place finishes with its frame's throw.
                     if let Some(resume) = pending.completion.take_generator() {
                         self.abandon_in_loop_generator_step(resume);
+                    }
+                    if let Some(step) = pending.completion.take_array_step() {
+                        self.abandon_array_step(step);
                     }
                     // An async callee's abrupt completion rejects its promise, which the
                     // call yields; the caller resumes after the call.

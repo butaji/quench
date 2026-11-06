@@ -24,8 +24,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // name, setup (top-level code), the names `run` takes from it, body (per iteration, `i` the
-// index, `acc` the accumulator), C instructions per iteration. Setup runs outside the measured
-// function, so the function is the loop and its body alone.
+// index, `acc` the accumulator), C instructions per iteration, and optionally the iterations a
+// run takes (default N). Setup runs outside the measured function, so the function is the loop
+// and its body alone.
+const WARM = 3;
+const N = 40_000;
+
 const OPERATIONS = [
   ["int-add", "", [], "acc = (acc + i) | 0;", 3],
   ["float-add", "var x = 0.5;", ["x"], "acc = acc + x;", 3],
@@ -78,18 +82,27 @@ const OPERATIONS = [
     "[i].forEach(add); acc = cells[0];",
     8,
   ],
+  // The same callback over a 64-element array: the per-element cost apart from the entry. Its
+  // runs take N calls of the callback, as `call`'s do: callgrind's memory grows with the calls
+  // a run makes without leaving the lane, past the host's at N iterations of 64 calls.
+  [
+    "array-foreach-64",
+    "var cells = [0]; function add(x) { cells[0] = (cells[0] + x) | 0; } var a = []; for (var j = 0; j < 64; j++) a.push(j);",
+    ["cells", "add", "a"],
+    "a.forEach(add); acc = cells[0];",
+    64 * 6,
+    N / 64,
+  ],
 ];
 
-const WARM = 3;
-const N = 40_000;
 
-function fixture(setup, names, body, n) {
+function fixture(setup, names, body, warm, n) {
   // `acc` is printed as a checksum; doubles keep a fixed rendering through `toFixed`.
   const params = ["n", ...names].join(", ");
   const args = names.map((name) => `, ${name}`).join("");
   return `${setup}
 function run(${params}) { var acc = 0; for (var i = 0; i < n; i++) { ${body} } return acc; }
-for (var w = 0; w < ${WARM}; w++) run(${N}${args});
+for (var w = 0; w < ${WARM}; w++) run(${warm}${args});
 var r = run(${n}${args});
 console.log(typeof r === "number" && !Number.isInteger(r) ? r.toFixed(6) : String(r));
 `;
@@ -182,7 +195,7 @@ function writesNoCode(file) {
 
 const jobs = [];
 const cells = {};
-const measure = (name, column, command, args, env, single, double, expected) =>
+const measure = (name, column, command, args, env, single, double, expected, n) =>
   jobs.push(async () => {
     const result = await run(command, [...args, single], env);
     const ok = result.code === 0 && result.out === expected;
@@ -190,20 +203,20 @@ const measure = (name, column, command, args, env, single, double, expected) =>
       instructions(command, args, env, single),
       instructions(command, args, env, double),
     ]);
-    cells[name][column] = { ok, cost: (b - a) / N, got: result.out };
+    cells[name][column] = { ok, cost: (b - a) / n, got: result.out };
   });
-for (const [name, setup, names, body] of chosen) {
+for (const [name, setup, names, body, , n = N] of chosen) {
   const single = join(directory, `${name}-1.js`);
   const double = join(directory, `${name}-2.js`);
-  writeFileSync(single, fixture(setup, names, body, N));
-  writeFileSync(double, fixture(setup, names, body, 2 * N));
+  writeFileSync(single, fixture(setup, names, body, n, n));
+  writeFileSync(double, fixture(setup, names, body, n, 2 * n));
   const expected = execFileSync("node", [single]).toString().trim();
   cells[name] = { expected };
-  for (const [mode, command, args, env] of modes) measure(name, mode, command, args, env, single, double, expected);
+  for (const [mode, command, args, env] of modes) measure(name, mode, command, args, env, single, double, expected, n);
   for (const [peer, command, args, env] of PEERS) {
     const cached = cachedPeers[name]?.[peer];
     if (cached) cells[name][peer] = cached;
-    else measure(name, peer, command, args, env, single, double, expected);
+    else measure(name, peer, command, args, env, single, double, expected, n);
   }
 }
 const noCode = modeNames.includes("no-jit") ? writesNoCode(join(directory, `${chosen[0][0]}-1.js`)) : true;

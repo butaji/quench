@@ -1504,6 +1504,11 @@ enum Completion {
     /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
     /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
+    /// An array callback method's callback the lane runs for one element
+    /// (`lane_begin_array_iteration`): its return steps the iteration `LaneStack::steps`
+    /// keeps (`lane_step_array_iteration`). Made a frame, its pending call finishes the
+    /// iteration on the native's path (`CallCompletion::ArrayStep`).
+    ArrayStep,
 }
 
 impl Completion {
@@ -2247,6 +2252,9 @@ pub(super) struct LaneStack {
     /// promise is made only where one is observable, and a primitive return reaches the
     /// `await` as it is.
     settling: Vec<Option<crate::heap::RootId>>,
+    /// The array iterations of the `Completion::ArrayStep` activations, innermost last; each
+    /// activation's frame takes its own when it materializes (`CallCompletion::ArrayStep`).
+    steps: Vec<LaneArrayStep>,
     /// The iterators the activations' `for-of` loops would close, each with the index of
     /// the activation whose loop pushed it (`IteratorCleanupPush`), innermost last: a
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
@@ -2291,6 +2299,7 @@ impl Default for LaneStack {
             read_memos: Box::new([EMPTY_READ_MEMO; READ_MEMOS]),
             forwarders: Vec::new(),
             settling: Vec::new(),
+            steps: Vec::new(),
             iterators: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
@@ -11472,6 +11481,7 @@ impl<H: Host> Vm<H> {
         let mut registers = std::mem::take(&mut self.lane_stack.values);
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let mut settling = std::mem::take(&mut self.lane_stack.settling).into_iter();
+        let mut steps = std::mem::take(&mut self.lane_stack.steps).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
         let states = ActivationState::of(&activations, cx);
         // A deferred native's caller activations below its callback take the lane's outer
@@ -11520,6 +11530,10 @@ impl<H: Host> Vm<H> {
                 Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
                 Some(Completion::SettlesPromise) => CallCompletion::Promise(
                     self.settling_root(settling.next().expect("each settling activation has its entry"))),
+                Some(Completion::ArrayStep) => {
+                    let step = steps.next().expect("each array step activation has its entry");
+                    CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
+                }
                 _ => CallCompletion::Value,
             };
             // A native's callback is the entry frame of the loop that finishes it.
@@ -11664,6 +11678,7 @@ impl<H: Host> Vm<H> {
             caller += 1;
         }
         debug_assert!(settling.next().is_none(), "every settling root belongs to an activation");
+        debug_assert!(steps.next().is_none(), "every array step belongs to an activation");
         if let Some(boundary) = boundary {
             // The native's caller is now the innermost of its activations' frames, as when
             // its deferred call is observed (`materialize_deferred_lane_now`).
@@ -13789,8 +13804,181 @@ script_handler! {
         };
         // SAFETY: the call's window is registers of the running function, which the native
         // call copies before anything can move them.
-        let value = lane_call_native_out(cx, ip, native, callee, r.get(i.c), unsafe { lane_call_window(r, i) });
+        let args = unsafe { lane_call_window(r, i) };
+        if let Some(resumed) = lane_begin_array_iteration(cx, ip, native, r.get(i.c), args) {
+            resume!(cx, resumed)
+        }
+        let value = lane_call_native_out(cx, ip, native, callee, r.get(i.c), args);
         resume!(cx, lane_native_complete(cx, ip, i, value))
+    }
+}
+
+/// The values an array callback method passes its callback: the element, its index and the
+/// array.
+const ARRAY_CALLBACK_ARGUMENTS: usize = 3;
+
+/// An array callback method's iteration a lane runs (`lane_begin_array_iteration`), one
+/// entry per `Completion::ArrayStep` activation, innermost last: the loop's state and what
+/// entering its callback's activation again for the next element reads.
+#[derive(Clone, Copy)]
+struct LaneArrayStep {
+    iteration: super::array_indexed::ArrayIteration,
+    /// The element the running callback was passed, at `index`: a filter keeps it, a find
+    /// answers it.
+    element: Value,
+    index: usize,
+    entry: PreparedEntry,
+}
+
+/// The call of an array callback method `native` at the lane `Call` record `ip` over a dense
+/// array `receiver` with `args`, run in the lane as the bytecode JSC's builtin runs: each
+/// element's callback is an activation of the caller's lane (`Completion::ArrayStep`) whose
+/// return steps the loop and enters the activation again for the next element
+/// (`lane_step_array_iteration_in_place`), with no native frame and no nested run. `None`
+/// leaves the call to the native: another receiver, a callback no lane call activates, or a
+/// result the species makes.
+#[inline(never)]
+fn lane_begin_array_iteration<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    native: Native,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls } || vm.with_scope_entered {
+        return None;
+    }
+    let length = vm.heap.array_elements(receiver)?.len();
+    if vm.own_array_length(receiver) != Some(length) {
+        return None;
+    }
+    let callback = *args.first()?;
+    let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+    let mut resolved = None;
+    let target = lane_script_target_in(cx, callback, &mut resolved)?;
+    let this = lane_call_this(vm, target, this_arg)?;
+    // SAFETY: the running lane's context, which nothing else accesses.
+    let mut shape = PreparedShape::of(unsafe { &*cx }, ip, target, ARRAY_CALLBACK_ARGUMENTS)?;
+    let entry = shape.entry(target, this);
+    if let ActivationKind::Script(script) = &mut shape.activation.kind {
+        script.completion = Completion::ArrayStep;
+    }
+    let mut iteration = vm.fresh_array_iteration(native, receiver, callback, this_arg, length)?;
+    note_allocation(vm);
+    // SAFETY: `ip` is the call record of the running function's view.
+    let i = unsafe { &*ip };
+    let Some(index) = iteration.advance() else {
+        return Some(lane_native_complete(cx, ip, i, Some(iteration.completion())));
+    };
+    let key = Value::length(index);
+    if let Some(element) = vm.dense_array_element(receiver, key)
+        && let Some(start) = lane_push_prepared(cx, &shape.activation, shape.room, &entry, &[element, key, receiver])
+    {
+        vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry });
+        // SAFETY: the push made the callback's registers the context's.
+        return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
+    }
+    iteration.visited -= 1;
+    Some(lane_resume_array_iteration(cx, ip, iteration))
+}
+
+/// The iteration `iteration` of the call at `ip`, whose caller runs, past its last element:
+/// the call completes with the method's value; else the rest of its loop on the native's
+/// path from the caller's frame (`Vm::array_iteration_run`), which reads holes and anything
+/// else generically.
+fn lane_resume_array_iteration<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    mut iteration: super::array_indexed::ArrayIteration,
+) -> Resumed {
+    // SAFETY: `ip` is the call record of the running function's view.
+    let i = unsafe { &*ip };
+    if iteration.visited == iteration.length {
+        return lane_native_complete(cx, ip, i, Some(iteration.completion()));
+    }
+    let value = lane_call_from_frame(cx, ip, |vm, code| vm.array_iteration_run(code, &mut iteration));
+    lane_native_complete(cx, ip, i, value)
+}
+
+/// The return of an array callback method's callback `activation` with `mapped`, its
+/// caller restored (`lane_restore_caller`): the step of the innermost lane iteration, then
+/// the rest of its loop (`lane_finish_array_step`).
+fn lane_step_array_iteration<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, mapped: Value) -> Resumed {
+    let applied = lane_apply_array_step(cx, mapped);
+    lane_finish_array_step(cx, activation, applied)
+}
+
+/// The step of the innermost lane iteration whose callback returned `mapped`
+/// (`Vm::array_iteration_apply`), whose fresh result's store and answers run no guest code.
+#[inline(always)]
+fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Result<Option<Value>, JsError> {
+    let vm = unsafe { vm(cx) };
+    let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
+    // SAFETY: the context's program outlives the lane run; the entry stays in place while
+    // the step, which reads no lane stack, runs.
+    let (code, step) = unsafe { (&*(*cx).code, &mut *step) };
+    let applied = vm.array_iteration_apply(code, &mut step.iteration, step.index, step.element, mapped);
+    note_allocation(vm);
+    applied
+}
+
+/// `lane_step_array_iteration` of the innermost activation, a callback that returned
+/// `mapped`: where the step goes on to a present dense element and no collection is due,
+/// the activation is entered again for it in place, as the lane's own loop of calls would
+/// make its next one (`lane_enter_prepared`); otherwise the activation retires to its
+/// caller first.
+fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Option<Resumed> {
+    let applied = lane_apply_array_step(cx, mapped);
+    let vm = unsafe { vm(cx) };
+    let depth = vm.lane_stack.activations.len() - 1;
+    if let Ok(None) = applied
+        && depth < vm.lane_stack.activation_limit.get()
+    {
+        let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
+        // SAFETY: the entry stays in place while the callback's window is filled again.
+        let step = unsafe { &mut *step };
+        if let Some(index) = step.iteration.advance() {
+            let (key, receiver) = (Value::length(index), step.iteration.receiver);
+            if let Some(element) = vm.dense_array_element(receiver, key) {
+                step.element = element;
+                step.index = index;
+                // The callback's completed loops close nothing more.
+                vm.lane_stack.drop_iterators_from(depth);
+                let window = vm.lane_stack.activations[depth].window;
+                // SAFETY: the window the activation held, which its return left in place.
+                let start = unsafe { lane_enter_prepared(cx, &step.entry, &[element, key, receiver], window) };
+                return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
+            }
+            step.iteration.visited -= 1;
+        }
+    }
+    let activation = vm.lane_stack.pop_activation()?;
+    lane_restore_caller(cx, &activation);
+    Some(lane_finish_array_step(cx, &activation, applied))
+}
+
+/// The iteration of the call `activation` made, its caller restored, after a step that
+/// `applied`: the iteration retires, and the call completes with the method's value where
+/// the step ended it, else goes on as `lane_resume_array_iteration` does.
+fn lane_finish_array_step<H: Host>(
+    cx: *mut LaneContext<H>,
+    activation: &Activation,
+    applied: Result<Option<Value>, JsError>,
+) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    let depth = vm.lane_stack.steps.len() - 1;
+    let iteration = vm.lane_stack.steps[depth].iteration;
+    vm.lane_stack.steps.truncate(depth);
+    // SAFETY: the call record lies in the restored caller's view.
+    let i = unsafe { &*activation.call };
+    match applied {
+        Ok(None) => lane_resume_array_iteration(cx, activation.call, iteration),
+        Ok(value) => lane_native_complete(cx, activation.call, i, value),
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            lane_native_complete(cx, activation.call, i, None)
+        }
     }
 }
 
@@ -15271,6 +15459,17 @@ fn lane_constructing<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
 
 #[inline(always)]
 fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
+    lane_script_target_in(cx, callee, &mut None).copied()
+}
+
+/// `lane_script_target`'s target, read in place where the cache holds it, else resolved
+/// into `resolved`. The cache's entry holds until the next resolution or collection.
+#[inline(always)]
+fn lane_script_target_in<'a, H: Host>(
+    cx: *mut LaneContext<H>,
+    callee: Value,
+    resolved: &'a mut Option<ScriptCallTarget>,
+) -> Option<&'a ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
     if lane_constructing(vm, callee) {
         return None;
@@ -15279,7 +15478,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     // activate callees of the running program alone. Another program's callee, once
     // resolved, is held apart (`cross_call_entry`) for the callers that activate across
     // programs; resolving it again would only find it so.
-    // The cached entry is tested in place and copied once.
+    // The cached entry is tested and used in place.
     let active = vm.active_program;
     let admits = move |target: &ScriptCallTarget| {
         target.program == active && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
@@ -15287,12 +15486,13 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     if let Some(entry) = vm.script_call_entry(callee) {
         // SAFETY: the entry is read before anything else touches the cache.
         let target = unsafe { &*entry };
-        return admits(target).then_some(*target);
+        return admits(target).then_some(target);
     }
     if vm.cross_call_entry(callee).is_some() {
         return None;
     }
-    vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(admits)
+    *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(admits);
+    resolved.as_ref()
 }
 
 /// Make `program` the lane's running program, as a call into or a return to one of its
@@ -16342,7 +16542,7 @@ fn lane_push_callback<H: Host>(
     // SAFETY: the running lane's context, which nothing else accesses.
     let shape = PreparedShape::of(unsafe { &*cx }, call, target, args.len());
     if let Some(shape) = &shape
-        && let Some(start) = lane_push_prepared(cx, shape, target, this, args)
+        && let Some(start) = lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(target, this), args)
     {
         return Some(start);
     }
@@ -17212,6 +17412,7 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
         Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
+        Some(Completion::ArrayStep) => lane_step_array_iteration_in_place(cx, value),
         _ => None,
     };
     if common.is_some() {
@@ -17468,6 +17669,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             if script.completion == Completion::ReturnsToNative {
                 vm.lane_native_returned = Some(value);
                 return Some(Resumed::Exit(exit(activation.call)));
+            }
+            if script.completion == Completion::ArrayStep {
+                return Some(lane_step_array_iteration(cx, &activation, value));
             }
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
@@ -18852,7 +19056,7 @@ fn lane_return_script_frame<H: Host>(
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
         // a generator resumed in place finishes here as there (`PendingGeneralCall::completion`).
         let returns_here = pending.last().is_some_and(|call| {
-            call.caller + 1 == frame && frame + 1 == vm.frames.len() && !call.completion.is_settling()
+            call.caller + 1 == frame && frame + 1 == vm.frames.len() && !call.completion.completes_on_general_path()
         });
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
@@ -22238,6 +22442,7 @@ impl PreparedShape {
     /// The shape of `target`'s activations from the native whose caller's context is
     /// `caller`, for calls passing `argc` values; `None` for a gathering target, whose rest
     /// array each call makes (`lane_activate_keeping`).
+    #[inline(always)]
     fn of<H: Host>(caller: &LaneContext<H>, call: Ip, target: &ScriptCallTarget, argc: usize) -> Option<Self> {
         if target.entry == CallEntry::Gathers || argc > usize::from(u16::MAX) {
             return None;
@@ -22268,44 +22473,102 @@ impl PreparedShape {
     }
 }
 
-/// The activation `shape` describes, for a call with `args`: the window filled, the
-/// activation pushed and the context made the callee's. `None`, which changes nothing,
-/// where the lane stack lacks room.
+/// What entering an activation of a `PreparedShape` for one receiver reads
+/// (`lane_enter_prepared`): the shape's window layout and the target's view, environment and
+/// captures.
+#[derive(Clone, Copy)]
+struct PreparedEntry {
+    view: *const LaneView,
+    env: Value,
+    capture: *const usize,
+    this: Value,
+    registers: usize,
+    passed: u16,
+    argc: u16,
+    keeps: bool,
+    size: usize,
+    program: ProgramId,
+    function: u32,
+}
+
+impl PreparedShape {
+    /// The entry of its activations of `target` with `this`.
+    #[inline(always)]
+    fn entry(&self, target: &ScriptCallTarget, this: Value) -> PreparedEntry {
+        PreparedEntry {
+            view: target.view,
+            env: target.env,
+            capture: target.capture,
+            this,
+            registers: self.registers,
+            passed: self.passed as u16,
+            argc: self.argc as u16,
+            keeps: self.keeps,
+            size: self.size,
+            program: target.program,
+            function: target.function,
+        }
+    }
+}
+
+/// The activation of a `PreparedShape`, `activation` with its admission's `room`, for a call
+/// with `args` (`entry`): the window filled, the activation pushed and the context made the
+/// callee's. `None`, which changes nothing, where the lane stack lacks room.
 #[inline(always)]
 fn lane_push_prepared<H: Host>(
     cx: *mut LaneContext<H>,
-    shape: &PreparedShape,
-    target: &ScriptCallTarget,
-    this: Value,
+    activation: &Activation,
+    room: usize,
+    entry: &PreparedEntry,
     args: &[Value],
 ) -> Option<Ip> {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
-    if stack.activations.len() >= stack.activation_limit.get() || stack.values.capacity() - window < shape.room {
+    if stack.activations.len() >= stack.activation_limit.get() || stack.values.capacity() - window < room {
         return None;
     }
-    // SAFETY: as `lane_push_callback`'s; `args` holds `shape.argc` values.
+    // SAFETY: as `lane_push_callback`'s; `args` holds `entry.argc` values.
+    unsafe {
+        stack.push_activation(Activation { window, ..*activation });
+        Some(lane_enter_prepared(cx, entry, args, window))
+    }
+}
+
+/// The activation `entry` enters, whose window starts at the lane-stack index `window`,
+/// for a call with `args`: the window filled and the context made the callee's. Its first
+/// record.
+///
+/// # Safety
+/// The lane stack's capacity holds the window, and `args` holds `entry.argc` values.
+#[inline(always)]
+unsafe fn lane_enter_prepared<H: Host>(
+    cx: *mut LaneContext<H>,
+    entry: &PreparedEntry,
+    args: &[Value],
+    window: usize,
+) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let stack = &mut vm.lane_stack;
     unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, shape.registers, Value::UNDEFINED);
-        copy_arguments(registers, args.as_ptr(), shape.passed as u16);
-        if shape.keeps {
-            copy_arguments(registers.add(shape.registers), args.as_ptr(), shape.argc as u16);
+        fill_window(registers, entry.registers, Value::UNDEFINED);
+        copy_arguments(registers, args.as_ptr(), entry.passed);
+        if entry.keeps {
+            copy_arguments(registers.add(entry.registers), args.as_ptr(), entry.argc);
         }
-        stack.values.set_len(window + shape.size);
-        stack.push_activation(Activation { window, ..shape.activation });
+        stack.values.set_len(window + entry.size);
         (*cx).registers = Registers(registers);
-        (*cx).base = (*target.view).records();
-        (*cx).this = this;
-        (*cx).env = target.env;
-        (*cx).capture = target.capture;
+        (*cx).base = (*entry.view).records();
+        (*cx).this = entry.this;
+        (*cx).env = entry.env;
+        (*cx).capture = entry.capture;
     }
     if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
+        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
     }
     // SAFETY: the program store keeps a derived view alive with its program.
-    Some(unsafe { (*target.view).start() })
+    unsafe { (*entry.view).start() }
 }
 
 impl<H: Host> Vm<H> {
@@ -22399,7 +22662,7 @@ impl<H: Host> Vm<H> {
             (*cx).executing = caller.executing;
         };
         let pushed = match &prepared.shape {
-            Some(shape) => lane_push_prepared(cx, shape, &prepared.target, prepared.this, args),
+            Some(shape) => lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(&prepared.target, prepared.this), args),
             None => None,
         };
         let Some(start) = pushed.or_else(|| {
