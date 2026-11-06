@@ -2369,6 +2369,20 @@ fn capture_reads(capture: *const crate::heap::EnvironmentSlots) -> *const crate:
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
+/// What a lane body's capture stores may skip (`JsStepDispatch::capture_stores`): the slots'
+/// environment admits every direct store (`Vm::admits_every_direct_store`), a fact of its
+/// function; and it is in the remembered set, a fact of the collection cycle, without which
+/// only a value holding no heap edge needs no barrier.
+pub(super) const CAPTURE_STORE_ADMITS: usize = 1;
+pub(super) const CAPTURE_STORE_REMEMBERED: usize = 2;
+
+/// A `LaneContext::capture`'s slots, and what its tag lets a body's stores skip.
+#[inline(always)]
+pub(super) fn capture_split(capture: *const crate::heap::EnvironmentSlots) -> (*const crate::heap::EnvironmentSlots, usize) {
+    let tagged = capture.addr() & CAPTURE_STORES != 0;
+    (capture_reads(capture), if tagged { CAPTURE_STORE_ADMITS | CAPTURE_STORE_REMEMBERED } else { 0 })
+}
+
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
 #[inline(always)]
 fn capture_stores(capture: *const crate::heap::EnvironmentSlots) -> Option<*mut crate::heap::EnvironmentSlots> {
@@ -7573,7 +7587,7 @@ script_handler! {
         // SAFETY: the activation's context holds its own receiver and captures.
         let this = unsafe { (*cx).this };
         let receiver = if this.is_deleted() { Value::DELETED } else { this };
-        let captures = capture_reads(unsafe { (*cx).capture });
+        let captures = unsafe { (*cx).capture };
         let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::LoopHeader, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
         // A run that leaves at the header, before an iteration, pays its entry for nothing: a
@@ -14504,7 +14518,7 @@ script_handler! {
         let this = unsafe { (*cx).this };
         let receiver = if i.b != 0 && !this.is_deleted() { this } else { Value::DELETED };
         // SAFETY: the activation just set the context to its own captures.
-        let captures = capture_reads(unsafe { (*cx).capture });
+        let captures = unsafe { (*cx).capture };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
@@ -14796,6 +14810,8 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, pc: usize, instructi
         (method as *const super::compiled::LaneMethod, method.entry_address(), callee.lane_body_room())
     };
     // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
+    // A link outlives the remembered set its target's tag records: only admission carries.
+    let capture_stores = capture_split(target.capture).1 & CAPTURE_STORE_ADMITS;
     let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
         .and_then(crate::heap::EnvironmentSlots::native_dense_view)
         .unwrap_or((std::ptr::null(), 0));
@@ -14810,6 +14826,7 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, pc: usize, instructi
         sloppy,
         capture_values,
         capture_len,
+        capture_stores,
     })
 }
 
@@ -15241,7 +15258,7 @@ fn lane_run_activation<H: Host>(
         return leave(start, Value::UNDEFINED);
     };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-    let captures = capture_reads(unsafe { (*cx).capture });
+    let captures = unsafe { (*cx).capture };
     let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
     let (resumed, innermost) = lane_body_left(cx, registers, own, method, exit);
     if lane_leave_counts(cx, exit) {

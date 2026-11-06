@@ -408,6 +408,21 @@ pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Wo
     Some(value)
 }
 
+/// `dense_capture`'s store of `value` to `slot`, of slots whose every store is the whole
+/// write (`dispatch_fast::CAPTURE_STORES`); `miss` where the view does not hold the slot
+/// bound.
+#[inline(always)]
+pub(crate) fn store_dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
+    let held = stage.above_imm(len, u64::from(slot));
+    stage.guard(held, miss)?;
+    let offset = i32::from(slot) * std::mem::size_of::<u64>() as i32;
+    let old = stage.load_u64(values, offset);
+    let bound = bound(stage, old);
+    stage.guard(bound, miss)?;
+    stage.store_u64(values, offset, value);
+    Some(())
+}
+
 /// The interpreter's stage: words are the machine's own, and a failed guard returns to the
 /// caller's slow path. A table's base is read where an operation addresses it.
 pub(crate) struct Concrete {

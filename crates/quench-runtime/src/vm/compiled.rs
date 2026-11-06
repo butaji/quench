@@ -6722,6 +6722,9 @@ struct JsStepDispatch {
     /// after every semantic callout; generated reads do not cross a safepoint.
     capture_values: *const Value,
     capture_len: usize,
+    /// What a store to those slots may skip (`dispatch_fast::CAPTURE_STORE_ADMITS`,
+    /// `CAPTURE_STORE_REMEMBERED`).
+    capture_stores: usize,
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
@@ -7183,7 +7186,7 @@ impl<H: Host> Vm<H> {
 
     /// The field cache sites `unit` reads or writes, each with the exact shapes and slots its
     /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
-    /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
+    /// a store's own (`Vm::native_field_store_descriptors`); a nested lookup names one site
     /// per read of its chain, and its sink's store.
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
@@ -7213,7 +7216,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
             .filter(|(site, _)| !generic.contains(site))
-            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
+            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_store_descriptors(site) }))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
     }
@@ -7379,6 +7382,8 @@ impl<H: Host> Vm<H> {
         lane_context: *mut (),
     ) -> LaneExit {
         let frame = lane_frame();
+        // A tagged pointer's slots also admit the body's stores (`dispatch_fast::CAPTURE_STORES`).
+        let (captures, capture_stores) = super::dispatch_fast::capture_split(captures);
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
         let (capture_values, capture_len) = unsafe { captures.as_ref() }
             .and_then(crate::heap::EnvironmentSlots::native_dense_view)
@@ -7397,6 +7402,7 @@ impl<H: Host> Vm<H> {
                 receiver: receiver.to_bits(),
                 capture_values,
                 capture_len,
+                capture_stores,
                 residual: residual as *const ResidualProgram as usize,
             }
             .install(&mut *dispatch);
@@ -7556,6 +7562,8 @@ pub(super) struct DirectCallee {
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(super) capture_values: *const Value,
     pub(super) capture_len: usize,
+    /// What its capture stores may skip (`JsStepDispatch::capture_stores`): admission only.
+    pub(super) capture_stores: usize,
 }
 
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
@@ -7663,6 +7671,7 @@ struct LaneEntry {
     receiver: u64,
     capture_values: *const Value,
     capture_len: usize,
+    capture_stores: usize,
     residual: usize,
 }
 
@@ -7674,6 +7683,7 @@ impl LaneEntry {
             receiver: dispatch.receiver,
             capture_values: dispatch.capture_values,
             capture_len: dispatch.capture_len,
+            capture_stores: dispatch.capture_stores,
             residual: dispatch.residual,
         }
     }
@@ -7684,6 +7694,7 @@ impl LaneEntry {
         dispatch.receiver = self.receiver;
         dispatch.capture_values = self.capture_values;
         dispatch.capture_len = self.capture_len;
+        dispatch.capture_stores = self.capture_stores;
         dispatch.residual = self.residual;
     }
 }
@@ -7724,6 +7735,7 @@ impl LaneFrame {
                 fixed_this_slot: std::ptr::null(),
                 capture_values: std::ptr::null(),
                 capture_len: 0,
+                capture_stores: 0,
                 array_record_base: 0,
                 object_record_base: 0,
                 function_record_base: 0,
@@ -7864,7 +7876,7 @@ impl JsStepDispatch {
             native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0,
+            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,

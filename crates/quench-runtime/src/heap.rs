@@ -1111,6 +1111,12 @@ impl Heap {
         })
     }
 
+    /// Whether an object used as a prototype may have exact shape `shape`: a registered one
+    /// does, and any may where the registry does not know every prototype.
+    pub(crate) fn shape_may_hold_prototype(&self, shape: u32) -> bool {
+        !matches!(self.prototypes, PrototypeRegistry::Known(_)) || self.prototypes_of_shape(shape).next().is_some()
+    }
+
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);

@@ -1472,6 +1472,15 @@ impl<H: Host> Vm<H> {
         self.native_field_descriptors(site, false)
     }
 
+    /// `native_field_load_descriptors` a store writes natively: none of a shape a prototype
+    /// may have, whose store must advance the prototype value epoch its inheritors' constants
+    /// read under (`Object::note_prototype_value_write`), which only the VM's store hit does.
+    pub(super) fn native_field_store_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+        let mut stores = self.native_field_descriptors(site, false);
+        stores.retain(|store| !self.heap.shape_may_hold_prototype(store.shape));
+        stores
+    }
+
     /// `native_field_load_descriptors` with the entries whose slot an immediate prototype
     /// holds (`NativeFieldLoad::holder`): what a read, not a store, may take from the site.
     /// The site's cached reads, with its proved inherited entries (`inherited_native_loads`)

@@ -120,6 +120,8 @@ struct Entry {
     /// Per capture slot read, its value or `DELETED`.
     capture_values: Variable,
     capture_len: Variable,
+    /// Nonzero where a store to any capture slot is the whole write (`JsStepDispatch::capture_stores`).
+    capture_stores: Variable,
     this: Variable,
     /// The run's interrupt flag's address (`CallContext::interrupt`), fixed for the run.
     interrupt: Variable,
@@ -185,6 +187,8 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Hoist>,
+    /// The calls that leave instead of calling, a hoisting loop's inlined fallbacks.
+    leaving_calls: BTreeSet<usize>,
     hoisted: BTreeMap<usize, (Variable, bool)>,
     /// Per array register a loop reads elements of, its elements' view, proved at the loop's
     /// entry (`Lowering::hoist_reads`): a header and a length, zero where the register held
@@ -651,6 +655,8 @@ struct Hoist {
     arrays: Vec<Register>,
     /// The loop's last PC, its backward jump.
     back: usize,
+    /// Its inlined calls' fallbacks, which leave at the call (`invariant_reads`).
+    fallbacks: Vec<usize>,
 }
 
 /// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
@@ -658,8 +664,10 @@ struct Hoist {
 /// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
 /// writes, by one cached atom it stores to no object, see the same object and value every
 /// iteration. No entry (`starts`) lies in such a loop past its header.
-fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
-    -> BTreeMap<usize, Hoist> {
+/// An inlined call's fallback, the call for a callee none of its frames is, counts as reading
+/// only: inside such a loop it leaves at the call instead (`Hoist::fallbacks`), exactly.
+fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize],
+    fallbacks: &BTreeSet<usize>) -> BTreeMap<usize, Hoist> {
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
         ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump).then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| !matches!(instruction.op().control_flow_layout(),
@@ -676,7 +684,8 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if entries != 1 || side
-            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate) || stores_element(*candidate)) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| reads_only(constants, *candidate) || stores_own(*candidate)
+                || stores_element(*candidate) || fallbacks.contains(&(header + offset))) { continue }
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
@@ -691,7 +700,8 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
             .filter_map(|candidate| candidate.operand_b().register_index())
             .filter(|register| !written.contains(register)).collect();
         if !reads.is_empty() || !arrays.is_empty() {
-            hoists.insert(header, Hoist { reads, arrays: arrays.into_iter().collect(), back });
+            let fallbacks = fallbacks.range(header..=back).copied().collect();
+            hoists.insert(header, Hoist { reads, arrays: arrays.into_iter().collect(), back, fallbacks });
         }
     }
     hoists
@@ -839,6 +849,7 @@ fn lower(
         valid: true,
         invalid_at: 0,
         hoists: BTreeMap::new(),
+        leaving_calls: BTreeSet::new(),
         hoisted: BTreeMap::new(),
         hoisted_arrays: BTreeMap::new(),
         at: 0,
@@ -913,7 +924,13 @@ fn lower(
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     let starts: Vec<usize> = std::iter::once(0).chain(loop_entry).collect();
-    lowering.hoists = invariant_reads(&instructions, &program.constants, &starts);
+    // Each inlined call's fallback: the caller's call past its frames' alternatives.
+    let fallbacks: BTreeSet<usize> = instructions.iter().enumerate()
+        .filter(|(pc, instruction)| instruction.op() == Op::Call && matches!(unit.origins[*pc],
+            super::lane_unit::Origin::Caller(call) if unit.frames.iter().any(|frame| frame.parent.is_none() && frame.call == call)))
+        .map(|(pc, _)| pc).collect();
+    lowering.hoists = invariant_reads(&instructions, &program.constants, &starts, &fallbacks);
+    lowering.leaving_calls = lowering.hoists.values().flat_map(|hoist| hoist.fallbacks.iter().copied()).collect();
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
     for start in &starts { if let Some(entered) = lowering.entered.get_mut(*start) { *entered = true; } }
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
@@ -1272,11 +1289,14 @@ impl Lowering<'_, '_> {
         let len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len));
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
+        let capture_stores = self.builder.declare_var(types::I64);
+        let stores = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_stores));
+        self.builder.def_var(capture_stores, stores);
         let interrupt = self.builder.declare_var(types::I64);
         let flag = self.builder.ins().load(types::I64, MemFlagsData::trusted(), self.context,
             std::mem::offset_of!(CallContext, interrupt) as i32);
         self.builder.def_var(interrupt, flag);
-        Entry { receiver, receiver_shapes, store_atoms, capture_values, capture_len, this, interrupt }
+        Entry { receiver, receiver_shapes, store_atoms, capture_values, capture_len, capture_stores, this, interrupt }
     }
 
     /// The facts guest code may change, proved again once after it ran: each stored atom's
@@ -1323,6 +1343,11 @@ impl Lowering<'_, '_> {
         let ran = match instruction.op() {
             Op::Return if plain && instruction.register_a() < self.unit.registers => {
                 Some(self.complete(state, pc, instruction.register_a()))
+            }
+            Op::Call if self.leaving_calls.contains(&pc) => {
+                let exit = self.guard_exit(state, pc32);
+                self.builder.ins().jump(exit, &[]);
+                Some(false)
             }
             Op::Call if (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
@@ -1414,6 +1439,7 @@ impl Lowering<'_, '_> {
                     Some(captures) if captures.env.is_deleted() => exit,
                     _ => self.builder.create_block(),
                 };
+
                 let done = self.builder.create_block();
                 self.builder.append_block_param(done, types::I64);
                 // The dense view's read, as every tier makes it (`staged::dense_capture`).
@@ -1452,18 +1478,8 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             // A capture's store, by the lane's own store; a binding it does not take leaves.
-            Op::StoreCapture if matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
-                let exit = self.guard_exit(state, pc32);
-                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-                let depth = u64::from(crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()));
-                let slot = u64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-                let packed = self.ins().iconst(types::I64, (depth << u16::BITS | slot) as i64);
-                let value = self.tagged(state, instruction.register_a());
-                let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.capture_set, &[context, packed, value]);
-                let stored = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-                emit_js_guard(&mut self.builder, stored, exit);
-                Some(true)
-            }
+            Op::StoreCapture if instruction.result_flags() == 0
+                && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => Some(self.capture_store(state, pc, instruction)),
             Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
@@ -2213,13 +2229,15 @@ impl Lowering<'_, '_> {
             std::mem::offset_of!(JsStepDispatch, receiver),
             std::mem::offset_of!(JsStepDispatch, capture_values),
             std::mem::offset_of!(JsStepDispatch, capture_len),
+            std::mem::offset_of!(JsStepDispatch, capture_stores),
         ];
         let saved: Vec<ir::Value> = words.iter()
             .map(|field| self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(*field)))
             .collect();
         let capture_values = self.ins().iconst(types::I64, callee.capture_values as i64);
         let capture_len = self.ins().iconst(types::I64, callee.capture_len as i64);
-        for (field, value) in words.iter().zip([this, capture_values, capture_len]) {
+        let capture_stores = self.ins().iconst(types::I64, callee.capture_stores as i64);
+        for (field, value) in words.iter().zip([this, capture_values, capture_len, capture_stores]) {
             self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
         }
         self.ins().store(MemFlagsData::trusted(), pushed, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
@@ -2312,7 +2330,7 @@ impl Lowering<'_, '_> {
     /// Each read's value is one variable every entering edge defines; a guard that fails
     /// leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
-        let Some(Hoist { reads, arrays, back }) = self.hoists.get(&header).cloned() else { return };
+        let Some(Hoist { reads, arrays, back, .. }) = self.hoists.get(&header).cloned() else { return };
         for register in arrays {
             let bits = self.tagged(state, register);
             let (header_bits, length) = self.array_view(bits);
@@ -2544,6 +2562,49 @@ impl Lowering<'_, '_> {
             }
         }
         Some(true)
+    }
+
+    /// The caller's `StoreCapture` at `pc`. A depth-0 store to a bound dense slot of slots that
+    /// admit it, needing no barrier (remembered slots, or a value with no heap edge), is the
+    /// whole write, as the lane's own (`lane_store_capture`, `staged::store_dense_capture`);
+    /// any other is the lane's store, which leaves only where it does.
+    fn capture_store(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        use super::super::dispatch_fast::{CAPTURE_STORE_ADMITS, CAPTURE_STORE_REMEMBERED};
+        let exit = self.guard_exit(state, pc as u32);
+        let value = self.tagged(state, instruction.register_a());
+        let (depth, slot) = (crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()), crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let done = self.builder.create_block();
+        let general = self.builder.create_block();
+        if depth == 0 {
+            let entry = self.entry.as_ref().expect("entry facts");
+            let (values, len, stores) = (entry.capture_values, entry.capture_len, entry.capture_stores);
+            let (values, len, stores) = (self.builder.use_var(values), self.builder.use_var(len), self.builder.use_var(stores));
+            let admits = self.ins().band_imm_u(stores, CAPTURE_STORE_ADMITS as i64);
+            let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, admits, 0);
+            emit_js_guard(&mut self.builder, admitted, general);
+            let remembered = self.ins().band_imm_u(stores, CAPTURE_STORE_REMEMBERED as i64);
+            let remembered = self.ins().icmp_imm_u(IntCC::NotEqual, remembered, 0);
+            let tag = self.ins().band_imm_u(value, crate::value::ValueLayout::TAG_MASK as i64);
+            let immediate = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::HEAP_TAG as i64);
+            let unlogged = self.ins().bor(remembered, immediate);
+            emit_js_guard(&mut self.builder, unlogged, general);
+            let mut stage = super::object_slots::Emit::new(&mut self.builder);
+            crate::vm::staged::store_dense_capture(&mut stage, values, len, slot, value, general)
+                .expect("an emitting stage's guards continue");
+            self.ins().jump(done, &[]);
+        } else {
+            self.ins().jump(general, &[]);
+        }
+        self.builder.switch_to_block(general);
+        self.builder.set_cold_block(general);
+        let packed = self.ins().iconst(types::I64, (u64::from(depth) << u16::BITS | u64::from(slot)) as i64);
+        let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.capture_set, &[context, packed, value]);
+        let stored = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+        emit_js_guard(&mut self.builder, stored, exit);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        true
     }
 
     /// The value of a plain read of a virtual object's own field (`State::virtuals`).
