@@ -7470,7 +7470,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         if let Some(body) = code.function_get(function as usize) {
             lane_prepare_callees(cx, own, body);
         }
-        let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
+        let direct = code.function_get(function as usize).map(|body| lane_direct_callees(cx, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
         if diagnostics && let Some(method) = &method {
             own.body_stats.compiled(function, method.inlined.len());
@@ -14561,9 +14561,7 @@ fn lane_prepare_callees<H: Host>(cx: *mut LaneContext<H>, view: &LaneView, body:
         // Every callee the site keeps, as `lane_direct_callees` takes them.
         if lane_call_target(vm, view, body, pc).is_none() { continue }
         for site in lane_site_targets(vm, view, pc as u32) {
-            let Some(target) = vm.script_call_entry(site.callee) else { continue };
-            // SAFETY: as `Vm::script_call_entry`; the specializations below resolve no target.
-            let target = unsafe { *target };
+            let Some(target) = lane_site_callee(cx, site.callee) else { continue };
             if target.program != unsafe { (*cx).program } || std::ptr::eq(target.view, view) {
                 continue;
             }
@@ -14576,7 +14574,21 @@ fn lane_prepare_callees<H: Host>(cx: *mut LaneContext<H>, view: &LaneView, body:
     }
 }
 
-fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Vec<super::compiled::DirectCallee>> {
+/// The target of `callee`, a callee a site of the running program kept: its cached entry, or
+/// resolved again where the cache displaced it since (`LaneStack::script_targets` is a cache;
+/// the site's history is the authority on its callees).
+fn lane_site_callee<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
+    let vm = unsafe { vm(cx) };
+    match vm.script_call_entry(callee) {
+        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves.
+        Some(target) => Some(unsafe { *target }),
+        // SAFETY: the context's program outlives the lane run.
+        None => vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee),
+    }
+}
+
+fn lane_direct_callees<H: Host>(cx: *mut LaneContext<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Vec<super::compiled::DirectCallee>> {
+    let vm = unsafe { vm(cx) };
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     (0..body.code.len())
         .map(|pc| {
@@ -14590,10 +14602,9 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
             let mut targets = vec![linked];
             for site in lane_site_targets(vm, view, pc as u32) {
                 if targets.iter().all(|target| target.callee != site.callee)
-                    && let Some(target) = vm.script_call_entry(site.callee)
+                    && let Some(target) = lane_site_callee(cx, site.callee)
                 {
-                    // SAFETY: as `Vm::script_call_entry`; nothing here resolves a target.
-                    targets.push(unsafe { *target });
+                    targets.push(target);
                 }
             }
             targets.into_iter().filter_map(|target| lane_direct_callee(vm, view, pc, instruction, target)).take(CALL_SITE_TARGETS).collect()
@@ -14883,6 +14894,9 @@ fn lane_body_call_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else { return LANE_CALL_MISSED };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let target = unsafe { &*target };
+    // The callee joins the site's history, so the body's next specialization calls it
+    // directly (`lane_direct_callees`).
+    vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee, function: target.function });
     let argc = ImmediateLayout::argument_count(i.imm());
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return LANE_CALL_MISSED };
     // A target whose body is a read completes with the read's hit, as the lane's own call
