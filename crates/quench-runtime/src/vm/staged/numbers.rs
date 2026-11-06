@@ -34,8 +34,9 @@ pub(crate) trait Numbers: Stage {
     fn known_int(&self, register: Register) -> bool;
     /// Whether `register` is held as a double.
     fn known_float(&self, register: Register) -> bool;
-    /// Whether `register`'s next value is read only through ToInt32 (`| 0` and its kin).
-    fn truncated(&self, register: Register) -> bool;
+    /// Whether the current operation's int32 sum or difference may wrap: its result is read
+    /// only through ToInt32 (`| 0` and its kin), or proved within int32.
+    fn wraps(&self) -> bool;
     fn int_register(&mut self, register: Register, miss: Self::Miss) -> Option<Self::Int>;
     fn float_register(&mut self, register: Register, miss: Self::Miss) -> Option<Self::Float>;
     /// Whether `register` holds an int32.
@@ -329,7 +330,7 @@ pub(crate) fn binary<N: Numbers>(
 ) -> Option<()> {
     match operator {
         NumberOperator::Arithmetic(operation) => {
-            let wraps = machine.truncated(destination);
+            let wraps = machine.wraps();
             let number = arithmetic(machine, operation, wraps, left, right, miss)?;
             machine.set_number(destination, number);
         }
@@ -355,7 +356,7 @@ impl<R: super::RegisterFile> Numbers for super::ConcreteFrame<R> {
     #[inline(always)]
     fn known_float(&self, _: Register) -> bool { false }
     #[inline(always)]
-    fn truncated(&self, _: Register) -> bool { false }
+    fn wraps(&self) -> bool { false }
     #[inline(always)]
     fn int_register(&mut self, register: Register, _: ()) -> Option<i32> { self.value(register).as_int() }
     #[inline(always)]

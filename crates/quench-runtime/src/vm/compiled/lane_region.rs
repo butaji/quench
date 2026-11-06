@@ -147,6 +147,8 @@ struct Lowering<'a, 'f> {
     native_calls: bool,
     /// The registers' types at each block leader (`facts::analyze`).
     facts: super::facts::Facts,
+    /// The PCs whose int32 sum or difference may wrap (`Lowering::wraps_at`), resolved once.
+    wrapping: PcSet,
     /// The caller's register liveness, by its PCs; per inlined frame, its callee's
     /// (`Lowering::is_live`). A function without masks keeps every register live.
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
@@ -749,6 +751,7 @@ fn lower(
         pending: Vec::new(),
         native_calls: unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
         facts: super::facts::Facts::default(),
+        wrapping: PcSet::default(),
         live,
         frame_live,
         valid: true,
@@ -804,6 +807,7 @@ fn lower(
         }
     }
     lowering.facts = super::facts::analyze(&initial, &instructions, &leaders, &program.constants, &writes);
+    lowering.wrapping = PcSet::from_fn(instructions.len(), |pc| lowering.wraps_at(pc));
     lowering.entry = Some(lowering.entry_facts(&instructions));
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
@@ -929,7 +933,36 @@ fn lower(
 /// ToInt32 (ECMA-262 7.1.6).
 const TO_INT32_EXACT_BOUND: f64 = 9_223_372_036_854_775_808.0;
 
+/// A set of a unit's PCs, one bit each.
+#[derive(Default)]
+struct PcSet(Vec<u64>);
+
+impl PcSet {
+    fn from_fn(len: usize, mut member: impl FnMut(usize) -> bool) -> Self {
+        let mut words = vec![0u64; len.div_ceil(u64::BITS as usize)];
+        for pc in (0..len).filter(|pc| member(*pc)) {
+            words[pc / u64::BITS as usize] |= 1 << (pc % u64::BITS as usize);
+        }
+        Self(words)
+    }
+
+    fn contains(&self, pc: usize) -> bool {
+        self.0.get(pc / u64::BITS as usize).is_some_and(|word| word >> (pc % u64::BITS as usize) & 1 == 1)
+    }
+}
+
 impl Lowering<'_, '_> {
+    /// Whether the int32 sum or difference the instruction at `pc` computes may wrap: its
+    /// result is read only through ToInt32 (`truncated`), or it is a loop induction its
+    /// header bounds (`bounded_increment`), which no overflow reaches.
+    fn wraps_at(&self, pc: usize) -> bool {
+        let instruction = self.unit.instructions[pc];
+        let destination = instruction.result_register();
+        self.truncated(pc, destination) || instruction.op() == Op::IncDec
+            && instruction.boolean_flag() == Some(false)
+            && self.bounded_increment(pc, instruction.register_b(), destination)
+    }
+
     /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its
     /// header bounds: the loop's header leaves unless `register < bound`, with `bound` an
     /// int32 the loop never writes, and this increment is the loop's only write of `register`,
@@ -1163,7 +1196,7 @@ impl Lowering<'_, '_> {
                 None => Some(true),
             },
             // The interpreter's own semantics, run on the register state (`staged::step`).
-            Op::LoadConst | Op::Move if plain => super::lane_operation(&self.program.constants, instruction).map(|operation| {
+            Op::LoadConst | Op::Move | Op::IncDec if plain => super::lane_operation(&self.program.constants, instruction).map(|operation| {
                 let exit = self.guard_exit(state, pc32);
                 crate::vm::staged::step(&mut LaneMachine { lowering: self, state, pc }, operation, exit) == Some(crate::vm::staged::Flow::Next)
             }),
@@ -1303,25 +1336,6 @@ impl Lowering<'_, '_> {
             }
             Op::Construct if !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
-            Op::IncDec if plain && instruction.numeric_local_target().is_none() => {
-                let decrement = instruction.boolean_flag();
-                decrement.map(|decrement| {
-                    let exit = self.guard_exit(state, pc32);
-                    let value = self.int(state, instruction.register_b(), exit);
-                    let (result, overflow) = if decrement {
-                        let one = self.ins().iconst(types::I32, 1);
-                        self.ins().ssub_overflow(value, one)
-                    } else {
-                        let one = self.ins().iconst(types::I32, 1);
-                        self.ins().sadd_overflow(value, one)
-                    };
-                    if decrement || !self.bounded_increment(pc, instruction.register_b(), instruction.result_register()) {
-                        emit_js_guard_not(&mut self.builder, overflow, exit);
-                    }
-                    self.set_int(state, instruction.result_register(), result);
-                    true
-                })
-            }
             Op::Jump if plain => {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {
@@ -2618,13 +2632,6 @@ impl Lowering<'_, '_> {
     }
 }
 
-/// Continue only when `condition` is false; `fallback` otherwise.
-fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fallback: ir::Block) {
-    let passed = builder.create_block();
-    builder.ins().brif(condition, fallback, &[], passed, &[]);
-    builder.switch_to_block(passed);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2824,7 +2831,7 @@ impl crate::vm::staged::Numbers for LaneMachine<'_, '_, '_> {
     fn known_float(&self, register: Register) -> bool {
         self.state.values[usize::from(register)].value.representation == Representation::Float64
     }
-    fn truncated(&self, register: Register) -> bool { self.lowering.truncated(self.pc, register) }
+    fn wraps(&self) -> bool { self.lowering.wrapping.contains(self.pc) }
     fn int_register(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.int(self.state, register, miss)) }
     fn float_register(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.number(self.state, register, miss)) }
     fn int_held(&mut self, register: Register) -> ir::Value {

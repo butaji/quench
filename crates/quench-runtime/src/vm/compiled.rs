@@ -7488,13 +7488,24 @@ impl ShadowFrame {
 /// the operations it covers; `None` for any other instruction, a constant with a heap cell, or
 /// a Number operator with a constant operand that is no Number.
 pub(super) fn lane_operation(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<super::staged::Operation> {
-    use super::staged::{NumberOperator, Operation};
+    use super::staged::{NumberOperator, Operation, Source};
     let source = |operand| lane_source(constants, operand);
     Some(match instruction.op() {
         Op::Move => Operation::Move { destination: instruction.result_register(), source: instruction.register_b() },
         Op::LoadConst => Operation::LoadConst {
             destination: instruction.result_register(),
             constant: constants.get(instruction.constant_index()).and_then(facts::immediate)?,
+        },
+        // `x++` and `x--` of a register: its Number plus or minus one.
+        Op::IncDec if instruction.numeric_local_target().is_none() => Operation::Binary {
+            operator: NumberOperator::Arithmetic(if instruction.boolean_flag()? {
+                super::operations::NumberArithmetic::Subtract
+            } else {
+                super::operations::NumberArithmetic::Add
+            }),
+            destination: instruction.result_register(),
+            left: Source::Register(instruction.register_b()),
+            right: Source::Constant(Value::integer(1)),
         },
         op => Operation::Binary {
             operator: NumberOperator::from_js_instruction(op, instruction.binary_operator())?,
