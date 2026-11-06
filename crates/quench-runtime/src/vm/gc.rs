@@ -1111,21 +1111,39 @@ impl<H: Host> Vm<H> {
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
+        // An enclosing queue's entry stays in place below this queue's own.
+        let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
         let result = (|| {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
+                if matches!(job, PendingJob::Call { .. }) {
+                    self.leave_unobserved_jobs();
+                }
                 self.run_pending_job(program, job, home)?;
                 // Static continuations may become ready after a reaction. Import
                 // loading waits for the agent checkpoint after this queue drains.
                 if self.static_module_jobs_pending() {
+                    self.leave_unobserved_jobs();
                     self.switch_realm_global(home);
                     self.advance_static_module_jobs(program)?;
                 }
             }
             Ok(())
         })();
+        self.leave_unobserved_jobs();
+        self.unobserved_jobs_entered = outer;
         self.switch_realm_global(home);
         result
+    }
+
+    /// Leaves the context unobserved Promise jobs of the running queue share, if entered: a
+    /// host job and module advancement run in the queue's own.
+    fn leave_unobserved_jobs(&mut self) {
+        if std::mem::take(&mut self.unobserved_jobs_entered) {
+            for root in self.host.leave_unobserved_job() {
+                self.heap.release_root(root);
+            }
+        }
     }
 
     /// Runs a job already taken off the queue, leaving its realm current: a finished job

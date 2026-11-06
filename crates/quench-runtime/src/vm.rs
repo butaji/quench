@@ -1839,6 +1839,9 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
 pub(crate) struct Vm<H> {
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
+    /// Whether the innermost running job queue has entered the host's context for unobserved
+    /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
+    unobserved_jobs_entered: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

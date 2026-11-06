@@ -473,9 +473,15 @@ impl<H: Host> Vm<H> {
         body: impl FnOnce(&mut Self) -> Result<(), JsError>,
     ) -> Result<(), JsError> {
         self.switch_realm_global(realm);
-        let Some(context) = context.or_else(|| self.host.enter_unobserved_job()) else {
+        let context = match context {
+            Some(context) => Some(context),
+            None => self.host.enter_unobserved_job(self.unobserved_jobs_entered),
+        };
+        let Some(context) = context else {
+            // The queue's consecutive unobserved jobs share the entry (`Vm::run_job_queue`).
+            self.unobserved_jobs_entered = true;
             let outcome = body(self);
-            for root in self.host.leave_unobserved_job() {
+            for root in self.host.end_unobserved_job() {
                 self.heap.release_root(root);
             }
             return outcome;

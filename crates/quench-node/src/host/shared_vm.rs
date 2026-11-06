@@ -2788,9 +2788,13 @@ impl quench_runtime::Host for NodeHost {
         }
     }
 
-    fn enter_unobserved_job(&mut self) -> Option<quench_runtime::HostExecutionContext> {
-        crate::modules::async_hooks_shared_vm::enter_unobserved_job(&self.shared_state)
+    fn enter_unobserved_job(&mut self, entered: bool) -> Option<quench_runtime::HostExecutionContext> {
+        crate::modules::async_hooks_shared_vm::enter_unobserved_job(&self.shared_state, entered)
             .map(quench_runtime::HostExecutionContext)
+    }
+
+    fn end_unobserved_job(&mut self) -> Vec<quench_runtime::RootId> {
+        crate::modules::async_hooks_shared_vm::end_unobserved_job(&self.shared_state)
     }
 
     fn leave_unobserved_job(&mut self) -> Vec<quench_runtime::RootId> {

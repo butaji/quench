@@ -293,6 +293,7 @@ const UNOBSERVED_JOB: JobContext =
 
 /// Snapshot the currently visible stores under a fresh identity for one Promise job, so a
 /// later `enterWith` cannot mutate the context of the job that registered it.
+#[inline]
 pub(crate) fn capture_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     resource: Option<quench_runtime::HostExecutionContext>,
@@ -308,6 +309,14 @@ pub(crate) fn capture_job_context(
     {
         return None;
     }
+    Some(snapshot_job_context(state, resource))
+}
+
+#[cold]
+fn snapshot_job_context(
+    state: &mut super::async_hooks_state::SharedAsyncHooksState,
+    resource: Option<quench_runtime::HostExecutionContext>,
+) -> u64 {
     let token = state.next_job_id;
     state.next_job_id = token.checked_add(1).expect("private Promise job token space exhausted");
     // Without a Promise hook a job has no async resource, and Node runs it with execution
@@ -324,7 +333,7 @@ pub(crate) fn capture_job_context(
     }
     let source = state.identity.store_context();
     inherit_stores(state, source, StoreContext::Job(token));
-    Some(token)
+    token
 }
 
 /// A Promise created while no promise hook was installed has no async resource. Like
@@ -365,10 +374,13 @@ pub(crate) fn enter_job_context(
     previous.0
 }
 
-/// Enters the job of `capture_job_context`'s `None`: execution and trigger ids 0, as Node
-/// runs a Promise job without a resource, and an empty store frame of its own. A Promise hook
-/// installed since the capture gives the job a storeless token, which runs as a captured one.
-pub(crate) fn enter_unobserved_job(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> Option<u64> {
+/// Enters the job of `capture_job_context`'s `None`, unless the job queue has `entered` it for
+/// an earlier job: execution and trigger ids 0, as Node runs a Promise job without a
+/// resource, and an empty store frame (`end_unobserved_job` empties it after each job). A
+/// Promise hook installed since the capture gives the job a storeless token, which runs as a
+/// captured one.
+#[inline]
+pub(crate) fn enter_unobserved_job(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, entered: bool) -> Option<u64> {
     let mut shared = shared_state.borrow_mut();
     let state = &mut shared.async_hooks;
     if state.tracks_promises() {
@@ -376,12 +388,19 @@ pub(crate) fn enter_unobserved_job(shared_state: &Rc<RefCell<crate::host::Shared
         state.next_job_id = token.checked_add(1).expect("private Promise job token space exhausted");
         return Some(token);
     }
+    if !entered {
+        enter_unobserved_frame(state);
+    }
+    None
+}
+
+#[cold]
+fn enter_unobserved_frame(state: &mut super::async_hooks_state::SharedAsyncHooksState) {
     let previous = (state.identity.current_async_id(), state.identity.current_trigger_id(), state.identity.store_context());
     state.job_stack.push(previous);
     state.identity.replace_current_async_id(UNOBSERVED_JOB.execution);
     state.identity.replace_current_trigger_id(UNOBSERVED_JOB.trigger);
     state.identity.replace_store_context(unobserved_frame(previous.2));
-    None
 }
 
 /// The frame of an unobserved job that runs inside `outer`'s.
@@ -392,8 +411,19 @@ fn unobserved_frame(outer: StoreContext) -> StoreContext {
     }
 }
 
-/// Leaves `enter_unobserved_job`'s job: the previous context returns, and the stores the job
-/// entered are released.
+/// Releases what an unobserved job's `enterWith` left in the frame the queue's next unobserved
+/// jobs run in.
+#[inline]
+pub(crate) fn end_unobserved_job(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> Vec<RootId> {
+    if shared_state.borrow().async_hooks.local_stores.is_empty() {
+        return Vec::new();
+    }
+    let frame = shared_state.borrow().async_hooks.identity.store_context();
+    take_store_context(shared_state, frame)
+}
+
+/// Leaves `enter_unobserved_job`'s context: the previous context returns, and the stores the
+/// last job entered are released.
 pub(crate) fn leave_unobserved_job(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> Vec<RootId> {
     let outer = {
         let mut shared = shared_state.borrow_mut();
