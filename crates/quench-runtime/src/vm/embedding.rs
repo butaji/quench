@@ -1282,7 +1282,7 @@ impl<H: Host> Vm<H> {
                 .syntax_error_result(&program, "global lexical declaration already exists")
                 .map(drop);
         }
-        self.realm.bind_global_lexical(atom, value);
+        self.bind_global_lexical(atom, value);
         Ok(())
     }
 

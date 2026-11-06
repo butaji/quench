@@ -119,6 +119,8 @@ union LaneOperand {
     /// A `GetField` record's immediate and the receiver shape of its own-field hint
     /// (`LaneInstruction::field_hint`).
     field: FieldOperand,
+    /// A call record's immediate and its read memo's slot (`CallOperand::memo`).
+    call: CallOperand,
     jump: isize,
     constant: Value,
     /// A loop's backward jump in compiled execution: its site (`LoopSite`), which holds the
@@ -138,6 +140,20 @@ struct FieldOperand {
     imm: u32,
     shape: u32,
 }
+
+/// A call record's operand: its immediate, and the slot of `LaneStack::read_memos` its read
+/// memo was made in (`lane_memoize_read`), `NO_READ_MEMO` before its first. The slot is the
+/// site's alone until the table refills (`READ_MEMOS`), so which sites keep a memo does not
+/// depend on where their records lie.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct CallOperand {
+    imm: u32,
+    memo: u32,
+}
+
+/// A `CallOperand::memo` that names no slot: no table holds this many.
+const NO_READ_MEMO: u32 = u32::MAX;
 
 /// The `FieldOperand::shape` of a record whose hint is an inherited entry
 /// (`Vm::hinted_inherited_field_hit`): no object's exact shape (`Object::exact_shape`, whose id
@@ -353,6 +369,10 @@ pub(super) struct LaneView {
     /// The `GetField` and `SetField` records past the loop headers its sites hold, whose
     /// own-field hints a shape compaction clears.
     field_records: Box<[u32]>,
+    /// The by-name load records past the loop headers its sites hold, whose global-object
+    /// hints (`lane_load_global_name`) a shape compaction clears, and a change of the global
+    /// lexical names they answer past (`LaneView::clear_name_hints`).
+    name_records: Box<[u32]>,
 }
 
 #[derive(Debug, Default)]
@@ -1140,15 +1160,8 @@ impl LaneView {
         if matches!(body, LaneBody::Retired { .. }) {
             *body = LaneBody::Declined;
         }
-        for &pc in &self.field_records {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: no handler runs during a collection, and each listed record is a
-            // `GetField` or `SetField` one, whose operand is `field`, and no loop's header.
-            unsafe {
-                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
-                (*record).call_link.set(NO_CALL_LINK);
-            }
-        }
+        self.clear_hints(&self.field_records);
+        self.clear_name_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
@@ -1158,13 +1171,41 @@ impl LaneView {
         }
     }
 
+    /// Clears the global-object hints of its by-name loads (`lane_load_global_name`): the
+    /// global lexical names they answer past changed.
+    pub(super) fn clear_name_hints(&self) {
+        self.clear_hints(&self.name_records);
+    }
+
+    fn clear_hints(&self, pcs: &[u32]) {
+        for &pc in pcs {
+            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
+            // SAFETY: each listed record's operand is `field`, and it is no loop's header
+            // (`holds_field_hint`); its handler reads the hint whole, between runs that write it.
+            unsafe {
+                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
+                (*record).call_link.set(NO_CALL_LINK);
+            }
+        }
+    }
+
     /// How many of its records hold an own-field hint. Profiled builds derive no lane views,
     /// so only the unprofiled test reads it.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn held_field_hints(&self) -> usize {
-        self.field_records
-            .iter()
-            // SAFETY: each listed record is a `GetField` or `SetField` one, whose operand is `field`.
+        self.held_hints(&self.field_records)
+    }
+
+    /// How many of its by-name loads hold a global-object hint (`lane_load_global_name`).
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn held_name_hints(&self) -> usize {
+        self.held_hints(&self.name_records)
+    }
+
+    #[cfg(all(test, not(quench_profiled)))]
+    fn held_hints(&self, pcs: &[u32]) -> usize {
+        pcs.iter()
+            // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
             .filter(|&&pc| unsafe { (*self.records[pc as usize].get()).operand.field.shape } != super::NO_FIELD_RECEIVER)
             .count()
     }
@@ -2306,8 +2347,9 @@ pub(super) struct LaneStack {
     cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
-    /// The reads call sites answered (`ReadMemo`), one per set of sites (`read_memo_index`).
-    read_memos: Box<[ReadMemo; READ_MEMOS]>,
+    /// The reads call sites answered (`ReadMemo`), each in the slot its record names
+    /// (`CallOperand::memo`).
+    read_memos: Vec<ReadMemo>,
     /// The forwarding constructors whose activations constructions skipped, one per
     /// `Completion::Forwarder` activation, innermost last.
     forwarders: Vec<SkippedForwarder>,
@@ -2362,7 +2404,7 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
-            read_memos: Box::new([EMPTY_READ_MEMO; READ_MEMOS]),
+            read_memos: Vec::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
             steps: Vec::new(),
@@ -2395,7 +2437,7 @@ impl LaneStack {
         self.cross_targets.clear();
         *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
         *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
-        *self.read_memos = [EMPTY_READ_MEMO; READ_MEMOS];
+        self.read_memos.clear();
     }
 
     /// The target `function_targets` holds for a closure of `function` of `program` in this
@@ -13273,33 +13315,16 @@ script_handler! {
 
 script_handler! {
     /// A `LoadName` where names resolve statically to global bindings (`lane_load_name_first`):
-    /// an initialized global lexical binding of the name, which the general path's search
-    /// finds first there, else the global object's cached field (`Vm::cached_field_hit`), or
-    /// the getter of the accessor its site cached (`Vm::cached_field_getter`), as Node defines
-    /// `Buffer`, activated with the global object as receiver as a field read's is
-    /// (`lane_activate_getter`). Any other read, including an uninitialized binding or a cache
-    /// miss, takes the general path, which raises or caches it. A `LoadNameCall`
-    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding,
-    /// and `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`.
+    /// the global object's own data field its record's hint names (`LaneInstruction::field_hint`),
+    /// one shape test and one load. The hint holds only while no global lexical binding
+    /// shadows the name: a change of those names clears it (`Vm::note_global_lexical_names`),
+    /// and the global object's deletes, redefinitions and storage changes change its exact
+    /// shape. Any other read takes `lane_load_global_name_refresh`. A `LoadNameCall`
+    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding.
     fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let atom = i.imm();
-        if vm.realm.global_lexical_declarations.contains(&atom) {
-            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
-            else {
-                return exit(ip);
-            };
-            r.set(i.a, value);
-            if KIND == LOAD_NAME_CALL {
-                r.set(i.b, Value::UNDEFINED);
-            }
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
-        let globals = vm.realm.globals;
-        let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
-            sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
+        let Some(value) = vm.record_field_entry_hit(i.field_hint(), vm.realm.globals) else {
+            sibling!(lane_load_global_name_refresh::<H, KIND>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
@@ -13310,7 +13335,46 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_load_global_name` past its lexical binding and cached global property: a
+    /// `lane_load_global_name` past its record's hint: an initialized global lexical binding of
+    /// the name, which the general path's search finds first there; else the global object's
+    /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
+    /// (`Vm::cached_field_hit`). Any other read takes `lane_load_global_name_miss`, or the general
+    /// path for an uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as
+    /// `undefined`.
+    #[inline(never)]
+    fn lane_load_global_name_refresh<KIND: u8>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let atom = i.imm();
+        let globals = vm.realm.globals;
+        let value = if vm.realm.global_lexical_declarations.contains(&atom) {
+            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
+            else {
+                return exit(ip);
+            };
+            value
+        } else if let Some(hint) = vm.own_data_field_hint(globals, atom)
+            && let Some(value) = vm.record_field_entry_hit(hint, globals)
+        {
+            set_field_hint(ip, hint);
+            value
+        } else {
+            let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
+                sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
+            };
+            value
+        };
+        r.set(i.a, value);
+        if KIND == LOAD_NAME_CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_load_global_name_refresh` past its lexical binding and global property: a
     /// global accessor's getter, activated in the lane, or a plain global property, recorded
     /// in the site's entry; any other read takes the general path. Out of line: the getter's
     /// activation and the lookups take stack temporaries, which the common read then does not
@@ -18555,7 +18619,7 @@ fn script_call_memo_handler<H: Host>(shape: u8) -> Handler {
 /// program it was made in, as `ScriptCallTarget` is.
 #[derive(Clone, Copy)]
 struct ReadMemo {
-    /// The call record that made it, which owns its slot (`read_memo_index`) while it holds.
+    /// The call record that made it, whose slot (`CallOperand::memo`) it is.
     site: Ip,
     callee: Value,
     generation: ScriptGeneration,
@@ -18564,29 +18628,21 @@ struct ReadMemo {
     read: MemoRead,
 }
 
-/// Slots of the read memo (`LaneStack::read_memos`); a site whose slot another live site's
-/// memo holds keeps the full call form.
-const READ_MEMOS: usize = 64;
-const _: () = assert!(READ_MEMOS.is_power_of_two());
+/// Slots of the read memo table (`LaneStack::read_memos`): it bounds the table's memory, and a
+/// table that fills starts again empty, so the sites that read since make their memos again.
+const READ_MEMOS: usize = 4096;
 
-const EMPTY_READ_MEMO: ReadMemo = ReadMemo {
-    site: std::ptr::null(),
-    callee: Value::UNDEFINED,
-    generation: NO_SCRIPT_GENERATION,
-    program: ProgramId::MAIN,
-    this_binding: ThisBinding::Sloppy,
-    read: MemoRead::Leaf(MemoLeaf::Field { base: 0, field: super::EMPTY_CACHE }),
-};
-
-/// The read memo slot of the call record `site`: the shared direct-mapped index of its
-/// address (`shape_memo::direct_mapped_index`), which spreads a view's consecutive records.
+/// The memo the call record `site` made, in the slot it names (`CallOperand::memo`); `None`
+/// before its first, or once the table refilled and gave the slot to another site.
 #[inline(always)]
-fn read_memo_index(site: Ip) -> usize {
-    super::shape_memo::direct_mapped_index(site as usize, READ_MEMOS)
+fn site_read_memo<'a>(memos: &'a [ReadMemo], site: &LaneInstruction) -> Option<&'a ReadMemo> {
+    // SAFETY: a memo's site is a call record (`is_script_call`), whose operand is `call`.
+    let slot = unsafe { site.operand.call.memo };
+    memos.get(slot as usize).filter(|held| std::ptr::eq(held.site, site))
 }
 
-/// Records `target`'s read at the call record `site` (`lane_memoize_read`) unless a live memo
-/// holds its slot: another site's, or the site's own, which then missed.
+/// Records `target`'s read at the call record `site` (`lane_memoize_read`) unless the site's
+/// own memo of this generation missed, which keeps the full form until the generation ends.
 #[inline(always)]
 fn lane_note_read<H: Host>(
     cx: *mut LaneContext<H>,
@@ -18596,8 +18652,8 @@ fn lane_note_read<H: Host>(
     this: Value,
 ) {
     let stack = unsafe { &vm(cx).lane_stack };
-    let held = &stack.read_memos[read_memo_index(site)];
-    if held.generation != stack.generation || held.site.is_null() {
+    // SAFETY: `site` is a call record of the running view.
+    if site_read_memo(&stack.read_memos, unsafe { &*site }).is_none_or(|held| held.generation != stack.generation) {
         lane_memoize_read(cx, site, target, arguments, this);
     }
 }
@@ -18669,7 +18725,7 @@ fn lane_memoize_read<H: Host>(
         }
     };
     let handler = script_call_memo_handler::<H>(read.shape());
-    vm.lane_stack.read_memos[read_memo_index(site)] = ReadMemo {
+    let memo = ReadMemo {
         site,
         callee: target.callee,
         generation: vm.lane_stack.generation,
@@ -18677,27 +18733,39 @@ fn lane_memoize_read<H: Host>(
         this_binding: target.this_binding,
         read,
     };
+    let memos = &mut vm.lane_stack.read_memos;
+    // SAFETY: `site` is a call record (`is_script_call`) of the running view, whose operand is
+    // `call`, written as `requicken` writes it.
+    unsafe {
+        if site_read_memo(memos, &*site).is_some() {
+            memos[(*site).operand.call.memo as usize] = memo;
+        } else {
+            if memos.len() == READ_MEMOS {
+                memos.clear();
+            }
+            (*site.cast_mut()).operand.call.memo = memos.len() as u32;
+            memos.push(memo);
+        }
+    }
     requicken::<H>(site, handler);
 }
 
-/// The value the memo of the call record at `ip` answers its call with (`ReadMemo`); `None`
+/// The value the memo of the call record `i` answers its call with (`ReadMemo`); `None`
 /// where the memo is another site's or stale, the call is another callee's or a construction's
 /// (`lane_constructing`), or a hit misses.
 ///
 /// # Safety
-/// `cx` is the running lane's context and `ip` its call record `i`.
+/// `cx` is the running lane's context and `i` its call record.
 #[inline(always)]
 unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     cx: *mut LaneContext<H>,
     r: Registers,
-    ip: Ip,
     i: &LaneInstruction,
 ) -> Option<Value> {
     let vm: &Vm<H> = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    let held = &vm.lane_stack.read_memos[read_memo_index(ip)];
-    if held.site != ip
-        || held.callee != callee
+    let held = site_read_memo(&vm.lane_stack.read_memos, i)?;
+    if held.callee != callee
         || held.generation != vm.lane_stack.generation
         || held.program != vm.active_program
         || lane_constructing(vm, callee)
@@ -18732,17 +18800,16 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
 script_handler! {
     /// `lane_script_call_full` at a site whose read call made a memo (`lane_memoize_read`): the
     /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
-    /// target's would. A call the memo does not
-    /// answer, or a returning call the frame does not admit (`lane_returning_call_admitted`),
-    /// takes the full form, which the site then keeps.
+    /// target's would. A call the memo does not answer takes the full form, which the site
+    /// then keeps; a run that admits no read call (`lane_returning_call_admitted`) takes it
+    /// once.
     fn lane_script_call_memo<SHAPE: u8>(cx, r, ip, i, view) {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        let value = if !unsafe { (*cx).script_calls } || (returns && !lane_returning_call_admitted(cx)) {
-            None
-        } else {
-            unsafe { lane_memo_read::<H, SHAPE>(cx, r, ip, i) }
-        };
-        let Some(value) = value else {
+        // A run that admits no read call leaves the memo to the next.
+        if !unsafe { (*cx).script_calls } || (returns && !lane_returning_call_admitted(cx)) {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        }
+        let Some(value) = (unsafe { lane_memo_read::<H, SHAPE>(cx, r, i) }) else {
             requicken::<H>(ip, lane_script_call_full::<H>);
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
@@ -19800,8 +19867,11 @@ fn lane_operand(
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,
         },
-        _ if matches!(instruction.op(), Op::GetField | Op::SetField) => LaneOperand {
+        _ if holds_field_hint(instruction.op()) => LaneOperand {
             field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
+        },
+        _ if is_script_call(instruction.op()) => LaneOperand {
+            call: CallOperand { imm: instruction.imm(), memo: NO_READ_MEMO },
         },
         _ => LaneOperand {
             imm: instruction.imm(),
@@ -21096,15 +21166,19 @@ fn derive_lane_view<'live, H: Host>(
             params: function.params,
             initial: function.initial_register.value(),
         });
-    let field_records = decoded
-        .iter()
-        .enumerate()
-        .filter(|&(pc, instruction)| {
-            matches!(instruction.op(), Op::GetField | Op::SetField)
-                && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
-        })
-        .map(|(pc, _)| pc as u32)
-        .collect();
+    let hinted_records = |names: bool| -> Box<[u32]> {
+        decoded
+            .iter()
+            .enumerate()
+            .filter(|&(pc, instruction)| {
+                holds_field_hint(instruction.op())
+                    && is_name_load(instruction.op()) == names
+                    && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
+            })
+            .map(|(pc, _)| pc as u32)
+            .collect()
+    };
+    let (field_records, name_records) = (hinted_records(false), hinted_records(true));
     let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
         records.into_iter().map(std::cell::UnsafeCell::new).collect();
     let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
@@ -21139,7 +21213,36 @@ fn derive_lane_view<'live, H: Host>(
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
+        name_records,
     }
+}
+
+/// Whether an instruction's record holds an own-field hint (`LaneInstruction::field_hint`) in
+/// a `field` operand: a field read or store's of its receiver, a by-name load's of the global
+/// object (`lane_load_global_name`).
+fn holds_field_hint(op: Op) -> bool {
+    matches!(op, Op::GetField | Op::SetField) || is_name_load(op)
+}
+
+/// Whether an instruction's record is a call site a read memo may answer
+/// (`lane_memoize_read`), whose operand is `call`.
+fn is_script_call(op: Op) -> bool {
+    matches!(
+        op,
+        Op::Call
+            | Op::CallArray
+            | Op::CallForwardingArguments
+            | Op::CallKnown
+            | Op::CallMethod
+            | Op::CallSpread
+            | Op::CallThisMethod
+            | Op::Construct
+    )
+}
+
+/// Whether an instruction is a by-name load (`LOAD_NAME`).
+fn is_name_load(op: Op) -> bool {
+    matches!(op, Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose

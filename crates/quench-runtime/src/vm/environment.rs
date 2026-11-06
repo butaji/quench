@@ -1482,7 +1482,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if active.is_none() || self.realm.global_lexical_bindings.contains_key(&atom) {
-            self.realm.bind_global_lexical(atom, value);
+            self.bind_global_lexical(atom, value);
         }
         Ok(())
     }
@@ -2127,7 +2127,7 @@ impl<H: Host> Vm<H> {
         self.store_environment_mapped_argument(owner, function, env, slot_index, value);
         if let Some(atom) = self.root_global_lexical_atom(owner, function, slot_index) {
             if self.realm.global_lexical_bindings.contains_key(&atom) {
-                self.realm.bind_global_lexical(atom, value);
+                self.bind_global_lexical(atom, value);
             }
             let owner = self.frames.iter().rposition(|active| {
                 active.function == super::ROOT_FUNCTION_ID && active.program == owner_id

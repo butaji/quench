@@ -22815,6 +22815,95 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
     }
 }
 
+#[cfg(not(quench_profiled))]
+#[test]
+fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
+    // Hot reads of global bindings (`lane_load_global_name`) across every change of what the
+    // name resolves to; the expectations are Node's, each script run as its own global Script.
+    let first = r#"
+function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }
+function check(got, want, what) { if (got !== want) throw Error(what + ': ' + got + ' !== ' + want); }
+function thrown(f) { try { f(); return 'none'; } catch (e) { return e.constructor.name; } }
+var V = 1;
+function readV() { return V; }
+check(hot(readV), 2000, 'var');
+V = 2;
+check(hot(readV), 4000, 'var redefined');
+globalThis.G = 1;
+function readG() { return G; }
+check(hot(readG), 2000, 'property');
+globalThis.G = 2;
+check(hot(readG), 4000, 'property redefined');
+Object.defineProperty(globalThis, 'G', { value: 3, writable: false, configurable: true });
+check(hot(readG), 6000, 'defineProperty data');
+Object.defineProperty(globalThis, 'G', { get() { return 4; }, configurable: true });
+check(hot(readG), 8000, 'getter');
+Object.defineProperty(globalThis, 'G', { value: 5, writable: true, configurable: true });
+check(hot(readG), 10000, 'getter replaced by data');
+globalThis.S = 1;
+function readS() { return S === undefined ? 7 : S; }
+check(hot(readS), 2000, 'before setter');
+var stored = 0;
+Object.defineProperty(globalThis, 'S', { set(v) { stored = v; }, configurable: true });
+check(hot(readS), 14000, 'setter without getter');
+S = 9;
+check(stored, 9, 'setter called');
+delete globalThis.G;
+check(thrown(function () { hot(readG); }), 'ReferenceError', 'deleted');
+function typeofH() { return typeof H === 'undefined' ? 1 : 2; }
+check(hot(typeofH), 2000, 'typeof absent');
+globalThis.H = 0;
+check(hot(typeofH), 4000, 'typeof present');
+globalThis.G = 6;
+for (var k = 0; k < 50; k++) globalThis['extra' + k] = k;
+check(hot(readG), 12000, 'other globals added');
+globalThis.L = 10;
+function readL() { return L; }
+check(hot(readL), 20000, 'before lexical');
+globalThis.K = 1;
+function readK() { return K; }
+check(hot(readK), 2000, 'before const');
+globalThis.C = 1;
+function readC() { return C; }
+check(hot(readC), 2000, 'before class');
+function readE() { return typeof E === 'undefined' ? -1 : E; }
+check(hot(readE), -2000, 'before eval var');
+globalThis.W = 1;
+function withRead(o) { with (o) { return W; } }
+check(hot(function () { return withRead({}); }), 2000, 'with misses');
+check(hot(function () { return withRead({ W: 2 }); }), 4000, 'with shadows');
+"#;
+    let later = r#"
+check(thrown(function () { hot(readL); }), 'ReferenceError', 'lexical in TDZ');
+const K = 40;
+check(hot(readK), 80000, 'const shadows');
+class C { static v = 3; }
+check(hot(function () { return readC().v; }), 6000, 'class shadows');
+(0, eval)('var E = 50;');
+check(hot(readE), 100000, 'eval var');
+check(hot(readG), 12000, 'property after lexical declarations');
+"#;
+    let program = Engine::specialize(first, "global-reads.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let held = |vm: &Vm<TestHost>| {
+        vm.programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .into_iter()
+            .flatten()
+            .filter_map(super::program_store::derived_lane_view)
+            .map(|view| view.held_name_hints())
+            .sum::<usize>()
+    };
+    assert!(held(&vm) > 0, "the hot reads hold global-object hints");
+    // A later Script's `let` shadows the global property; reading it first is a TDZ error.
+    let error = vm.eval_script_source(&program, "readL(); let L = 20;", "global-lexical.js").unwrap_err();
+    assert!(vm.format_error(&program, &error).contains("ReferenceError"));
+    // Declaring `L` cleared every hint, whatever name it holds (`Vm::note_global_lexical_names`).
+    assert_eq!(held(&vm), 0);
+    vm.eval_script_source(&program, later, "global-reads-later.js").unwrap();
+}
+
 #[test]
 fn global_declarations_survive_abrupt_script_evaluation() {
     let program = Engine::specialize_unspecialized("", "initial-script.js").unwrap();

@@ -566,6 +566,7 @@ impl<H: Host> Vm<H> {
         self.report_memory_if_enabled("snapshot_heap");
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
+        self.note_global_lexical_names();
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
         self.realm.immutable_global_lexical_bindings = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_states = Snap::unsnap(&mut reader)?;
