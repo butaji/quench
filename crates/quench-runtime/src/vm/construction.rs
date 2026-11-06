@@ -1017,8 +1017,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own `prototype` data property `key` in its `shape`; `None`
     /// for an accessor or no such property. Out of line and of plain values: a construct the
-    /// lane inlines this lookup into passes it no address of its stack, which would keep its
-    /// dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    /// lane inlines this lookup into passes it no address of its stack.
     #[inline(never)]
     fn prototype_data_slot(&self, constructor: Value, shape: u32, key: PropertyKey) -> Option<usize> {
         self.property_attributes(constructor, key)
