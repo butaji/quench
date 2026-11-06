@@ -41,6 +41,9 @@ pub(crate) trait Stage {
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    fn ne_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    /// Whether `a` is above `imm`, both unsigned.
+    fn above_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// Whether `a` is below `imm`, both unsigned.
     fn below_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s: only the arm taken runs.
@@ -270,6 +273,34 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
     }).expect("both arms of a narrow decode are total")
 }
 
+/// Whether a binding's word is a value the program reads, not an internal marker (an
+/// uninitialized binding's, a hole's).
+#[inline(always)]
+pub(crate) fn bound<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    stage.ne_imm(tag, ValueLayout::INTERNAL_TAG)
+}
+
+/// `bound` of a value the interpreter holds.
+#[inline(always)]
+pub(crate) fn is_bound(value: crate::Value) -> bool {
+    let mut stage = Concrete::DETACHED;
+    bound(&mut stage, value.to_bits())
+}
+
+/// Capture `slot` of an environment whose dense view holds `len` values at `values`
+/// (`EnvironmentSlots::native_dense_view`); `miss` where the view does not hold it: past its
+/// end, or not `bound`.
+#[inline(always)]
+pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let held = stage.above_imm(len, u64::from(slot));
+    stage.guard(held, miss)?;
+    let value = stage.load_u64(values, i32::from(slot) * std::mem::size_of::<u64>() as i32);
+    let bound = bound(stage, value);
+    stage.guard(bound, miss)?;
+    Some(value)
+}
+
 /// The interpreter's stage: words are the machine's own, and a failed guard returns to the
 /// caller's slow path. The property arena gives its base where an operation addresses it.
 pub(crate) struct Concrete {
@@ -336,6 +367,10 @@ impl Stage for Concrete {
     fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
     #[inline(always)]
     fn below_imm(&mut self, a: u64, imm: u64) -> bool { a < imm }
+    #[inline(always)]
+    fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
+    #[inline(always)]
+    fn above_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>, otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {
         if cond { then(self) } else { otherwise(self) }
@@ -462,6 +497,8 @@ impl<R: RegisterFile> Stage for ConcreteFrame<R> {
         sar32_imm(a: u64, shift: u32) -> u64;
         eq_imm(a: u64, imm: u64) -> bool;
         below_imm(a: u64, imm: u64) -> bool;
+        ne_imm(a: u64, imm: u64) -> bool;
+        above_imm(a: u64, imm: u64) -> bool;
         guard(cond: bool, miss: ()) -> Option<()>;
         property_base() -> u64;
         object_records() -> u64;

@@ -2799,7 +2799,6 @@ pub(super) fn lower_js_general_dispatch(
                         && instruction.numeric_local_target().is_none() =>
                 {
                     if let Some(destination) = register_offset(instruction.result_register()) {
-                        use crate::value::ValueLayout;
                         let fallback = builder.create_block();
                         let values = emit_js_payload_word(
                             &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values),
@@ -2807,17 +2806,9 @@ pub(super) fn lower_js_general_dispatch(
                         let len = emit_js_payload_word(
                             &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len),
                         );
-                        let slot = usize::from(instruction.capture_slot());
-                        let in_bounds = builder.ins().icmp_imm_u(
-                            IntCC::UnsignedGreaterThan, len, i64::try_from(slot).expect("capture slot fits i64"),
-                        );
-                        emit_js_guard(&mut builder, in_bounds, fallback);
-                        let offset = i32::try_from(slot * std::mem::size_of::<Value>())
-                            .expect("capture slot offset fits i32");
-                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
-                        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-                        let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
-                        emit_js_guard(&mut builder, ordinary, fallback);
+                        let mut stage = object_slots::Emit { builder: &mut builder, property_base: None, object_records: None };
+                        let value = super::staged::dense_capture(&mut stage, values, len, instruction.capture_slot(), fallback)
+                            .expect("an emitting stage's guards continue");
                         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
                         builder.ins().jump(next, &[]);
                         builder.switch_to_block(fallback);

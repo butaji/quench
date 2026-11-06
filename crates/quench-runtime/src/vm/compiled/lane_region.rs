@@ -1209,7 +1209,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
-                let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+                let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
                 let inlined = match self.unit.origins.get(pc).copied() {
                     Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(self.frame_captures.get(frame).copied().unwrap_or(super::FrameCaptures::NONE)),
                     _ => None,
@@ -1231,13 +1231,10 @@ impl Lowering<'_, '_> {
                 };
                 let done = self.builder.create_block();
                 self.builder.append_block_param(done, types::I64);
-                let in_bounds = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, len, slot as i64);
-                emit_js_guard(&mut self.builder, in_bounds, general);
-                let offset = i32::try_from(slot * std::mem::size_of::<Value>()).expect("capture slot offset fits i32");
-                let value = self.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
-                let tag = self.ins().band_imm_u(value, crate::value::ValueLayout::TAG_MASK as i64);
-                let ordinary = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::INTERNAL_TAG as i64);
-                emit_js_guard(&mut self.builder, ordinary, general);
+                // The dense view's read, as every tier makes it (`staged::dense_capture`).
+                let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_base: None, object_records: None };
+                let value = crate::vm::staged::dense_capture(&mut stage, values, len, slot, general)
+                    .expect("an emitting stage's guards continue");
                 self.ins().jump(done, &[value.into()]);
                 if general != exit {
                     self.builder.switch_to_block(general);
@@ -2688,6 +2685,8 @@ impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
         sar32_imm(a: ir::Value, shift: u32) -> ir::Value;
         eq_imm(a: ir::Value, imm: u64) -> ir::Value;
         below_imm(a: ir::Value, imm: u64) -> ir::Value;
+        ne_imm(a: ir::Value, imm: u64) -> ir::Value;
+        above_imm(a: ir::Value, imm: u64) -> ir::Value;
         guard(cond: ir::Value, miss: ir::Block) -> Option<()>;
     }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> Option<ir::Value>, otherwise: impl FnOnce(&mut Self) -> Option<ir::Value>) -> Option<ir::Value> {

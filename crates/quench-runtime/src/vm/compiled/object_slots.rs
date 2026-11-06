@@ -220,6 +220,8 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
     }
     fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
     fn below_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, a, imm as i64) }
+    fn ne_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm as i64) }
+    fn above_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm as i64) }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> Option<ir::Value>, otherwise: impl FnOnce(&mut Self) -> Option<ir::Value>) -> Option<ir::Value> {
         let (then_block, otherwise_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let result = self.builder.append_block_param(join, types::I64);

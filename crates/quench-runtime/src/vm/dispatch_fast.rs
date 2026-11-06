@@ -14488,7 +14488,7 @@ pub(super) unsafe extern "C" fn lane_env_capture<H: Host>(vm: u64, _residual: u6
     vm.walked_capture_slots(env, false, 0)
         .and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
         .or_else(|| vm.plain_projected_root_binding(env, slot))
-        .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
+        .filter(|value| super::staged::is_bound(*value))
         .unwrap_or(Value::DELETED)
         .to_bits()
 }
@@ -14695,7 +14695,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
         vm.plain_projected_root_binding(vm.environment_capture_env(env, false, depth)?, slot)
     });
     value
-        .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
+        .filter(|value| super::staged::is_bound(*value))
         .unwrap_or(Value::DELETED)
         .to_bits()
 }
