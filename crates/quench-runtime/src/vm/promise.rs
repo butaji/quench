@@ -10,22 +10,19 @@ const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
-/// Where SpeciesConstructor(promise, %Promise%) found the realm's `%Promise%` for receivers
-/// of one shape and prototype under one prototype layout epoch (`Vm::promise_species_proved`):
-/// `constructor` in a data slot of a prototype, and its own `@@species` slot holding the
-/// intrinsic getter. Every collection advances the epoch, so no value here outlives its record.
+/// That SpeciesConstructor(promise, %Promise%) answers the realm's `%Promise%` for receivers
+/// of one shape and prototype (`Vm::promise_species_proved`), held as a dependency: the walk
+/// that proved it found `constructor` in a data slot of a prototype and the constructor's own
+/// `@@species` holding the intrinsic getter, and both objects are watched prototypes, so any
+/// write to their slots or change to their layouts advances the prototype value epoch the
+/// proof was made under (`heap::prototype_value_epoch`), as does a collection that frees a
+/// prototype. A use reads no slot.
 #[derive(Clone, Copy)]
 pub(super) struct PromiseSpeciesProof {
     shape: u32,
     prototype: Value,
-    epoch: u64,
+    value_epoch: u64,
     realm: Value,
-    holder: Value,
-    holder_slot: u32,
-    constructor: Value,
-    constructor_shape: u32,
-    species_slot: usize,
-    getter: Value,
 }
 
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
@@ -5692,12 +5689,8 @@ impl<H: Host> Vm<H> {
         intrinsic
     }
 
-    /// Whether the last `PromiseSpeciesProof` answers `promise`: SpeciesConstructor(promise,
-    /// %Promise%) then reads `constructor` as the realm's `%Promise%` from the prototype data
-    /// slot it was found in, and that constructor's own `@@species` still holds the intrinsic
-    /// getter. A receiver of the proved shape and prototype finds `constructor` where the walk
-    /// did while the prototype layout epoch holds (`plain_proved_get`); the two slots are read
-    /// again, as a data write to either changes no layout.
+    /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved shape and
+    /// prototype, with no side descriptors, under the value epoch the proof was made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let Some(proof) = self.promise_species_proof.get() else {
@@ -5706,60 +5699,35 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return false;
         };
-        if data.shape() != proof.shape
-            || data.proto() != proof.prototype
-            || data.has_side_descriptors()
-            || proof.epoch != crate::heap::prototype_layout_epoch()
-            || proof.realm != self.realm.globals
-        {
-            return false;
-        }
-        let (Some(holder), Some(constructor)) =
-            (self.heap.ordinary_object(proof.holder), self.object_data(proof.constructor))
-        else {
-            return false;
-        };
-        // SAFETY: the proof's walk found `constructor` in this data slot of the holder's shape,
-        // which the epoch keeps.
-        let found = unsafe { self.heap.property_get_shaped(holder, proof.holder_slot as usize) };
-        found == Some(proof.constructor)
-            && constructor.shape() == proof.constructor_shape
-            && self.heap.property_get(constructor, proof.species_slot) == Some(proof.getter)
+        data.shape() == proof.shape
+            && data.proto() == proof.prototype
+            && !data.has_side_descriptors()
+            && proof.value_epoch == crate::heap::prototype_value_epoch()
+            && proof.realm == self.realm.globals
     }
 
     /// Records the `PromiseSpeciesProof` of `promise`, whose `constructor` read found the
-    /// realm's `%Promise%` with its intrinsic `@@species` getter: where the read's proof found
-    /// the constructor, and the getter's slot, when both were proved under this epoch.
-    fn record_promise_species_proof(&self, promise: Value, constructor: Value) {
+    /// realm's `%Promise%` with its intrinsic `@@species` getter, where the read's proof found
+    /// the constructor inherited from a prototype: the holder and the constructor become
+    /// watched prototypes, whose writes retire the proof.
+    fn record_promise_species_proof(&mut self, promise: Value, constructor: Value) {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let epoch = crate::heap::prototype_layout_epoch();
-        let (Some(data), Some(constructor_data)) = (self.heap.ordinary_object(promise), self.object_data(constructor))
+        let Some(data) = self.heap.ordinary_object(promise) else {
+            return;
+        };
+        let (shape, key) = (data.shape(), PropertyKey::string(self.runtime_atoms.constructor));
+        let Some(SymbolLoadAnswer::Inherited { prototype, holder, .. }) =
+            self.symbol_load_proofs.answer(shape, key, crate::heap::prototype_layout_epoch())
         else {
             return;
         };
-        let key = PropertyKey::string(self.runtime_atoms.constructor);
-        let Some(SymbolLoadAnswer::Inherited { prototype, holder, slot }) = self.symbol_load_proofs.answer(data.shape(), key, epoch)
-        else {
-            return;
-        };
-        let constructor_shape = constructor_data.shape();
-        let Some(species_slot) = self.proved_species_slot(constructor_shape, epoch) else {
-            return;
-        };
-        let Some(getter) = self.heap.property_get(constructor_data, species_slot) else {
-            return;
-        };
+        self.heap.mark_prototype(holder);
+        self.heap.mark_prototype(constructor);
         self.promise_species_proof.set(Some(PromiseSpeciesProof {
-            shape: data.shape(),
+            shape,
             prototype,
-            epoch,
+            value_epoch: crate::heap::prototype_value_epoch(),
             realm: self.realm.globals,
-            holder,
-            holder_slot: slot,
-            constructor,
-            constructor_shape,
-            species_slot,
-            getter,
         }));
     }
 

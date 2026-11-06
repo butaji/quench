@@ -473,8 +473,18 @@ impl<H: Host> Vm<H> {
         body: impl FnOnce(&mut Self) -> Result<(), JsError>,
     ) -> Result<(), JsError> {
         self.switch_realm_global(realm);
+        let context = match context {
+            Some(context) => Some(context),
+            None => self.host.enter_unobserved_job(self.unobserved_jobs_entered),
+        };
         let Some(context) = context else {
-            return body(self);
+            // The queue's consecutive unobserved jobs share the entry (`Vm::run_job_queue`).
+            self.unobserved_jobs_entered = true;
+            let outcome = body(self);
+            for root in self.host.end_unobserved_job() {
+                self.heap.release_root(root);
+            }
+            return outcome;
         };
         let previous = self.host.enter_job_context(context);
         let outcome = self.promise_job_boundary(Some(context), true).and_then(|()| body(self));
@@ -500,7 +510,8 @@ impl<H: Host> Vm<H> {
             let called = if await_reaction {
                 vm.resume_await(p, reaction.handler, reaction.rejected, value)
             } else {
-                vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
+                // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
+                vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
             };
             let (state, result) = match called {
                 Ok(result) => (PromiseState::Fulfilled, result),

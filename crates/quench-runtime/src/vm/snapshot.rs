@@ -240,6 +240,7 @@ impl<H: Host> Vm<H> {
         }
         let Self {
             native_microtask_running,
+            unobserved_jobs_entered: _,
             host,
             specialized,
             heap,

@@ -12,6 +12,7 @@ impl<H: Host> Vm<H> {
         Self {
             host,
             native_microtask_running: false,
+            unobserved_jobs_entered: false,
             specialized: true,
             heap: Heap::new(),
             realm: Realm {

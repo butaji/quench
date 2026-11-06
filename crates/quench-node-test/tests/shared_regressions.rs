@@ -592,3 +592,43 @@ console.log(show(() => mix({ valueOf() { throw new RangeError('boom'); } })));
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+/// Promise jobs that capture no store and no resource run in a fresh, empty context: job order
+/// across `then`, `await` and `queueMicrotask`, execution ids, thrown handlers, unhandled
+/// rejections, and an `enterWith` inside a job, which reaches the job's own continuations and
+/// no later job, as Node's do.
+#[test]
+fn promise_jobs_isolate_async_local_storage_and_keep_order_like_node() {
+    let source = r#"
+const { AsyncLocalStorage, executionAsyncId, triggerAsyncId } = require('async_hooks');
+const out = [];
+const ids = () => executionAsyncId() + '/' + triggerAsyncId();
+process.on('unhandledRejection', (reason) => out.push('unhandled ' + (reason && reason.message)));
+const p = Promise.resolve(1);
+p.then(() => out.push('t1 ' + ids()));
+queueMicrotask(() => out.push('q1'));
+(async () => { out.push('a0'); await null; out.push('a1 ' + ids()); await p; out.push('a2'); })();
+p.then(() => { out.push('t2'); throw new Error('thrown'); }).catch((e) => out.push('caught ' + e.message));
+p.then(() => { throw new Error('nobody'); });
+Promise.reject(new Error('rejected')).then(() => out.push('never'));
+let als;
+p.then(() => {
+  als = new AsyncLocalStorage();
+  out.push('e0 ' + als.getStore());
+  als.enterWith('E');
+  out.push('e1 ' + als.getStore());
+  Promise.resolve().then(() => out.push('e-inner ' + als.getStore()));
+});
+p.then(() => out.push('after-e ' + als.getStore()));
+queueMicrotask(() => { out.push('q2 ' + als.getStore()); als.enterWith('Q'); });
+p.then(() => out.push('after-q ' + als.getStore()));
+p.then(() => als.run('R', () => p.then(() => { out.push('run ' + als.getStore()); als.enterWith('R2'); }).then(() => out.push('run2 ' + als.getStore()))));
+p.then(() => out.push('last ' + als.getStore()));
+setTimeout(() => { out.push('timer ' + als.getStore()); console.log(out.join('\n')); }, 10);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "Quench failed: {:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
