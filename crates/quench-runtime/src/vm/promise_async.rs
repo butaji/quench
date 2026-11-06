@@ -46,13 +46,17 @@ impl<H: Host> Vm<H> {
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
         let (low, high) = frame.registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
-        let mut dead = !mask & RegisterSet::MAX.checked_shr(RegisterSet::BITS - covered as u32).unwrap_or(0);
-        // Dead registers come in runs (a statement's temporaries), each cleared as one span.
-        while dead != 0 {
-            let start = dead.trailing_zeros();
-            let end = start + (dead >> start).trailing_ones();
-            low[start as usize..end as usize].fill(Value::UNDEFINED);
-            dead &= RegisterSet::MAX.checked_shl(end).unwrap_or(0);
+        // Dead registers come in runs (a statement's temporaries), each cleared as one span,
+        // found a machine word of the mask at a time.
+        for (word, registers) in low.chunks_mut(u64::BITS as usize).enumerate() {
+            let live = (mask >> (word * u64::BITS as usize)) as u64;
+            let mut dead = !live & u64::MAX >> (u64::BITS as usize - registers.len());
+            while dead != 0 {
+                let start = dead.trailing_zeros();
+                let end = start + (dead >> start).trailing_ones();
+                registers[start as usize..end as usize].fill(Value::UNDEFINED);
+                dead &= u64::MAX.checked_shl(end).unwrap_or(0);
+            }
         }
     }
 
