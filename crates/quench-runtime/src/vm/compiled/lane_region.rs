@@ -157,8 +157,13 @@ struct Lowering<'a, 'f> {
     /// Per loop header, the reads its loop repeats unchanged (`invariant_reads`), made once
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
-    hoists: BTreeMap<usize, Vec<usize>>,
+    hoists: BTreeMap<usize, Hoist>,
     hoisted: BTreeMap<usize, (Variable, bool)>,
+    /// Per array register a loop reads elements of, its elements' view, proved at the loop's
+    /// entry (`Lowering::hoist_reads`): a header and a length, zero where the register held
+    /// no direct array, so every read of it takes the general one.
+    /// Its loop's extent bounds the reads that take it.
+    hoisted_arrays: BTreeMap<Register, (Variable, Variable, std::ops::RangeInclusive<usize>)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -563,13 +568,23 @@ fn stores_own(instruction: WideInstruction) -> bool {
         && !instruction.returns_from_frame()
 }
 
+/// What a loop repeats unchanged, made once at its entry: its field reads (by PC), and the
+/// elements view of each array register it reads elements of.
+#[derive(Clone, Default)]
+struct Hoist {
+    reads: Vec<usize>,
+    arrays: Vec<Register>,
+    /// The loop's last PC, its backward jump.
+    back: usize,
+}
+
 /// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
 /// entered by one edge from before it and no other, of instructions that only read
 /// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
 /// writes, by one cached atom it stores to no object, see the same object and value every
 /// iteration. No entry (`starts`) lies in such a loop past its header.
 fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
-    -> BTreeMap<usize, Vec<usize>> {
+    -> BTreeMap<usize, Hoist> {
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
         ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump).then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| !matches!(instruction.op().control_flow_layout(),
@@ -595,7 +610,14 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
                 && base.register_index().is_some_and(|register| !written.contains(&register)) => Some(header + offset),
             _ => None,
         }).collect();
-        if !reads.is_empty() { hoists.insert(header, reads); }
+        // A loop that only reads stores no element, so an array it never rebinds keeps its
+        // elements' backing.
+        let arrays: BTreeSet<Register> = body.iter().filter(|candidate| candidate.op() == Op::GetIndex)
+            .filter_map(|candidate| candidate.operand_b().register_index())
+            .filter(|register| !written.contains(register)).collect();
+        if !reads.is_empty() || !arrays.is_empty() {
+            hoists.insert(header, Hoist { reads, arrays: arrays.into_iter().collect(), back });
+        }
     }
     hoists
 }
@@ -737,6 +759,7 @@ fn lower(
         valid: true,
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
+        hoisted_arrays: BTreeMap::new(),
         at: 0,
         forward: Vec::new(),
         arrived: BTreeMap::new(),
@@ -1278,6 +1301,8 @@ impl Lowering<'_, '_> {
                 // Any other element, a hole's or one past the dense end included, is the lane's
                 // own read (`compiled::lane_index_get`), which leaves only where it does.
                 let exit = self.guard_exit(state, pc32);
+                // The key's tagged bits are taken here, where they dominate both paths: a view
+                // the cold path alone made would not hold on the hot one.
                 let base = self.operand_tagged(state, instruction.operand_b());
                 let key = self.operand_tagged(state, instruction.operand_c());
                 // The key's index, as every tier takes it (`staged::index`).
@@ -1288,7 +1313,18 @@ impl Lowering<'_, '_> {
                     let (general, join) = (self.builder.create_block(), self.builder.create_block());
                     self.builder.set_cold_block(general);
                     let read = self.builder.append_block_param(join, types::I64);
-                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, index, general);
+                    // A view its loop proved at entry, else this read's own.
+                    let hoisted = instruction.operand_b().register_index().and_then(|register| self.hoisted_arrays.get(&register))
+                        .filter(|(_, _, extent)| extent.contains(&pc)).map(|(header, length, _)| (*header, *length));
+                    let value = match hoisted {
+                        Some((header, length)) => {
+                            let elements = crate::vm::staged::Elements { header: self.builder.use_var(header), length: self.builder.use_var(length) };
+                            let index = self.ins().uextend(types::I64, index);
+                            crate::vm::staged::element_in(&mut super::object_slots::Emit::new(&mut self.builder), elements, index, general)
+                                .expect("an emitting stage's guards continue")
+                        }
+                        None => super::emit_dense_element_read(&mut self.builder, payload, base, index, general),
+                    };
                     self.ins().jump(join, &[ir::BlockArg::Value(value)]);
                     self.builder.switch_to_block(general);
                     let value = emit_lane_helper_call(&mut self.builder, payload, self.helpers.index_get, &[base, key]);
@@ -1982,7 +2018,18 @@ impl Lowering<'_, '_> {
     /// Each read's value is one variable every entering edge defines; a guard that fails
     /// leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
-        let Some(reads) = self.hoists.get(&header).cloned() else { return };
+        let Some(Hoist { reads, arrays, back }) = self.hoists.get(&header).cloned() else { return };
+        for register in arrays {
+            let bits = self.tagged(state, register);
+            let (header_bits, length) = self.array_view(bits);
+            let (header_var, length_var) = match self.hoisted_arrays.get(&register) {
+                Some((header_var, length_var, _)) => (*header_var, *length_var),
+                None => (self.builder.declare_var(types::I64), self.builder.declare_var(types::I64)),
+            };
+            self.builder.def_var(header_var, header_bits);
+            self.builder.def_var(length_var, length);
+            self.hoisted_arrays.insert(register, (header_var, length_var, header..=back));
+        }
         for pc in reads {
             let instruction = self.unit.instructions[pc];
             let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { continue };
@@ -2012,6 +2059,28 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variable, value);
             self.hoisted.insert(pc, (variable, int32));
         }
+    }
+
+    /// The elements view of the value `bits` (`staged::elements`): a direct array's, else a
+    /// view of none, which no index is within.
+    fn array_view(&mut self, bits: ir::Value) -> (ir::Value, ir::Value) {
+        use crate::vm::staged::Stage;
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+        let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let array = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
+        let reserved = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+        let viewed = self.ins().band(array, reserved);
+        let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::ArrayRecords, records);
+        let view = |stage: &mut super::object_slots::Emit<'_, '_>| {
+            let id = stage.and_imm(bits, u64::from(u32::MAX));
+            let offset = stage.mul_imm(id, crate::heap::NATIVE_ARRAY_LAYOUT.record_size as u64);
+            let record = stage.add(records, offset);
+            crate::vm::staged::elements(stage, record)
+        };
+        let header = stage.choose(viewed, |stage| Some(view(stage).header), |stage| Some(stage.constant(0))).expect("both arms make a word");
+        let length = stage.choose(viewed, |stage| Some(stage.load_u32(header, crate::heap::NATIVE_ARRAY_LAYOUT.header_length_offset as i32)),
+            |stage| Some(stage.constant(0))).expect("both arms make a word");
+        (header, length)
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {

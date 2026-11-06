@@ -304,13 +304,35 @@ pub(crate) fn array_record<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss
     Some(stage.add(records, offset))
 }
 
+/// A view of an array's dense elements: their backing's header and how many it holds.
+#[derive(Clone, Copy)]
+pub(crate) struct Elements<W> {
+    pub(crate) header: W,
+    pub(crate) length: W,
+}
+
+/// The current dense elements of the array record at `record`.
+#[inline(always)]
+pub(crate) fn elements<S: Stage>(stage: &mut S, record: S::Word) -> Elements<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let header = stage.load_u64(record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    Elements { header, length }
+}
+
 /// The present element `index` (unsigned) of the dense elements of the array record at
 /// `record`, through its current backing; `miss` past their end or at a hole.
 #[inline(always)]
 pub(crate) fn dense_element<S: Stage>(stage: &mut S, record: S::Word, index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let elements = elements(stage, record);
+    element_in(stage, elements, index, miss)
+}
+
+/// The present element `index` (unsigned) of `elements`; `miss` past their end or at a hole.
+#[inline(always)]
+pub(crate) fn element_in<S: Stage>(stage: &mut S, elements: Elements<S::Word>, index: S::Word, miss: S::Miss) -> Option<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let header = stage.load_u64(record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    let Elements { header, length } = elements;
     let within = stage.below(index, length);
     stage.guard(within, miss)?;
     let offset = stage.mul_imm(index, std::mem::size_of::<u64>() as u64);
