@@ -2839,7 +2839,21 @@ impl crate::vm::staged::Numbers for LaneMachine<'_, '_, '_> {
     }
     fn float_constant(&mut self, value: f64) -> ir::Value { self.lowering.ins().f64const(value) }
     fn cond_constant(&mut self, value: bool) -> ir::Value { self.lowering.ins().iconst(types::I8, i64::from(value)) }
-    fn not_cond(&mut self, a: ir::Value) -> ir::Value { self.lowering.ins().bxor_imm_u(a, 1) }
+    /// A comparison's negation is the comparison of the complement condition (for doubles,
+    /// the unordered one, so NaN still negates), which a branch takes as it is; any other
+    /// condition's is its flip.
+    fn not_cond(&mut self, a: ir::Value) -> ir::Value {
+        use cranelift_codegen::ir::condcodes::CondCode;
+        let dfg = &self.lowering.builder.func.dfg;
+        if let ir::ValueDef::Result(inst, 0) = dfg.value_def(a) {
+            match dfg.insts[inst] {
+                ir::InstructionData::IntCompare { cond, args: [left, right], .. } => return self.lowering.ins().icmp(cond.complement(), left, right),
+                ir::InstructionData::FloatCompare { cond, args: [left, right], .. } => return self.lowering.ins().fcmp(cond.complement(), left, right),
+                _ => {}
+            }
+        }
+        self.lowering.ins().bxor_imm_u(a, 1)
+    }
     fn set_boolean(&mut self, register: Register, cond: ir::Value) {
         let boolean = self.lowering.boolean(cond);
         self.lowering.set_boolean(self.state, register, boolean);
