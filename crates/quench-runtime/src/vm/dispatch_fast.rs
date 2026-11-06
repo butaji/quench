@@ -1266,6 +1266,7 @@ impl Carried {
 /// An activation a lane call made without a VM frame. Its registers are
 /// a window of the lane stack; it returns to the record after `call` in its
 /// caller, whose registers, view and memory it keeps for the return.
+#[derive(Clone, Copy)]
 struct Activation {
     function: u32,
     call: Ip,
@@ -1281,6 +1282,7 @@ struct Activation {
 }
 
 /// What an activation keeps beyond its registers, by the kind of function it runs.
+#[derive(Clone, Copy)]
 enum ActivationKind {
     Script(ScriptActivation),
     /// A Wasm activation keeps its caller's memory for the return and its requested
@@ -1319,6 +1321,7 @@ impl Activation {
 /// receiver and environment live in the context while it runs (`LaneContext::this`, `env`)
 /// and in the next script activation's caller state beneath that (`ActivationState::of`):
 /// one fact, held once.
+#[derive(Clone, Copy)]
 struct ScriptActivation {
     callee: Value,
     /// Arguments passed, all in parameter registers.
@@ -3967,14 +3970,7 @@ macro_rules! lane_return_value {
 /// handlers keep their registers.
 #[inline(never)]
 fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
-    // As `lane_return_general`: a run of returning calls, then another program's activation.
-    if let Some(resumed) = lane_complete_plain_chain(cx, value) {
-        return resumed;
-    }
-    if let Some(resumed) = lane_complete_cross_activation(cx, value) {
-        return resumed;
-    }
-    if let Some(resumed) = lane_complete_activation(cx, ip, value) {
+    if let Some(resumed) = lane_complete_returning(cx, ip, value) {
         return resumed;
     }
     if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
@@ -15596,34 +15592,35 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     (callee_registers, start)
 }
 
-/// The activation of a native's call of `target` with `args` from the frame whose registers
-/// are `r` (`Vm::lane_native_callback`), as the lane's own call would make it from the call
-/// record `call`: a plain activation when it takes at most its parameters, the values past
-/// them dropped where no legacy reflection of a sloppy function can observe them, else a
-/// keeping one (`lane_activate_keeping`). Its first record, or `None` where the lane would
-/// not activate the call.
+/// The activation of a native's call of `target` with `args` from the lane's running
+/// function (`Vm::lane_native_callback`), as the lane's own call would make it from the call
+/// record `call`, completing to the native (`Completion::ReturnsToNative`): by its shape
+/// (`PreparedShape`), or, for a gathering target, whose rest array it makes, or a call
+/// without room, which grows the stack for the general path it takes, as
+/// `lane_activate_keeping` makes it. Its first record, or `None` where the lane would not
+/// activate the call.
 fn lane_push_callback<H: Host>(
     cx: *mut LaneContext<H>,
-    r: Registers,
     call: Ip,
     target: &ScriptCallTarget,
     args: &[Value],
     this: Value,
 ) -> Option<Ip> {
-    let vm = unsafe { vm(cx) };
-    let params = usize::from(target.params);
-    let passed = args.len().min(params);
-    let unobserved = args.len() <= params || target.this_binding != ThisBinding::Sloppy;
-    if target.entry == CallEntry::Activates
-        && unobserved
-        && passed <= usize::from(FIXED_ARGUMENT_COPIES)
-        && lane_activation_room(vm, target)
+    debug_assert!(!lane_crosses::<H, true>(cx, target), "a native's lane callee is of the running program");
+    // SAFETY: the running lane's context, which nothing else accesses.
+    let shape = PreparedShape::of(unsafe { &*cx }, call, target, args.len());
+    if let Some(shape) = &shape
+        && let Some(start) = lane_push_prepared(cx, shape, target, this, args)
     {
-        let (_, start) = lane_push_passed::<H, false, false>(cx, r, call, target, args.as_ptr(), passed as u16, this, false);
         return Some(start);
     }
-    let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
-    lane_activate_keeping::<H, false>(cx, r, call, target, arguments, this, false, None).ok().map(|(_, start)| start)
+    let (r, arguments) = (unsafe { (*cx).registers }, ActivationArguments::Kept(args.as_ptr(), args.len()));
+    let (_, start) = lane_activate_keeping::<H, false>(cx, r, call, target, arguments, this, false, None).ok()?;
+    let vm = unsafe { vm(cx) };
+    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
+        script.completion = Completion::ReturnsToNative;
+    }
+    Some(start)
 }
 
 /// `lane_activate` of an environment target (`CallEntry::Environment`): its window holds
@@ -16450,19 +16447,38 @@ lane_handler! {
     /// registers.
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
-        // A run of returning calls (`return f(...)`) first, the commonest return past the
-        // plain one, then another program's activation.
-        if let Some(resumed) = lane_complete_plain_chain(cx, r.get(i.a)) {
-            resume!(cx, resumed)
-        }
-        if let Some(resumed) = lane_complete_cross_activation(cx, r.get(i.a)) {
-            resume!(cx, resumed)
-        }
-        if let Some(resumed) = lane_complete_activation(cx, ip, r.get(i.a)) {
+        if let Some(resumed) = lane_complete_returning(cx, ip, r.get(i.a)) {
             resume!(cx, resumed)
         }
         resume!(cx, lane_return_frame::<H>(r, ip))
     }
+}
+
+/// The completion of the innermost activation with `value`, which the record at `ip`
+/// returns, past the common return (`lane_complete_plain_activation`), by what it yields to
+/// its call: a native's callback ends the run (`lane_complete_native_callback`), a plain
+/// activation completes a run of returning calls (`return f(...)`,
+/// `lane_complete_plain_chain`), another program's activation enters its caller's program
+/// (`lane_complete_cross_activation`), and any other completion, or any of these past its
+/// common form, completes as `lane_complete_activation` completes it. `None` when no
+/// activation runs: the running function is a VM frame.
+#[inline(always)]
+fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let completion = match vm.lane_stack.activations.last().map(|activation| &activation.kind) {
+        Some(ActivationKind::Script(script)) => Some(script.completion),
+        _ => None,
+    };
+    let common = match completion {
+        Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
+        Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
+        Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
+        _ => None,
+    };
+    if common.is_some() {
+        return common;
+    }
+    lane_complete_activation(cx, ip, value)
 }
 
 /// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
@@ -16612,6 +16628,28 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     vm.lane_stack.activations.truncate(outermost + 1);
     vm.lane_stack.drop_iterators_from(outermost + 1);
     lane_complete_plain_activation(cx, value)
+}
+
+/// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the
+/// native's caller state restored, the run ends with `value`, which the native receives.
+#[inline(always)]
+fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
+    let top: *const Activation = &vm.lane_stack.activations[depth];
+    // SAFETY: `top` is the innermost activation, which nothing else accesses.
+    if !matches!(unsafe { &(*top).kind }, ActivationKind::Script(script) if script.completion == Completion::ReturnsToNative) {
+        return None;
+    }
+    // SAFETY: a script activation holds no drop glue and no Wasm storage
+    // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
+    // the next push, so it is read in place, as `lane_return_from` reads a plain one.
+    unsafe { vm.lane_stack.activations.set_len(depth) };
+    vm.lane_stack.drop_iterators_from(depth);
+    let activation = unsafe { &*top };
+    lane_restore_caller(cx, activation);
+    vm.lane_native_returned = Some(value);
+    Some(Resumed::Exit(exit(activation.call)))
 }
 
 /// Restore the lane state `activation`'s caller runs with, as its return does: the lane
@@ -21095,7 +21133,7 @@ impl<H: Host> Vm<H> {
             (*cx).pending = &mut pending;
             (*cx).executing = &mut executing;
         }
-        let Some(start) = lane_push_callback(cx, saved.registers, site.call, &target, args, this) else {
+        let Some(start) = lane_push_callback(cx, site.call, &target, args, this) else {
             unsafe {
                 (*cx).pending = saved.pending;
                 (*cx).executing = saved.executing;
@@ -21103,11 +21141,6 @@ impl<H: Host> Vm<H> {
             self.pending_call_stacks.push(pending);
             return None;
         };
-        if let Some(ActivationKind::Script(script)) =
-            self.lane_stack.activations.last_mut().map(|activation| &mut activation.kind)
-        {
-            script.completion = Completion::ReturnsToNative;
-        }
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
         let outcome = match self.lane_native_returned.take() {
@@ -21191,7 +21224,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: the deferred call's record lies in the caller activation's view.
         let call = unsafe { saved.base.add(deferred.call_pc) };
         let lower = self.lane_stack.activations.len();
-        let Some(start) = lane_push_callback(cx, saved.registers, call, &target, args, this) else {
+        let Some(start) = lane_push_callback(cx, call, &target, args, this) else {
             // A push that found no room made the activations frames, as the native's
             // observation of the frame stack would have.
             if self.frames.len() != deferred.frames {
@@ -21207,11 +21240,6 @@ impl<H: Host> Vm<H> {
         unsafe {
             (*cx).pending = &mut pending;
             (*cx).executing = &mut executing;
-        }
-        if let Some(ActivationKind::Script(script)) =
-            self.lane_stack.activations.last_mut().map(|activation| &mut activation.kind)
-        {
-            script.completion = Completion::ReturnsToNative;
         }
         self.lane_stack.native_boundary =
             Some(NativeBoundary {
@@ -21313,6 +21341,255 @@ unsafe fn lane_restore_context<H: Host>(cx: *mut LaneContext<H>, saved: LaneCont
     unsafe {
         std::ptr::write(cx, saved);
         (*cx).proofs.retire();
+    }
+}
+
+/// What a native's loop of calls of one callee with one receiver from the lane that called
+/// it proves once (`Vm::prepare_lane_callback`), as JSC's `CachedCall` links its callee once
+/// per loop: the lane, the native's site in it and the context its caller resumes with, the
+/// callee's frameless target and the `this` it binds, resolved under `epoch`, the native
+/// stack the calls run on and the pending calls their frames would take. Each call
+/// (`Vm::call_prepared_lane`) tests only what the native's own steps between calls can
+/// change, and leaves any other call to `Vm::call_value`.
+pub(super) struct PreparedLaneCallback<H: Host> {
+    cx: *mut LaneContext<H>,
+    site: LaneNativeCall,
+    receiver: Value,
+    target: ScriptCallTarget,
+    this: Value,
+    /// The collection epoch `target` was resolved under; a collection retires it.
+    epoch: u64,
+    /// The lane's context as the native's caller left it, which a callback that leaves the
+    /// lane restores (`lane_restore_context`). It holds no drop glue.
+    caller: LaneContext<H>,
+    /// The activation calls passing its argument count push, made once (`PreparedShape`).
+    shape: Option<PreparedShape>,
+    pending: Vec<PendingGeneralCall>,
+    _stack: crate::stack::StackGuard,
+}
+
+/// The activation of a native's callback for calls passing `argc` values (`lane_push_callback`),
+/// made once per prepared loop: every field but its window, which each call takes from the
+/// lane stack, and the window's layout: its `registers`, the `passed` values its parameters
+/// bind, whether it `keeps` every value passed after its registers (where a forwarded
+/// `arguments` or a sloppy function's legacy reflection can observe those past its
+/// parameters), its whole `size` and the `room` its admission needs.
+#[derive(Clone, Copy)]
+struct PreparedShape {
+    argc: usize,
+    activation: Activation,
+    registers: usize,
+    passed: usize,
+    keeps: bool,
+    size: usize,
+    room: usize,
+}
+
+impl PreparedShape {
+    /// The shape of `target`'s activations from the native whose caller's context is
+    /// `caller`, for calls passing `argc` values; `None` for a gathering target, whose rest
+    /// array each call makes (`lane_activate_keeping`).
+    fn of<H: Host>(caller: &LaneContext<H>, call: Ip, target: &ScriptCallTarget, argc: usize) -> Option<Self> {
+        if target.entry == CallEntry::Gathers || argc > usize::from(u16::MAX) {
+            return None;
+        }
+        let (params, registers) = (usize::from(target.params), usize::from(target.registers));
+        let keeps = target.forwards() || argc > params && !target.drops_extra_arguments();
+        let size = if keeps { registers + argc } else { registers };
+        let activation = Activation {
+            function: target.function,
+            call,
+            caller_base: caller.base,
+            caller_registers: caller.registers,
+            window: 0,
+            caller_program: caller.program,
+            kind: ActivationKind::Script(ScriptActivation {
+                callee: target.callee,
+                argc: if keeps { argc } else { argc.min(params) } as u16,
+                caller_this: caller.this,
+                caller_env: caller.env,
+                caller_capture: caller.capture,
+                completion: Completion::ReturnsToNative,
+                forwards: keeps,
+                environment: false,
+            }),
+        };
+        let room = usize::from(target.room).max(fill_room::<ACTIVATION_FILL_BLOCK>(size));
+        Some(Self { argc, activation, registers, passed: argc.min(params), keeps, size, room })
+    }
+}
+
+/// The activation `shape` describes, for a call with `args`: the window filled, the
+/// activation pushed and the context made the callee's. `None`, which changes nothing,
+/// where the lane stack lacks room.
+#[inline(always)]
+fn lane_push_prepared<H: Host>(
+    cx: *mut LaneContext<H>,
+    shape: &PreparedShape,
+    target: &ScriptCallTarget,
+    this: Value,
+    args: &[Value],
+) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
+    let stack = &mut vm.lane_stack;
+    let window = stack.values.len();
+    if stack.activations.len() >= stack.activation_limit.get() || stack.values.capacity() - window < shape.room {
+        return None;
+    }
+    // SAFETY: as `lane_push_callback`'s; `args` holds `shape.argc` values.
+    unsafe {
+        let registers = stack.values.as_mut_ptr().add(window);
+        fill_window(registers, shape.registers, Value::UNDEFINED);
+        copy_arguments(registers, args.as_ptr(), shape.passed as u16);
+        if shape.keeps {
+            copy_arguments(registers.add(shape.registers), args.as_ptr(), shape.argc as u16);
+        }
+        stack.values.set_len(window + shape.size);
+        stack.push_activation(Activation { window, ..shape.activation });
+        (*cx).registers = Registers(registers);
+        (*cx).base = (*target.view).records();
+        (*cx).this = this;
+        (*cx).env = target.env;
+        (*cx).capture = target.capture;
+    }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    }
+    // SAFETY: the program store keeps a derived view alive with its program.
+    Some(unsafe { (*target.view).start() })
+}
+
+impl<H: Host> Vm<H> {
+    /// `lane_native_callback`'s tests and resolution, made once for a native's loop of calls
+    /// of `callee` with `receiver`: `None` where none of them would run in the lane.
+    pub(super) fn prepare_lane_callback(&mut self, callee: Value, receiver: Value) -> Option<PreparedLaneCallback<H>> {
+        if !self.execution_mode.allows_dynamic_execution() || self.lane_deferred.is_some() {
+            return None;
+        }
+        let site = self.lane_native?;
+        let cx: *mut LaneContext<H> = site.cx.cast();
+        if site.frames != self.frames.len()
+            || lane_context::<H>() != cx
+            || !self.lane_stack.activations.is_empty()
+            || self.with_scope_entered
+            // SAFETY: the lane's context lives while its native runs.
+            || !unsafe { (*cx).script_calls }
+            || self.active_program != unsafe { (*cx).program }
+        {
+            return None;
+        }
+        let stack = crate::stack::StackGuard::enter().ok()?;
+        let epoch = self.heap.collection_epoch();
+        self.lane_stack.enter_generation((epoch, self.realm.globals));
+        let target = lane_script_target(cx, callee)?;
+        let this = lane_call_this(self, &target, receiver)?;
+        Some(PreparedLaneCallback {
+            cx,
+            site,
+            receiver,
+            target,
+            this,
+            epoch,
+            // SAFETY: as `lane_native_callback`'s copy; the native's caller resumes with it.
+            caller: unsafe { std::ptr::read(cx) },
+            shape: None,
+            pending: self.pending_call_stacks.pop().unwrap_or_default(),
+            _stack: stack,
+        })
+    }
+
+    /// Ends a prepared loop: its pending-call stack returns to the pool.
+    pub(super) fn finish_lane_callback(&mut self, prepared: PreparedLaneCallback<H>) {
+        let PreparedLaneCallback { mut pending, .. } = prepared;
+        pending.clear();
+        self.pending_call_stacks.push(pending);
+    }
+
+    /// `lane_native_callback` of the prepared callee with `args`, past what the loop proved:
+    /// it tests the frame depth, the lane's activations and program, a due collection and
+    /// the collection epoch, which the native's steps between calls can change. `None`
+    /// leaves the call to the general path.
+    pub(super) fn call_prepared_lane(
+        &mut self,
+        prepared: &mut PreparedLaneCallback<H>,
+        args: &[Value],
+    ) -> Option<Result<Value, JsError>> {
+        let cx = prepared.cx;
+        let site = prepared.site;
+        // SAFETY: the lane's context lives while its native runs.
+        let program = unsafe { (*cx).program };
+        if site.frames != self.frames.len()
+            || !self.lane_stack.activations.is_empty()
+            || self.lane_deferred.is_some()
+            || self.with_scope_entered
+            || self.active_program != program
+            || self.heap.should_collect()
+        {
+            return None;
+        }
+        if self.heap.collection_epoch() != prepared.epoch {
+            prepared.epoch = self.heap.collection_epoch();
+            self.lane_stack.enter_generation((prepared.epoch, self.realm.globals));
+            let callee = prepared.target.callee;
+            prepared.target = lane_script_target(cx, callee)?;
+            prepared.this = lane_call_this(self, &prepared.target, prepared.receiver)?;
+            prepared.shape = None;
+        }
+        if prepared.shape.as_ref().is_none_or(|shape| shape.argc != args.len()) {
+            prepared.shape = PreparedShape::of(&prepared.caller, site.call, &prepared.target, args.len());
+        }
+        let registers = self.active_registers;
+        let mut executing = super::dispatch_frame::ExecutingProgram { id: program, retained: None };
+        // SAFETY: as `lane_native_callback`'s.
+        unsafe {
+            (*cx).pending = &mut prepared.pending;
+            (*cx).executing = &mut executing;
+        }
+        let restore_pending = |cx: *mut LaneContext<H>, caller: &LaneContext<H>| unsafe {
+            (*cx).pending = caller.pending;
+            (*cx).executing = caller.executing;
+        };
+        let pushed = match &prepared.shape {
+            Some(shape) => lane_push_prepared(cx, shape, &prepared.target, prepared.this, args),
+            None => None,
+        };
+        let Some(start) = pushed.or_else(|| {
+            lane_push_callback(cx, site.call, &prepared.target, args, prepared.this)
+        }) else {
+            restore_pending(cx, &prepared.caller);
+            return None;
+        };
+        unsafe { (*cx).memory = MemoryView::script(cx) };
+        let exit = lane_dispatch(cx, start);
+        let outcome = match self.lane_native_returned.take() {
+            Some(value) => {
+                restore_pending(cx, &prepared.caller);
+                Ok(value)
+            }
+            None => {
+                // SAFETY: handlers only return records of the active view.
+                let pc = unsafe { exit.offset_from((*cx).base) } as usize;
+                self.materialize_lane_activations(cx);
+                let frame = unsafe { (*cx).frame };
+                debug_assert!(frame >= site.frames, "the callback's activation became a frame");
+                self.frames[frame].pc = pc;
+                let raised = self.lane_raised.take();
+                // SAFETY: as `lane_native_callback`'s; the copy holds no drop glue.
+                unsafe { lane_restore_context(cx, std::ptr::read(&prepared.caller)) };
+                // SAFETY: the lane's program outlives its run.
+                let code = unsafe { &*prepared.caller.code };
+                let exited = super::dispatch_frame::LaneExit { executing, raised };
+                let result = self.run_frames_after_lane_exit(code, frame, &mut prepared.pending, exited);
+                debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
+                prepared.pending.clear();
+                self.complete_user_frame(code, result, false).and_then(FrameOutcome::into_value)
+            }
+        };
+        self.active_registers = registers;
+        if self.active_program != program {
+            self.set_active_program(program);
+        }
+        Some(outcome)
     }
 }
 

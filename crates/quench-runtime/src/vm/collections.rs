@@ -844,10 +844,12 @@ impl<H: Host> Vm<H> {
                             ));
                         }
                         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                        self.walk_collection(this, |vm, key, value| {
-                            let value = value.unwrap_or(Value::UNDEFINED);
-                            vm.call_value(p, callback, this_arg, &[value, key, this])?;
-                            Ok(true)
+                        self.with_prepared_callback(callback, this_arg, |vm, prepared| {
+                            vm.walk_collection(this, |vm, key, value| {
+                                let value = value.unwrap_or(Value::UNDEFINED);
+                                vm.call_prepared(p, prepared, &[value, key, this])?;
+                                Ok(true)
+                            })
                         })?;
                         Ok(Value::UNDEFINED)
                     }
@@ -1005,9 +1007,11 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "callback is not callable".into()));
                 }
                 let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                self.walk_collection(this, |vm, value, _| {
-                    vm.call_value(p, callback, this_arg, &[value, value, this])?;
-                    Ok(true)
+                self.with_prepared_callback(callback, this_arg, |vm, prepared| {
+                    vm.walk_collection(this, |vm, value, _| {
+                        vm.call_prepared(p, prepared, &[value, value, this])?;
+                        Ok(true)
+                    })
                 })?;
                 Ok(Value::UNDEFINED)
             }
