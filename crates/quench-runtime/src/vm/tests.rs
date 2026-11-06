@@ -25441,6 +25441,156 @@ fn lane_leaf_calls_survive_collections_their_getters_make() {
 }
 
 #[test]
+fn lane_capture_leaf_calls_keep_binding_semantics() {
+    // Leaves reading and storing captures (`CallEntry::CaptureLeaf`, a store followed by a
+    // read of its capture as one record): shared captures, per-iteration and wide per-iteration
+    // bindings, TDZ and constant stores, sloppy `this`, `arguments` and direct eval beside
+    // them, closures recreated after warm-up, and a throw's frames and receiver (expected
+    // values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      function shared() {
+        var c = 0;
+        var inc = function () { c = (c + 1) | 0; return c; };
+        var get = function () { return c; };
+        var add = function (k) { c = (c + k) | 0; return c; };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + inc() + get() + add(i & 3)) | 0;
+        return s + ":" + c;
+      }
+      print(shared());
+      function perIteration() {
+        var fs = [];
+        for (let k = 0; k < 4; k++) fs.push(function () { k = (k + 3) | 0; return k; });
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + fs[i & 3]()) | 0;
+        return s + ":" + fs.map(function (f) { return f(); }).join("/");
+      }
+      print(perIteration());
+      function tdz(early, store) {
+        var f = store ? function () { y = 5; return y; } : function () { y = (y + 1) | 0; return y; };
+        if (early) { try { f(); return "none"; } catch (e) { return e.constructor.name + ":" + e.message; } }
+        let y = 0;
+        return f;
+      }
+      function tdzRun() {
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + tdz(false, (i & 1) === 1)()) | 0;
+        return s + " " + tdz(true, false) + " " + tdz(true, true);
+      }
+      print(tdzRun());
+      function constant() {
+        const k = 1;
+        var bad = function () { k = (k + 1) | 0; return k; };
+        var ok = function () { return (k + 1) | 0; };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + ok()) | 0;
+        try { bad(); } catch (e) { return s + " " + e.constructor.name + ":" + e.message; }
+      }
+      print(constant());
+      function context() {
+        var c = 0;
+        var sloppyThis = function () { c = (c + 1) | 0; return this === globalThis ? 1 : 2; };
+        var args = function () { c = (c + 1) | 0; return arguments.length; };
+        var evals = function () { c = (c + 1) | 0; return eval("c"); };
+        var o = { m: sloppyThis, n: function () { c = (c + 1) | 0; return c; } };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + sloppyThis() + o.m() + args(i, i) + o.n() + o.n.call(i)) | 0;
+        s = (s + evals()) | 0;
+        return s + ":" + c;
+      }
+      print(context());
+      function recreated() {
+        var make = function (start) { var c = start; return function () { c = (c + 1) | 0; return c; }; };
+        var f = make(0), s = 0;
+        for (var i = 0; i < 6000; i++) {
+          if (i % 1000 === 999) f = make(i);
+          s = (s + f()) | 0;
+        }
+        return s;
+      }
+      print(recreated());
+      function throwsIn() {
+        var c = 0;
+        var deep = function () { c = (c + 1) | 0; return c.x.y; };
+        var plain = function () { c = (c + 1) | 0; return c; };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + plain()) | 0;
+        var out = [s];
+        try { deep(); } catch (e) { out.push(e.constructor.name + " " + frames(e)); }
+        var prepare = Error.prepareStackTrace;
+        Error.prepareStackTrace = function (e, sites) { return sites[0].getFunctionName() + "/" + sites[0].getTypeName() + "/" + typeof sites[0].getThis(); };
+        try { deep(); } catch (e) { out.push(e.stack); }
+        try { deep.call(5); } catch (e) { out.push(e.stack); }
+        try { ({ deep: deep }).deep(); } catch (e) { out.push(e.stack); }
+        Error.prepareStackTrace = prepare;
+        return out.join(" | ");
+      }
+      print(throwsIn());
+      function wide() {
+        var decl = [];
+        for (var j = 0; j < 70; j++) decl.push("a" + j + " = " + j);
+        return new Function("var fs = []; for (let " + decl.join(", ") + ", k = 0; k < 4; k++) fs.push(function () { a69 = (a69 + k) | 0; return a69; });" +
+          "var s = 0; for (var i = 0; i < 3000; i++) s = (s + fs[i & 3]()) | 0; return s + ':' + fs.map(function (f) { return f(); }).join('/');")();
+      }
+      print(wide());
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "capture-leaves.js").0,
+        [
+            "33741000:7500",
+            "3384000:2253/2254/2255/2256",
+            "9000 ReferenceError:Cannot access 'y' before initialization ReferenceError:Cannot access 'y' before initialization",
+            "6000 TypeError:Assignment to constant variable.",
+            "45042001:15001",
+            "18003000",
+            "4501500 | TypeError deep,throwsIn | deep/null/object | deep/Number/object | deep/Object/object",
+            "1896750:69/820/1571/2322",
+        ]
+    );
+}
+
+#[test]
+fn lane_int32_truncated_sums_match_node() {
+    // `(a + b) | 0` and `(a - b) | 0` run as one record (`lane_operator_int32`) whose int32
+    // operands wrap; overflowing, fractional, NaN, string, BigInt-free primitive and
+    // `valueOf` operands, and a sum whose register stays live, keep the operators' own
+    // results (expected values from Node).
+    let source = r#"
+      function wrap(a, b) {
+        var s = 0, d = 0, k = 0, kept = 0, t = "";
+        for (var i = 0; i < 3000; i++) {
+          s = (s + a[i & 7]) | 0;
+          d = (d - b[i & 7]) | 0;
+          k = (k + 2147483000) | 0;
+          var sum = kept + i;
+          kept = (sum + 1) | 0;
+          t = (sum - 1) | 0;
+        }
+        return [s, d, k, kept, t, sum].join(",");
+      }
+      print(wrap([1, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1]));
+      print(wrap([2147483647, -2147483648, 1, -1, 0, 7, 9, 11], [-2147483648, 2147483647, 3, 3, 3, 3, 3, 3]));
+      print(wrap([0.5, 1.5, 1e10, -0, NaN, Infinity, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8]));
+      print(wrap(["1", "2", 3, 4, 5, 6, 7, 8], [true, null, undefined, {}, [], 1n === 1n, "x", 1]));
+      var vo = { valueOf: function () { return 2147483647; } };
+      print(wrap([vo, vo, vo, vo, 1, 1, 1, 1], [vo, 1, vo, 1, vo, 1, vo, 1]));
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "int32-sums.js").0,
+        [
+            "13500,-13500,-1944000,4501500,4501498,4501499",
+            "9750,-6375,-1944000,4501500,4501498,4501499",
+            "7,-13500,-1944000,4501500,4501498,4501499",
+            "1000583613,-1,-1944000,4501500,4501498,4501499",
+            "0,0,-1944000,4501500,4501498,4501499",
+        ]
+    );
+}
+
+#[test]
 fn lane_leaf_calls_bind_receivers_as_activations() {
     // A leaf method reads its receiver's field; a sloppy leaf binds the global object for a
     // missing receiver and a strict one `undefined` (expected values from Node).
