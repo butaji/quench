@@ -1205,7 +1205,7 @@ impl Lowering<'_, '_> {
             },
             // The interpreter's own semantics, run on the register state (`staged::step`).
             Op::LoadConst | Op::Move if plain => super::lane_operation(&self.program.constants, instruction)
-                .map(|operation| crate::vm::staged::step(&mut LaneMachine { lowering: self, state }, operation) == crate::vm::staged::Flow::Next),
+                .map(|operation| crate::vm::staged::step(&mut LaneMachine { lowering: self, state, pc }, operation) == crate::vm::staged::Flow::Next),
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -2658,102 +2658,9 @@ impl Lowering<'_, '_> {
         }
         let exit = self.guard_exit(state, pc as u32);
         match (arithmetic, bitwise) {
-            (Some(arithmetic), _) => {
-                let float_operand = [left, right].iter().any(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.representation == Representation::Float64,
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
-                    _ => false,
-                });
-                // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
-                // negative zero, is a value no int32 holds and leaves, rather than every result
-                // becoming a double that the next operation converts back.
-                let proved_int = [left, right].iter().all(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
-                    _ => false,
-                });
-                if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
-                    let left = self.operand_number(state, left, exit)?;
-                    let right = self.operand_number(state, right, exit)?;
-                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left, right);
-                    self.set_number(state, destination, number);
-                } else if proved_int {
-                    let left_int = self.operand_int(state, left, exit).expect("supported operand");
-                    let right_int = self.operand_int(state, right, exit).expect("supported operand");
-                    let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
-                    // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
-                    // result, which needs no overflow exit.
-                    if !(matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
-                        && self.truncated(pc, destination)) {
-                        emit_js_guard_not(&mut self.builder, overflow, exit);
-                    }
-                    if arithmetic == super::operations::NumberArithmetic::Multiply {
-                        let zero = self.ins().icmp_imm_u(IntCC::Equal, result, 0);
-                        let signs = self.ins().bor(left_int, right_int);
-                        let negative = self.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
-                        let negative_zero = self.ins().band(zero, negative);
-                        emit_js_guard_not(&mut self.builder, negative_zero, exit);
-                    }
-                    self.set_int(state, destination, result);
-                } else if matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
-                    && self.truncated(pc, destination) {
-                    // Only its ToInt32 is read: int32 operands wrap, any other numbers take
-                    // ToInt32 of their double result, and both join as an int32.
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let wrapped = if arithmetic == super::operations::NumberArithmetic::Add {
-                        self.ins().iadd(left_int, right_int)
-                    } else {
-                        self.ins().isub(left_int, right_int)
-                    };
-                    let join = self.builder.create_block();
-                    let int = self.builder.append_block_param(join, types::I32);
-                    self.ins().jump(join, &[ir::BlockArg::Value(wrapped)]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
-                    let truncated = self.number_to_int32(number, exit);
-                    self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state);
-                    self.set_int(state, destination, int);
-                } else {
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
-                    let int_done = self.builder.create_block();
-                    self.ins().brif(overflow, float, &[], int_done, &[]);
-                    self.builder.switch_to_block(int_done);
-                    if arithmetic == super::operations::NumberArithmetic::Multiply {
-                        let zero = self.ins().icmp_imm_u(IntCC::Equal, result, 0);
-                        let signs = self.ins().bor(left_int, right_int);
-                        let negative = self.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
-                        let negative_zero = self.ins().band(zero, negative);
-                        emit_js_guard_not(&mut self.builder, negative_zero, float);
-                    }
-                    let join = self.builder.create_block();
-                    let number = self.builder.append_block_param(join, types::F64);
-                    let result = self.ins().fcvt_from_sint(types::F64, result);
-                    self.ins().jump(join, &[ir::BlockArg::Value(result)]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let result = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
-                    self.ins().jump(join, &[ir::BlockArg::Value(result)]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state);
-                    self.set_number(state, destination, number);
-                }
-            }
+            // The interpreter's own Number arithmetic, run on the register state
+            // (`staged::arithmetic`).
+            (Some(arithmetic), _) => crate::vm::staged::arithmetic(&mut LaneMachine { lowering: self, state, pc }, arithmetic, destination, left, right, exit)?,
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;
                 let right_int = self.operand_to_int32(state, right, exit)?;
@@ -2876,6 +2783,8 @@ mod tests {
 struct LaneMachine<'l, 'a, 'f> {
     lowering: &'l mut Lowering<'a, 'f>,
     state: &'l mut State,
+    /// The unit PC of the instruction the machine runs.
+    pc: usize,
 }
 
 impl<'f> LaneMachine<'_, '_, 'f> {
@@ -2952,4 +2861,110 @@ impl crate::vm::staged::Machine for LaneMachine<'_, '_, '_> {
     }
     /// A copy keeps every fact of the source: its representation and proofs.
     fn copy_register(&mut self, destination: Register, source: Register) { self.lowering.copy(self.state, destination, source) }
+}
+
+impl crate::vm::staged::Numbers for LaneMachine<'_, '_, '_> {
+    type Int = ir::Value;
+    type Float = ir::Value;
+    type Cond = ir::Value;
+    type Miss = ir::Block;
+    fn known_int(&self, operand: Operand) -> bool {
+        match operand.kind() {
+            Some(OperandKind::Register) => self.state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
+            Some(OperandKind::Constant) => self.lowering.program.constants.get(usize::from(operand.payload()))
+                .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+            _ => false,
+        }
+    }
+    fn known_float(&self, operand: Operand) -> bool {
+        match operand.kind() {
+            Some(OperandKind::Register) => self.state.values[usize::from(operand.payload())].value.representation == Representation::Float64,
+            Some(OperandKind::Constant) => self.lowering.program.constants.get(usize::from(operand.payload()))
+                .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
+            _ => false,
+        }
+    }
+    fn truncated(&self, register: Register) -> bool { self.lowering.truncated(self.pc, register) }
+    fn int_operand(&mut self, operand: Operand, miss: ir::Block) -> Option<ir::Value> { self.lowering.operand_int(self.state, operand, miss) }
+    fn float_operand(&mut self, operand: Operand, miss: ir::Block) -> Option<ir::Value> { self.lowering.operand_number(self.state, operand, miss) }
+    fn int_operands(&mut self, left: Operand, right: Operand) -> ir::Value {
+        let mut all = self.lowering.ins().iconst(types::I8, 1);
+        for operand in [left, right] {
+            if self.known_int(operand) { continue; }
+            let held = match operand.register_index() {
+                Some(register) => {
+                    let bits = self.lowering.tagged(self.state, register);
+                    is_int_tagged(&mut self.lowering.builder, bits)
+                }
+                // A constant that is no int32 is never one.
+                None => self.lowering.ins().iconst(types::I8, 0),
+            };
+            all = self.lowering.ins().band(all, held);
+        }
+        all
+    }
+    fn int_checked(&mut self, operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
+        operation.apply(&mut EmitArithmetic::<true> { builder: &mut self.lowering.builder }, left, right)
+    }
+    fn int_wrapping(&mut self, operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value) -> ir::Value {
+        if operation == super::operations::NumberArithmetic::Add { self.lowering.ins().iadd(left, right) } else { self.lowering.ins().isub(left, right) }
+    }
+    fn negative_zero_product(&mut self, result: ir::Value, left: ir::Value, right: ir::Value) -> ir::Value {
+        let zero = self.lowering.ins().icmp_imm_u(IntCC::Equal, result, 0);
+        let signs = self.lowering.ins().bor(left, right);
+        let negative = self.lowering.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
+        self.lowering.ins().band(zero, negative)
+    }
+    fn or_cond(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.lowering.ins().bor(a, b) }
+    fn float_op(&mut self, operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value) -> ir::Value {
+        emit_number_arithmetic_operation(&mut self.lowering.builder, operation, left, right)
+    }
+    fn float_to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> { Some(self.lowering.number_to_int32(number, miss)) }
+    fn guard_not(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        emit_js_guard_not(&mut self.lowering.builder, cond, miss);
+        Some(())
+    }
+    fn choose_number(
+        &mut self,
+        cond: ir::Value,
+        then: impl FnOnce(&mut Self) -> Option<crate::vm::staged::Number<ir::Value, ir::Value>>,
+        otherwise: impl FnOnce(&mut Self) -> Option<crate::vm::staged::Number<ir::Value, ir::Value>>,
+    ) -> Option<crate::vm::staged::Number<ir::Value, ir::Value>> {
+        use crate::vm::staged::Number;
+        let (then_block, otherwise_block) = (self.lowering.builder.create_block(), self.lowering.builder.create_block());
+        self.lowering.builder.set_cold_block(otherwise_block);
+        self.lowering.ins().brif(cond, then_block, &[], otherwise_block, &[]);
+        let mut other_state = self.state.clone();
+        self.lowering.builder.switch_to_block(then_block);
+        let first = then(self)?;
+        let first_end = self.lowering.builder.current_block().expect("an arm ends in a block");
+        self.lowering.builder.switch_to_block(otherwise_block);
+        // The second arm runs on the state the branch left, then gives back the first's.
+        std::mem::swap(self.state, &mut other_state);
+        let second = otherwise(self);
+        std::mem::swap(self.state, &mut other_state);
+        let second = second?;
+        // One representation joins both: an int32 where both are, else the double.
+        let int = matches!((first, second), (Number::Int(_), Number::Int(_)));
+        let join = self.lowering.builder.create_block();
+        let parameter = self.lowering.builder.append_block_param(join, if int { types::I32 } else { types::F64 });
+        let widen = |lowering: &mut Lowering<'_, '_>, number: Number<ir::Value, ir::Value>| match number {
+            Number::Int(value) if !int => lowering.ins().fcvt_from_sint(types::F64, value),
+            Number::Int(value) | Number::Float(value) => value,
+        };
+        let second = widen(self.lowering, second);
+        self.lowering.ins().jump(join, &[ir::BlockArg::Value(second)]);
+        self.lowering.builder.switch_to_block(first_end);
+        let first = widen(self.lowering, first);
+        self.lowering.ins().jump(join, &[ir::BlockArg::Value(first)]);
+        self.lowering.builder.switch_to_block(join);
+        self.lowering.join_states(self.state, &other_state);
+        Some(if int { Number::Int(parameter) } else { Number::Float(parameter) })
+    }
+    fn set_number(&mut self, register: Register, number: crate::vm::staged::Number<ir::Value, ir::Value>) {
+        match number {
+            crate::vm::staged::Number::Int(int) => self.lowering.set_int(self.state, register, int),
+            crate::vm::staged::Number::Float(number) => self.lowering.set_number(self.state, register, number),
+        }
+    }
 }

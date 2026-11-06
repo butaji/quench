@@ -84,7 +84,7 @@ pub(super) trait NumberArithmeticStage<T> {
 macro_rules! number_arithmetic {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-        pub(super) enum NumberArithmetic { $($operation),+ }
+        pub(crate) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmeticStage<f64> for NumberF64Stage {
             type Output = f64;
@@ -446,8 +446,14 @@ pub(super) fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
 }
 
 #[inline(always)]
-fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) -> f64 {
+pub(super) fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) -> f64 {
     operation.apply(&mut NumberF64Stage, left, right)
+}
+
+/// `operation` on two int32s, `None` where the exact result leaves int32.
+#[inline(always)]
+pub(super) fn checked_int32_arithmetic(operation: NumberArithmetic, left: i32, right: i32) -> Option<i32> {
+    operation.apply(&mut CheckedInt32Stage, left, right)
 }
 
 struct PartialOrderStage;
@@ -762,25 +768,6 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
-}
-
-#[inline(always)]
-fn number_arithmetic_values(
-    operation: NumberArithmetic,
-    left: Value,
-    right: Value,
-) -> Option<(Value, crate::profile::BinaryValuePath)> {
-    if operation != NumberArithmetic::Divide
-        && let Some((left, right)) = Value::int_pair(left, right)
-    {
-        let value = numeric_integer_arithmetic_result(operation, left, right);
-        return Some((value, crate::profile::BinaryValuePath::IntegerFastPath));
-    }
-    let (left, right) = Value::number_pair(left, right)?;
-    Some((
-        Value::number(number_arithmetic_result(operation, left, right)),
-        crate::profile::BinaryValuePath::NumberFastPath,
-    ))
 }
 
 #[inline(always)]
@@ -1865,7 +1852,14 @@ impl<H: Host> Vm<H> {
         let Some(operation) = NumberArithmetic::from_operator(op) else {
             return self.tabled_number_binary(op, left, right);
         };
-        let (value, path) = number_arithmetic_values(operation, left, right)?;
+        // The interpreter's own semantics of Number arithmetic, which the specializer
+        // specializes too (`staged::arithmetic`).
+        let value = super::staged::arithmetic_values(operation, left, right)?;
+        let path = if operation != NumberArithmetic::Divide && Value::int_pair(left, right).is_some() {
+            crate::profile::BinaryValuePath::IntegerFastPath
+        } else {
+            crate::profile::BinaryValuePath::NumberFastPath
+        };
         self.record_binary_value_path(op, left, right, path);
         Some(value)
     }

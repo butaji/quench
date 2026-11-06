@@ -364,3 +364,197 @@ pub(crate) fn step<M: Machine>(machine: &mut M, operation: Operation) -> Flow {
     }
     Flow::Next
 }
+
+/// A number result whose representation the semantics knows statically: an int32 or a
+/// double. A join of arms of different representations takes the double.
+#[derive(Clone, Copy)]
+pub(crate) enum Number<I, F> {
+    Int(I),
+    Float(F),
+}
+
+/// The number domain of a machine: int32 and double words, the operations on them, typed
+/// operand reads and the static facts that decide which apply. What the facts say (an operand
+/// proved int32, a result read only through ToInt32) is static: the interpreter, which proves
+/// nothing ahead, sees none and tests the values; the specializer folds them.
+pub(crate) trait Numbers {
+    type Int: Copy;
+    type Float: Copy;
+    type Cond: Copy;
+    type Miss: Copy;
+    /// Whether `operand` is proved an int32.
+    fn known_int(&self, operand: crate::bytecode::Operand) -> bool;
+    /// Whether `operand` is held as a double, or is a constant no int32 holds.
+    fn known_float(&self, operand: crate::bytecode::Operand) -> bool;
+    /// Whether `register`'s next value is read only through ToInt32 (`| 0` and its kin).
+    fn truncated(&self, register: crate::bytecode::Register) -> bool;
+    fn int_operand(&mut self, operand: crate::bytecode::Operand, miss: Self::Miss) -> Option<Self::Int>;
+    fn float_operand(&mut self, operand: crate::bytecode::Operand, miss: Self::Miss) -> Option<Self::Float>;
+    /// Whether both operands are int32s.
+    fn int_operands(&mut self, left: crate::bytecode::Operand, right: crate::bytecode::Operand) -> Self::Cond;
+    /// `operation` on two int32s, and whether its exact result leaves int32.
+    fn int_checked(&mut self, operation: super::operations::NumberArithmetic, left: Self::Int, right: Self::Int) -> (Self::Int, Self::Cond);
+    /// A sum or difference of int32s, wrapped to int32.
+    fn int_wrapping(&mut self, operation: super::operations::NumberArithmetic, left: Self::Int, right: Self::Int) -> Self::Int;
+    /// Whether the int32 product `result` of `left` and `right` is a zero no int32 holds, -0.
+    fn negative_zero_product(&mut self, result: Self::Int, left: Self::Int, right: Self::Int) -> Self::Cond;
+    fn or_cond(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
+    fn float_op(&mut self, operation: super::operations::NumberArithmetic, left: Self::Float, right: Self::Float) -> Self::Float;
+    /// ToInt32 of a double; `miss` where the machine does not compute it exactly.
+    fn float_to_int32(&mut self, number: Self::Float, miss: Self::Miss) -> Option<Self::Int>;
+    /// Continues where `cond` does not hold.
+    fn guard_not(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
+    /// The number `then` makes where `cond` holds, else `otherwise`'s, each arm's register
+    /// facts joined after; the second arm is the rare one.
+    fn choose_number(
+        &mut self,
+        cond: Self::Cond,
+        then: impl FnOnce(&mut Self) -> Option<Number<Self::Int, Self::Float>>,
+        otherwise: impl FnOnce(&mut Self) -> Option<Number<Self::Int, Self::Float>>,
+    ) -> Option<Number<Self::Int, Self::Float>>;
+    fn set_number(&mut self, register: crate::bytecode::Register, number: Number<Self::Int, Self::Float>);
+}
+
+/// `destination = left op right` for Number operands, JavaScript's arithmetic on Numbers:
+/// int32 operands give an int32 where the exact result is one, else the IEEE double; a
+/// division takes the doubles. Operands proved int32 stay int32 and leave at an overflow or a
+/// product's -0, as C keeps them; a sum or difference read only through ToInt32 wraps.
+/// `miss` for an operand that is not a Number.
+#[inline(always)]
+pub(crate) fn arithmetic<N: Numbers>(
+    machine: &mut N,
+    operation: super::operations::NumberArithmetic,
+    destination: crate::bytecode::Register,
+    left: crate::bytecode::Operand,
+    right: crate::bytecode::Operand,
+    miss: N::Miss,
+) -> Option<()> {
+    use super::operations::NumberArithmetic;
+    let doubles = |machine: &mut N| -> Option<Number<N::Int, N::Float>> {
+        let (a, b) = (machine.float_operand(left, miss)?, machine.float_operand(right, miss)?);
+        Some(Number::Float(machine.float_op(operation, a, b)))
+    };
+    let wraps = matches!(operation, NumberArithmetic::Add | NumberArithmetic::Subtract) && machine.truncated(destination);
+    let result = if operation == NumberArithmetic::Divide || machine.known_float(left) || machine.known_float(right) {
+        doubles(machine)?
+    } else if machine.known_int(left) && machine.known_int(right) {
+        let (a, b) = (machine.int_operand(left, miss)?, machine.int_operand(right, miss)?);
+        if wraps {
+            Number::Int(machine.int_wrapping(operation, a, b))
+        } else {
+            let (result, overflow) = machine.int_checked(operation, a, b);
+            machine.guard_not(overflow, miss)?;
+            if operation == NumberArithmetic::Multiply {
+                let negative_zero = machine.negative_zero_product(result, a, b);
+                machine.guard_not(negative_zero, miss)?;
+            }
+            Number::Int(result)
+        }
+    } else {
+        let ints = machine.int_operands(left, right);
+        machine.choose_number(ints, |machine| {
+            let (a, b) = (machine.int_operand(left, miss)?, machine.int_operand(right, miss)?);
+            if wraps {
+                return Some(Number::Int(machine.int_wrapping(operation, a, b)));
+            }
+            let (result, overflow) = machine.int_checked(operation, a, b);
+            let inexact = if operation == NumberArithmetic::Multiply {
+                let negative_zero = machine.negative_zero_product(result, a, b);
+                machine.or_cond(overflow, negative_zero)
+            } else {
+                overflow
+            };
+            machine.choose_number(inexact, doubles, |_| Some(Number::Int(result)))
+        }, |machine| match doubles(machine)? {
+            Number::Float(number) if wraps => Some(Number::Int(machine.float_to_int32(number, miss)?)),
+            number => Some(number),
+        })?
+    };
+    machine.set_number(destination, result);
+    Some(())
+}
+
+/// The interpreter's number machine for two operand values and a result
+/// (`arithmetic_values`): operand register 0 is the left value, any other the right.
+struct ValueOperands {
+    left: crate::Value,
+    right: crate::Value,
+    result: crate::Value,
+}
+
+impl ValueOperands {
+    #[inline(always)]
+    fn value(&self, operand: crate::bytecode::Operand) -> crate::Value {
+        if operand.register_index() == Some(0) { self.left } else { self.right }
+    }
+}
+
+impl Numbers for ValueOperands {
+    type Int = i32;
+    type Float = f64;
+    type Cond = bool;
+    type Miss = ();
+    #[inline(always)]
+    fn known_int(&self, _: crate::bytecode::Operand) -> bool { false }
+    #[inline(always)]
+    fn known_float(&self, _: crate::bytecode::Operand) -> bool { false }
+    #[inline(always)]
+    fn truncated(&self, _: crate::bytecode::Register) -> bool { false }
+    #[inline(always)]
+    fn int_operand(&mut self, operand: crate::bytecode::Operand, _: ()) -> Option<i32> { self.value(operand).as_int() }
+    #[inline(always)]
+    fn float_operand(&mut self, operand: crate::bytecode::Operand, _: ()) -> Option<f64> { self.value(operand).as_number() }
+    #[inline(always)]
+    fn int_operands(&mut self, _: crate::bytecode::Operand, _: crate::bytecode::Operand) -> bool {
+        crate::Value::int_pair(self.left, self.right).is_some()
+    }
+    #[inline(always)]
+    fn int_checked(&mut self, operation: super::operations::NumberArithmetic, left: i32, right: i32) -> (i32, bool) {
+        match super::operations::checked_int32_arithmetic(operation, left, right) {
+            Some(result) => (result, false),
+            None => (0, true),
+        }
+    }
+    #[inline(always)]
+    fn int_wrapping(&mut self, operation: super::operations::NumberArithmetic, left: i32, right: i32) -> i32 {
+        if operation == super::operations::NumberArithmetic::Add { left.wrapping_add(right) } else { left.wrapping_sub(right) }
+    }
+    #[inline(always)]
+    fn negative_zero_product(&mut self, result: i32, left: i32, right: i32) -> bool { result == 0 && (left | right) < 0 }
+    #[inline(always)]
+    fn or_cond(&mut self, a: bool, b: bool) -> bool { a || b }
+    #[inline(always)]
+    fn float_op(&mut self, operation: super::operations::NumberArithmetic, left: f64, right: f64) -> f64 {
+        super::operations::number_arithmetic_result(operation, left, right)
+    }
+    #[inline(always)]
+    fn float_to_int32(&mut self, number: f64, _: ()) -> Option<i32> { Some(crate::value::number_to_u32(number) as i32) }
+    #[inline(always)]
+    fn guard_not(&mut self, cond: bool, _: ()) -> Option<()> { (!cond).then_some(()) }
+    #[inline(always)]
+    fn choose_number(
+        &mut self,
+        cond: bool,
+        then: impl FnOnce(&mut Self) -> Option<Number<i32, f64>>,
+        otherwise: impl FnOnce(&mut Self) -> Option<Number<i32, f64>>,
+    ) -> Option<Number<i32, f64>> {
+        if cond { then(self) } else { otherwise(self) }
+    }
+    #[inline(always)]
+    fn set_number(&mut self, _: crate::bytecode::Register, number: Number<i32, f64>) {
+        self.result = match number {
+            Number::Int(int) => crate::Value::integer(int),
+            Number::Float(number) => crate::Value::number(number),
+        };
+    }
+}
+
+/// `arithmetic` of two values, as the interpreter computes `left op right`: `None` where
+/// either is not a Number.
+#[inline(always)]
+pub(crate) fn arithmetic_values(operation: super::operations::NumberArithmetic, left: crate::Value, right: crate::Value) -> Option<crate::Value> {
+    let mut machine = ValueOperands { left, right, result: crate::Value::UNDEFINED };
+    let (left, right) = (crate::bytecode::Operand::register(0), crate::bytecode::Operand::register(1));
+    arithmetic(&mut machine, operation, 2, left, right, ())?;
+    Some(machine.result)
+}
