@@ -1196,10 +1196,8 @@ impl Lowering<'_, '_> {
                 None => Some(true),
             },
             // The interpreter's own semantics, run on the register state (`staged::step`).
-            Op::LoadConst | Op::Move | Op::IncDec if plain => super::lane_operation(&self.program.constants, instruction).map(|operation| {
-                let exit = self.guard_exit(state, pc32);
-                crate::vm::staged::step(&mut LaneMachine { lowering: self, state, pc }, operation, exit) == Some(crate::vm::staged::Flow::Next)
-            }),
+            Op::LoadConst | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue if plain =>
+                super::lane_operation(&self.program.constants, instruction).and_then(|operation| self.run(state, pc, operation)),
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -1336,41 +1334,6 @@ impl Lowering<'_, '_> {
             }
             Op::Construct if !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
-            Op::Jump if plain => {
-                let target = instruction.jump_target() as usize;
-                if target <= pc {
-                    self.interrupt_check(state, pc32);
-                }
-                self.continue_at(state, target);
-                return false;
-            }
-            Op::JumpFalse | Op::JumpTrue if plain => {
-                let take_when_truthy = instruction.op() == Op::JumpTrue;
-                let exit = self.guard_exit(state, pc32);
-                let register = instruction.register_a();
-                let fact = state.values[usize::from(register)].value;
-                let truthy = match fact.representation {
-                    Representation::Int32 => {
-                        let int = { let variable = self.int_var(usize::from(register)); self.builder.use_var(variable) };
-                        self.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
-                    }
-                    Representation::Float64 => {
-                        let number = { let variable = self.float_var(usize::from(register)); self.builder.use_var(variable) };
-                        emit_number_truthiness(&mut self.builder, number)
-                    }
-                    Representation::Tagged => {
-                        let bits = self.tagged(state, register);
-                        if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
-                            self.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-                        } else {
-                            emit_js_tagged_truthiness(&mut self.builder, bits, exit)
-                        }
-                    }
-                };
-                let taken = if take_when_truthy { truthy } else { self.ins().icmp_imm_u(IntCC::Equal, truthy, 0) };
-                self.branch(state, pc, instruction.jump_target() as usize, taken);
-                return false;
-            }
             Op::JumpBinaryFalse if plain => {
                 let operator = instruction.binary_operator_field();
                 let (left, right) = (instruction.operand_b(), instruction.operand_c());
@@ -1384,21 +1347,21 @@ impl Lowering<'_, '_> {
                         let value = self.tagged(state, comparison.source);
                         emit_nullish_branch(&mut self.builder, value, comparison, self.vm.html_dda, exit)
                     };
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc { self.interrupt_check(state, pc32); }
-                    self.branch(state, pc, target, taken);
+                    self.follow(state, pc, instruction.jump_target() as usize, Some(taken));
                     return false;
                 }
-                if let Some(holds) = self.relation(state, pc32, operator, left, right) {
-                    let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc {
-                        self.interrupt_check(state, pc32);
-                    }
-                    self.branch(state, pc, target, taken);
-                    return false;
-                } else {
-                    None
+                // A Number relation is the interpreter's own (`staged::step`); an equality of
+                // operands not both Numbers, or `instanceof`, the lowering's (`relation`).
+                let numbers = [left, right].iter().all(|operand| super::facts::operand_type(
+                    &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
+                    .is_subtype(Type::NUMBER));
+                match super::lane_operation(&self.program.constants, instruction) {
+                    Some(operation) if numbers || super::operations::equality_operator(operator).is_none() => self.run(state, pc, operation),
+                    _ => self.relation(state, pc32, operator, left, right).map(|holds| {
+                        let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
+                        self.follow(state, pc, instruction.jump_target() as usize, Some(taken));
+                        false
+                    }),
                 }
             }
             _ => None,
@@ -1412,6 +1375,32 @@ impl Lowering<'_, '_> {
                 self.exit(state, pc32);
                 false
             }
+        }
+    }
+
+    /// `operation` by the interpreter's semantics on the register state (`staged::step`),
+    /// leaving at `pc` where it misses; whether control falls through to the next.
+    fn run(&mut self, state: &mut State, pc: usize, operation: crate::vm::staged::Operation) -> Option<bool> {
+        use crate::vm::staged::Flow;
+        let exit = self.guard_exit(state, pc as u32);
+        let (target, taken) = match crate::vm::staged::step(&mut LaneMachine { lowering: self, state, pc }, operation, exit)? {
+            Flow::Next => return Some(true),
+            Flow::Jump(target) => (target, None),
+            Flow::Branch { taken, target } => (target, Some(taken)),
+        };
+        self.follow(state, pc, target as usize, taken);
+        Some(false)
+    }
+
+    /// Control from `pc` to `target`, where `taken` holds if it is a branch: a backward edge
+    /// first checks for an interrupt.
+    fn follow(&mut self, state: &mut State, pc: usize, target: usize, taken: Option<ir::Value>) {
+        if target <= pc {
+            self.interrupt_check(state, pc as u32);
+        }
+        match taken {
+            Some(taken) => self.branch(state, pc, target, taken),
+            None => self.continue_at(state, target),
         }
     }
 
@@ -2764,6 +2753,16 @@ impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
 }
 
 impl crate::vm::staged::Machine for LaneMachine<'_, '_, '_> {
+    /// A Boolean's bits are its truthiness; any other value's is the shared tagged test,
+    /// which leaves for a heap value.
+    fn value_truthy(&mut self, register: Register, miss: ir::Block) -> Option<ir::Value> {
+        let bits = self.lowering.tagged(self.state, register);
+        Some(if self.state.values[usize::from(register)].value.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
+            self.lowering.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
+        } else {
+            emit_js_tagged_truthiness(&mut self.lowering.builder, bits, miss)
+        })
+    }
     fn register(&mut self, register: Register) -> ir::Value { self.lowering.tagged(self.state, register) }
     fn set_register(&mut self, register: Register, value: ir::Value) { self.lowering.set_tagged(self.state, register, value) }
     fn set_static(&mut self, register: Register, value: Value) {

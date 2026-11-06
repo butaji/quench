@@ -278,6 +278,9 @@ pub(crate) trait Machine: Numbers {
     /// Writes `value`, which the semantics knows, to `register`: the interpreter stores its
     /// bits, the specializer takes it as a fact and folds on it.
     fn set_static(&mut self, register: crate::bytecode::Register, value: crate::Value);
+    /// ToBoolean of `register`'s value where no Number fact decides it (`to_boolean`); `miss`
+    /// where the machine does not decide it here.
+    fn value_truthy(&mut self, register: crate::bytecode::Register, miss: Self::Miss) -> Option<Self::Cond>;
     /// Copies `source` to `destination`, with everything known of it.
     fn copy_register(&mut self, destination: crate::bytecode::Register, source: crate::bytecode::Register) {
         let value = self.register(source);
@@ -343,6 +346,9 @@ impl<R: RegisterFile> Stage for ConcreteFrame<R> {
 }
 
 impl<R: RegisterFile> Machine for ConcreteFrame<R> {
+    /// ToBoolean of an immediate (`Value::truthiness`); a heap value's is the VM's to read.
+    #[inline(always)]
+    fn value_truthy(&mut self, register: crate::bytecode::Register, _: ()) -> Option<bool> { self.value(register).truthiness() }
     #[inline(always)]
     fn register(&mut self, register: crate::bytecode::Register) -> u64 { self.registers.get(register) }
     #[inline(always)]
@@ -362,13 +368,48 @@ pub(crate) enum Operation {
     LoadConst { destination: crate::bytecode::Register, constant: crate::Value },
     /// `destination = left operator right` on Numbers.
     Binary { operator: NumberOperator, destination: crate::bytecode::Register, left: Source, right: Source },
+    /// Continues at `target`.
+    Jump { target: u32 },
+    /// Continues at `target` where ToBoolean of `register` is `when`.
+    JumpIf { register: crate::bytecode::Register, when: bool, target: u32 },
+    /// Continues at `target` unless Number `relation` holds of `left` and `right`.
+    JumpUnless { relation: super::operations::NumberRelation, left: Source, right: Source, target: u32 },
 }
 
-/// Where control goes after `step`.
+/// Where control goes after `step`, `C` the machine's condition.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Flow {
+pub(crate) enum Flow<C> {
     /// The next instruction.
     Next,
+    /// The instruction at the target.
+    Jump(u32),
+    /// The instruction at `target` where `taken` holds, else the next.
+    Branch { taken: C, target: u32 },
+}
+
+/// ToBoolean of `register` (ECMA-262 7.1.2): a proved int32 is true unless zero, a held
+/// double unless zero or NaN (`operations::number_truthiness`); the machine decides any other.
+#[inline(always)]
+fn to_boolean<M: Machine>(machine: &mut M, register: crate::bytecode::Register, miss: M::Miss) -> Option<M::Cond> {
+    use super::operations::NumberRelation;
+    if machine.known_int(register) {
+        let int = machine.int_register(register, miss)?;
+        let zero = machine.int_constant(0);
+        return Some(machine.int_relation(NumberRelation::NotEqual, int, zero));
+    }
+    if !machine.known_float(register) {
+        return machine.value_truthy(register, miss);
+    }
+    struct Truthiness<'m, M>(&'m mut M);
+    impl<M: Numbers> super::operations::NumberTruthinessStage<M::Float> for Truthiness<'_, M> {
+        type Predicate = M::Cond;
+        fn zero(&mut self) -> M::Float { self.0.float_constant(0.0) }
+        fn equal(&mut self, left: M::Float, right: M::Float) -> M::Cond { self.0.float_relation(NumberRelation::Equal, left, right) }
+        fn not_equal(&mut self, left: M::Float, right: M::Float) -> M::Cond { self.0.float_relation(NumberRelation::NotEqual, left, right) }
+        fn and(&mut self, left: M::Cond, right: M::Cond) -> M::Cond { self.0.and_cond(left, right) }
+    }
+    let number = machine.float_register(register, miss)?;
+    Some(super::operations::number_truthiness(&mut Truthiness(machine), number))
 }
 
 /// The interpreter: each operation's semantics, over any machine (`Machine`). The lane runs
@@ -377,11 +418,22 @@ pub(crate) enum Flow {
 /// the compiler (the second).
 /// `miss` where the operation's operands are not of the kind the machine's semantics takes.
 #[inline(always)]
-pub(crate) fn step<M: Machine>(machine: &mut M, operation: Operation, miss: M::Miss) -> Option<Flow> {
+pub(crate) fn step<M: Machine>(machine: &mut M, operation: Operation, miss: M::Miss) -> Option<Flow<M::Cond>> {
     match operation {
         Operation::Move { destination, source } => machine.copy_register(destination, source),
         Operation::LoadConst { destination, constant } => machine.set_static(destination, constant),
         Operation::Binary { operator, destination, left, right } => binary(machine, operator, destination, left, right, miss)?,
+        Operation::Jump { target } => return Some(Flow::Jump(target)),
+        Operation::JumpIf { register, when, target } => {
+            let truthy = to_boolean(machine, register, miss)?;
+            let taken = if when { truthy } else { machine.not_cond(truthy) };
+            return Some(Flow::Branch { taken, target });
+        }
+        Operation::JumpUnless { relation: operator, left, right, target } => {
+            let holds = relation(machine, operator, left, right, miss)?;
+            let taken = machine.not_cond(holds);
+            return Some(Flow::Branch { taken, target });
+        }
     }
     Some(Flow::Next)
 }

@@ -7496,6 +7496,18 @@ pub(super) fn lane_operation(constants: &[crate::bytecode::Constant], instructio
             destination: instruction.result_register(),
             constant: constants.get(instruction.constant_index()).and_then(facts::immediate)?,
         },
+        Op::Jump => Operation::Jump { target: instruction.jump_target() },
+        Op::JumpFalse | Op::JumpTrue => Operation::JumpIf {
+            register: instruction.register_a(),
+            when: instruction.op() == Op::JumpTrue,
+            target: instruction.jump_target(),
+        },
+        Op::JumpBinaryFalse => Operation::JumpUnless {
+            relation: super::operations::NumberRelation::from_operator(instruction.binary_operator_field())?,
+            left: source(instruction.operand_b())?,
+            right: source(instruction.operand_c())?,
+            target: instruction.jump_target(),
+        },
         // `x++` and `x--` of a register: its Number plus or minus one.
         Op::IncDec if instruction.numeric_local_target().is_none() => Operation::Binary {
             operator: NumberOperator::Arithmetic(if instruction.boolean_flag()? {
