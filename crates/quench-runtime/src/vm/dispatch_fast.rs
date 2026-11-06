@@ -2214,9 +2214,16 @@ impl LaneStack {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
         if site.last() != Some(&target) {
-            site.retain(|recorded| *recorded != target);
-            if site.len() == CALL_SITE_TARGETS {
-                site.remove(0);
+            // A record holds each callee once, so the callee in hand moves to the newest end
+            // from where it was, or evicts the oldest.
+            match site.iter().position(|recorded| *recorded == target) {
+                Some(older) => {
+                    site.remove(older);
+                }
+                None if site.len() == CALL_SITE_TARGETS => {
+                    site.remove(0);
+                }
+                None => {}
             }
             site.push(target);
         }
@@ -21402,6 +21409,32 @@ mod instruction_set_tests {
             }
             for pc in 0..count { assert!(set.contains(pc)); }
         }
+    }
+}
+
+#[cfg(test)]
+mod call_site_history_tests {
+    use super::*;
+    use super::super::compiled::{CallTarget, CalleeBinding};
+
+    #[test]
+    fn a_call_sites_history_keeps_each_callee_once_newest_last() {
+        // A callee met again moves to the newest end; a further one evicts the oldest
+        // (`LaneStack::note_site_callee`).
+        let stack = LaneStack::default();
+        let link = std::cell::Cell::new(NO_CALL_LINK);
+        let target = |k: i32| CallTarget { callee: CalleeBinding::Identity(Value::integer(k)), function: k as u32 };
+        let history = || {
+            stack.call_sites.borrow()[&std::ptr::from_ref(&link).addr()].iter().map(|target| target.function).collect::<Vec<_>>()
+        };
+        for k in [1, 2, 3, 2, 2] {
+            stack.note_site_callee(&link, target(k));
+        }
+        assert_eq!(history(), [1, 3, 2]);
+        for k in [4, 1, 5] {
+            stack.note_site_callee(&link, target(k));
+        }
+        assert_eq!(history(), [2, 4, 1, 5]);
     }
 }
 
