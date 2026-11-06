@@ -506,8 +506,44 @@ impl<H: Host> Vm<H> {
         let _call_guard =
             crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
-        let result = self.run_frame_general(p, frame_index);
+        let view = if capture_constructor_this { std::ptr::null() } else { self.entered_lane_view(p, id) };
+        let result = if Self::lane_runs_call(view) {
+            let body = p.function(id as usize);
+            let cursor = GeneralCodeCursor {
+                program: self.active_program,
+                function: id,
+                code: body.code.as_ptr(),
+                wide: body.wide.as_ptr(),
+                decoded: std::ptr::null(),
+                lane: view,
+                back_edges: None,
+            };
+            self.run_frame_from_lane(p, frame_index, &cursor, 0)
+        } else {
+            self.run_frame_general(p, frame_index)
+        };
         self.complete_user_frame(p, result, capture_constructor_this)
+    }
+
+    /// The lane view a call of function `id` of the active program `p` enters at its first
+    /// instruction from a native (a promise job, a host callback), as a lane call of it would
+    /// activate it (`Vm::resolve_script_call_target`): derived once its deferred runs complete
+    /// (`ProgramStore::lane_call_may_derive`); null where the general loop runs it.
+    fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
+        let program = self.active_program;
+        let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
+            && !self.js_tier_runs()
+            && !self.programs.js_jit_general_dispatch_enabled();
+        #[cfg(feature = "native-execution")]
+        let lane_runs = lane_runs && self.programs.native_js_code(program).is_none();
+        if !lane_runs
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || !self.lane_admits(p)
+            || !self.programs.lane_call_may_derive(program, id)
+        {
+            return std::ptr::null();
+        }
+        self.lane_view_any(program, id).unwrap_or(std::ptr::null())
     }
 
     /// Retire the innermost frame, a user activation that ran to `result` on the native
@@ -1492,11 +1528,7 @@ impl<H: Host> Vm<H> {
 
     /// `run_frame_general_with_error` of a resumed generator's or async function's frame
     /// `frame` with no error to raise. Without JS tiers the general loop would only enter the
-    /// lane at the frame's PC, so the lane runs from here. A generator's plain `yield` the lane
-    /// stops at becomes the frame's outcome as the loop's `Op::Yield` step makes it; any other
-    /// stop (another instruction, a pending call, a raised error, another frame or program, an
-    /// async function's `await`) resumes the general loop where the lane left
-    /// (`run_frames_after_lane_exit`).
+    /// lane at the frame's PC, so the lane runs from here (`run_frame_from_lane`).
     pub(super) fn run_resumed_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
         let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
         // With JS tiers or JIT general dispatch the loop may run the resumed frame in a tier
@@ -1508,6 +1540,23 @@ impl<H: Host> Vm<H> {
         if !Self::lane_runs(cursor.lane, pc) {
             return self.run_frame_general_with_error(p, frame, None);
         }
+        self.run_frame_from_lane(p, frame, &cursor, pc)
+    }
+
+    /// Runs frame `frame` from `pc` in the lane of `cursor`'s view, which runs that
+    /// instruction. The frame's own return, a generator's plain `yield` and an async
+    /// function's observation-free `await` the lane stops at become the frame's outcome as
+    /// the general loop's steps make them; any other stop (another instruction, a pending
+    /// call, a raised error, another frame or program) resumes the general loop where the
+    /// lane left (`run_frames_after_lane_exit`).
+    fn run_frame_from_lane(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        cursor: &GeneralCodeCursor,
+        pc: usize,
+    ) -> Result<FrameOutcome, JsError> {
+        let (program, function) = (cursor.program, cursor.function);
         let previous_program = self.replace_active_program(program);
         let previous_global = self.realm.globals;
         let caller_registers = self.active_registers;
@@ -1519,29 +1568,17 @@ impl<H: Host> Vm<H> {
             self.active_registers = self.frames[frame].registers.as_mut_ptr();
             let mut executing = ExecutingProgram { id: program, retained: None };
             let mut running = frame;
-            let pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+            let pc = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+            let body = p.function(function as usize);
             let stops_here = running == frame
                 && pending_calls.is_empty()
                 && executing.id == program
                 && self.lane_raised.is_none()
-                && pc < p.function(function as usize).code.len();
-            let asynchronous = p.function(function as usize).is_async;
-            if stops_here && asynchronous && let Some(outcome) = self.lane_stop_awaits(p, frame, cursor.instruction(pc), pc) {
+                && pc < body.code.len();
+            if stops_here
+                && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(pc), pc, body.is_async)
+            {
                 return Ok(outcome);
-            }
-            if stops_here && !asynchronous {
-                let instruction = cursor.instruction(pc);
-                if instruction.op() == Op::Yield {
-                    let value = self.read(frame, instruction.register_b());
-                    self.frames[frame].pc = pc + 1;
-                    self.frames[frame].pc_is_resume = true;
-                    return Ok(FrameOutcome::Yield {
-                        value,
-                        destination: instruction.result_register(),
-                        delegated_result: None,
-                        frame: None,
-                    });
-                }
             }
             self.frames[running].pc = pc;
             let raised = self.lane_raised.take();
@@ -1553,6 +1590,47 @@ impl<H: Host> Vm<H> {
         self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
         outcome
+    }
+
+    /// The outcome of frame `frame`, whose lane run stopped in it at `instruction` at `pc`
+    /// with no call pending, where the general loop's step there would end its run: the
+    /// frame's return, or the completion a call it made returned from it (`Vm::lane_returned`),
+    /// a generator's plain `yield`, or an async function's observation-free `await`
+    /// (`lane_stop_awaits`). `None` leaves the instruction to the general loop.
+    #[inline(always)]
+    fn lane_stop_outcome(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        instruction: WideInstruction,
+        pc: usize,
+        asynchronous: bool,
+    ) -> Option<FrameOutcome> {
+        let returned = match self.lane_returned.take() {
+            Some(value) => Some(value),
+            None if instruction.op() == Op::Return => Some(self.read(frame, instruction.register_a())),
+            None => None,
+        };
+        if let Some(value) = returned {
+            self.frames[frame].pc = pc;
+            self.frames[frame].pc_is_resume = true;
+            return Some(FrameOutcome::Complete(value));
+        }
+        if asynchronous {
+            return self.lane_stop_awaits(p, frame, instruction, pc);
+        }
+        if instruction.op() != Op::Yield {
+            return None;
+        }
+        let value = self.read(frame, instruction.register_b());
+        self.frames[frame].pc = pc + 1;
+        self.frames[frame].pc_is_resume = true;
+        Some(FrameOutcome::Yield {
+            value,
+            destination: instruction.result_register(),
+            delegated_result: None,
+            frame: None,
+        })
     }
 
     /// The suspension of an async frame `frame` whose lane run stopped at its `Await` record

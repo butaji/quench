@@ -256,6 +256,11 @@ pub(super) struct LaneView {
     /// The window of an environment activation, when its local and closure records also run
     /// in one (`specialize_environment_window`).
     environment_window: Option<EnvironmentWindow>,
+    /// Whether the straight-line lane run from the function's first instruction reaches its
+    /// `Return` (`entry_run_returns`): a call from a native runs it whole in the lane
+    /// (`Vm::run_frame_from_lane`), whatever the run's length, since that call enters no
+    /// general loop the lane would save.
+    returns_from_entry: bool,
     /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
@@ -11699,7 +11704,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The lane view of `function`, derived on first use.
-    fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
+    pub(super) fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         if !self.execution_mode.allows_dynamic_execution() { return None; }
         let diagnostics = self.programs.reports_on_drop();
         self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
@@ -19769,6 +19774,7 @@ fn derive_lane_view<'live, H: Host>(
         }
     }
     let entries = entries.into_boxed_slice();
+    let returns_from_entry = reads_accumulator.first() == Some(&false) && entry_run_returns(&decoded, &exits);
     let activation = function
         .parameter_registers
         .filter(|_| function.locals == 0)
@@ -19797,6 +19803,7 @@ fn derive_lane_view<'live, H: Host>(
         activation,
         target_body: std::cell::OnceCell::new(),
         environment_window,
+        returns_from_entry,
         loops,
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
@@ -20828,6 +20835,23 @@ fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, foll
     runs
 }
 
+/// Whether the straight-line run from the first instruction, through its unconditional jumps,
+/// reaches a `Return` before any record the lane exits at.
+fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
+    let mut pc = 0;
+    for _ in 0..decoded.len() {
+        if exits.get(pc).is_none_or(|exits| *exits) {
+            return false;
+        }
+        match decoded[pc].op() {
+            Op::Return => return true,
+            Op::Jump => pc = decoded[pc].imm() as usize,
+            _ => pc += 1,
+        }
+    }
+    false
+}
+
 fn closes_loop(decoded: &[WideInstruction], exits: &[bool]) -> bool {
     decoded.iter().enumerate().any(|(pc, &instruction)| {
         let target = instruction.imm() as usize;
@@ -20950,6 +20974,14 @@ impl<H: Host> Vm<H> {
                 *entries.get_unchecked(pc / u64::BITS as usize)
                     & (1 << (pc % u64::BITS as usize)) != 0
             }
+    }
+
+    /// Whether a call from a native enters `view` at its first instruction: where the general
+    /// loop would, or where the lane runs the call whole (`LaneView::returns_from_entry`).
+    #[inline(always)]
+    pub(super) fn lane_runs_call(view: *const LaneView) -> bool {
+        // SAFETY: a non-null view lives with its program.
+        Self::lane_runs(view, 0) || !view.is_null() && unsafe { (*view).returns_from_entry }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
