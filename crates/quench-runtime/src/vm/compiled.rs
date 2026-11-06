@@ -2008,31 +2008,44 @@ fn emit_js_own_field_get(
     arguments: ir::Value,
     payload: ir::Value,
     receiver: JsFieldReceiver,
-    sites: &[u16],
+    sites: &[(Atom, u16)],
     destination_offset: i32,
     next: ir::Block,
     exact: &JsExactFallback,
     table: NarrowTable,
 ) {
     let fallback = builder.create_block();
-    let mut receiver = receiver;
-    let mut value = None;
-    for &site in sites {
-        // An own slot in inline storage holds a packed value, which decodes to the same Value.
-        let (packed, read) = (builder.create_block(), builder.create_block());
+    let mut object = match receiver {
+        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
+        JsFieldReceiver::Value(value) => value,
+    };
+    for &(atom, site) in sites {
+        // An own slot in inline storage holds a packed value, which decodes to the same Value;
+        // a read the site's primary row does not answer asks the VM's caches
+        // (`general_field_get`), whose miss alone takes the exact step.
+        let (packed, miss, read) = (builder.create_block(), builder.create_block(), builder.create_block());
         let packed_address = builder.append_block_param(packed, types::I64);
         let field = builder.append_block_param(read, types::I64);
-        let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, Some(packed));
+        let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, JsFieldReceiver::Value(object), site,
+            true, miss, None, None, Some(packed));
         let stored = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
         builder.ins().jump(read, &[ir::BlockArg::Value(stored)]);
         builder.switch_to_block(packed);
         let narrow = builder.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
         emit_narrow_read(builder, narrow, table, read);
+        builder.switch_to_block(miss);
+        builder.set_cold_block(miss);
+        let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_get));
+        let named = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
+        let probed = emit_lane_helper_call(builder, payload, helper, &[object, named]);
+        let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, probed, Value::DELETED.to_bits() as i64);
+        emit_js_guard(builder, hit, fallback);
+        builder.ins().jump(read, &[ir::BlockArg::Value(probed)]);
         builder.switch_to_block(read);
-        receiver = JsFieldReceiver::Value(field);
-        value = Some(field);
+        object = field;
     }
-    let value = value.expect("a field read names a site");
+    let value = object;
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -3245,7 +3258,7 @@ pub(super) fn lower_js_general_dispatch(
             builder.ins().store(MemFlagsData::trusted(), length, arguments, destination_offset);
             builder.ins().jump(next, &[]);
             builder.switch_to_block(generic);
-            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &[cache_site], destination_offset, next, &exact, narrow_table);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &[(atom, cache_site)], destination_offset, next, &exact, narrow_table);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -3256,9 +3269,9 @@ pub(super) fn lower_js_general_dispatch(
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
             && let Some((base, sites)) = match instruction.field_lookup() {
-                Some(FieldLookup::Atom { base, cache_site, .. }) => Some((base, smallvec::smallvec![cache_site])),
+                Some(FieldLookup::Atom { base, atom, cache_site }) => Some((base, smallvec::smallvec![(atom, cache_site)])),
                 Some(FieldLookup::Site(site)) => program.field_sites.get(site).map(|site| (site.base,
-                    std::iter::once(site.first.1).chain(site.second.map(|(_, cache)| cache)).collect::<smallvec::SmallVec<[u16; 2]>>())),
+                    std::iter::once(site.first).chain(site.second).collect::<smallvec::SmallVec<[(Atom, u16); 2]>>())),
                 None => None,
             }
             && let Some(receiver) = js_field_receiver(base, &register_offset)
@@ -7680,6 +7693,9 @@ struct JsStepDispatch {
     /// What a store missing its existing slot tries next (`lane_store_miss`): the object's
     /// shape and storage may change, which only re-proved reads see.
     field_add: usize,
+    /// The VM's cached read (`general_field_get`), which a read its site's primary row does
+    /// not answer asks before the exact step.
+    field_get: usize,
     /// The running VM's heap, whose allocation counters a native back edge compares to leave
     /// for its safepoint when a collection is due (`emit_js_safepoint_due`).
     heap: usize,
@@ -7853,10 +7869,26 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
 /// leaves native code for the lane's full read.
 unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
-    // The read's atom above its cache site (`Lowering::field_probe`).
-    let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
+    unsafe { cached_field_read::<H>(vm, residual, receiver, read) }
+}
+
+/// General dispatch's read of a field its site's primary row does not answer: the same
+/// cached read as a lane body's (`lane_field_get`), reached only from a row miss.
+unsafe extern "C" fn general_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+    // SAFETY: as `lane_field_get`.
+    unsafe { cached_field_read::<H>(vm, residual, receiver, read) }
+}
+
+/// The VM's cached read of the field `read` names (its atom above its cache site): an array's
+/// `length`, a proved inherited entry, else the site's caches; `Value::DELETED` for a miss.
+///
+/// # Safety
+/// `vm` and `residual` are the running VM and residual, live and unborrowed for the call.
+unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+    let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
+    // SAFETY: as the caller promises; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
     // An array's `length`, an own data property no shape holds, answers first: a loop's
     // condition reads it every iteration (`Vm::array_length_field`).
@@ -8659,6 +8691,7 @@ impl LaneFrame {
                 field_entries: 0,
                 field_store: 0,
                 field_add: 0,
+                field_get: 0,
                 heap: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
@@ -8808,7 +8841,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, heap: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, heap: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8843,6 +8876,7 @@ impl JsStepDispatch {
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
         self.field_store = lane_field_set::<H> as *const () as usize;
         self.field_add = lane_store_miss::<H> as *const () as usize;
+        self.field_get = general_field_get::<H> as *const () as usize;
         self.heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap)) as usize;
     }
 
