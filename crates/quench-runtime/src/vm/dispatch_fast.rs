@@ -6030,16 +6030,37 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a register or `this` at a site whose primary entry names a prototype
-    /// holder (`Vm::field_site_holder`), a method read: that entry inline; any other read
-    /// takes `lane_get_field_miss`, which moves a site gone polymorphic.
+    /// holder (`Vm::field_site_holder`), a method read: the record's hint of that read
+    /// (`Vm::holder_hint_hit`), whose receiver shape, prototype link and epoch tests stand for
+    /// the entry's receiver and holder proofs and the holder's storage, which the epoch
+    /// carries from the read that made the hint. Any other read takes
+    /// `lane_get_field_holder_refresh` out of line.
     fn lane_get_field_holder<THIS: bool>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), object))
+        else {
+            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_holder` past its hint: the site's primary holder entry
+    /// (`Vm::primary_record_holder_field_hit`), whose answer becomes the hint. Any other read
+    /// takes `lane_get_field_holder_any`.
+    #[inline(never)]
+    fn lane_get_field_holder_refresh<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).primary_record_holder_field_hit(code, object, i.c))
+        let vm = unsafe { vm(cx) };
+        let Some((object, value)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| vm.primary_record_holder_field_hit(code, object, i.c).map(|value| (object, value)))
         else {
             sibling!(lane_get_field_holder_any::<H, THIS>, r, ip, Carried::script(cx))
         };
+        set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }

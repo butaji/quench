@@ -1250,6 +1250,133 @@ fn polymorphic_method_reads_follow_their_holder_hint() {
 }
 
 #[test]
+fn monomorphic_field_sites_follow_prototypes_integrity_and_globals() {
+    // A monomorphic prototype read answers from its record's hint (`Vm::holder_hint_hit`), an
+    // own store from its record's entry into packed inline or arena storage
+    // (`Object::exact_storage`), and a constant operand's integer is proved once
+    // (`lane_operator_integer_constant`). Warmed sites then see a prototype value replaced,
+    // `setPrototypeOf`, a shadowing own property, an accessor added to the prototype, a deleted
+    // and re-added holder, values past the narrow range, a non-writable or frozen target, an
+    // accessor on the receiver or its prototype, and a global property redefined, deleted and
+    // made a getter. Expected values are Node's (v22, as a script).
+    let prototype = r#"
+      var out = [];
+      function P() {}
+      P.prototype.k = 5;
+      function readK(o) { return o.k; }
+      var o = new P(), s = 0, i;
+      for (i = 0; i < 300; i++) s += readK(o);
+      out.push(s);
+      P.prototype.k = 7;
+      out.push(readK(o));
+      for (i = 0, s = 0; i < 300; i++) s += readK(o);
+      out.push(s);
+      var shadow = new P();
+      shadow.k = 11;
+      out.push(readK(shadow), readK(o));
+      Object.setPrototypeOf(o, { k: 13 });
+      out.push(readK(o));
+      Object.setPrototypeOf(o, P.prototype);
+      out.push(readK(o));
+      var calls = 0;
+      Object.defineProperty(P.prototype, "k", { get: function () { calls++; return this === o ? 17 : 19; }, configurable: true });
+      out.push(readK(o), readK(new P()), calls);
+      delete P.prototype.k;
+      out.push(String(readK(o)));
+      Object.prototype.k = "object k";
+      out.push(readK(o));
+      delete Object.prototype.k;
+      P.prototype.k = 23;
+      for (i = 0, s = 0; i < 300; i++) s += readK(o);
+      out.push(s);
+      Object.freeze(P.prototype);
+      out.push(readK(o));
+      print(out.join("|"));
+    "#;
+    let stores = r#"
+      var out = [];
+      function put(o, x) { o.v = x; return o.w; }
+      function C() { this.v = 0; }
+      C.prototype.set = function (x) { this.v = x; };
+      function strictPut(o, x) { "use strict"; o.v = x; }
+      var o = { v: 3, w: 4 }, c = new C(), s = 0, i;
+      for (i = 0; i < 300; i++) { s += put(o, i); c.set(i); s += c.v; }
+      out.push(s, o.v, c.v);
+      put(o, 1 << 30); c.set(-(1 << 30) - 1);
+      out.push(o.v, o.w, c.v);
+      put(o, 2.5); c.set("str");
+      out.push(o.v, o.w, c.v);
+      put(o, o); c.set(null);
+      out.push(o.v === o, o.w, c.v);
+      for (i = 0; i < 300; i++) { put(o, i); c.set(i); }
+      out.push(o.v, c.v);
+      Object.defineProperty(o, "v", { writable: false });
+      put(o, 99);
+      out.push(o.v);
+      try { strictPut(o, 98); out.push("no throw"); } catch (e) { out.push(e.constructor.name); }
+      Object.freeze(c);
+      c.set(1234);
+      out.push(c.v);
+      var d = new C();
+      for (i = 0; i < 300; i++) d.set(i);
+      var seen = [];
+      Object.defineProperty(d, "v", { set: function (x) { seen.push(x); }, get: function () { return "got"; }, configurable: true });
+      d.set(41);
+      out.push(d.v, seen.join(","));
+      var e = new C();
+      Object.defineProperty(C.prototype, "v", { set: function (x) { seen.push("proto " + x); }, configurable: true });
+      e.set(42);
+      out.push(e.v, seen.join(","));
+      var f = new C();
+      out.push(f.v);
+      f.set(43);
+      out.push(f.v, seen.join(","));
+      print(out.join("|"));
+    "#;
+    let globals = r#"
+      var out = [];
+      var g = 5;
+      globalThis.h = 6;
+      function readG() { return g; }
+      function readH() { return typeof h === "undefined" ? "absent" : h; }
+      function readHPlain() { try { return h; } catch (e) { return e.constructor.name; } }
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += readG() + readH() + readHPlain();
+      out.push(s);
+      g = 8; h = 9;
+      out.push(readG(), readH(), readHPlain());
+      out.push(delete globalThis.g, readG());
+      out.push(delete globalThis.h, readH(), readHPlain());
+      var calls = 0;
+      Object.defineProperty(globalThis, "h", { get: function () { calls++; return 10; }, configurable: true });
+      for (i = 0, s = 0; i < 300; i++) s += readH() + readHPlain();
+      out.push(s, calls);
+      Object.defineProperty(globalThis, "h", { value: 12, writable: false, configurable: true });
+      h = 13;
+      out.push(readH(), readHPlain());
+      Object.defineProperty(globalThis, "g", { value: 14 });
+      out.push(readG());
+      g = 15;
+      out.push(readG(), Object.getOwnPropertyDescriptor(globalThis, "g").writable);
+      print(out.join("|"));
+    "#;
+    for (source, expected) in [
+        (prototype, "1500|7|2100|11|7|13|7|17|19|2|undefined|object k|6900|23"),
+        (
+            stores,
+            "46050|299|299|1073741824|4|-1073741825|2.5|4|str|true|4||299|299|299|TypeError|299|got|41|42|41|||41,proto 0,proto 43",
+        ),
+        (globals, "5100|8|9|9|false|8|true|absent|ReferenceError|6000|900|12|12|14|15|true"),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(source, "monomorphic-field-sites.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected]);
+    }
+}
+
+#[test]
 fn string_method_reads_follow_the_prototype_values() {
     // A string primitive's method read keeps `String.prototype`'s answer as its record's hint
     // (`Vm::string_hint_hit`): a method replaced by assignment, restored, and redefined each
