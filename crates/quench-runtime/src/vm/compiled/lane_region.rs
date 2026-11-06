@@ -2543,25 +2543,15 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let ty = state.values[usize::from(source)].value.ty;
         let value = self.tagged(state, source);
-        // A store a previous body left at may add its property (`compiled::lane_field_add`),
-        // which changes the object's shape: every proof of an object retires, as another
-        // register may name it, and `this`'s facts are read again.
-        if self.generic.contains(&pc) {
+        // A store a previous body left at, or whose site proves no own slot (a constructor's,
+        // which adds its property), may add its property (`add_helper`).
+        let site = instruction.cache_site_index();
+        if self.generic.contains(&pc) || self.fields.get(&site).is_none_or(|shapes| shapes.iter().all(|field| field.holder.is_some())) {
             let object = match register {
                 None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
                 Some(register) => self.tagged(state, register),
             };
-            let write = self.ins().iconst(types::I64, (u64::from(instruction.atom_index()) << u16::BITS
-                | u64::from(instruction.cache_site_index())) as i64);
-            let payload = self.payload;
-            let stored = emit_lane_helper_call(&mut self.builder, payload, self.helpers.field_add, &[payload, object, write, value]);
-            let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-            emit_js_guard(&mut self.builder, hit, exit);
-            state.shapes.clear();
-            state.layouts.clear();
-            state.epoch = None;
-            self.reload_property_arena();
-            self.reload_receiver();
+            self.add_helper(state, object, instruction.atom_index(), site, value, exit);
             return Some(true);
         }
         self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
@@ -2632,9 +2622,11 @@ impl Lowering<'_, '_> {
                     self.store_direct(field, object_bits, object, properties, None, value, ty, done, general);
                     self.builder.switch_to_block(next);
                 }
+                // A shape the site names no own slot for may take the property's add, a
+                // constructor's site that other constructors' receivers already hold.
                 self.ins().jump(general, &[]);
                 self.builder.switch_to_block(general);
-                self.store_helper(state, object_bits, atom, site, value, exit);
+                self.add_helper(state, object_bits, atom, site, value, exit);
                 self.ins().jump(done, &[]);
                 self.builder.switch_to_block(done);
                 return Some(());
@@ -2706,6 +2698,22 @@ impl Lowering<'_, '_> {
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
     /// included; anything else leaves through `exit`.
+    /// The store of `value` to `object`'s field `atom` that may add the property
+    /// (`compiled::lane_field_add`), which changes the object's shape: every proof of an
+    /// object retires, as another register may name it, and `this`'s facts are read again.
+    fn add_helper(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
+        let write = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
+        let payload = self.payload;
+        let stored = emit_lane_helper_call(&mut self.builder, payload, self.helpers.field_add, &[payload, object, write, value]);
+        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+        emit_js_guard(&mut self.builder, hit, exit);
+        state.shapes.clear();
+        state.layouts.clear();
+        state.epoch = None;
+        self.reload_property_arena();
+        self.reload_receiver();
+    }
+
     fn store_helper(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         // The store may write a prototype's own field.
         state.epoch = None;

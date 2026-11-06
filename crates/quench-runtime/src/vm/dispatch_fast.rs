@@ -7557,10 +7557,10 @@ script_handler! {
             }
         }
         let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
-        let resumed = lane_body_left(cx, r, own, method, exit);
+        let (resumed, innermost) = lane_body_left(cx, r, own, method, exit);
         // Counted once nothing reads the body: a reoptimization moves it.
         if lane_leave_counts(cx, exit) {
-            own.note_lane_body_end(exit);
+            lane_note_leave(own, innermost, exit);
         }
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
@@ -14366,12 +14366,14 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
         let counts = lane_leave_counts(cx, exit);
-        let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
-        let resumed = lane_body_left(cx, r, own, method, exit);
+        let (resumed, innermost) = lane_body_left(cx, r, own, method, exit);
+        // A leave inside a callee is the callee's: the run's own code ran as compiled.
+        let left = counts && innermost.is_none()
+            && !matches!(exit, super::compiled::LaneExit::Returned { .. } | super::compiled::LaneExit::Callee);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
         if counts {
-            own.note_lane_body_end(exit);
+            lane_note_leave(own, innermost, exit);
         }
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
@@ -15043,9 +15045,9 @@ fn lane_body_activate<H: Host>(
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
-    let resumed = lane_body_left(cx, registers, own, method, exit);
+    let (resumed, innermost) = lane_body_left(cx, registers, own, method, exit);
     if lane_leave_counts(cx, exit) {
-        own.note_lane_body_end(exit);
+        lane_note_leave(own, innermost, exit);
     }
     match resumed {
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
@@ -15070,6 +15072,17 @@ fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::La
     !(warming && exit == super::compiled::LaneExit::Callee)
 }
 
+/// Counts `exit` toward the reoptimization of the body it is a leave of (`lane_body_left`):
+/// the innermost direct callee's, else `own`'s; a leave in a native call's callee is that
+/// callee's, which its own run counted (`lane_body_activate`).
+fn lane_note_leave(own: &LaneView, innermost: Option<&LaneView>, exit: super::compiled::LaneExit) {
+    match innermost {
+        Some(callee) => callee.note_lane_body_end(exit),
+        None if exit == super::compiled::LaneExit::Callee => {}
+        None => own.note_lane_body_end(exit),
+    }
+}
+
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
 /// registers are `r`: the activations of the native frames it left inside first
 /// (`lane_materialize_frames`), then the record its leave names in the innermost, or the
@@ -15082,22 +15095,37 @@ enum LaneBodyLeft {
 
 
 
+/// With the view whose body the exit is a leave of: the innermost native frame's, where the
+/// run left inside a direct callee, whose feedback it is; `None` for the run's own body.
 fn lane_body_left<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     own: &LaneView,
     method: &super::compiled::LaneMethod,
     exit: super::compiled::LaneExit,
-) -> LaneBodyLeft {
+) -> (LaneBodyLeft, Option<&'static LaneView>) {
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.body_stats.ended(exit, &method.inlined, super::compiled::take_lane_exit_line());
     }
     let frames = Vm::<H>::take_shadow_frames();
-    let (r, own, method) = match lane_materialize_frames(cx, frames) {
+    let innermost = lane_materialize_frames(cx, frames);
+    let (r, own, method) = match innermost {
         // SAFETY: the materialization made the innermost frame the running activation.
         Some((own, method)) => (unsafe { (*cx).registers }, own, method),
         None => (r, own, method),
     };
+    (lane_resumption(cx, r, own, method, exit), innermost.map(|(view, _)| view))
+}
+
+/// Where the lane continues after `exit` of `own`'s body `method`, on the activation whose
+/// registers are `r` (`lane_body_left`).
+fn lane_resumption<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    own: &LaneView,
+    method: &super::compiled::LaneMethod,
+    exit: super::compiled::LaneExit,
+) -> LaneBodyLeft {
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
     match exit {
