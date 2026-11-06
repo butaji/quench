@@ -22674,6 +22674,95 @@ fn lane_constructions_build_like_the_interpreter() {
 }
 
 #[test]
+fn lane_parser_node_constructions_build_like_the_interpreter() {
+    // acorn's node construction: constructors whose fields depend on the parser's options,
+    // nested constructions of a location and its positions, prototype methods and a helper
+    // run through `Function.prototype.call`. Each of these handlers dispatches its successor
+    // as a sibling jump (`become`), so a long run of them stays in one lane frame.
+    let source = r#"
+      function Position(line, col) { this.line = line; this.column = col; }
+      Position.prototype.offset = function (n) { return new Position(this.line, this.column + n); };
+      function SourceLocation(p, start, end) { this.start = start; this.end = end; if (p.sourceFile !== null) this.source = p.sourceFile; }
+      function Node(parser, pos, loc) {
+        this.type = ""; this.start = pos; this.end = 0;
+        if (parser.options.locations) this.loc = new SourceLocation(parser, loc);
+        if (parser.options.ranges) this.range = [pos, 0];
+      }
+      function finishNodeAt(node, type, pos, loc) { node.type = type; node.end = pos; if (this.options.locations) node.loc.end = loc; if (this.options.ranges) node.range[1] = pos; return node; }
+      function Parser(options) { this.options = options; this.sourceFile = options.sourceFile ? "f" : null; this.pos = 0; this.line = 1; }
+      Parser.prototype.curPosition = function () { if (this.options.locations) return new Position(this.line, this.pos); };
+      Parser.prototype.startNode = function () { return new Node(this, this.pos, this.curPosition()); };
+      Parser.prototype.finishNode = function (node, type) { return finishNodeAt.call(this, node, type, this.pos, this.curPosition()); };
+      function run(options, n) {
+        const p = new Parser(options);
+        let t = 0;
+        for (let i = 0; i < n; i++) {
+          const node = p.startNode();
+          p.pos += 3; if (i % 7 === 0) p.line++;
+          p.finishNode(node, i & 1 ? "Identifier" : "Literal");
+          t += node.end - node.start + node.type.length;
+          if (node.loc) t += node.loc.start.column + node.loc.end.line + (node.loc.source ? 1 : 0) + node.loc.start.offset(2).column;
+          if (node.range) t += node.range[1];
+        }
+        return t;
+      }
+      let total = 0;
+      for (let r = 0; r < 8; r++) {
+        total += run({ locations: true, ranges: true, sourceFile: r & 1 }, 200);
+        total += run({ locations: false, ranges: r % 3 === 0 }, 150);
+      }
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-parser-nodes.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1600989.0); 2]);
+}
+
+#[test]
+fn lane_nested_lengths_read_like_the_interpreter() {
+    // A tokenizer's `this.input.length`: a nested read whose last step is a string's own
+    // `length`, of empty, ASCII and wide strings, and an array's at the same sites, which
+    // read what the interpreter reads.
+    let source = r#"
+      function Tokenizer(input) { this.input = input; this.pos = 0; }
+      Tokenizer.prototype.remaining = function () { return this.input.length - this.pos; };
+      function scan(t) { let n = 0; while (t.pos < t.input.length) { t.pos++; n++; } return n; }
+      const inputs = ["", "abc", "x".repeat(70), "é€😀", [1, 2, 3, 4], [], new Array(9)];
+      let total = 0;
+      for (let r = 0; r < 300; r++) {
+        for (const input of inputs) {
+          const t = new Tokenizer(input);
+          total += t.remaining() * 3 + scan(t) + t.remaining() + t.input.length;
+        }
+      }
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-nested-lengths.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(135000.0); 2]);
+}
+
+#[test]
 fn lane_capture_stores_write_like_the_interpreter() {
     // A lane body stores to captures of enclosing scopes, and a callee it calls directly
     // resolves its own captures in its closure's scope, not its caller's.

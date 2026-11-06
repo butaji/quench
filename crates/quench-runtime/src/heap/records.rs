@@ -357,8 +357,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         // The common allocation, inline: an id from the loaded free word, else the next fresh
         // id in a block that exists. Reservation, new blocks and loading the next free word
         // take `claim_slow`, which names no value: an allocation inlined into a lane handler
-        // then passes it no address of the handler's stack, which would keep the handler's
-        // dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
+        // then passes it no address of the handler's stack.
         let id = if self.free_word != 0 {
             let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
             self.free_word &= !(1_u64 << bit);
