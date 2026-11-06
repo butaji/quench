@@ -151,6 +151,11 @@ impl NativeFieldLoad {
                 || self.storage_len <= crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
     }
 
+    /// The read this load makes, as the shared semantics takes it (`staged::FieldCase`).
+    pub(super) fn case(self) -> crate::vm::staged::FieldCase {
+        crate::vm::staged::FieldCase { exact: self.shape, holder: self.holder, slot: self.slot, storage_len: self.storage_len }
+    }
+
     /// Where a receiver of the exact shape keeps its values (`PlainPropertyStorage::of_exact`),
     /// which the read's shape match proves.
     pub(super) fn storage(self) -> PlainPropertyStorage {
@@ -215,20 +220,21 @@ impl crate::vm::staged::Stage for Emit<'_, '_> {
     }
     fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
     fn below_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, a, imm as i64) }
-    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value, otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> Option<ir::Value>, otherwise: impl FnOnce(&mut Self) -> Option<ir::Value>) -> Option<ir::Value> {
         let (then_block, otherwise_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let result = self.builder.append_block_param(join, types::I64);
         self.builder.ins().brif(cond, then_block, &[], otherwise_block, &[]);
-        for (block, arm) in [(then_block, Box::new(then) as Box<dyn FnOnce(&mut Self) -> ir::Value + '_>), (otherwise_block, Box::new(otherwise))] {
+        for (block, arm) in [(then_block, Box::new(then) as Box<dyn FnOnce(&mut Self) -> Option<ir::Value> + '_>), (otherwise_block, Box::new(otherwise))] {
             self.builder.switch_to_block(block);
             self.builder.seal_block(block);
-            let value = arm(self);
+            let value = arm(self)?;
             self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
         }
         self.builder.switch_to_block(join);
         self.builder.seal_block(join);
-        result
+        Some(result)
     }
+    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
     fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         emit_js_guard(self.builder, cond, miss);
         Some(())

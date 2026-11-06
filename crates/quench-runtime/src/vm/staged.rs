@@ -44,7 +44,10 @@ pub(crate) trait Stage {
     /// Whether `a` is below `imm`, both unsigned.
     fn below_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s: only the arm taken runs.
-    fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word, otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
+    /// `None` where the arm taken refuses (an emitting stage: either does).
+    fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Option<Self::Word>, otherwise: impl FnOnce(&mut Self) -> Option<Self::Word>) -> Option<Self::Word>;
+    /// Whether `a` or `b` holds.
+    fn either(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
     /// Continues where `cond` holds; `None` where it never can, so nothing runs past it.
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
     /// The property arena's base, whose values a flat object's run starts at its position.
@@ -141,6 +144,56 @@ pub(crate) fn holder_slot<S: Stage>(stage: &mut S, record: S::Word, holder: u32,
     Some(read_slot(stage, layout, slot))
 }
 
+/// One proved case of a field site: an object of the exact shape `exact` holds the value at
+/// `slot`, its own or, for a `holder`, its immediate prototype's of that exact shape, among
+/// `storage_len` values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct FieldCase {
+    pub(crate) exact: u32,
+    pub(crate) holder: Option<u32>,
+    pub(crate) slot: u16,
+    pub(crate) storage_len: usize,
+}
+
+/// The value `case` reads from the object record at `record`, whose exact shape is `case`'s.
+#[inline(always)]
+fn case_read<S: Stage>(stage: &mut S, record: S::Word, case: FieldCase, miss: S::Miss) -> Option<S::Word> {
+    match case.holder {
+        None => {
+            let layout = layout(stage, record, case.exact, case.storage_len, false);
+            Some(read_slot(stage, layout, case.slot))
+        }
+        Some(holder) => holder_slot(stage, record, holder, case.slot, case.storage_len, miss),
+    }
+}
+
+/// The value a field site's proved `cases` read from the object record at `record`, whose
+/// exact shape word is `shape`; `miss` for any other shape. Own values at one slot in one
+/// storage form are a layout family: one membership test and one read serve them, bounded by
+/// the shortest storage, which still holds the slot. Other cases switch on the shape.
+#[inline(always)]
+pub(crate) fn field_read<S: Stage>(stage: &mut S, record: S::Word, shape: S::Word, cases: &[FieldCase], miss: S::Miss) -> Option<S::Word> {
+    let (first, rest) = cases.split_first()?;
+    let family = |case: &FieldCase| case.holder.is_none() && case.slot == first.slot
+        && PlainPropertyStorage::of_exact(case.exact) == PlainPropertyStorage::of_exact(first.exact);
+    if cases.iter().all(family) {
+        let mut member = stage.eq_imm(shape, u64::from(first.exact));
+        for case in rest {
+            let same = stage.eq_imm(shape, u64::from(case.exact));
+            member = stage.either(member, same);
+        }
+        stage.guard(member, miss)?;
+        let shortest = cases.iter().copied().min_by_key(|case| case.storage_len)?;
+        return case_read(stage, record, shortest, miss);
+    }
+    let matched = stage.eq_imm(shape, u64::from(first.exact));
+    if rest.is_empty() {
+        stage.guard(matched, miss)?;
+        return case_read(stage, record, *first, miss);
+    }
+    stage.choose(matched, |stage| case_read(stage, record, *first, miss), |stage| field_read(stage, record, shape, rest, miss))
+}
+
 /// Value `slot` of an object of `layout`, which holds it.
 #[inline(always)]
 pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word>, slot: u16) -> S::Word {
@@ -210,11 +263,11 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
         let entry = stage.add(table, offset);
         let upper = stage.load_table(entry);
         let lower = stage.shr_imm(narrow, NarrowLayout::INDEX_SHIFT);
-        stage.or(upper, lower)
+        Some(stage.or(upper, lower))
     }, |stage| {
         let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
-        stage.or_imm(shifted, ValueLayout::INT_TAG)
-    })
+        Some(stage.or_imm(shifted, ValueLayout::INT_TAG))
+    }).expect("both arms of a narrow decode are total")
 }
 
 /// The interpreter's stage: words are the machine's own, and a failed guard returns to the
@@ -284,9 +337,11 @@ impl Stage for Concrete {
     #[inline(always)]
     fn below_imm(&mut self, a: u64, imm: u64) -> bool { a < imm }
     #[inline(always)]
-    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
+    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>, otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {
         if cond { then(self) } else { otherwise(self) }
     }
+    #[inline(always)]
+    fn either(&mut self, a: bool, b: bool) -> bool { a || b }
     #[inline(always)]
     fn guard(&mut self, cond: bool, _: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
@@ -301,11 +356,18 @@ impl Stage for Concrete {
 #[inline(always)]
 pub(crate) fn own_field(heap: &crate::heap::Heap, object: &crate::heap::Object, exact: u32, slot: u16, storage_len: usize) -> Option<crate::Value> {
     let mut stage = Concrete::of(heap);
-    let record = object as *const crate::heap::Object as u64;
-    let matched = exact_shape_is(&mut stage, record, exact);
+    let matched = exact_shape_is(&mut stage, object as *const crate::heap::Object as u64, exact);
     stage.guard(matched, ())?;
+    Some(own_slot(heap, object, exact, slot, storage_len))
+}
+
+/// `own_field` of an object whose exact shape the caller proved `exact`.
+#[inline(always)]
+pub(crate) fn own_slot(heap: &crate::heap::Heap, object: &crate::heap::Object, exact: u32, slot: u16, storage_len: usize) -> crate::Value {
+    let mut stage = Concrete::of(heap);
+    let record = object as *const crate::heap::Object as u64;
     let layout = layout(&mut stage, record, exact, storage_len, false);
-    Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
+    crate::Value::from_bits(read_slot(&mut stage, layout, slot))
 }
 
 /// The data value `slot` that the immediate prototype of `object` holds, as every tier reads
@@ -405,9 +467,11 @@ impl<R: RegisterFile> Stage for ConcreteFrame<R> {
         object_records() -> u64;
     }
     #[inline(always)]
-    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
+    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>, otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {
         if cond { then(self) } else { otherwise(self) }
     }
+    #[inline(always)]
+    fn either(&mut self, a: bool, b: bool) -> bool { a || b }
 }
 
 impl<R: RegisterFile> Machine for ConcreteFrame<R> {

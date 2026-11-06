@@ -2218,38 +2218,15 @@ impl Lowering<'_, '_> {
             };
             return Some(projection.read(&mut self.builder, field.slot));
         }
-        // A layout family: own fields at one slot in every shape. One membership test and one
-        // read serve them all, bounded by the shortest storage, which still holds the slot.
-        if let [first, ..] = shapes
-            && shapes.iter().all(|field| field.holder.is_none() && field.slot == first.slot && field.storage() == first.storage()) {
-            let mut member = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(first.shape));
-            for field in &shapes[1..] {
-                let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-                member = self.ins().bor(member, same);
-            }
-            emit_js_guard(&mut self.builder, member, exit);
-            let shortest = shapes.iter().copied().min_by_key(|field| field.storage_len).expect("a family has a shape");
-            let projection = CheckedObject::prove(&mut self.builder, object, properties, shortest, PackedAccess::Reload)?;
-            return Some(projection.read(&mut self.builder, first.slot));
+        // Several shapes: the shared dispatch over the site's cases (`staged::field_read`).
+        // A holder case that folds to its prototype's constant is the lowering's own.
+        if shapes.iter().any(|field| field.inherited.is_some() || !field.valid()) {
+            return None;
         }
-        let join = self.builder.create_block();
-        let value = self.builder.append_block_param(join, types::I64);
-        for field in shapes {
-            let matched = self.builder.create_block();
-            let next = self.builder.create_block();
-            let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-            self.ins().brif(same, matched, &[], next, &[]);
-            self.builder.switch_to_block(matched);
-            let read = match field.holder {
-                None => CheckedObject::prove(&mut self.builder, object, properties, *field, PackedAccess::Reload)?.read(&mut self.builder, field.slot),
-                Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
-            };
-            self.ins().jump(join, &[ir::BlockArg::Value(read)]);
-            self.builder.switch_to_block(next);
-        }
-        self.ins().jump(exit, &[]);
-        self.builder.switch_to_block(join);
-        Some(value)
+        let cases: Vec<_> = shapes.iter().map(|field| field.case()).collect();
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_base: Some(properties), object_records: Some(records) };
+        crate::vm::staged::field_read(&mut stage, object, shape, &cases, exit)
     }
 
     /// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's
@@ -2713,19 +2690,20 @@ impl crate::vm::staged::Stage for LaneMachine<'_, '_, '_> {
         below_imm(a: ir::Value, imm: u64) -> ir::Value;
         guard(cond: ir::Value, miss: ir::Block) -> Option<()>;
     }
-    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value, otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> Option<ir::Value>, otherwise: impl FnOnce(&mut Self) -> Option<ir::Value>) -> Option<ir::Value> {
         let (then_block, otherwise_block, join) = (self.lowering.builder.create_block(), self.lowering.builder.create_block(), self.lowering.builder.create_block());
         let result = self.lowering.builder.append_block_param(join, types::I64);
         self.lowering.builder.ins().brif(cond, then_block, &[], otherwise_block, &[]);
         self.lowering.builder.switch_to_block(then_block);
-        let value = then(self);
+        let value = then(self)?;
         self.lowering.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
         self.lowering.builder.switch_to_block(otherwise_block);
-        let value = otherwise(self);
+        let value = otherwise(self)?;
         self.lowering.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
         self.lowering.builder.switch_to_block(join);
-        result
+        Some(result)
     }
+    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.lowering.ins().bor(a, b) }
     fn property_base(&mut self) -> ir::Value {
         let entry = self.lowering.entry.as_ref().expect("entry facts");
         self.lowering.builder.use_var(entry.receiver.properties)

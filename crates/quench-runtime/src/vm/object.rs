@@ -2406,35 +2406,16 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
-        let receiver_shape = receiver.exact_shape();
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(site) };
-        if cache.receiver == receiver_shape && cache.holder == NO_FIELD_HOLDER {
-            // SAFETY: receiver shape and slot were recorded together for an
-            // own data property on the cache miss path.
-            let value = unsafe {
-                self.heap
-                    .property_get_unchecked(receiver, cache.slot as usize)
-            };
-            return Some(FieldCacheHit {
-                value,
-                tier: 0,
-                depth: 0,
-            });
+        if cache.holder == NO_FIELD_HOLDER && let Some(value) = self.own_field_entry_hit(cache, receiver) {
+            return Some(FieldCacheHit { value, tier: 0, depth: 0 });
         }
-        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape, NO_FIELD_HOLDER) {
-            // SAFETY: the table is keyed by the immutable receiver shape.
-            let value = unsafe {
-                self.heap
-                    .property_get_unchecked(receiver, cache.slot as usize)
-            };
-            return Some(FieldCacheHit {
-                value,
-                tier: 2,
-                depth: 0,
-            });
-        }
-        None
+        // The megamorphic table's key is the exact shape, which its entry's read then holds.
+        let exact = receiver.exact_shape();
+        let cache = self.megamorphic_field_cache(site, exact, NO_FIELD_HOLDER)?;
+        let value = super::staged::own_slot(&self.heap, receiver, exact, cache.slot, usize::from(cache.slot) + 1);
+        Some(FieldCacheHit { value, tier: 2, depth: 0 })
     }
 
     /// The monomorphic prototype-holder hit when the immediate prototype is an ordinary object;
