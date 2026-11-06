@@ -25128,3 +25128,220 @@ var result = out.join(",");
     };
     std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
 }
+
+/// Runs `source` and returns what it printed, with the collections its run made.
+fn leaf_call_output(source: &str, name: &str) -> (Vec<String>, u64) {
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, name).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    vm.execute(&program).unwrap();
+    let collections = vm.heap.collection_epoch() - epoch;
+    let printed = output.borrow().clone();
+    (printed, collections)
+}
+
+#[test]
+fn lane_leaf_calls_follow_callee_redefinition() {
+    // A site that called leaves (`CallEntry::Leaf`, `CallEntry::ContextLeaf`) and meets another
+    // callee calls it, whatever it captures (expected values from Node).
+    let source = r#"
+      var f = function (x) { return (x + 1) | 0; };
+      function gl(x) { return x * 2; }
+      var counter = (function () { var c = 0; return function () { c = (c + 1) | 0; return c; }; })();
+      function run(n) {
+        var acc = 0;
+        for (var i = 0; i < n; i++) {
+          acc = (f(acc) + gl(1) + counter()) | 0;
+          if (i === 3000) {
+            f = function (x) { return (x + 2) | 0; };
+            gl = function (x) { return x * 3; };
+            counter = (function () { var c = 100; return function () { c = (c + 2) | 0; return c; }; })();
+          }
+        }
+        return acc;
+      }
+      print(run(6000));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-redefinition.js").0, ["13825399"]);
+}
+
+#[test]
+fn lane_leaf_calls_that_throw_keep_their_frames() {
+    // A leaf's record that leaves the lane makes the leaf an activation first
+    // (`lane_materialize_leaf`), so its error's stack holds its frame, and a `valueOf` it
+    // reaches runs above it (expected frames from Node).
+    let source = r#"
+      function getV(o) { return o.v; }
+      function add(a, b) { return a + b; }
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      function run(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) s = (s + getV({ v: i })) | 0;
+        try { getV(undefined); } catch (e) { print(e.constructor.name + " " + frames(e)); }
+        var bad = { valueOf: function () { throw new Error("boom"); } };
+        for (var j = 0; j < n; j++) s = (s + add(j, 1)) | 0;
+        try { add(1, bad); } catch (e) { print(e.message + " " + frames(e)); }
+        return s;
+      }
+      print(run(3000));
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "leaf-throws.js").0,
+        ["TypeError getV,run", "boom valueOf,add", "9000000"]
+    );
+}
+
+#[test]
+fn lane_leaf_calls_reach_the_recursion_limit_as_activations() {
+    // A leaf call takes the room its activation would (`lane_activation_room`), so recursion
+    // through leaf calls overflows as it would without them, and recovers.
+    let source = r#"
+      function leafInc(x) { return (x + 1) | 0; }
+      function rec(n) { return n === 0 ? 0 : (leafInc(n) + rec(n - 1)) | 0; }
+      function run() {
+        for (var i = 0; i < 3000; i++) rec(10);
+        try { rec(1e7); return "no error"; } catch (e) { return (e instanceof RangeError) + " " + rec(100); }
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-recursion.js").0, ["true 5150"]);
+}
+
+#[test]
+fn lane_leaf_calls_keep_legacy_caller_and_arguments() {
+    // A sloppy leaf reading its own `caller`, or its caller's `arguments`, sees the frames a
+    // call without leaves would have (expected values from Node).
+    let source = r#"
+      function who() { return who.caller === viaWho; }
+      function viaWho(a) { return who(); }
+      function peek() { return outer.arguments.length + ":" + outer.arguments[1]; }
+      function outer(a) { return peek(); }
+      function run() {
+        var ok = 0, last = "";
+        for (var i = 0; i < 3000; i++) { if (viaWho(i)) ok++; last = outer(i, "x" + i, 3); }
+        return ok + " " + last;
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-legacy.js").0, ["3000 3:x2999"]);
+}
+
+#[test]
+fn lane_leaf_calls_survive_collections_their_getters_make() {
+    // A leaf's field read that meets a getter makes the leaf an activation before the
+    // getter's (`lane_getter_activation`), so the object in the leaf's register survives the
+    // collections the getter's allocations make; a leaf's concatenation allocates too.
+    let source = r#"
+      var holder = { get x() { var a = []; for (var k = 0; k < 64; k++) a.push({ k: k }); return a.length; } };
+      function rd(o, p) { var t = p.y; var g = o.x; return t.k + g; }
+      function cat(a, b) { return a + b; }
+      function run() {
+        var s = 0, str = "";
+        for (var i = 0; i < 20000; i++) { s = (s + rd(holder, { y: { k: i & 7 } })) | 0; str = cat("v", i); }
+        return s + " " + str;
+      }
+      print(run());
+    "#;
+    let (printed, collections) = leaf_call_output(source, "leaf-collections.js");
+    assert_eq!(printed, ["1350000 v19999"]);
+    assert!(collections > 0, "the getters' allocations collect");
+}
+
+#[test]
+fn lane_leaf_calls_bind_receivers_as_activations() {
+    // A leaf method reads its receiver's field; a sloppy leaf binds the global object for a
+    // missing receiver and a strict one `undefined` (expected values from Node).
+    let source = r#"
+      function C() { this.n = 2; }
+      C.prototype.m = function (x) { return (x + this.n) | 0; };
+      function sloppyThis() { return this === globalThis; }
+      function strictThis() { "use strict"; return this; }
+      function run() {
+        var o = new C(), s = 0, t = 0, u = 0;
+        for (var i = 0; i < 3000; i++) { s = o.m(s); if (sloppyThis()) t++; if (strictThis() === undefined) u++; }
+        var m = o.m;
+        return s + " " + t + " " + u + " " + m(1);
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-receivers.js").0, ["6000 3000 3000 0"]);
+}
+
+#[test]
+fn lane_leaf_calls_make_operations_in_place_as_activations() {
+    // A leaf's operation made in place (`lane_in_place`: a `valueOf` a binary reaches, a
+    // proxy's read) makes the leaf an activation first, from an activation or from the
+    // frame, so the guest code runs above the leaf's frame (expected values from Node).
+    let source = r#"
+      function sum3(a, b) { var t = a + b; return t * 2; }
+      function rd(o) { var v = o.k; return v + 1; }
+      var log = [];
+      var obj = { valueOf: function () { log.push(new Error().stack.split("\n")[2].trim().split(" ")[1]); return 5; } };
+      var prox = new Proxy({}, { get: function (t, k) { log.push("get " + String(k)); return 7; } });
+      function inner(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) s = (s + sum3(i, 1) + rd({ k: i })) | 0;
+        return (s + sum3(obj, 1) + rd(prox)) | 0;
+      }
+      function outer() { return inner(3000); }
+      var top = 0;
+      for (var i = 0; i < 3000; i++) top = (top + sum3(i, 2) + rd({ k: 1 })) | 0;
+      top = (top + sum3(obj, 2) + rd(prox)) | 0;
+      print(outer() + " " + top + " " + log.join(","));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-in-place.js").0, ["13504520 9015022 sum3,get k,sum3,get k"]);
+}
+
+#[test]
+fn lane_leaf_call_sites_meeting_other_callees_call_each() {
+    // A site whose callee was a leaf calls a plain activation, the other leaf form, a read
+    // body and a native in turn as their own forms would (expected values from Node).
+    let source = r#"
+      function A(n) { this.n = n; } A.prototype.f = function (x) { return (x + 1) | 0; };
+      function B(n) { this.n = n; } B.prototype.f = function (x) { return (x + this.n) | 0; };
+      function C(n) { this.n = n; } C.prototype.f = function (x) { var s = 0; for (var k = 0; k < 3; k++) s += x; return s | 0; };
+      function D(n) { this.n = n; } D.prototype.f = function () { return this.n; };
+      function E(n) { this.n = n; } E.prototype.f = Math.abs;
+      var objects = [new A(1), new B(2), new C(3), new D(4), new E(5)];
+      function run() {
+        var acc = 0;
+        for (var i = 0; i < 5000; i++) acc = (acc + objects[i % 5].f(i & 15)) | 0;
+        return acc;
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-polymorphic.js").0, ["51944"]);
+}
+
+#[test]
+fn lane_returning_operators_keep_binary_semantics() {
+    // A returning arithmetic `Binary` decided per operator (`lane_returning_operator`) gives
+    // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
+    // `Binary` gives (expected values from Node).
+    let source = r#"
+      function add(a, b) { return a + b; }
+      function sub1(a) { return a - 1; }
+      function or0(a) { return a | 0; }
+      function shr(a, b) { return a >>> b; }
+      function run() {
+        var s = 0, t = "", u = 0n;
+        for (var i = 0; i < 3000; i++) {
+          s = add(s, sub1(i)) | 0;
+          s = (s + or0(i * 1.5) + shr(-i, 28)) | 0;
+        }
+        t = add("a", 1) + add(1.5, 0.25) + add(true, 1);
+        u = add(2n ** 64n, 1n);
+        var v = add({ valueOf: function () { return 40; } }, 2);
+        return s + " " + t + " " + u + " " + v + " " + sub1("7") + " " + or0(2 ** 32 + 5);
+      }
+      print(run());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "returning-operators.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["11287485 a11.752 18446744073709551617 42 6 5"]);
+}
