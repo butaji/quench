@@ -1090,7 +1090,18 @@ impl<H: Host> Vm<H> {
         Ok(self.array_prototype_for_realm(realm))
     }
 
+    /// `realm`'s `Array.prototype`. The active realm's is the field that follows it
+    /// (`Vm::realm_prototype_field`), read without the table.
+    #[inline(always)]
     pub(super) fn array_prototype_for_realm(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.array_proto;
+        }
+        self.array_prototype_in_table(realm)
+    }
+
+    #[inline(never)]
+    fn array_prototype_in_table(&self, realm: Value) -> Value {
         self.realm
             .intrinsics
             .builtin_prototypes
