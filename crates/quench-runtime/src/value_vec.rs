@@ -450,6 +450,7 @@ impl ValueArena {
         self.shape_readers.subscribe(shape, code)
     }
 
+    #[inline(always)]
     pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
         if previous != next {
             self.targets.depart(previous, |owner| self.slot_readers.retire(owner));

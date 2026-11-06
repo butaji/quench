@@ -121,6 +121,7 @@ impl TargetShapes {
         if self.get(owner) != TargetShape::NONE { self.set(owner, TargetShape::NONE); }
     }
 
+    #[inline(always)]
     pub(super) fn depart(&mut self, shape: u32, mut retire: impl FnMut(u32)) {
         while let Some(owner) = self.heads.get(shape as usize).copied().flatten() {
             let owner = owner.get() - 1;
