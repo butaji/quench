@@ -534,7 +534,9 @@ impl<H: Host> Vm<H> {
         if next.is_undefined() {
             return Ok(());
         }
-        let capability = self.realm.promise.reaction_capabilities.remove(&next);
+        // Only a species other than %Promise% leaves a capability (`promise_then`).
+        let capabilities = &mut self.realm.promise.reaction_capabilities;
+        let capability = if capabilities.is_empty() { None } else { capabilities.remove(&next) };
         if let Some((resolve, reject)) = capability {
             let settler = if state == PromiseState::Fulfilled {
                 resolve
@@ -628,11 +630,8 @@ impl<H: Host> Vm<H> {
         self.run_promise_job(thenable.realm, thenable.execution_context, |vm| {
             if vm.is_intrinsic_promise_then(thenable.then)
                 && vm.is_promise(thenable.thenable)
-                && !vm
-                    .realm
-                    .promise
-                    .reaction_capabilities
-                    .contains_key(&thenable.promise)
+                && (vm.realm.promise.reaction_capabilities.is_empty()
+                    || !vm.realm.promise.reaction_capabilities.contains_key(&thenable.promise))
             {
                 return vm.promise_then_resolving(p, thenable.thenable, thenable.promise);
             }
