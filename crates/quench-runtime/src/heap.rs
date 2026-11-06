@@ -3694,6 +3694,50 @@ impl Heap {
         store_exact_slot(data, &mut self.properties, slot, value, target, layout)
     }
 
+    /// Whether the arena keeps slot representations, which observe every store
+    /// (`ValueArena::tracks`).
+    pub(crate) fn tracks_slot_representations(&self) -> bool {
+        self.properties.tracks()
+    }
+
+    /// `record_property_set_flat::<false>` of a store that keeps its layout and makes no call:
+    /// `false` also leaves to the caller a store the arena's slot representations observe
+    /// (`ValueArena::tracks`) or one that would widen inline storage.
+    ///
+    /// # Safety
+    /// As `record_property_set_flat`.
+    #[inline(always)]
+    pub(crate) unsafe fn record_property_set_unobserved(&mut self, record_id: u32, slot: usize, value: Value) -> bool {
+        if self.properties.tracks() {
+            return false;
+        }
+        // An integer, the common stored value, holds no reference the barrier logs: its one
+        // tag test also gives its narrow form.
+        let narrow = match value.as_int() {
+            Some(integer) => Value::narrow_integer(integer),
+            None if self.object_records.store_logs(record_id, value) => return false,
+            None => value.to_narrow(),
+        };
+        // SAFETY: the caller proves the record live; the barrier logs nothing for this store.
+        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+        match data.exact_storage() {
+            ExactStorage::PackedInline => data.store_packed_narrow(slot, narrow),
+            ExactStorage::Plain(start) => {
+                // SAFETY: as `store_exact_slot`.
+                unsafe { self.properties.set_flat_at(start, slot, value) };
+                true
+            }
+            // A prototype's store moves the epoch its readers hold under, a call left to the
+            // caller.
+            ExactStorage::Extended { .. } if data.was_used_as_prototype() => false,
+            ExactStorage::Extended { inline } => {
+                // SAFETY: as `store_exact_slot`.
+                unsafe { store_extended_slot(data, &mut self.properties, slot, value, inline) };
+                true
+            }
+        }
+    }
+
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
     /// RegExp, Map, Date or any other object without a record) whose exact shape is `shape`:
     /// one owner lookup; `false` leaves any other value to the caller unchanged.
@@ -4526,31 +4570,44 @@ unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize)
 /// Preserve declines before changing storage or values.
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, target: TargetShape, layout: PropertyStoreLayout) -> bool {
-    data.note_prototype_value_write();
-    // The caller matched the exact shape, which holds the slot.
+    // The caller matched the exact shape, which holds the slot outside dictionary storage.
     let widened = properties.note_slot_target(data.shape(), slot, value, target);
     if widened && layout == PropertyStoreLayout::PreserveNative { return false; }
-    if let Some(start) = data.plain_storage_start() {
-        debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { properties.set_flat_at(start, slot, value) };
-        return true;
-    }
-    if data.properties().has_inline_property_storage() {
-        if !data.store_inline_narrow(slot, value) {
-            if layout != PropertyStoreLayout::MayWiden {
-                return false;
+    match data.exact_storage() {
+        // SAFETY: as above.
+        ExactStorage::Plain(start) => unsafe { properties.set_flat_at(start, slot, value) },
+        // An object without extras was never a prototype: its store moves no epoch.
+        ExactStorage::PackedInline => {
+            if !data.store_packed_narrow(slot, value.to_narrow()) {
+                if layout != PropertyStoreLayout::MayWiden {
+                    return false;
+                }
+                let length = properties.len(data.properties());
+                widen_inline_storage(data, properties, data.shape(), length, slot, value);
             }
-            let length = properties.len(data.properties());
-            widen_inline_storage(data, properties, data.shape(), length, slot, value);
         }
-        return true;
+        ExactStorage::Extended { inline } => {
+            data.note_prototype_value_write();
+            // SAFETY: as above.
+            unsafe { store_extended_slot(data, properties, slot, value, inline) };
+        }
     }
-    let vector = data.properties();
-    debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
-    // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-    unsafe { properties.set_flat_unchecked(vector, slot, value) };
     true
+}
+
+/// `store_exact_slot` of an `Extended` object, without the prototype epoch: into the inline
+/// values its extras hold, or its arena run.
+///
+/// # Safety
+/// As `store_exact_slot`.
+#[inline(always)]
+unsafe fn store_extended_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, inline: bool) {
+    if inline {
+        data.store_extended_inline(slot, value);
+    } else {
+        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
+        unsafe { properties.set_flat_unchecked(data.properties(), slot, value) };
+    }
 }
 
 #[cfg(test)]

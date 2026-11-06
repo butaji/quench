@@ -1786,17 +1786,32 @@ impl<H: Host> Vm<H> {
         unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
     }
 
-    /// A monomorphic store's copied entry, with the same no-log/preserve-layout admission
-    /// as `primary_own_field_store_hit::<false>`. Refusal leaves the logged path to the caller.
+    /// A monomorphic store's copied entry, with the no-log/preserve-layout admission of
+    /// `primary_own_field_store_hit::<false>`: where the arena keeps slot representations
+    /// (`TRACKED`), observed by them; otherwise with no call
+    /// (`Heap::record_property_set_unobserved`), which refuses an observed store. Refusal
+    /// leaves the logged path to the caller.
     #[inline(always)]
-    pub(super) fn hinted_primary_field_store_hit(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
+    pub(super) fn hinted_primary_field_store_hit<const TRACKED: bool>(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
         if self.method_caches_may_name(atom) {
             return false;
         }
         let Some(record_id) = object.direct_object_index() else {
             return false;
         };
-        if !self.store_record_field_entry::<false>(record_id, hint, value, crate::heap::PropertyStoreLayout::Preserve) {
+        if hint.receiver != self.heap.object_record_by_id(record_id).exact_shape() || hint.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        let slot = usize::from(hint.slot);
+        // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
+        let stored = unsafe {
+            if TRACKED {
+                self.heap.record_property_set_flat::<false>(record_id, slot, value, crate::heap::PropertyStoreLayout::Preserve)
+            } else {
+                self.heap.record_property_set_unobserved(record_id, slot, value)
+            }
+        };
+        if !stored {
             return false;
         }
         #[cfg(feature = "profile-field-primitives")]

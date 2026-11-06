@@ -744,7 +744,7 @@ fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, rig
             && int32_zero_product_sign!(left, right, |l, r| l | r, |signs| signs < 0) =>
                 Value::number(-0.0),
         Some(integer) => Value::integer(integer),
-        None => Value::number(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
+        None => Value::overflowed_integer(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
     }
 }
 
@@ -847,6 +847,13 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
+}
+
+/// `integer_operator` of a right operand the caller proved an integer: only the left's tag
+/// is tested.
+#[inline(always)]
+pub(super) fn integer_constant_operator<const OP: u32>(left: Value, right: i32) -> Option<Value> {
+    numeric_integer_result(numeric_binary_operator(OP)?, left.as_int()?, right)
 }
 
 #[inline(always)]

@@ -2616,6 +2616,9 @@ struct LaneContext<H: Host> {
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
     /// one; a nested run retires them on entry, and they end with the run.
     proofs: crate::heap::ArrayStorageProofs,
+    /// The run's floor cell (`lane_floor`), which a JavaScript safepoint reads from here
+    /// (`script_below_floor`).
+    floor: *const std::sync::atomic::AtomicUsize,
     /// Whether that callee left the lane because it has no body yet and is still warming
     /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
     /// specialization (`lane_leave_counts`).
@@ -2828,6 +2831,14 @@ fn stack_pointer() -> usize {
 #[inline(always)]
 fn below_floor() -> bool {
     stack_pointer() < lane_floor().load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `below_floor` of a JavaScript record, whose context register carries the run's floor
+/// (`LaneContext::floor`) without the thread-local load.
+#[inline(always)]
+fn script_below_floor<H: Host>(cx: *mut LaneContext<H>) -> bool {
+    // SAFETY: the run's floor cell, which its VM holds for the whole run.
+    stack_pointer() < unsafe { &*(*cx).floor }.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// After a lane allocation, a due collection raises the floor.
@@ -3865,21 +3876,27 @@ script_handler! {
     /// (`lane_jump_binary_false_registers`, `specialize_update_jumps`): the update, the back
     /// edge's safepoint, then the test, continuing in the body or at the loop's exit, a
     /// rotated loop's one dispatch per iteration where the pair and the test took two. A pair
-    /// other than two integers runs the test's own record.
-    fn lane_inc_dec_loop<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script(cx))
+    /// other than two integers runs the test's own record, any update but an integer's that
+    /// stays one the update's own (`lane_inc_dec`).
+    fn lane_inc_dec_loop<DECREMENT: bool, OP: u32, COUNTER: bool>(cx, r, ip, i, view) {
+        // An overflow, a double or a BigInt runs the update's own record, which continues at
+        // the jump record.
+        let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
+            sibling!(lane_inc_dec::<H, DECREMENT>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
-        if below_floor() {
+        if script_below_floor(cx) {
             resume!(cx, lane_jump::<H>(r, jump_ip, true, Carried::script(cx), None))
         }
         // SAFETY: the view records the distance to a validated jump target, the test record
         // `specialize_update_jumps` matched.
         let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let test = unsafe { &*test_ip };
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), r.get(test.c))
+        // A test of the counter (`COUNTER`, `specialize_update_jumps`) reads the integer just
+        // written, whose tag the update proved.
+        let left = if COUNTER { value } else { r.get(test.b) };
+        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), left, r.get(test.c))
         else {
             next!(cx, r, test_ip, Carried::script(cx))
         };
@@ -4715,6 +4732,38 @@ script_handler! {
         else {
             requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
             sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_constant` of an integer constant, which the view proved when it chose
+    /// the handler (`constant_operator_handler`) and carries as the record's immediate: only
+    /// the register operand's tag is tested.
+    fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = super::operations::integer_constant_operator::<OP>(r.get(i.b), i.imm() as i32)
+        else {
+            requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
+            sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_constant_numbers` and `lane_operator_constant_concatenation` of
+    /// `lane_operator_integer_constant`'s integer, out of line.
+    #[inline(never)]
+    fn lane_operator_integer_constant_numbers<OP: u32>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), Value::integer(i.imm() as i32));
+        let value = super::operations::number_value_operator::<OP>(left, right).or_else(|| {
+            (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten()
+        });
+        let Some(value) = value else {
+            return exit(ip);
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -6030,16 +6079,37 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a register or `this` at a site whose primary entry names a prototype
-    /// holder (`Vm::field_site_holder`), a method read: that entry inline; any other read
-    /// takes `lane_get_field_miss`, which moves a site gone polymorphic.
+    /// holder (`Vm::field_site_holder`), a method read: the record's hint of that read
+    /// (`Vm::holder_hint_hit`), whose receiver shape, prototype link and epoch tests stand for
+    /// the entry's receiver and holder proofs and the holder's storage, which the epoch
+    /// carries from the read that made the hint. Any other read takes
+    /// `lane_get_field_holder_refresh` out of line.
     fn lane_get_field_holder<THIS: bool>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), object))
+        else {
+            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_holder` past its hint: the site's primary holder entry
+    /// (`Vm::primary_record_holder_field_hit`), whose answer becomes the hint. Any other read
+    /// takes `lane_get_field_holder_any`.
+    #[inline(never)]
+    fn lane_get_field_holder_refresh<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).primary_record_holder_field_hit(code, object, i.c))
+        let vm = unsafe { vm(cx) };
+        let Some((object, value)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| vm.primary_record_holder_field_hit(code, object, i.c).map(|value| (object, value)))
         else {
             sibling!(lane_get_field_holder_any::<H, THIS>, r, ip, Carried::script(cx))
         };
+        set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -7350,11 +7420,25 @@ script_handler! {
     /// `SetField` or `SetFieldStrict` at a site whose primary entry names an own data field
     /// (`Vm::hinted_primary_field_store_hit`): that store inline where the write barrier logs
     /// nothing; any other takes `lane_set_field_logged`.
-    fn lane_set_object_field_own<>(cx, r, ip, i, view) {
-        if !unsafe { vm(cx) }.hinted_primary_field_store_hit(i.field_hint(), r.get(i.b), i.imm(), r.get(i.a)) {
-            sibling!(lane_set_field_logged::<H, false>, r, ip, Carried::script(cx))
+    fn lane_set_object_field_own<TRACKED: bool>(cx, r, ip, i, view) {
+        if !unsafe { vm(cx) }.hinted_primary_field_store_hit::<TRACKED>(i.field_hint(), r.get(i.b), i.imm(), r.get(i.a)) {
+            sibling!(lane_set_field_own_miss::<H, false, TRACKED>, r, ip, Carried::script(cx))
         }
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// A refused hinted own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
+    /// in a runtime whose arena keeps slot representations, which the untracked store refuses,
+    /// the record moves to its `TRACKED` instantiation for good; the store itself takes
+    /// `lane_set_field_logged`.
+    #[inline(never)]
+    fn lane_set_field_own_miss<THIS: bool, TRACKED: bool>(cx, r, ip, i, view) {
+        if !TRACKED && unsafe { vm(cx) }.heap.tracks_slot_representations() {
+            requicken::<H>(ip, if THIS { lane_set_this_field_own::<H, true> } else { lane_set_object_field_own::<H, true> });
+        }
+        sibling!(lane_set_field_logged::<H, THIS>, r, ip, Carried::script(cx))
     }
 }
 
@@ -7384,11 +7468,11 @@ script_handler! {
 
 script_handler! {
     /// `lane_set_object_field_own` for `SetThisField` and `SetThisFieldStrict`.
-    fn lane_set_this_field_own<>(cx, r, ip, i, view) {
+    fn lane_set_this_field_own<TRACKED: bool>(cx, r, ip, i, view) {
         let this = unsafe { lane_held_this(cx) };
-        let stored = unsafe { vm(cx) }.hinted_primary_field_store_hit(i.field_hint(), this, i.imm(), r.get(i.a));
+        let stored = unsafe { vm(cx) }.hinted_primary_field_store_hit::<TRACKED>(i.field_hint(), this, i.imm(), r.get(i.a));
         if !stored {
-            sibling!(lane_set_field_logged::<H, true>, r, ip, Carried::script(cx))
+            sibling!(lane_set_field_own_miss::<H, true, TRACKED>, r, ip, Carried::script(cx))
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -8029,7 +8113,7 @@ script_handler! {
         // SAFETY: the region carries its validated header and latch PCs, and
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
-        if below_floor() {
+        if script_below_floor(cx) {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
@@ -8207,7 +8291,7 @@ script_handler! {
     fn lane_loop_header<>(cx, r, ip, i, view) {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
-        if !below_floor()
+        if !script_below_floor(cx)
             && site.exits.get() < LOOP_TIER_MAX_EXITS
             && site.declines.get() < LOOP_TIER_MAX_DECLINES
             && let Some(region) = site.active_region()
@@ -8291,7 +8375,7 @@ script_handler! {
         let site = i.loop_site();
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
-        if below_floor() {
+        if script_below_floor(cx) {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         let vm = unsafe { vm(cx) };
@@ -19340,8 +19424,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
-        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
-        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
+        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H, false>),
+        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H, false>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::ToPropertyKey => Some(lane_to_property_key::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
@@ -21159,10 +21243,13 @@ fn specialize_register_operands<H: Host>(
                             lane_relation_value::<H, true> as Handler
                         }
                     } else {
-                        let Some(handler) = operator_handler::<H, true>(operator) else {
+                        let Some((handler, operand)) = constant_operator_handler::<H>(operator, *constant) else {
                             continue;
                         };
-                        handler
+                        record.handler = handler as *const ();
+                        record.operand = operand;
+                        record.b = left.payload();
+                        continue;
                     };
                     record.handler = handler as *const ();
                     record.operand = LaneOperand {
@@ -21641,7 +21728,7 @@ fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [
             .then(|| records.get(test))
             .flatten()
             .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
-            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1));
+            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1, test.b == records[pc].a));
         records[pc].handler = looped.unwrap_or(fused) as *const ();
     }
 }
@@ -21867,14 +21954,16 @@ fn relation_jump_handler<H: Host, const SMALL: bool>(operator: u32, backward: bo
 }
 
 /// The fused update, back edge and register test handler (`lane_inc_dec_loop`) of the test's
-/// `operator`: as `relation_jump_handler` picks, the comparison's own instantiation.
-fn update_loop_handler<H: Host>(operator: u32, decrement: bool) -> Handler {
+/// `operator`: as `relation_jump_handler` picks, the comparison's own instantiation; `counter`
+/// where the test's left operand is the updated register.
+fn update_loop_handler<H: Host>(operator: u32, decrement: bool, counter: bool) -> Handler {
     macro_rules! pick {
         ($op:expr) => {
-            if decrement {
-                lane_inc_dec_loop::<H, true, { $op }> as Handler
-            } else {
-                lane_inc_dec_loop::<H, false, { $op }> as Handler
+            match (decrement, counter) {
+                (true, true) => lane_inc_dec_loop::<H, true, { $op }, true> as Handler,
+                (true, false) => lane_inc_dec_loop::<H, true, { $op }, false> as Handler,
+                (false, true) => lane_inc_dec_loop::<H, false, { $op }, true> as Handler,
+                (false, false) => lane_inc_dec_loop::<H, false, { $op }, false> as Handler,
             }
         };
     }
@@ -21943,6 +22032,21 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
         };
     }
     arithmetic_operators!(operator, pick)
+}
+
+/// The handler of an arithmetic operator whose right operand is `constant`, with the operand
+/// its record carries: an integer as the immediate, its tag proved here once
+/// (`lane_operator_integer_constant`); any other value as the constant.
+fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<(Handler, LaneOperand)> {
+    let Some(integer) = constant.as_int() else {
+        return Some((operator_handler::<H, true>(operator)?, LaneOperand { constant }));
+    };
+    macro_rules! pick {
+        ($op:expr) => {
+            lane_operator_integer_constant::<H, { $op }> as Handler
+        };
+    }
+    Some((arithmetic_operators!(operator, pick)?, LaneOperand { imm: integer as u32 }))
 }
 
 /// Whether some loop of `function`, from a backward jump's target through the jump, has no
@@ -22223,6 +22327,7 @@ impl<H: Host> Vm<H> {
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
+            floor: floor_cell,
         };
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));

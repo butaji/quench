@@ -1489,6 +1489,18 @@ impl InlineObjectHeader {
 }
 
 #[repr(C)]
+/// Where an object outside dictionary storage keeps its values (`Object::exact_storage`).
+#[derive(Clone, Copy)]
+pub(crate) enum ExactStorage {
+    /// No extras and no inline storage: an arena run from this start.
+    Plain(usize),
+    /// No extras: the inline slots, narrow, in the payload word.
+    PackedInline,
+    /// Behind extras, as a prototype's or an object with a wide inline value: the inline
+    /// slots there, or an arena run (`Object::properties`).
+    Extended { inline: bool },
+}
+
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -2341,7 +2353,7 @@ impl Object {
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
         Some(match self.extras() {
             Some(extras) => extras.inline_properties.0[slot],
-            None => Value::from_narrow((self.payload >> (slot as u32 * u32::BITS)) as u32),
+            None => Value::from_narrow(self.payload_narrow(slot)),
         })
     }
 
@@ -2406,12 +2418,57 @@ impl Object {
         self.set_shape(shape, properties);
     }
 
+    /// The half of the payload word that holds inline `slot`, the first the lower: one
+    /// half-word access, which neither shifts nor touches the other slot.
+    #[inline(always)]
+    fn payload_half(slot: usize) -> usize {
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        if cfg!(target_endian = "little") { slot } else { INLINE_PROPERTY_COUNT - 1 - slot }
+    }
+
+    /// The narrow form at inline `slot` of the payload word, which holds the inline values.
+    #[inline(always)]
+    fn payload_narrow(&self, slot: usize) -> u32 {
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves.
+        unsafe { (&raw const self.payload).cast::<u32>().add(Self::payload_half(slot)).read() }
+    }
+
     /// Stores the narrow form `narrow` at inline `slot` of the payload word, which holds the
     /// inline values.
     #[inline(always)]
     fn store_payload_narrow(&mut self, slot: usize, narrow: u32) {
-        let shift = slot as u32 * u32::BITS;
-        self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves; `&mut self` is exclusive.
+        unsafe { (&raw mut self.payload).cast::<u32>().add(Self::payload_half(slot)).write(narrow) };
+    }
+
+    /// Where the values of an object outside dictionary storage live, decoded from its
+    /// payload word once (`ExactStorage`).
+    #[inline(always)]
+    pub(crate) fn exact_storage(&self) -> ExactStorage {
+        let inline = self.meta & OBJECT_INLINE_STORAGE != 0;
+        match (self.extras_pointer(), inline) {
+            (Some(_), _) => ExactStorage::Extended { inline },
+            (None, true) => ExactStorage::PackedInline,
+            (None, false) => ExactStorage::Plain(self.payload as usize),
+        }
+    }
+
+    /// Stores a value's narrow form `narrow` (`Value::to_narrow`) into inline `slot` of a
+    /// `PackedInline` object (`exact_storage`), that half of the payload word; `false` for a
+    /// value without one, changing nothing.
+    #[inline(always)]
+    pub(crate) fn store_packed_narrow(&mut self, slot: usize, narrow: Option<u32>) -> bool {
+        debug_assert!(matches!(self.exact_storage(), ExactStorage::PackedInline));
+        narrow.map(|narrow| self.store_payload_narrow(slot, narrow)).is_some()
+    }
+
+    /// Stores `value` into inline `slot` of an `Extended` object (`exact_storage`), whose
+    /// extras hold its inline values.
+    #[inline(always)]
+    pub(crate) fn store_extended_inline(&mut self, slot: usize, value: Value) {
+        let extras = self.extras_pointer().expect("an extended object has extras");
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { (*extras).inline_properties.0[slot] = value };
     }
 
     /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
