@@ -1999,22 +1999,30 @@ impl JsExactFallback {
     }
 }
 
-/// Lower a cached data-field read (`emit_js_cached_field_slot`); the destination stays untouched
-/// on a failed proof, which resumes `Vm::step` at this GetField PC and may fill the cache.
+/// Lower a cached data-field read (`emit_js_cached_field_slot`), or a nested lookup's chain of
+/// them, each read's value the next one's receiver; the destination stays untouched on a
+/// failed proof, which resumes `Vm::step` at this GetField PC and may fill the caches.
 #[allow(clippy::too_many_arguments)]
 fn emit_js_own_field_get(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
     receiver: JsFieldReceiver,
-    site: u16,
+    sites: &[u16],
     destination_offset: i32,
     next: ir::Block,
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let mut receiver = receiver;
+    let mut value = None;
+    for &site in sites {
+        let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
+        let read = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        receiver = JsFieldReceiver::Value(read);
+        value = Some(read);
+    }
+    let value = value.expect("a field read names a site");
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -3182,7 +3190,12 @@ pub(super) fn lower_js_general_dispatch(
             && !instruction.writes_current_this()
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
-            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some((base, sites)) = match instruction.field_lookup() {
+                Some(FieldLookup::Atom { base, cache_site, .. }) => Some((base, smallvec::smallvec![cache_site])),
+                Some(FieldLookup::Site(site)) => program.field_sites.get(site).map(|site| (site.base,
+                    std::iter::once(site.first.1).chain(site.second.map(|(_, cache)| cache)).collect::<smallvec::SmallVec<[u16; 2]>>())),
+                None => None,
+            }
             && let Some(receiver) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
@@ -3195,7 +3208,7 @@ pub(super) fn lower_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_get(&mut builder, arguments, payload, receiver, cache_site, destination_offset, next, &exact);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
