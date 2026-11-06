@@ -1,18 +1,25 @@
 #!/usr/bin/env node
-// Operation cost matrix: steady-state instructions per JavaScript operation, per tier.
+// Operation cost matrix: steady-state instructions per JavaScript operation, per engine mode.
 //
 // Each operation is one loop body run inside a function. A run warms the function, then
 // executes N iterations; the cost of one operation is the callgrind instruction difference
 // between a 2N and an N run, divided by N, so start-up, compilation and warm-up cancel.
-// Every fixture prints a checksum, which must match Node's in every tier: one table checks
-// semantics and cost together. The C column is the work a C programmer's loop would do for
-// the same body (loop control included), the target the native tiers are judged against.
+// Every fixture prints a checksum, which must match Node's in every mode: one table checks
+// semantics and cost together.
 //
-// Usage: tools/op-cost.mjs <quench-node> [--tiers interp,jit,lane] [--baseline file.json]
-//        [--save file.json] [ops...]
+// Modes (Quench): no-jit compiles nothing at runtime (checked: the run maps no executable
+// memory of its own); jit runs every runtime compilation layer. aot (compilation before the
+// run as well) is a separate build and is not measured here.
+// Peers run in their no-JIT modes (Node --jitless, Bun with JSC's JIT off). The budget of an
+// operation is the best peer's cost over the win margin, the bar a no-jit Quench row must
+// clear; the C column is the work a C programmer's loop does for the same body, the bar of
+// the native tiers. Peer costs do not change with Quench builds: --peers caches them.
+//
+// Usage: tools/op-cost.mjs <quench-node> [--modes no-jit,jit] [--peers file.json]
+//        [--baseline file.json] [--save file.json] [ops...]
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -79,10 +86,19 @@ console.log(typeof r === "number" && !Number.isInteger(r) ? r.toFixed(6) : Strin
 `;
 }
 
-const ALL_TIERS = [
-  ["interp", [], {}],
-  ["jit", ["--jit"], {}],
-  ["lane", ["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1" }],
+// The score margin a row must win by: Quench at most the best peer's cost over this.
+const WIN_MARGIN = 1.2;
+
+// name, arguments before the fixture, environment.
+const MODES = {
+  "no-jit": [[], {}],
+  jit: [["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1" }],
+};
+const BUN = process.env.BUN ?? join(process.env.HOME ?? "", ".bun/bin/bun");
+// name, command, arguments, environment.
+const PEERS = [
+  ["node", "node", ["--jitless"], {}],
+  ["bun", BUN, [], { BUN_JSC_useJIT: "0", BUN_OPTIONS: "" }],
 ];
 
 function run(command, args, env) {
@@ -98,10 +114,10 @@ function run(command, args, env) {
   });
 }
 
-async function instructions(quench, args, env, file) {
+async function instructions(command, args, env, file) {
   const { err } = await run(
     "valgrind",
-    ["--tool=callgrind", "--callgrind-out-file=/dev/null", quench, ...args, file],
+    ["--tool=callgrind", "--callgrind-out-file=/dev/null", command, ...args, file],
     env,
   );
   const match = err.match(/refs:\s*([\d,]+)/);
@@ -129,16 +145,44 @@ const option = (name) => {
   const at = argv.indexOf(name);
   return at < 0 ? undefined : argv.splice(at, 2)[1];
 };
-const tierNames = option("--tiers");
+const modeNames = (option("--modes") ?? "no-jit").split(",");
+const peersFile = option("--peers");
 const baselineFile = option("--baseline");
 const saveFile = option("--save");
-const TIERS = tierNames ? ALL_TIERS.filter(([tier]) => tierNames.split(",").includes(tier)) : ALL_TIERS;
+const modes = modeNames.map((mode) => {
+  if (!MODES[mode]) throw new Error(`unknown mode ${mode}: ${Object.keys(MODES).join(", ")}`);
+  return [mode, quench, ...MODES[mode]];
+});
 const chosen = argv.length ? OPERATIONS.filter(([name]) => argv.includes(name)) : OPERATIONS;
 const directory = mkdtempSync(join(tmpdir(), "op-cost-"));
 const width = Number(execFileSync("nproc").toString().trim());
+const cachedPeers = peersFile && existsSync(peersFile) ? JSON.parse(readFileSync(peersFile, "utf8")) : {};
+
+// Whether a no-jit run of `file` writes no code: no executable mapping or protection change
+// of its own, only the executable's and its libraries' file mappings.
+function writesNoCode(file) {
+  const trace = join(directory, "no-jit.strace");
+  execFileSync("strace", ["-f", "-e", "trace=mmap,mprotect", "-o", trace, quench, ...MODES["no-jit"][0], file], {
+    env: { ...process.env, QUENCH_COMPILE_CACHE: "" },
+    stdio: "ignore",
+  });
+  return !readFileSync(trace, "utf8")
+    .split("\n")
+    .some((line) => line.includes("PROT_EXEC") && (line.includes("mprotect(") || line.includes("MAP_ANONYMOUS")));
+}
 
 const jobs = [];
 const cells = {};
+const measure = (name, column, command, args, env, single, double, expected) =>
+  jobs.push(async () => {
+    const result = await run(command, [...args, single], env);
+    const ok = result.code === 0 && result.out === expected;
+    const [a, b] = await Promise.all([
+      instructions(command, args, env, single),
+      instructions(command, args, env, double),
+    ]);
+    cells[name][column] = { ok, cost: (b - a) / N, got: result.out };
+  });
 for (const [name, setup, names, body] of chosen) {
   const single = join(directory, `${name}-1.js`);
   const double = join(directory, `${name}-2.js`);
@@ -146,38 +190,45 @@ for (const [name, setup, names, body] of chosen) {
   writeFileSync(double, fixture(setup, names, body, 2 * N));
   const expected = execFileSync("node", [single]).toString().trim();
   cells[name] = { expected };
-  for (const [tier, args, env] of TIERS) {
-    jobs.push(async () => {
-      const result = await run(quench, [...args, single], env);
-      const ok = result.code === 0 && result.out === expected;
-      const [a, b] = await Promise.all([
-        instructions(quench, args, env, single),
-        instructions(quench, args, env, double),
-      ]);
-      cells[name][tier] = { ok, cost: (b - a) / N, got: result.out };
-    });
+  for (const [mode, command, args, env] of modes) measure(name, mode, command, args, env, single, double, expected);
+  for (const [peer, command, args, env] of PEERS) {
+    const cached = cachedPeers[name]?.[peer];
+    if (cached) cells[name][peer] = cached;
+    else measure(name, peer, command, args, env, single, double, expected);
   }
 }
+const noCode = modeNames.includes("no-jit") ? writesNoCode(join(directory, `${chosen[0][0]}-1.js`)) : true;
 await pool(jobs, width);
+if (peersFile) {
+  const peers = { ...cachedPeers };
+  for (const [name] of chosen) peers[name] = Object.fromEntries(PEERS.map(([peer]) => [peer, cells[name][peer]]));
+  writeFileSync(peersFile, JSON.stringify(peers, null, 1));
+}
 
 const baseline = baselineFile ? JSON.parse(readFileSync(baselineFile, "utf8")) : {};
-const column = (name, tier) => {
-  const cell = cells[name][tier];
-  const base = baseline[name]?.[tier]?.cost;
+const budget = (name) => Math.min(...PEERS.map(([peer]) => cells[name][peer]).filter((cell) => cell.ok).map((cell) => cell.cost)) / WIN_MARGIN;
+const column = (name, mode) => {
+  const cell = cells[name][mode];
+  const base = baseline[name]?.[mode]?.cost;
   const value = cell.cost.toFixed(1);
   const delta = base === undefined ? "" : ` (${cell.cost - base >= 0 ? "+" : ""}${(cell.cost - base).toFixed(1)})`;
   return `${cell.ok ? "" : "WRONG "}${value}${delta}`;
 };
-console.log(`| operation | C | ${TIERS.map(([tier]) => tier).join(" | ")} |`);
-console.log(`|---|---|${TIERS.map(() => "---").join("|")}|`);
+const columns = [...modes.map(([mode]) => mode), ...PEERS.map(([peer]) => peer)];
+console.log(`| operation | C | ${columns.join(" | ")} | budget | ${modeNames[0]}/budget |`);
+console.log(`|---|---|${columns.map(() => "---").join("|")}|---|---|`);
 for (const [name, , , , c] of chosen) {
-  console.log(`| ${name} | ${c} | ${TIERS.map(([tier]) => column(name, tier)).join(" | ")} |`);
+  const over = cells[name][modeNames[0]].cost / budget(name);
+  console.log(
+    `| ${name} | ${c} | ${columns.map((mode) => column(name, mode)).join(" | ")} | ${budget(name).toFixed(1)} | ${over.toFixed(2)}${over > 1 ? " LOSES" : ""} |`,
+  );
 }
 const wrong = chosen.flatMap(([name]) =>
-  TIERS.filter(([tier]) => !cells[name][tier].ok).map(([tier]) =>
-    `${name}/${tier}: expected ${cells[name].expected}, got ${cells[name][tier].got}`
+  columns.filter((mode) => !cells[name][mode].ok).map((mode) =>
+    `${name}/${mode}: expected ${cells[name].expected}, got ${cells[name][mode].got}`
   )
 );
 for (const line of wrong) console.log(`WRONG ${line}`);
+if (!noCode) console.log("NO-JIT VIOLATED: the no-jit run mapped executable memory of its own");
 if (saveFile) writeFileSync(saveFile, JSON.stringify(cells, null, 1));
-process.exitCode = wrong.length ? 1 : 0;
+process.exitCode = wrong.length || !noCode ? 1 : 0;
