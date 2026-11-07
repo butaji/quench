@@ -1305,7 +1305,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         frame: usize,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
     ) -> Result<(), JsError> {
         if !self.frames[frame].captured {
             return Ok(());
@@ -1327,7 +1327,7 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         function: u32,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
     ) -> Result<Value, JsError> {
         let slots = self
             .heap

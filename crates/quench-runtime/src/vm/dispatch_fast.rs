@@ -3315,7 +3315,7 @@ script_handler! {
             };
             // It checks the environment before it allocates the copy, so an error leaves the
             // frame for the general path to raise it from.
-            if vm.clone_frame_environment(frame, &plan.fresh, &plan.reset).is_err() {
+            if vm.clone_frame_environment(frame, &plan.fresh, body.environment_clones.resets(plan)).is_err() {
                 return exit(ip);
             }
             note_allocation(vm);
@@ -3361,7 +3361,7 @@ script_handler! {
         };
         // It checks the environment before it allocates the copy, so an error leaves the
         // activation for the general path to raise it from.
-        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, &plan.reset)
+        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, body.environment_clones.resets(plan))
         else {
             return exit(ip);
         };

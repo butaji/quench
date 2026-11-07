@@ -173,7 +173,7 @@ impl Heap {
         &self,
         environment: Value,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
     ) -> Option<EnvironmentSlots> {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
