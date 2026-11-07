@@ -142,8 +142,8 @@ pub(super) fn passes_early_checks(source: &str, source_type: SourceType) -> bool
     !parsed.stack_exhausted
         && parsed.diagnostics.is_empty()
         && super::stack::validate(&parsed.program).is_ok()
-        && super::early::regexp_early_error(&parsed.program).is_none()
-        && super::annex_b_targets::invalid_target(&parsed.program).is_none()
+        && super::early::regexp_early_error(&parsed).is_none()
+        && super::annex_b_targets::invalid_parsed_target(&parsed).is_none()
         && oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program)
@@ -360,14 +360,13 @@ impl BodyFacts {
     /// bodies inside it whole, and adds its facts. The facts are gathered before code
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
-    pub(super) fn check(&mut self, program: &Program<'_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
+    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
         if self.failed {
             return;
         }
         let strict = program.source_type.is_module() || has_use_strict(&program.directives);
         if super::stack::validate(program).is_err()
-            || super::early::regexp_early_error(program).is_some()
-            || super::annex_b_targets::invalid_target(program).is_some()
+            || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
             || !super::early::program_early_errors(program, strict).1.is_empty()
         {
             self.failed = true;

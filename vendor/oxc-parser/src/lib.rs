@@ -217,6 +217,14 @@ pub struct ParserReturn<'a> {
     /// in source order: the program holds it with its directives and no statements.
     pub lazy_function_bodies: Box<[u32]>,
 
+    /// The span of every regular expression literal the program's text holds, lazily parsed
+    /// bodies' included, in source order.
+    pub regexp_literals: Box<[Span]>,
+
+    /// Whether the parse built any call assignment target
+    /// (`ParseOptions::allow_call_assignment_targets`), counting those it later discarded.
+    pub has_call_assignment_targets: bool,
+
     /// Whether the file is [flow](https://flow.org).
     pub is_flow_language: bool,
 }
@@ -301,21 +309,29 @@ pub struct ParseOptions {
 
 /// A borrowed check of each lazily parsed function (`ParseOptions::lazy_body_check`).
 #[derive(Clone, Copy)]
-pub struct LazyBodyCheck(std::ptr::NonNull<dyn for<'x> FnMut(&Program<'x>)>);
+pub struct LazyBodyCheck(std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>)>);
+
+/// A function whose body `ParseOptions::lazy_function_bodies` releases, alone as a program,
+/// with what its parse registered.
+pub struct LazyBody<'p, 'a> {
+    pub program: &'p Program<'a>,
+    /// The body's parse built a call assignment target.
+    pub call_assignment_targets: bool,
+}
 
 impl LazyBodyCheck {
     /// # Safety
     /// `check` must outlive every parse given these options.
-    pub unsafe fn new<'c>(check: &'c mut (dyn for<'x> FnMut(&Program<'x>) + 'c)) -> Self {
+    pub unsafe fn new<'c>(check: &'c mut (dyn for<'x> FnMut(LazyBody<'_, 'x>) + 'c)) -> Self {
         // SAFETY: the caller keeps `check` alive while it is called.
-        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn for<'x> FnMut(&Program<'x>) + 'c>, std::ptr::NonNull<dyn for<'x> FnMut(&Program<'x>)>>(std::ptr::NonNull::from(check)) })
+        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>) + 'c>, std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>)>>(std::ptr::NonNull::from(check)) })
     }
 
     /// # Safety
     /// The check given to `new` is alive and not otherwise borrowed.
-    pub(crate) unsafe fn call(self, program: &Program<'_>) {
+    pub(crate) unsafe fn call(self, body: LazyBody<'_, '_>) {
         // SAFETY: the caller's contract.
-        unsafe { (*self.0.as_ptr())(program) }
+        unsafe { (*self.0.as_ptr())(body) }
     }
 }
 
@@ -743,6 +759,13 @@ struct ParserImpl<'a, C: ParserConfig> {
     /// Whether the current position is strict mode code, as far as a lazily parsed body's
     /// check needs it: the module goal, a `"use strict"` directive or a class.
     strict: bool,
+
+    /// Each regular expression literal parsed, as `ParserReturn::regexp_literals`; a rewind
+    /// drops those parsed after its checkpoint.
+    regexp_literals: Vec<Span>,
+
+    /// The call assignment targets built so far, discarded ones included.
+    call_assignment_targets: u32,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -784,6 +807,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             lazy_depth: 0,
             lazy_function_bodies: Vec::new(),
             strict: source_type.is_module(),
+            regexp_literals: Vec::new(),
+            call_assignment_targets: 0,
         }
     }
 
@@ -888,6 +913,13 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             tokens,
             fatal_error: has_fatal_error,
             lazy_function_bodies: std::mem::take(&mut self.lazy_function_bodies).into_boxed_slice(),
+            has_call_assignment_targets: self.call_assignment_targets != 0,
+            regexp_literals: {
+                let mut spans = std::mem::take(&mut self.regexp_literals);
+                spans.sort_unstable_by_key(|span| span.start);
+                spans.dedup();
+                spans.into_boxed_slice()
+            },
             stack_exhausted,
             is_flow_language,
         }
@@ -973,6 +1005,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let mut replacements = ArenaVec::new_in(self);
 
         let checkpoints = std::mem::take(&mut self.state.potential_await_reparse);
+        // The statements parse again after the whole program: their checkpoints must not drop
+        // the literals of the statements after them.
+        let parsed_regexp_literals = std::mem::take(&mut self.regexp_literals);
         // Ranges refer to the original tokens and to the flat replacement buffer
         let mut edits = ArenaVec::with_capacity_in(
             if self.lexer.config.tokens() {
@@ -1034,6 +1069,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 ));
             }
         }
+
+        self.regexp_literals.extend(parsed_regexp_literals);
 
         if let Some(mut tokens) = original_tokens {
             let mut read = 0;

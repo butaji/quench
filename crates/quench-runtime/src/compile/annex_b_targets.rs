@@ -53,6 +53,12 @@ pub(super) fn call_target<'s, 'a>(
 
 /// Logical assignments and destructuring patterns require simple targets even
 /// in non-strict Annex B code. Calls inside keys/default expressions remain valid.
+/// `invalid_target` of a parse, which only a call assignment target can fail
+/// (`ParserReturn::has_call_assignment_targets`).
+pub(super) fn invalid_parsed_target(parsed: &ParserReturn<'_>) -> Option<Span> {
+    parsed.has_call_assignment_targets.then(|| invalid_target(&parsed.program)).flatten()
+}
+
 pub(super) fn invalid_target(program: &oxc_ast::ast::Program<'_>) -> Option<Span> {
     struct Targets {
         invalid: Option<Span>,
