@@ -274,7 +274,7 @@ pub(crate) fn lazy_transform(c: &mut Context<'_>, transform: RootId) -> Outcome 
     for name in LAZY_STATES {
         let data = c.string_rooted(name);
         let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoLazyTransformGet"), "get", data)?;
-        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoLazyTransformSet"), "set", data)?;
+        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoAliasSet"), "set", data)?;
         let key = c.string_rooted(name);
         let fields = DescriptorFields {
             get: Some(getter),
@@ -306,14 +306,6 @@ pub(crate) fn lazy_transform_get(c: &mut Context<'_>, this: RootId, _: &[RootId]
     let no = c.boolean(false);
     put(c, writable, "decodeStrings", no)?;
     c.get_property_rooted(this, name)
-}
-
-/// The lazy state setter: an own data property replaces the accessor.
-pub(crate) fn lazy_transform_set(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let name = c.host_function_data()?;
-    let value = arg(c, args, 0);
-    c.define_data_property_rooted(this, name, value, true, true, true)?;
-    Ok(c.undefined())
 }
 
 pub(crate) fn build(c: &mut Context<'_>, lazy: RootId) -> Result<Vec<(Class, RootId)>, RootedError> {

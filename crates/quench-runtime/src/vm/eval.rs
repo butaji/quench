@@ -124,7 +124,7 @@ impl<H: Host> Vm<H> {
                 if only_trivia(source) {
                     return Ok(Value::UNDEFINED);
                 }
-                Rc::make_mut(&mut prepared.program).source_name = source_name.to_owned();
+                source_name.clone_into(&mut Rc::make_mut(&mut prepared.program).source_name);
                 let Some(id) = self.store_prepared_script(&prepared)? else {
                     return Err(self.type_error(p, "dynamic program store is full".into()));
                 };
@@ -152,7 +152,7 @@ impl<H: Host> Vm<H> {
                     }
                     let message = diagnostics
                         .first()
-                        .map_or("invalid script source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                        .map_or_else(|| "invalid script source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
                     return self.syntax_error_result(p, &message);
                 }
             };
@@ -365,13 +365,18 @@ impl<H: Host> Vm<H> {
             }
             let message = diagnostics
                 .first()
-                .map_or("invalid eval source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                .map_or_else(|| "invalid eval source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
         let cache_source = cache_source.filter(|_| {
             residual.functions.first().is_some_and(|root| !root.strict)
-                && !crate::Engine::eval_has_tagged_template(source)
+                // The compilation counted its tagged templates; only a program it kept no
+                // replay of parses its source again to find them.
+                && !residual.replay.as_ref().map_or_else(
+                    || crate::Engine::eval_has_tagged_template(source),
+                    |replay| replay.has_tagged_template(),
+                )
         });
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
@@ -613,7 +618,7 @@ impl<H: Host> Vm<H> {
                 }
                 let message = diagnostics
                     .first()
-                    .map_or("invalid host script".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                    .map_or_else(|| "invalid host script".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
                 self.syntax_error_result(&program, &message)
                     .expect_err("specialized host-script syntax errors must throw")
             })?;

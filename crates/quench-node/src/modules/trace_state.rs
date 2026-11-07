@@ -113,11 +113,11 @@ impl TraceState {
                 index += 1;
                 categories = args.get(index).cloned();
             } else if let Some(value) = argument.strip_prefix("--trace-event-file-pattern=") {
-                pattern = value.to_owned();
+                value.clone_into(&mut pattern);
             } else if argument == "--trace-event-file-pattern" {
                 index += 1;
                 if let Some(value) = args.get(index) {
-                    pattern = value.clone();
+                    pattern.clone_from(value);
                 }
             }
             index += 1;

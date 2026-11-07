@@ -35,8 +35,8 @@ impl SessionType {
 
 /// A session's `kState.flags`.
 pub(super) mod session_flags {
-    pub(in super::super) const READY: u32 = 0x1;
-    pub(in super::super) const CLOSED: u32 = 0x2;
+    pub(crate) const READY: u32 = 0x1;
+    pub(crate) const CLOSED: u32 = 0x2;
     pub(in super::super) const DESTROYED: u32 = 0x4;
 }
 
@@ -54,8 +54,7 @@ const HTTP_PROTOCOL: &str = "http:";
 const HTTPS_PROTOCOL: &str = "https:";
 /// The ALPN identifier of HTTP/2 over cleartext.
 const H2C: &str = "h2c";
-/// The informational statuses, which a response's `headers` event carries.
-const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
+use crate::modules::http2_shared_vm::compat::INFORMATIONAL;
 /// The largest stream id `setNextStreamID` accepts.
 const MAX_STREAMS: f64 = u32::MAX as f64;
 /// ALTSVC values and origins share the frame's payload limit (`kMaxALTSVC`).
@@ -144,7 +143,7 @@ const SOCKET_MANIPULATION: [&str; 9] =
 pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let emitter = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Emitter);
     let session = constructor(c, Member::Construct, "Http2Session")?;
-    crate::modules::http_shared_vm::inherit(c, session, emitter)?;
+    crate::modules::stream_shared_vm::inherit(c, session, emitter)?;
     let prototype = get(c, session, "prototype")?;
     accessors(c, prototype, &[
         ("encrypted", Member::Encrypted, None),
@@ -188,14 +187,14 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     super::set_class(c, Class::SessionSocketHandler, handler)?;
 
     let server = constructor(c, Member::ServerConstruct, "ServerHttp2Session")?;
-    crate::modules::http_shared_vm::inherit(c, server, session)?;
+    crate::modules::stream_shared_vm::inherit(c, server, session)?;
     let prototype = get(c, server, "prototype")?;
     accessors(c, prototype, &[("server", Member::Server, None)])?;
     super::class_methods(c, prototype, &[("altsvc", Member::Altsvc), ("origin", Member::Origin)])?;
     super::set_class(c, Class::ServerHttp2Session, server)?;
 
     let client = constructor(c, Member::ClientConstruct, "ClientHttp2Session")?;
-    crate::modules::http_shared_vm::inherit(c, client, session)?;
+    crate::modules::stream_shared_vm::inherit(c, client, session)?;
     let prototype = get(c, client, "prototype")?;
     super::class_methods(c, prototype, &[("request", Member::Request)])?;
     super::set_class(c, Class::ClientHttp2Session, client)?;

@@ -2676,6 +2676,13 @@ impl Object {
     pub(crate) fn is_module_namespace(&self) -> bool {
         self.extras().is_some_and(|extras| extras.module_namespace)
     }
+    /// A proxy's own object: the handler answers every access, so no shape a cache records
+    /// may match it.
+    pub(crate) fn proxy(proto: Value) -> Self {
+        let mut object = Self::new(proto);
+        object.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
+        object
+    }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;

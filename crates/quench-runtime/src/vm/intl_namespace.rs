@@ -821,7 +821,7 @@ fn apply_locale_base_option<H: Host>(
             if index == parts.len() {
                 parts.push(text.clone());
             } else {
-                parts[index] = text.clone();
+                parts[index].clone_from(&text);
             }
             parts[index] = quench_intl::canonical_region(&text, &[language]);
         }

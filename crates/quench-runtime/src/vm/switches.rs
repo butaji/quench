@@ -36,14 +36,6 @@ impl Switch {
         self.set().unwrap_or(self.default)
     }
 
-    /// `1`, `0`, or `default`, for a diagnostics report.
-    pub(super) fn label(&self) -> &'static str {
-        match self.set() {
-            Some(true) => "1",
-            Some(false) => "0",
-            None => "default",
-        }
-    }
 }
 
 #[cfg(test)]
@@ -69,16 +61,8 @@ pub(super) fn with_switch<R>(switch: &Switch, enabled: bool, run: impl FnOnce() 
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) static WASM_JIT_SELECTIVE: Switch = Switch::new("QUENCH_WASM_JIT_SELECTIVE", false);
-pub(super) static WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF: Switch = Switch::new("QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF", false);
 pub(super) static WASM_JIT_ROOT_ONLY: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_ONLY", false);
 pub(super) static WASM_JIT_ROOT_FIRST: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_FIRST", false);
-/// The guarded direct-copy path for Emscripten's memcpy import.
-pub(super) static WASM_EMSCRIPTEN_MEMCPY_DIRECT: Switch = Switch::new("QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT", true);
-/// The raw-argument import path, opt-in so the late-bound path remains the control arm.
-pub(super) static WASM_EMSCRIPTEN_MEMCPY_RAW_I32: Switch = Switch::new("QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32", false);
-/// Compiled import callouts try the raw memcpy guard before the general Wasm import dispatcher.
-/// The exact-import and current-view checks remain mandatory; this selects only where they run.
-pub(super) static WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT: Switch = Switch::new("QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT", false);
 /// TOD-191's correctness oracle may force hot candidates past the payback model so guarded
 /// exits can be tested independently of profitability. Diagnostic only; never set by score
 /// harnesses.
@@ -90,8 +74,7 @@ pub(super) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_
 
 #[cfg(test)]
 const ALL: &[&Switch] = &[
-    &WASM_JIT_SELECTIVE, &WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF, &WASM_JIT_ROOT_ONLY, &WASM_JIT_ROOT_FIRST,
-    &WASM_EMSCRIPTEN_MEMCPY_DIRECT, &WASM_EMSCRIPTEN_MEMCPY_RAW_I32, &WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT,
+    &WASM_JIT_SELECTIVE, &WASM_JIT_ROOT_ONLY, &WASM_JIT_ROOT_FIRST,
     &JS_JIT_UNPRICED_GENERAL_DISPATCH, &JS_JIT_STATS, &JS_JIT_GENERAL_DISPATCH, &JS_JIT_LANE_METHODS,
 ];
 
@@ -106,11 +89,11 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), ALL.len(), "each switch has one definition");
-        let switch = &WASM_EMSCRIPTEN_MEMCPY_RAW_I32;
+        let switch = &JS_JIT_LANE_METHODS;
         with_switch(switch, true, || {
             assert!(switch.enabled());
-            with_switch(switch, false, || assert_eq!(switch.label(), "0"));
-            assert_eq!(switch.label(), "1");
+            with_switch(switch, false, || assert!(!switch.enabled()));
+            assert!(switch.enabled());
         });
     }
 

@@ -561,6 +561,11 @@ impl Default for PrototypeRegistry {
     }
 }
 
+/// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
+/// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
+/// record's space; each advance retires every cache and proof the VM holds.
+const WITHHELD_PROTOTYPE_IDS: usize = 4096;
+
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
@@ -828,6 +833,7 @@ pub(crate) enum CellKind {
 }
 impl CellKind {
     pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
+    #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
@@ -2075,35 +2081,45 @@ impl Heap {
         })
     }
     /// After a sweep: a prototype it freed may have its record reused by an object no proof
-    /// names, so the proofs made under the current `prototype_layout_epoch` retire. A sweep
-    /// that freed none keeps them.
+    /// names, so the proofs made under the current `prototype_layout_epoch` retire. A dead
+    /// object record's id is withheld from reuse instead, until `WITHHELD_PROTOTYPE_IDS` are;
+    /// a sweep that freed no other prototype keeps the proofs.
     fn retire_dead_prototypes(&mut self) {
-        let died = match std::mem::take(&mut self.prototypes) {
+        let retire = match std::mem::take(&mut self.prototypes) {
             PrototypeRegistry::Unknown => {
                 self.prototypes = PrototypeRegistry::Unknown;
                 self.dependencies.retire_all();
                 true
             }
             PrototypeRegistry::Known(mut prototypes) => {
-                let before = prototypes.len();
                 let mut died_subjects = Vec::new();
+                let mut died_unrecorded = false;
+                let mut withheld = 0;
                 prototypes.retain(|&(prototype, subject)| {
                     let live = self.is_live(prototype);
                     if !live {
                         died_subjects.push(subject);
+                        // A dead object record's id is withheld instead: no object takes its
+                        // Value, so no proof can name another object by it, as a class
+                        // declared in a hot function leaves one dead prototype per call.
+                        match prototype.direct_object_index() {
+                            Some(id) => withheld = self.object_records.withhold(id),
+                            None => died_unrecorded = true,
+                        }
                     }
                     live
                 });
                 for subject in died_subjects {
                     self.dependencies.release(subject);
                 }
-                let died = prototypes.len() != before;
                 self.prototypes = PrototypeRegistry::Known(prototypes);
-                died
+                died_unrecorded || withheld > WITHHELD_PROTOTYPE_IDS
             }
         };
-        if died {
+        if retire {
+            // Every proof made under the old epoch retires, so the withheld ids are free again.
             advance_prototype_layout_epoch();
+            self.object_records.release_withheld();
         }
     }
 
@@ -2384,7 +2400,7 @@ impl Heap {
                     let slots = properties.len(object.properties());
                     properties.release(object.properties());
                     #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_object(Value::direct_object(_record_id), slots);
+                    memory_profile.freed_record_cell(Value::direct_object(_record_id), slots);
                 }
             });
             let (function_live, function_freed) =
@@ -2402,7 +2418,7 @@ impl Heap {
                         let slots = properties.len(function.object.properties());
                         properties.release(function.object.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_function(Value::direct_function(_record_id), slots);
+                        memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
                     }
                 });
             let abandoned_contexts = &mut self.abandoned_contexts;
@@ -2422,7 +2438,7 @@ impl Heap {
                         let slots = properties.len(promise.object.properties());
                         properties.release(promise.object.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
+                        memory_profile.freed_record_cell(Value::direct_promise(_record_id), slots);
                     }
                 });
             // An await state owns no arena storage; dropping a dead one frees its unresumed
@@ -2445,7 +2461,7 @@ impl Heap {
                         let slots = properties.len(iterator.object.properties());
                         properties.release(iterator.object.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
+                        memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
                 });
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
@@ -2477,7 +2493,7 @@ impl Heap {
                     let slots = properties.len(array.properties());
                     properties.release(array.properties());
                     #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_array(Value::direct_array(record_id), slots, &array);
+                    memory_profile.freed_record_cell(Value::direct_array(record_id), slots);
                     dead_arrays.push(Value::direct_array(record_id));
                 }
             });

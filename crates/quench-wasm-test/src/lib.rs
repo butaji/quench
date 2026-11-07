@@ -121,6 +121,12 @@ pub fn testsuite_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testsuite")
 }
 
+/// The mangling prefix of Rust symbols (v0).
+pub const RUST_SYMBOL_PREFIX: &str = "_R";
+
+/// `nm` symbol kinds that name code.
+pub const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
+
 #[cfg(test)]
 mod tests {
     use super::{testsuite_root, TestSuite};

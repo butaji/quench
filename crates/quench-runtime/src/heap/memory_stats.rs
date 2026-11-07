@@ -6,11 +6,10 @@ use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use std::collections::{BTreeMap, HashSet};
 use std::mem::size_of;
-const KINDS: usize = CellKind::NAMES.len();
 
 /// Allocated heap records, arenas and unique backing storage at one instant.
 pub struct HeapMemoryComposition {
-    pub cell_counts: [usize; KINDS],
+    pub cell_counts: [usize; CellKind::COUNT],
     pub cell_variant_names: Vec<&'static str>,
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
@@ -85,7 +84,7 @@ impl Heap {
         let mut embedded_object_headers = 0;
         let mut boxed_object_headers = 0;
         let mut object_property_counts_by_width = Vec::new();
-        let mut cell_counts = [0; KINDS];
+        let mut cell_counts = [0; CellKind::COUNT];
         let mut cell_variant_counts = BTreeMap::new();
         let mut live_property_used_values = 0;
         let mut live_property_capacity_values = 0;

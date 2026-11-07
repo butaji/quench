@@ -29,6 +29,22 @@ is the interpreter specialized to what is known, and each fact has a binding tim
    the same specialized program: values in registers, numbers unboxed, layouts as
    constants, no boxing, spills or checks C would not need.
 
+## Redundancy laws
+
+Nothing is stored, checked or computed twice, at any level.
+
+1. One fact, one home: a value, flag, table or constant is defined once and derived
+   everywhere else. `quench-lint` rejects token-identical functions and repeated
+   module-level constants; clippy's redundancy lints (workspace `Cargo.toml`) reject
+   second lookups, copies and eagerly built values.
+2. Layers trust each other: the parser, bytecode compiler, interpreter, JIT tiers, OSR and
+   AOT share one representation of each proven fact. A later layer reads what an earlier
+   one established (a resolved binding, a shape, a type, a bound) and never re-derives or
+   re-verifies it; there is no adapter glue converting one layer's view into another's.
+3. Interfaces are built for efficiency: a boundary passes the producer's representation
+   (indices, borrowed slices, packed words), not copies, re-encodings, boxed values or
+   per-call conversions; a protocol that needs translating on every crossing is redesigned.
+
 Single homes (add to these; never a second copy):
 - `crates/quench-runtime/src/staged.rs`: object-layout and narrow-value reads, written once
   over the `Stage` trait. `Concrete` runs them in the interpreter, `Emit` generates them as
@@ -74,9 +90,11 @@ Process contiguous data in batches, not scattered objects.
 - Prefer stack allocation with a small inline capacity over heap-allocated lists.
 - Use a bitset instead of an array of bools.
 
-Functions and modules should be cohesive and reviewable. There are no mandatory
-line-count or complexity caps. There is no architectural ceiling on region size,
-register allocation, SIMD or additional optimization tiers. Compilation/cache
+Functions ≤ 40 lines with cyclomatic complexity ≤ 10, files ≤ 500 lines: split along a
+domain seam, never exempt. `quench-lint` enforces it; code that predates the law is listed
+in `crates/quench-lint/oversized.txt`, which may only shrink (`quench-lint --update` after
+a split). There is no architectural ceiling on region size, register allocation, SIMD or
+additional optimization tiers. Compilation/cache
 budgets need a documented cost or correctness purpose and safe exhaustion behavior.
 Do not force recursion, event sourcing or abstractions into ordinary Rust.
 

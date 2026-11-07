@@ -701,7 +701,7 @@ pub(crate) fn set(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<
     let (name, value) = (&strings[0], &strings[1]);
     match pairs.iter().position(|(current, _)| current == name) {
         Some(first) => {
-            pairs[first].1 = value.clone();
+            pairs[first].1.clone_from(value);
             let mut index = 0;
             pairs.retain(|(current, _)| {
                 index += 1;

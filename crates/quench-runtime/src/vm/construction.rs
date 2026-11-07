@@ -1351,7 +1351,7 @@ impl<H: Host> Vm<H> {
                     ProxyKind::Object
                 };
                 Ok(self.heap.alloc(Cell::Proxy {
-                    object: Box::new(Self::empty_object(self.object_proto)),
+                    object: Box::new(crate::heap::Object::proxy(self.object_proto)),
                     kind,
                     target,
                     handler,
@@ -1432,7 +1432,7 @@ impl<H: Host> Vm<H> {
                 self.box_primitive_object(value)
             }
             Native::Number => {
-                let argument = args.first().copied().unwrap_or(Value::number(0.0));
+                let argument = args.first().copied().unwrap_or_else(|| Value::number(0.0));
                 let primitive = if self.is_object_like(argument) {
                     self.to_primitive(p, argument, "number")?
                 } else {

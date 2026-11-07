@@ -112,7 +112,7 @@ impl Options {
                 .ok_or_else(|| format!("missing {option} value"))?;
             match option.as_str() {
                 "--profile" if matches!(value.as_str(), "iteration" | "production") => {
-                    options.profile = value.clone()
+                    options.profile.clone_from(value)
                 }
                 "--sdk-report" => {
                     options.sdk_report = Some(fs::canonicalize(value).map_err(|e| e.to_string())?)

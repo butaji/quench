@@ -732,7 +732,7 @@ mod signature_pool_tests {
         let embedded = WasmSignatures::with_imports(
             "pool-domains",
             &[],
-            [WasmCallableType::Embedded(reference_signature.clone())],
+            [WasmCallableType::Embedded(reference_signature)],
             &super::super::WasmTypes::default(),
         )
         .unwrap();

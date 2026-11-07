@@ -440,7 +440,7 @@ pub(crate) fn method(
             }
         }
         "setTicketKeys" => {
-            let Some(bytes) = context.view_bytes_rooted(value).map(|bytes| bytes.to_vec()) else {
+            let Some(bytes) = context.view_bytes_rooted(value) else {
                 return Err(super::super::util_shared_vm::argument_type_error(
                     context, value, "keys", "Buffer",
                 )?);
@@ -739,7 +739,7 @@ pub(crate) fn method(
                     configuration.set_private_key(parsed.pkey.as_ref().expect("validated key"))?;
                     if let Some(ca) = parsed.ca {
                         for cert in ca {
-                            configuration.add_extra_chain_cert(cert.to_owned())?;
+                            configuration.add_extra_chain_cert(cert.clone())?;
                             configuration.add_client_ca(&cert)?;
                             // Node ignores duplicate-store insertion errors.
                             let _ = configuration.cert_store_mut().add_cert(cert);

@@ -17,7 +17,7 @@ impl<H: Host> Vm<H> {
             realm: Realm {
                 globals: Value::NULL,
                 global_lexical_declarations: FxHashSet::default(),
-                global_lexical_bindings: FxHashMap::default(),
+                global_lexical_bindings: Default::default(),
                 immutable_global_lexical_bindings: FxHashSet::default(),
                 global_lexical_states: FxHashMap::default(),
                 parked: None,

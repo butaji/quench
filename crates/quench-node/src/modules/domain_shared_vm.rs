@@ -9,8 +9,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-/// The module's state: a null-prototype object whose members `STATE_*` name.
-const STATE: &str = "\0native:domain";
+use crate::modules::keys::STATE;
 const STATE_STACK: &str = "stack";
 const STATE_EXPORTS: &str = "exports";
 const STATE_SET_CAPTURE: &str = "setCapture";
@@ -27,7 +26,7 @@ const STATE_DEPRECATED: &str = "makeCallbackDeprecated";
 
 const DOMAIN: &str = "domain";
 const ACTIVE: &str = "active";
-const ERROR_EVENT: &str = "error";
+pub(crate) use crate::modules::keys::ERROR_EVENT;
 const UNCAUGHT_EXCEPTION: &str = "uncaughtException";
 
 /// `Domain.prototype`'s methods (Node assigns anonymous functions) with their operations.

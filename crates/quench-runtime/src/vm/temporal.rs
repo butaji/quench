@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(duration, "prototype", prototype)?;
         self.lock_temporal_constructor_prototype(duration)?;
         self.set_builtin_value_named(prototype, "constructor", duration)?;
-        self.install_temporal_to_string_tag(prototype, "Temporal.Duration")?;
+        self.install_builtin_to_string_tag(prototype, "Temporal.Duration")?;
         for (name, native) in [
             ("from", Native::TemporalDurationFrom),
             ("compare", Native::TemporalDurationCompare),
@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         self.set_builtin_value_named(temporal, "Duration", duration)?;
-        self.install_temporal_to_string_tag(temporal, "Temporal")?;
+        self.install_builtin_to_string_tag(temporal, "Temporal")?;
         self.install_temporal_now(p, temporal)?;
         self.install_temporal_plain_time(p, temporal)?;
         self.install_temporal_plain_date(p, temporal)?;
@@ -127,28 +127,6 @@ impl<H: Host> Vm<H> {
         self.install_temporal_instant(p, temporal)?;
         self.install_temporal_zoned_date_time(p, temporal)?;
         self.set_builtin_value_named(self.realm.globals, "Temporal", temporal)
-    }
-
-    fn install_temporal_to_string_tag(&mut self, object: Value, tag: &str) -> Result<(), JsError> {
-        let symbol = self
-            .well_known_symbols
-            .get(WellKnownSymbol::ToStringTag)
-            .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
-        let value = self.heap.alloc_string(tag.into());
-        self.set_symbol_property(object, symbol, value)?;
-        self.set_property_attributes(
-            object,
-            PropertyKey::symbol(symbol),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        Ok(())
     }
 
     fn lock_temporal_constructor_prototype(&mut self, constructor: Value) -> Result<(), JsError> {
@@ -638,9 +616,9 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(self.object_proto)),
             instant: Box::new(crate::heap::ZonedInstant {
                 epoch_nanoseconds: relative.epoch_nanoseconds,
-                time_zone: relative.time_zone.to_string(),
+                time_zone: relative.time_zone.clone(),
             }),
-            calendar: Box::new(relative.calendar.to_string()),
+            calendar: Box::new(relative.calendar.clone()),
         });
         let mut fields = [Value::number(0.0); 10];
         fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = Value::number(1.0);
@@ -685,9 +663,9 @@ impl<H: Host> Vm<H> {
                 object: Box::new(Self::empty_object(self.object_proto)),
                 instant: Box::new(crate::heap::ZonedInstant {
                     epoch_nanoseconds: zoned.epoch_nanoseconds,
-                    time_zone: zoned.time_zone.to_string(),
+                    time_zone: zoned.time_zone.clone(),
                 }),
-                calendar: Box::new(zoned.calendar.to_string()),
+                calendar: Box::new(zoned.calendar.clone()),
             });
             let result = self.temporal_zoned_date_time_arithmetic(
                 p,
@@ -895,7 +873,7 @@ impl<H: Host> Vm<H> {
                     instant, calendar, ..
                 }) => Some(super::temporal_zoned_date_time::ZonedDateTimeRecord {
                     epoch_nanoseconds: instant.epoch_nanoseconds,
-                    time_zone: instant.time_zone.to_string(),
+                    time_zone: instant.time_zone.clone(),
                     calendar: calendar.to_string(),
                 }),
                 _ => None,
@@ -978,7 +956,7 @@ impl<H: Host> Vm<H> {
                 if unit.is_undefined() {
                     return Err(self.range_error(p, "unit is required".into()));
                 }
-                (self.to_string(p, unit)?.to_string(), relative_date)
+                (self.to_string(p, unit)?, relative_date)
             }
             _ => return Err(self.type_error(p, "Options must be an object or unit string".into())),
         };
@@ -1141,7 +1119,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(Some(number as usize));
         }
-        let text = self.to_string(p, value)?.to_string();
+        let text = self.to_string(p, value)?;
         if text == "auto" {
             Ok(None)
         } else {
@@ -1158,7 +1136,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(default.to_owned());
         }
-        let mode = self.to_string(p, value)?.to_string();
+        let mode = self.to_string(p, value)?;
         if DURATION_ROUNDING_MODE_NAMES.contains(&mode.as_str()) {
             Ok(mode)
         } else {
@@ -1174,7 +1152,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(None);
         }
-        let unit = self.to_string(p, value)?.to_string();
+        let unit = self.to_string(p, value)?;
         let digits = match unit.as_str() {
             "second" | "seconds" => 0,
             "millisecond" | "milliseconds" => 3,
@@ -1378,9 +1356,9 @@ impl<H: Host> Vm<H> {
                 object: Box::new(Self::empty_object(self.object_proto)),
                 instant: Box::new(crate::heap::ZonedInstant {
                     epoch_nanoseconds: zoned.epoch_nanoseconds,
-                    time_zone: zoned.time_zone.to_string(),
+                    time_zone: zoned.time_zone.clone(),
                 }),
-                calendar: Box::new(zoned.calendar.to_string()),
+                calendar: Box::new(zoned.calendar.clone()),
             });
             let date_endpoint = self.temporal_zoned_date_time_arithmetic(
                 p,
@@ -1395,7 +1373,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
             let date_endpoint_epoch = instant.epoch_nanoseconds;
-            let time_zone = instant.time_zone.to_string();
+            let time_zone = instant.time_zone.clone();
             let calendar = calendar.to_string();
             let actual = self.relative_duration_nanoseconds(p, &relative_date, &fields)?;
             let residual = zoned
@@ -1731,7 +1709,7 @@ impl<H: Host> Vm<H> {
         }
         let (smallest_text, largest_text, relative_to, increment, mode) = if is_string {
             (
-                Some(self.to_string(p, options)?.to_string()),
+                Some(self.to_string(p, options)?),
                 None,
                 None,
                 1.0,
@@ -1743,7 +1721,7 @@ impl<H: Host> Vm<H> {
             let largest = if largest.is_undefined() {
                 None
             } else {
-                Some(self.to_string(p, largest)?.to_string())
+                Some(self.to_string(p, largest)?)
             };
             let relative_atom = self.intern_atom("relativeTo");
             let relative = self.get_property(p, options, relative_atom)?;
@@ -1764,14 +1742,14 @@ impl<H: Host> Vm<H> {
             let mode = if mode.is_undefined() {
                 "halfExpand".to_owned()
             } else {
-                self.to_string(p, mode)?.to_string()
+                self.to_string(p, mode)?
             };
             let smallest_atom = self.intern_atom("smallestUnit");
             let smallest = self.get_property(p, options, smallest_atom)?;
             let smallest = if smallest.is_undefined() {
                 None
             } else {
-                Some(self.to_string(p, smallest)?.to_string())
+                Some(self.to_string(p, smallest)?)
             };
             (smallest, largest, relative, increment, mode)
         };

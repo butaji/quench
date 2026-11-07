@@ -57,7 +57,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let net = crate::host::shared_vm::commonjs::net_module(c)?;
     let net_server = get(c, net, "Server")?;
     let server = constructor(c, Member::Construct, "Http2Server")?;
-    crate::modules::http_shared_vm::inherit(c, server, net_server)?;
+    crate::modules::stream_shared_vm::inherit(c, server, net_server)?;
     let prototype = get(c, server, "prototype")?;
     super::class_methods(c, prototype, &[
         ("setTimeout", Member::SetTimeout),
@@ -79,7 +79,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let tls = crate::host::shared_vm::commonjs::tls_module(c)?;
     let tls_server = get(c, tls, "Server")?;
     let secure = constructor(c, Member::SecureConstruct, "Http2SecureServer")?;
-    crate::modules::http_shared_vm::inherit(c, secure, tls_server)?;
+    crate::modules::stream_shared_vm::inherit(c, secure, tls_server)?;
     let prototype = get(c, secure, "prototype")?;
     super::class_methods(c, prototype, &[
         ("setTimeout", Member::SetTimeout),

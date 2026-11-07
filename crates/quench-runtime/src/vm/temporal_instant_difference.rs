@@ -1,10 +1,10 @@
 use super::*;
 
-const NANOSECONDS_PER_HOUR: i128 = 3_600_000_000_000;
-const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
-const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
-const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
+pub(crate) const NANOSECONDS_PER_HOUR: i128 = 3_600_000_000_000;
+pub(crate) const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;
+use crate::units::NANOSECONDS_PER_SECOND;
+use crate::units::NANOSECONDS_PER_MILLISECOND;
+pub(crate) const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
 const UNITS: [(&str, i128, usize); 6] = [
     ("hour", NANOSECONDS_PER_HOUR, 4),
     ("minute", NANOSECONDS_PER_MINUTE, 5),
@@ -13,7 +13,7 @@ const UNITS: [(&str, i128, usize); 6] = [
     ("microsecond", NANOSECONDS_PER_MICROSECOND, 8),
     ("nanosecond", 1, 9),
 ];
-const ROUNDING_MODES: [&str; 9] = [
+pub(crate) const ROUNDING_MODES: [&str; 9] = [
     "ceil",
     "floor",
     "expand",

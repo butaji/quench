@@ -4538,10 +4538,6 @@ pub(super) fn jit_wasm_selective_enabled() -> bool {
     super::switches::WASM_JIT_SELECTIVE.enabled()
 }
 
-fn jit_emscripten_memcpy_leaf_enabled() -> bool {
-    super::switches::WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
-}
-
 fn jit_wasm_root_only_enabled() -> bool {
     #[cfg(test)]
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
@@ -4675,7 +4671,6 @@ fn jit_memory_snapshot() -> Option<(u64, u64)> {
 /// the context.
 const RAISED_STATUS: i64 = TRAPS.len() as i64 + 1;
 const TERMINATED_STATUS: i64 = RAISED_STATUS + 1;
-const MEMCPY_LEAF_MISS_STATUS: i64 = RAISED_STATUS + 2;
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
     TRAPS
@@ -4748,16 +4743,6 @@ pub(super) struct CallContext {
     reference_fast_caches: *mut FastReferenceCache,
     /// Diagnostic-only count of direct Emscripten same-memory copies.
     emscripten_memcpy_fast_path_hits: *mut u64,
-    /// Diagnostic-only count of early raw-i32 Emscripten import copies.
-    emscripten_memcpy_raw_i32_hits: *mut u64,
-    /// Diagnostic-only count proving the early callout handled the copy.
-    emscripten_memcpy_early_import_hits: *mut u64,
-    /// Shared by nested native entries; host callouts invalidate the proof.
-    emscripten_memcpy_cache: *mut EmscriptenMemcpyCache,
-    /// Entry for the generated direct-copy leaf path.
-    emscripten_memcpy_leaf: usize,
-    /// Diagnostic-only count of direct leaf calls.
-    emscripten_memcpy_leaf_hits: *mut u64,
     /// Per-import attribution, present only during opt-in diagnostic runs.
     import_callout_counts: *const std::cell::Cell<u64>,
     import_callout_count: usize,
@@ -4807,11 +4792,6 @@ impl CallContext {
             reference_epoch: std::ptr::null(),
             reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
-            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
-            emscripten_memcpy_cache: std::ptr::null_mut(),
-            emscripten_memcpy_leaf: 0,
-            emscripten_memcpy_leaf_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
@@ -4866,11 +4846,6 @@ impl CallContext {
             reference_epoch: std::ptr::null(),
             reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
-            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
-            emscripten_memcpy_cache: std::ptr::null_mut(),
-            emscripten_memcpy_leaf: 0,
-            emscripten_memcpy_leaf_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
@@ -4919,11 +4894,6 @@ impl CallContext {
             reference_epoch: self.reference_epoch,
             reference_fast_caches: self.reference_fast_caches,
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
-            emscripten_memcpy_raw_i32_hits: self.emscripten_memcpy_raw_i32_hits,
-            emscripten_memcpy_early_import_hits: self.emscripten_memcpy_early_import_hits,
-            emscripten_memcpy_cache: self.emscripten_memcpy_cache,
-            emscripten_memcpy_leaf: self.emscripten_memcpy_leaf,
-            emscripten_memcpy_leaf_hits: self.emscripten_memcpy_leaf_hits,
             import_callout_counts: self.import_callout_counts,
             import_callout_count: self.import_callout_count,
             adapter_payload: std::ptr::null_mut(),
@@ -4955,15 +4925,9 @@ const CONTEXT_REFERENCE_EPOCH: i32 = std::mem::offset_of!(CallContext, reference
 const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
 const CONTEXT_REFERENCE_FAST_CACHES: i32 =
     std::mem::offset_of!(CallContext, reference_fast_caches) as i32;
-const CONTEXT_EMSCRIPTEN_MEMCPY_CACHE: i32 =
-    std::mem::offset_of!(CallContext, emscripten_memcpy_cache) as i32;
-const CONTEXT_EMSCRIPTEN_MEMCPY_LEAF: i32 =
-    std::mem::offset_of!(CallContext, emscripten_memcpy_leaf) as i32;
 const CONTEXT_JS_CONSTANTS: i32 = std::mem::offset_of!(CallContext, js_constants) as i32;
 const CONTEXT_JS_CONSTANT_COUNT: i32 =
     std::mem::offset_of!(CallContext, js_constant_count) as i32;
-const MEMCPY_CACHE_VALID: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, valid) as i32;
-const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, function) as i32;
 
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
@@ -5097,7 +5061,6 @@ unsafe extern "C" fn osr_probe<H: Host>(
     }
 }
 
-type DirectMemcpyLeaf = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
 type ReferenceCallout = unsafe extern "C" fn(
     *mut CallContext,
     u64,
@@ -5163,17 +5126,6 @@ impl Default for FastReferenceCache {
     }
 }
 
-/// Per-top-level-call proof for the guarded Emscripten memcpy leaf. The VM
-/// publishes it after a full dynamic check and clears it before host code runs.
-#[repr(C)]
-#[derive(Default)]
-struct EmscriptenMemcpyCache {
-    valid: u64,
-    function: u64,
-    base: usize,
-    length: usize,
-}
-
 /// Fill an already bounds-checked range in the instance's unshared memory.
 /// The compiler checks against the exact current length before calling this
 /// leaf, and no VM call can move the guarded memory during the operation.
@@ -5230,61 +5182,6 @@ unsafe extern "C" fn compiled_memory_copy(destination: u64, source: u64, length:
             destination as usize as *mut u8,
             length as usize,
         );
-    }
-    0
-}
-
-/// The dispatcher-free second-call path for the exact Emscripten helper.
-/// Its memory proof is scoped to one native invocation and ordinary callouts
-/// revoke it before guest JavaScript can mutate a view or grow memory.
-unsafe extern "C" fn compiled_emscripten_memcpy_leaf(
-    context: *mut CallContext,
-    function: u64,
-    destination: i32,
-    source: i32,
-    length: i32,
-) -> i64 {
-    if context.is_null() {
-        return MEMCPY_LEAF_MISS_STATUS;
-    }
-    // SAFETY: generated code passes its live context, and its cache points to
-    // storage owned by the suspended `run_compiled` activation.
-    let context = unsafe { &mut *context };
-    if context.emscripten_memcpy_cache.is_null() {
-        return MEMCPY_LEAF_MISS_STATUS;
-    }
-    let cache = unsafe { &mut *context.emscripten_memcpy_cache };
-    if cache.valid != 1 || cache.function != function || cache.base == 0 {
-        cache.valid = 0;
-        return MEMCPY_LEAF_MISS_STATUS;
-    }
-    if !context.interrupt.is_null()
-        && unsafe { &*context.interrupt }.load(std::sync::atomic::Ordering::Acquire)
-    {
-        return TERMINATED_STATUS;
-    }
-
-    let target = super::wasm_js::copy_within_relative_index(i64::from(destination), cache.length);
-    let start = super::wasm_js::copy_within_relative_index(i64::from(source), cache.length);
-    let raw_end = i64::from(source) + i64::from(length);
-    let end = super::wasm_js::copy_within_relative_index(raw_end, cache.length);
-    let count = end.saturating_sub(start).min(cache.length - target);
-    if count > 0 {
-        // SAFETY: the published certificate names the current full-length
-        // unshared Wasm view. All indices are clamped to that allocation.
-        unsafe {
-            std::ptr::copy(
-                (cache.base as *const u8).add(start),
-                (cache.base as *mut u8).add(target),
-                count,
-            );
-        }
-    }
-    if !context.emscripten_memcpy_leaf_hits.is_null() {
-        unsafe {
-            let hits = &mut *context.emscripten_memcpy_leaf_hits;
-            *hits = hits.saturating_add(1);
-        }
     }
     0
 }
@@ -5364,15 +5261,6 @@ fn format_import_callout_targets(
         })
         .collect::<Vec<_>>()
         .join(",")
-}
-
-#[inline]
-fn invalidate_emscripten_memcpy_cache(cache: *mut EmscriptenMemcpyCache) {
-    if !cache.is_null() {
-        // SAFETY: the pointer is the live cache owned by the suspended native
-        // invocation, and callout entry runs synchronously on that invocation.
-        unsafe { (*cache).valid = 0 };
-    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -5546,10 +5434,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
-    // Resolving or invoking a reference can execute arbitrary JS, enter an
-    // interpreted body, or grow the active Wasm memory. Revoke the raw view
-    // certificate before any of those paths can run.
-    invalidate_emscripten_memcpy_cache(context.emscripten_memcpy_cache);
     note_compiled_callout(context.reference_callouts);
     let vm_pointer = context.vm.cast::<Vm<H>>();
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
@@ -5912,10 +5796,6 @@ unsafe extern "C" fn import_callout<H: Host>(
     // SAFETY: compiled code passes the context `run_compiled` made, whose
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
-    let memcpy_cache = context.emscripten_memcpy_cache;
-    // Host code can replace the captured view/method or grow memory. The fast
-    // certificate cannot survive any ordinary callout.
-    invalidate_emscripten_memcpy_cache(memcpy_cache);
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     let defined = vm
         .programs
@@ -5944,50 +5824,19 @@ unsafe extern "C" fn import_callout<H: Host>(
     let env = context.env;
     let current_memory = context.memory;
     let memcpy_fast_path_hits = context.emscripten_memcpy_fast_path_hits;
-    let memcpy_raw_i32_hits = context.emscripten_memcpy_raw_i32_hits;
-    let memcpy_early_import_hits = context.emscripten_memcpy_early_import_hits;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: compiled code passes one word per parameter and a result
         // word.
-        if unsafe {
-            vm.try_early_compiled_emscripten_memcpy_import(
+        unsafe {
+            vm.call_import(
                 program,
                 env,
-                function,
+                function as u32,
                 current_memory,
-                memcpy_raw_i32_hits,
-                memcpy_early_import_hits,
+                memcpy_fast_path_hits,
                 args,
+                out,
             )
-        } {
-            if jit_emscripten_memcpy_leaf_enabled()
-                && !memcpy_cache.is_null()
-                && let Some((base, length)) =
-                    super::dispatch_fast::unshared_memory(vm, current_memory)
-            {
-                // Publish validity last after the helper has checked the
-                // import binding, live view, method, and exact memory object.
-                unsafe {
-                    (*memcpy_cache).function = function;
-                    (*memcpy_cache).base = base as usize;
-                    (*memcpy_cache).length = length;
-                    (*memcpy_cache).valid = 1;
-                }
-            }
-            Ok(())
-        } else {
-            unsafe {
-                vm.call_import(
-                    program,
-                    env,
-                    function as u32,
-                    current_memory,
-                    memcpy_fast_path_hits,
-                    memcpy_raw_i32_hits,
-                    args,
-                    out,
-                )
-            }
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
@@ -6293,9 +6142,6 @@ struct WasmJitDiagnostics {
     compiled_known_callouts: std::cell::Cell<u64>,
     compiled_reference_callouts: std::cell::Cell<u64>,
     emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
-    emscripten_memcpy_raw_i32_hits: std::cell::Cell<u64>,
-    emscripten_memcpy_early_import_hits: std::cell::Cell<u64>,
-    emscripten_memcpy_leaf_hits: std::cell::Cell<u64>,
     import_callout_names: Vec<(u32, u32, String, String)>,
     import_callout_counts: Vec<std::cell::Cell<u64>>,
     reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
@@ -6389,7 +6235,7 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"native_entry_sampling_interval\":{},\"native_entry_samples\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"emscripten_memcpy_leaf_switch\":\"{}\",\"emscripten_memcpy_leaf_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"native_entry_sampling_interval\":{},\"native_entry_samples\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -6405,21 +6251,7 @@ impl Drop for CompiledProgram {
             stats.compiled_known_callouts.get(),
             stats.compiled_reference_callouts.get(),
             import_callout_targets,
-            super::switches::WASM_EMSCRIPTEN_MEMCPY_DIRECT.label(),
-            super::wasm_js::emscripten_memcpy_direct_copy_enabled(),
             stats.emscripten_memcpy_fast_path_hits.get(),
-            super::switches::WASM_EMSCRIPTEN_MEMCPY_RAW_I32.label(),
-            super::wasm_js::emscripten_memcpy_raw_i32_enabled(),
-            stats.emscripten_memcpy_raw_i32_hits.get(),
-            super::switches::WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.label(),
-            super::wasm_js::emscripten_memcpy_early_import_enabled(),
-            stats.emscripten_memcpy_early_import_hits.get(),
-            if jit_emscripten_memcpy_leaf_enabled() {
-                "1"
-            } else {
-                "0"
-            },
-            stats.emscripten_memcpy_leaf_hits.get(),
             reference_sites,
             same_artifact_direct_hits,
             reference_targets,
@@ -6551,20 +6383,6 @@ impl CompiledProgram {
         self.diagnostics
             .as_ref()
             .map_or(0, |stats| stats.emscripten_memcpy_fast_path_hits.get())
-    }
-
-    #[cfg(test)]
-    pub(super) fn emscripten_memcpy_raw_i32_hits(&self) -> u64 {
-        self.diagnostics
-            .as_ref()
-            .map_or(0, |stats| stats.emscripten_memcpy_raw_i32_hits.get())
-    }
-
-    #[cfg(test)]
-    pub(super) fn emscripten_memcpy_early_import_hits(&self) -> u64 {
-        self.diagnostics
-            .as_ref()
-            .map_or(0, |stats| stats.emscripten_memcpy_early_import_hits.get())
     }
 
     fn note_direct_reference_entry(&self, function: usize) -> bool {
@@ -7662,7 +7480,7 @@ unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u
     // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
-        .map_or(Value::DELETED.to_bits(), u64::from)
+        .map_or_else(|| Value::DELETED.to_bits(), u64::from)
 }
 
 /// A lane body's fused `typeof` test of a heap value (`Vm::typeof_test_value`): 1 where its
@@ -10424,11 +10242,10 @@ impl<H: Host> Analysis<'_, H> {
             Op::Jump => Some(()),
             Op::WasmBranchTable => {
                 i32_value(state, instruction.a())?;
-                let pc_entries: Vec<_> =
-                    crate::bytecode::branch_table_entries(0, instruction).collect();
+                
                 // Entries are `Jump`s; validation guarantees it for
                 // reachable tables.
-                (!pc_entries.is_empty()).then_some(())
+                (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
             }
             Op::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
@@ -11233,8 +11050,6 @@ impl<'b> DerefMut for Body<'b> {
 
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
-    /// Emit a guarded direct leaf for the canonical Emscripten memcpy import.
-    emscripten_memcpy_leaf: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -11768,124 +11583,6 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn callout_function(
-        &mut self,
-        function: u32,
-        signature: &crate::WasmSignature,
-        instruction: WideInstruction,
-    ) {
-        if self.emscripten_memcpy_leaf && self.is_emscripten_memcpy_import(function, signature) {
-            self.callout_emscripten_memcpy_leaf(function, instruction);
-            return;
-        }
-        self.callout_function_generic(function, signature, instruction);
-    }
-
-    fn is_emscripten_memcpy_import(&self, function: u32, signature: &crate::WasmSignature) -> bool {
-        let Some(signatures) = self
-            .analysis
-            .vm
-            .programs
-            .wasm_signatures(self.analysis.program)
-        else {
-            return false;
-        };
-        let Some(import) = usize::try_from(function)
-            .ok()
-            .and_then(|index| signatures.imports().get(index))
-        else {
-            return false;
-        };
-        import.name.name == "_emscripten_memcpy_js"
-            && signature.params.as_slice()
-                == [
-                    crate::WasmType::I32,
-                    crate::WasmType::I32,
-                    crate::WasmType::I32,
-                ]
-            && signature.results.is_empty()
-    }
-
-    fn callout_emscripten_memcpy_leaf(&mut self, function: u32, instruction: WideInstruction) {
-        let fast = self.body.core.builder.create_block();
-        let slow = self.body.core.builder.create_block();
-        let success = self.body.core.builder.create_block();
-        let done = self.body.core.builder.create_block();
-        let cache = self.body.core.builder.ins().load(
-            types::I64,
-            invariant(),
-            self.body.core.context,
-            CONTEXT_EMSCRIPTEN_MEMCPY_CACHE,
-        );
-        let valid = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            cache,
-            MEMCPY_CACHE_VALID,
-        );
-        let valid = self.body.core.builder.ins().icmp_imm_u(IntCC::Equal, valid, 1);
-        let cached_function = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            cache,
-            MEMCPY_CACHE_FUNCTION,
-        );
-        let matching_function =
-            self.body.core.builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, cached_function, i64::from(function));
-        let valid = self.body.core.builder.ins().band(valid, matching_function);
-        self.body.core.builder.ins().brif(valid, fast, &[], slow, &[]);
-
-        self.body.core.builder.switch_to_block(fast);
-        let window = instruction.call_window();
-        let args = (0..3)
-            .map(|offset| self.read(window.base + offset, Kind::I32))
-            .collect::<Vec<_>>();
-        let target = self.body.core.builder.ins().load(
-            types::I64,
-            invariant(),
-            self.body.core.context,
-            CONTEXT_EMSCRIPTEN_MEMCPY_LEAF,
-        );
-        let mut leaf = Signature::new(self.call_conv);
-        leaf.params.push(AbiParam::new(types::I64));
-        leaf.params.push(AbiParam::new(types::I64));
-        leaf.params
-            .extend((0..3).map(|_| AbiParam::new(types::I32)));
-        leaf.returns.push(AbiParam::new(types::I64));
-        let leaf = self.body.core.builder.import_signature(leaf);
-        let function_value = self.body.core.builder.ins().iconst(types::I64, i64::from(function));
-        let call = self.body.core.builder.ins().call_indirect(
-            leaf,
-            target,
-            &[self.body.core.context, function_value, args[0], args[1], args[2]],
-        );
-        let status = self.body.core.builder.inst_results(call)[0];
-        let miss = self
-            .body.core.builder
-            .ins()
-            .icmp_imm_u(IntCC::Equal, status, MEMCPY_LEAF_MISS_STATUS);
-        self.body.core.builder.ins().brif(miss, slow, &[], success, &[]);
-
-        self.body.core.builder.switch_to_block(success);
-        self.propagate(status);
-        self.write_constant(instruction.result_register(), Kind::I32, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-
-        self.body.core.builder.switch_to_block(slow);
-        self.callout_function_generic(
-            function,
-            &crate::WasmSignature {
-                params: vec![crate::WasmType::I32; 3],
-                results: Vec::new(),
-            },
-            instruction,
-        );
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.switch_to_block(done);
-    }
-
-    fn callout_function_generic(
         &mut self,
         function: u32,
         signature: &crate::WasmSignature,
@@ -13382,7 +13079,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         selectors.dedup();
         let mut emitter = Emitter {
             guarded,
-            emscripten_memcpy_leaf: jit_emscripten_memcpy_leaf_enabled(),
             regions,
             globals,
             analysis: self,
@@ -16043,9 +15739,6 @@ impl<H: Host> Vm<H> {
                 compiled_known_callouts: std::cell::Cell::new(0),
                 compiled_reference_callouts: std::cell::Cell::new(0),
                 emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
-                emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
-                emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
-                emscripten_memcpy_leaf_hits: std::cell::Cell::new(0),
                 import_callout_names,
                 import_callout_counts,
                 reference_call_sites,
@@ -16266,7 +15959,7 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
-                    self.programs.set_compiled(program, compiled.clone());
+                    self.programs.set_compiled(program, compiled);
                     self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 } else if self
@@ -16302,7 +15995,7 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
-                    self.programs.set_compiled(program, compiled.clone());
+                    self.programs.set_compiled(program, compiled);
                     self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 }
@@ -16419,41 +16112,20 @@ impl<H: Host> Vm<H> {
             let mut known_callouts = 0u64;
             let mut reference_callouts = 0u64;
             let mut emscripten_memcpy_fast_path_hits = 0u64;
-            let mut emscripten_memcpy_raw_i32_hits = 0u64;
-            let mut emscripten_memcpy_early_import_hits = 0u64;
-            let mut emscripten_memcpy_leaf_hits = 0u64;
-            let mut emscripten_memcpy_cache = EmscriptenMemcpyCache::default();
             let (
                 import_callouts_ptr,
                 known_callouts_ptr,
                 reference_callouts_ptr,
                 emscripten_memcpy_fast_path_hits_ptr,
-                emscripten_memcpy_raw_i32_hits_ptr,
-                emscripten_memcpy_early_import_hits_ptr,
-                emscripten_memcpy_leaf_hits_ptr,
-            ): (
-                *mut u64,
-                *mut u64,
-                *mut u64,
-                *mut u64,
-                *mut u64,
-                *mut u64,
-                *mut u64,
-            ) = if compiled.diagnostics.is_some() {
+            ): (*mut u64, *mut u64, *mut u64, *mut u64) = if compiled.diagnostics.is_some() {
                 (
                     &mut import_callouts as *mut u64,
                     &mut known_callouts as *mut u64,
                     &mut reference_callouts as *mut u64,
                     &mut emscripten_memcpy_fast_path_hits as *mut u64,
-                    &mut emscripten_memcpy_raw_i32_hits as *mut u64,
-                    &mut emscripten_memcpy_early_import_hits as *mut u64,
-                    &mut emscripten_memcpy_leaf_hits as *mut u64,
                 )
             } else {
                 (
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
@@ -16499,15 +16171,6 @@ impl<H: Host> Vm<H> {
                 reference_epoch: self.wasm_reference_epoch.as_ptr(),
                 reference_fast_caches: compiled.reference_fast_caches_ptr(),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                emscripten_memcpy_raw_i32_hits: emscripten_memcpy_raw_i32_hits_ptr,
-                emscripten_memcpy_early_import_hits: emscripten_memcpy_early_import_hits_ptr,
-                emscripten_memcpy_cache: &mut emscripten_memcpy_cache,
-                emscripten_memcpy_leaf: if jit_emscripten_memcpy_leaf_enabled() {
-                    compiled_emscripten_memcpy_leaf as DirectMemcpyLeaf as usize
-                } else {
-                    0
-                },
-                emscripten_memcpy_leaf_hits: emscripten_memcpy_leaf_hits_ptr,
                 import_callout_counts: compiled
                     .diagnostics
                     .as_ref()
@@ -16578,24 +16241,6 @@ impl<H: Host> Vm<H> {
                         .get()
                         .saturating_add(emscripten_memcpy_fast_path_hits),
                 );
-                stats.emscripten_memcpy_raw_i32_hits.set(
-                    stats
-                        .emscripten_memcpy_raw_i32_hits
-                        .get()
-                        .saturating_add(emscripten_memcpy_raw_i32_hits),
-                );
-                stats.emscripten_memcpy_early_import_hits.set(
-                    stats
-                        .emscripten_memcpy_early_import_hits
-                        .get()
-                        .saturating_add(emscripten_memcpy_early_import_hits),
-                );
-                stats.emscripten_memcpy_leaf_hits.set(
-                    stats
-                        .emscripten_memcpy_leaf_hits
-                        .get()
-                        .saturating_add(emscripten_memcpy_leaf_hits),
-                );
             }
             if i64::from(status) == TERMINATED_STATUS {
                 return Some(Err(JsError::execution_terminated()));
@@ -16629,138 +16274,6 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    /// Try the exact raw-i32 Emscripten copy before the general import
-    /// dispatcher. The import-callout's outer panic/context/memory handling
-    /// still runs on both the fast path and every fallback.
-    ///
-    /// # Safety
-    /// `args` points to the compiled caller's three Wasm ABI words when the
-    /// module and host signatures checked below are exactly (i32, i32, i32).
-    unsafe fn try_early_compiled_emscripten_memcpy_import(
-        &mut self,
-        program: ProgramId,
-        instance_env: Value,
-        function: u64,
-        current_memory: Value,
-        raw_i32_hits: *mut u64,
-        early_import_hits: *mut u64,
-        args: *const u64,
-    ) -> bool {
-        if !jit_emscripten_memcpy_leaf_enabled()
-            && (!super::wasm_js::emscripten_memcpy_raw_i32_enabled()
-                || !super::wasm_js::emscripten_memcpy_early_import_enabled())
-        {
-            return false;
-        }
-        let Ok(function) = u32::try_from(function) else {
-            return false;
-        };
-        if self.programs.get(program).is_none() {
-            return false;
-        }
-        let Some(signatures) = self.programs.wasm_signatures(program) else {
-            return false;
-        };
-        let import_count = signatures.imports().len();
-        let function_index = function as usize;
-        if function_index >= import_count
-            || signatures.defined_index(function).is_some()
-            || !signatures.get(function_index).is_some_and(|signature| {
-                signature.params.as_slice()
-                    == [
-                        crate::WasmType::I32,
-                        crate::WasmType::I32,
-                        crate::WasmType::I32,
-                    ]
-                    && signature.results.is_empty()
-            })
-            || !signatures
-                .imports()
-                .get(function_index)
-                .is_some_and(|import| import.name.name == "_emscripten_memcpy_js")
-        {
-            return false;
-        }
-
-        // Imports are the final slots in the per-instance environment. Match
-        // wasm_function_reference's mapping without switching active program
-        // or constructing a wrapper Value.
-        let Some(Cell::Environment { slots, .. }) = self.heap.get(instance_env) else {
-            return false;
-        };
-        let Some(import_slot) = slots
-            .len()
-            .checked_sub(import_count)
-            .and_then(|base| base.checked_add(function_index))
-        else {
-            return false;
-        };
-        let Some(wrapper) = self.heap.environment_slot(instance_env, import_slot) else {
-            return false;
-        };
-        let Some(FunctionRecord {
-            kind: FunctionKind::Native(Native::WasmHost),
-            env: wrapper_env,
-            ..
-        }) = self.heap.function(wrapper)
-        else {
-            return false;
-        };
-        let wrapper_env = *wrapper_env;
-        let Some(Cell::WasmHostFunction {
-            target: crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target),
-            signature,
-        }) = self.heap.get(wrapper_env)
-        else {
-            return false;
-        };
-        if signature.params.as_slice()
-            != [
-                crate::WasmType::I32,
-                crate::WasmType::I32,
-                crate::WasmType::I32,
-            ]
-            || !signature.results.is_empty()
-        {
-            return false;
-        }
-        let view_environment = target.view_environment;
-        let view_slot = target.view_slot;
-
-        // Match the ordinary opaque import's stack and cancellation gate. If
-        // either gate fails, defer to call_import so it creates the error with
-        // the full NativeActivation and realm state installed.
-        let Ok(_stack) = self.enter_stack() else {
-            return false;
-        };
-        if self.check_execution_interrupt().is_err() {
-            return false;
-        }
-        // SAFETY: both Wasm and host signatures above prove exactly three i32
-        // words are available; their low 32 bits are the signed ABI values.
-        let indices = unsafe {
-            [
-                *args.add(0) as u32 as i32,
-                *args.add(1) as u32 as i32,
-                *args.add(2) as u32 as i32,
-            ]
-        };
-        if !self.try_emscripten_memcpy_same_memory_raw_capture(
-            view_environment,
-            view_slot,
-            current_memory,
-            indices,
-            raw_i32_hits,
-        ) {
-            return false;
-        }
-        // This call is invisible to guest code after the complete helper and
-        // memory guards pass; retain optional profile-aggregate accounting.
-        self.profile.call_target(0, 3);
-        note_compiled_callout(early_import_hits);
-        true
-    }
-
     /// Call imported `function` of `program` in instance `env` with the Wasm
     /// bits at `args`, storing its result's bits at `out`.
     ///
@@ -16773,7 +16286,6 @@ impl<H: Host> Vm<H> {
         function: u32,
         current_memory: Value,
         memcpy_fast_path_hits: *mut u64,
-        memcpy_raw_i32_hits: *mut u64,
         args: *const u64,
         out: *mut u64,
     ) -> Result<(), JsError> {
@@ -16781,7 +16293,7 @@ impl<H: Host> Vm<H> {
             .programs
             .get(program)
             .ok_or_else(|| JsError::validation("missing compiled Wasm program".into()))?;
-        let (params, result_type, module_signature_is_raw_i32) = {
+        let (params, result_type) = {
             let signature = self
                 .programs
                 .wasm_signatures(program)
@@ -16794,13 +16306,6 @@ impl<H: Host> Vm<H> {
                     .copied()
                     .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
                 signature.results.first().copied(),
-                signature.params.as_slice()
-                    == [
-                        crate::WasmType::I32,
-                        crate::WasmType::I32,
-                        crate::WasmType::I32,
-                    ]
-                    && signature.results.is_empty(),
             )
         };
         let active_program = self.replace_active_program(program);
@@ -16815,77 +16320,7 @@ impl<H: Host> Vm<H> {
             .programs
             .wasm_signatures(program)
             .and_then(|signatures| signatures.defined_index(function));
-        let imported_name_is_emscripten_memcpy = self
-            .programs
-            .wasm_signatures(program)
-            .and_then(|signatures| signatures.imports().get(function as usize))
-            .is_some_and(|import| import.name.name == "_emscripten_memcpy_js");
-        let raw_i32_import = if defined.is_none()
-            && module_signature_is_raw_i32
-            && imported_name_is_emscripten_memcpy
-            && super::wasm_js::emscripten_memcpy_raw_i32_enabled()
-        {
-            match self.heap.function(callee) {
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::WasmHost),
-                    env,
-                    ..
-                }) => match self.heap.get(*env) {
-                    Some(Cell::WasmHostFunction {
-                        target: crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target),
-                        signature,
-                    }) if signature.params.as_slice()
-                        == [
-                            crate::WasmType::I32,
-                            crate::WasmType::I32,
-                            crate::WasmType::I32,
-                        ]
-                        && signature.results.is_empty() =>
-                    {
-                        Some((
-                            target.function,
-                            (target.view_environment, target.view_slot),
-                            signature.clone(),
-                        ))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        } else {
-            None
-        };
-        let raw_result = if let Some((target, memcpy_capture, signature)) = raw_i32_import {
-            // SAFETY: the module and host signatures above prove there are
-            // exactly three i32 parameters; raw Wasm ABI words carry the
-            // signed i32 bit patterns in their low 32 bits.
-            let raw_indices = unsafe {
-                [
-                    *args.add(0) as u32 as i32,
-                    *args.add(1) as u32 as i32,
-                    *args.add(2) as u32 as i32,
-                ]
-            };
-            Some(self.call_compiled_js_wasm_import(
-                program,
-                &code,
-                callee,
-                target,
-                Some(memcpy_capture),
-                &signature,
-                receiver,
-                &[],
-                Some(raw_indices),
-                current_memory,
-                memcpy_fast_path_hits,
-                memcpy_raw_i32_hits,
-            )?)
-        } else {
-            None
-        };
-        let result = if let Some(result) = raw_result {
-            result
-        } else {
+        let result = {
             // Allocation never collects, so the encoded arguments stay live
             // until the ordinary callout roots them.
             let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
@@ -16953,10 +16388,8 @@ impl<H: Host> Vm<H> {
                     &signature,
                     receiver,
                     &values,
-                    None,
                     current_memory,
                     memcpy_fast_path_hits,
-                    memcpy_raw_i32_hits,
                 )?
             } else {
                 self.call_value(&code, callee, receiver, &values)?
@@ -20215,7 +19648,7 @@ mod tests {
             "direct-bitwise-guard.js",
         ).unwrap();
         let function = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "flags")
         }).unwrap() as u32;
         let artifact = super::super::js_compiled::compile(&program, function).unwrap();
@@ -21595,54 +21028,6 @@ mod tests {
         }
     }
 
-    fn memcpy_leaf_context(
-        cache: &mut EmscriptenMemcpyCache,
-        interrupt: &std::sync::atomic::AtomicBool,
-        hits: &mut u64,
-    ) -> CallContext {
-        CallContext {
-            stack_limit: 0,
-            interrupt,
-            table: std::ptr::null(),
-            vm: std::ptr::null_mut(),
-            env: Value::NULL,
-            entry_stack: 0,
-            guard_start: 0,
-            guard_end: 0,
-            // No poll page: compiled code checks the interrupt flag.
-            poll_start: 0,
-            poll_end: 0,
-            globals: std::ptr::null(),
-            callout: 0,
-            call_reference: 0,
-            compiled: std::ptr::null(),
-            program: ProgramId::MAIN,
-            import_callouts: std::ptr::null_mut(),
-            known_callouts: std::ptr::null_mut(),
-            reference_callouts: std::ptr::null_mut(),
-            memory: Value::NULL,
-            memory_length: 0,
-            raised: None,
-            call_reference_diagnostic: 0,
-            reference_call_sites: std::ptr::null(),
-            reference_call_site_count: 0,
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
-            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
-            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
-            emscripten_memcpy_cache: cache,
-            emscripten_memcpy_leaf: 0,
-            emscripten_memcpy_leaf_hits: hits,
-            import_callout_counts: std::ptr::null(),
-            import_callout_count: 0,
-            adapter_payload: std::ptr::null_mut(),
-            js_constants: std::ptr::null(),
-            js_constant_count: 0,
-            interrupt_owner: std::ptr::null(),
-        }
-    }
-
     #[test]
     fn per_import_callout_counts_use_function_indices_and_escape_json_names() {
         let names = vec![
@@ -21936,66 +21321,6 @@ mod tests {
         assert!(native_entry_sample_due(
             JIT_NATIVE_ENTRY_SAMPLE_INTERVAL * 2
         ));
-    }
-
-    #[test]
-    fn emscripten_memcpy_leaf_copies_overlap_and_observes_cache_miss_and_interrupt() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        // Wasm memory bytes: an untyped literal would be `[i32; 6]`.
-        let mut bytes: [u8; 6] = [0, 1, 2, 3, 4, 5];
-        let mut cache = EmscriptenMemcpyCache {
-            valid: 1,
-            function: 7,
-            base: bytes.as_mut_ptr() as usize,
-            length: bytes.len(),
-        };
-        let interrupt = AtomicBool::new(false);
-        let mut hits = 0;
-        let mut context = memcpy_leaf_context(&mut cache, &interrupt, &mut hits);
-
-        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, 1, 0, 4) };
-        assert_eq!(status, 0);
-        assert_eq!(bytes, [0, 0, 1, 2, 3, 5]);
-        assert_eq!(hits, 1);
-
-        bytes = [0, 1, 2, 3, 4, 5];
-        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, 0, 1, 4) };
-        assert_eq!(status, 0);
-        assert_eq!(bytes, [1, 2, 3, 4, 4, 5]);
-        assert_eq!(hits, 2);
-
-        bytes = [0, 1, 2, 3, 4, 5];
-        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, -1, -4, 10) };
-        assert_eq!(status, 0);
-        assert_eq!(bytes, [0, 1, 2, 3, 4, 2]);
-        assert_eq!(hits, 3);
-
-        bytes = [0, 1, 2, 3, 4, 5];
-        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, 0, 2, -1) };
-        assert_eq!(status, 0);
-        assert_eq!(bytes, [0, 1, 2, 3, 4, 5]);
-        assert_eq!(hits, 4);
-
-        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 8, 0, 1, 3) };
-        assert_eq!(status, MEMCPY_LEAF_MISS_STATUS);
-        assert_eq!(cache.valid, 0);
-        assert_eq!(bytes, [0, 1, 2, 3, 4, 5]);
-        assert_eq!(hits, 4);
-
-        let mut interrupt_cache = EmscriptenMemcpyCache {
-            valid: 1,
-            function: 7,
-            base: bytes.as_mut_ptr() as usize,
-            length: bytes.len(),
-        };
-        let mut interrupt_context =
-            memcpy_leaf_context(&mut interrupt_cache, &interrupt, &mut hits);
-        interrupt.store(true, Ordering::Release);
-        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut interrupt_context, 7, 0, 1, 3) };
-        assert_eq!(status, TERMINATED_STATUS);
-        assert_eq!(bytes, [0, 1, 2, 3, 4, 5]);
-        assert_eq!(hits, 4);
     }
 
     #[test]

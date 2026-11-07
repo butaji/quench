@@ -16,7 +16,7 @@ const IPV6_BITS: u8 = 128;
 const ADDRESS_BYTES: usize = 16;
 const PORT_BYTES: usize = 2;
 const FLOWLABEL_BYTES: usize = 4;
-const MAX_PORT: f64 = u16::MAX as f64;
+use crate::modules::dgram_shared_vm::MAX_PORT;
 
 /// A SocketAddress record: family, address, port, flow label.
 const SOCKET_FAMILY: usize = 0;
@@ -316,23 +316,6 @@ fn require_new(c: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
     Err(c.throw(error))
 }
 
-fn coded(c: &mut Context<'_>, code: &'static str, message: &str) -> RootedError {
-    match c.error_rooted(message) {
-        Ok(error) => match super::node_errors_shared_vm::decorate_error(c, error, code) {
-            Ok(()) => c.throw(error),
-            Err(failure) => failure,
-        },
-        Err(failure) => failure,
-    }
-}
-
-fn string_argument(c: &mut Context<'_>, value: RootId, name: &str) -> Result<String, RootedError> {
-    match c.string_text(value)? {
-        Some(text) => Ok(text),
-        None => Err(super::util_shared_vm::argument_type_error(c, value, name, "string")?),
-    }
-}
-
 /// Node's `validatePort(port, name)`: a number or numeric string within 0..=65535.
 fn validate_port(c: &mut Context<'_>, value: RootId, name: &str) -> Result<u16, RootedError> {
     let candidate = if let Some(number) = c.rooted_value(value).and_then(|value| value.as_number()) {
@@ -370,7 +353,7 @@ fn socket_address_from_options(c: &mut Context<'_>, options: RootId) -> Result<S
     };
     let address = option(c, options, "address")?;
     let address = if is_undefined(c, address) { c.string_rooted(family.default_address()) } else { address };
-    let address = string_argument(c, address, "options.address")?;
+    let address = super::util_shared_vm::validate_string(c, address, "options.address")?;
     let port = option(c, options, "port")?;
     let port = if is_undefined(c, port) { c.number(0.0) } else { port };
     let flowlabel = option(c, options, "flowlabel")?;
@@ -382,7 +365,7 @@ fn socket_address_from_options(c: &mut Context<'_>, options: RootId) -> Result<S
     };
     let port = validate_port(c, port, "options.port")?;
     let Some(address) = family.parse(&address) else {
-        return Err(coded(c, "ERR_INVALID_ADDRESS", "Invalid socket address"));
+        return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_INVALID_ADDRESS", "Invalid socket address"));
     };
     Ok(SocketAddress { family, address, port, flowlabel })
 }
@@ -507,7 +490,7 @@ pub(crate) fn is_socket_address(c: &mut Context<'_>, _: RootId, args: &[RootId])
 /// `SocketAddress.parse('host:port')`: the address a URL authority names, or undefined.
 pub(crate) fn socket_address_parse(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let input = arg(c, args, 0);
-    let input = string_argument(c, input, "input")?;
+    let input = super::util_shared_vm::validate_string(c, input, "input")?;
     let (host, port) = match input.strip_prefix('[') {
         Some(rest) => match rest.split_once(']') {
             Some((host, tail)) => (host, tail.strip_prefix(':')),
@@ -537,9 +520,9 @@ fn convert(c: &mut Context<'_>, address: RootId, family: RootId) -> Result<Socke
     if let Some(record) = socket_record(c, address)? {
         return Ok(record);
     }
-    string_argument(c, address, "address")?;
+    super::util_shared_vm::validate_string(c, address, "address")?;
     let family = if is_undefined(c, family) { c.string_rooted(Family::V4.option()) } else { family };
-    string_argument(c, family, "family")?;
+    super::util_shared_vm::validate_string(c, family, "family")?;
     let options = c.object_rooted()?;
     c.assign_named_property_rooted(options, "address", address)?;
     c.assign_named_property_rooted(options, "family", family)?;
@@ -645,9 +628,9 @@ pub(crate) fn check(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outco
     let address = match socket_record(c, address)? {
         Some(record) => record,
         None => {
-            string_argument(c, address, "address")?;
+            super::util_shared_vm::validate_string(c, address, "address")?;
             let family = if is_undefined(c, family) { c.string_rooted(Family::V4.option()) } else { family };
-            string_argument(c, family, "family")?;
+            super::util_shared_vm::validate_string(c, family, "family")?;
             let options = c.object_rooted()?;
             c.assign_named_property_rooted(options, "address", address)?;
             c.assign_named_property_rooted(options, "family", family)?;
@@ -734,7 +717,7 @@ pub(crate) fn from_json(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> O
     let entries = c.array_like_values_rooted(data)?;
     let mut parsed = Vec::with_capacity(entries.len());
     for entry in entries {
-        let text = string_argument(c, entry, "data")?;
+        let text = super::util_shared_vm::validate_string(c, entry, "data")?;
         parsed.extend(parse_rule(&text));
     }
     let existing = rules(c, this)?;

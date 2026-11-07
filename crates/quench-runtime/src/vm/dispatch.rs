@@ -369,7 +369,7 @@ impl<H: Host> Vm<H> {
         // only `apply` takes as its list.
         let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
         let arguments = match forwarded {
-            Some((forwarded_target, forwarded_this, forwarded_arguments)) => {
+            Some(super::function::Forwarded { callee: forwarded_target, receiver: forwarded_this, args: forwarded_arguments, .. }) => {
                 (target, this) = (forwarded_target, forwarded_this);
                 forwarded_arguments
             }

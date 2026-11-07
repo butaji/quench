@@ -19,8 +19,7 @@ mod member {
     pub(super) const BROADCAST_CHANNEL: &str = "BroadcastChannel";
     pub(super) const WORKER: &str = "Worker";
     pub(super) const MESSAGE_EVENT: &str = "MessageEvent";
-    /// The private symbol a port, broadcast channel or worker keeps its state under.
-    pub(super) const SLOT: &str = "slot";
+    pub(crate) use crate::modules::keys::SLOT;
     /// The private symbol an event's MessageEvent fields live under.
     pub(super) const EVENT_FIELDS: &str = "eventFields";
     /// `setEnvironmentData`'s map.
@@ -32,17 +31,17 @@ mod member {
 /// A worker record's fields.
 mod worker {
     pub(super) const THREAD_ID: &str = "threadId";
-    pub(super) const PORT: &str = "port";
-    pub(super) const STDOUT: &str = "stdout";
-    pub(super) const STDERR: &str = "stderr";
+    pub(crate) use crate::modules::keys::PORT;
+    pub(crate) use crate::modules::keys::STDOUT;
+    pub(crate) use crate::modules::keys::STDERR;
     pub(super) const REFERENCED: &str = "referenced";
     pub(super) const EXIT: &str = "exit";
 }
 
 /// A broadcast channel record's fields.
 mod broadcast {
-    pub(super) const NAME: &str = "name";
-    pub(super) const PORT: &str = "port";
+    pub(crate) use crate::modules::keys::NAME;
+    pub(crate) use crate::modules::keys::PORT;
 }
 
 /// The `MessageEvent` fields `new MessageEvent(type, init)` reads, in its getters' order.
@@ -601,8 +600,7 @@ fn broadcast_port(c: &mut Context<'_>, receiver: RootId) -> Result<Option<u64>, 
     Ok(c.rooted_value(id).and_then(|id| id.as_number()).map(|id| id as u64))
 }
 
-/// The registered symbol `util.inspect` reads a custom inspection from.
-const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
+use crate::modules::keys::INSPECT_CUSTOM;
 
 /// `[util.inspect.custom](depth, options)`: `BroadcastChannel { name, active }`.
 pub(crate) fn broadcast_inspect(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

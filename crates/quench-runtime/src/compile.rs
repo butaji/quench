@@ -1383,10 +1383,12 @@ impl Engine {
         drop(allocator);
         let (compiler, module) = emitted?;
         let program = compiler.finish(module)?;
-        // Lazy parsing releases function-body ASTs. Freeze complete diagnostic
-        // facts once from source without forcing their bytecode replay. This
-        // cold metadata parse is shared by dynamic and native publication.
-        crate::vm::freeze_call_sites(&program);
+        // Lazy parsing releases function-body ASTs. A native-only build freezes complete
+        // diagnostic facts once from source without forcing their bytecode replay; a
+        // dynamic one defers that parse to the first diagnostic or write that reads them.
+        if !crate::DYNAMIC_EXECUTION_ENABLED {
+            crate::vm::freeze_call_sites(&program);
+        }
         #[cfg(feature = "aot")]
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]
@@ -2684,7 +2686,7 @@ impl<'a> Compiler<'a> {
             .id
             .as_ref()
             .map(|id| id.name.as_str())
-            .or(context.default_export.then_some("default"));
+            .or_else(|| context.default_export.then_some("default"));
         // A named function expression binds its name in its own scope; a body that cannot
         // observe the binding needs none, and runs without a frame where nothing else needs
         // one (`CallPlan::registers_only`).
@@ -3497,6 +3499,7 @@ impl<'a> Compiler<'a> {
                         starts.into_boxed_slice()
                     },
                     specialized: self.mode == SpecializationMode::Enabled,
+                    template_sites: self.template_sites,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
                     name_shared_sites: match &mut self.name_shared_sites {

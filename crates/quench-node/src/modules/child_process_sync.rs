@@ -11,9 +11,9 @@ const PIPE_READ_BYTES: usize = 64 * 1024;
 // A child without parent pipe endpoints still needs deadline-aware reaping.
 const EXIT_POLL_MILLIS: i32 = 1;
 const NANOS_PER_MILLI: u32 = Duration::from_millis(1).subsec_nanos();
-const STDIN: usize = 0;
-const STDOUT: usize = 1;
-const STDERR: usize = 2;
+use crate::modules::child_process_class_shared_vm::STDIN;
+use crate::modules::child_process_class_shared_vm::STDOUT;
+use crate::modules::child_process_class_shared_vm::STDERR;
 const CHANNELS: usize = super::child_process_stdio_shared_vm::STANDARD_CHANNELS;
 
 pub(crate) struct CollectedOutput {
@@ -155,7 +155,7 @@ pub(crate) fn collect(
                             io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
                         ) => {}
                     Err(failure) => {
-                        pipe_error.get_or_insert(failure.raw_os_error().unwrap_or(libc::EIO));
+                        pipe_error.get_or_insert_with(|| failure.raw_os_error().unwrap_or(libc::EIO));
                         stdin = None;
                     }
                 }
@@ -183,7 +183,7 @@ pub(crate) fn collect(
                         io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
                     ) => {}
                 Err(failure) => {
-                    pipe_error.get_or_insert(failure.raw_os_error().unwrap_or(libc::EIO));
+                    pipe_error.get_or_insert_with(|| failure.raw_os_error().unwrap_or(libc::EIO));
                     *pipe = None;
                 }
             }

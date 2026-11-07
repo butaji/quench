@@ -5225,7 +5225,7 @@ impl<H: Host> Vm<H> {
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
         let mut links = StaticModuleLinks::default();
-        if links.add_locals(locals.clone()) != StaticModuleAdd::Added {
+        if links.add_locals(locals) != StaticModuleAdd::Added {
             return Ok(StaticModuleGraph::LinkError);
         }
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));

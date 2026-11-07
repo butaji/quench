@@ -143,7 +143,7 @@ pub(super) enum JsJitStringTransform {
 // be delayed by a large, uninterruptible compiled body.
 const MAX_INSTRUCTIONS: usize = 256;
 const MAX_REGISTERS: usize = 256;
-pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
 pub(super) const MAX_CAPTURE_ARGUMENTS: usize = 4;
 pub(super) const MAX_NUMERIC_FIELD_INPUTS: usize = 4;

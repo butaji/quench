@@ -6,7 +6,7 @@ use std::{
     ptr::NonNull,
 };
 use zstd::zstd_safe::{self, zstd_sys as sys};
-const PARAM_UNSET: u32 = u32::MAX;
+use super::brotli::PARAM_UNSET;
 const END: c_int = 2;
 const SKIPPABLE_TAG_MASK: u8 = 0xf0;
 extern "C" {

@@ -99,6 +99,42 @@ pub fn script_source(source: &str, strict: bool) -> std::borrow::Cow<'_, str> {
     } else { std::borrow::Cow::Borrowed(source) }
 }
 
+/// Runner threads: `TEST262_JOBS` when positive, else the host's available parallelism.
+pub fn worker_jobs() -> usize {
+    std::env::var("TEST262_JOBS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|jobs| *jobs > 0)
+        .or_else(|| std::thread::available_parallelism().ok().map(usize::from))
+        .unwrap_or(1)
+}
+
+/// The per-test timeout every runner requires in `TEST262_TEST_TIMEOUT_MS`.
+pub fn required_timeout_ms() -> Result<u64, String> {
+    std::env::var("TEST262_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .ok_or_else(|| "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".into())
+}
+
+/// The files whose path below `base` contains any of `filters`; all of them when there are none.
+pub fn select_files(files: Vec<PathBuf>, base: &std::path::Path, filters: &[String]) -> Vec<PathBuf> {
+    if filters.is_empty() {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|path| {
+            let relative = path.strip_prefix(base).unwrap_or(path).to_string_lossy();
+            filters.iter().any(|filter| relative.contains(filter))
+        })
+        .collect()
+}
+
+/// Test files a worker claims at once from the shared queue.
+pub const WORK_BATCH: usize = 32;
+
 #[cfg(test)]
 mod tests {
     use super::*;

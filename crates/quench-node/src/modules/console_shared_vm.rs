@@ -3,15 +3,15 @@
 //! Every key but the writing methods (`WRITERS`) is a lazy member the Rust console
 //! (`console_class_shared_vm`) defines on first use. A writer writes a call of plain strings
 //! and primitives directly (`plain_line`), and formats any other (`console_format_shared_vm`).
+use super::util_inspect_shared_vm::identifier_key;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// The global console (`facade`).
 const CONSOLE: &str = "\0node/console/global";
 
-/// The process streams the global console writes to, read when first written.
-const STDOUT: &str = "\0node/console/stdout";
-const STDERR: &str = "\0node/console/stderr";
+use crate::modules::keys::STDOUT;
+use crate::modules::keys::STDERR;
 /// Set once `internal/util/inspect.js` has loaded: from then on its options
 /// (`inspect.defaultOptions`) may differ from Node's defaults, so `log` leaves every
 /// non-string argument to the SDK.
@@ -218,14 +218,14 @@ fn inspect_primitive(context: &mut NativeContext<'_, NodeHost>, value: RootId) -
 const BREAK_LENGTH: usize = 80;
 /// `reduceToSingleString`'s constant start, "next to all other factors that may reduce
 /// `breakLength`".
-const SINGLE_LINE_START: usize = 10;
+pub(crate) const SINGLE_LINE_START: usize = 10;
 /// `inspectDefaultOptions.maxArrayLength`: longer arrays end in `... n more items`, which this
 /// path leaves to `inspect`.
 const MAX_ARRAY_LENGTH: usize = 100;
 /// Arrays of more entries are grouped into columns (`groupArrayElements`).
 const MAX_UNGROUPED_ARRAY_ENTRIES: usize = 6;
 /// `groupArrayElements`: the comma and space after each entry.
-const SEPARATOR_SPACE: usize = 2;
+pub(crate) const SEPARATOR_SPACE: usize = 2;
 /// `groupArrayElements` groups only when this many entries fit next to each other...
 const MIN_GROUPED_COLUMNS: usize = 3;
 /// ...and no entry is longer than this share of all of them, or every entry is at most
@@ -240,11 +240,11 @@ const BIASED_MAX_OFFSET: f64 = 3.0;
 const GROUPED_COLUMNS_PER_COMPACT: usize = 4;
 const MAX_GROUPED_COLUMNS: usize = 15;
 /// The indentation `formatProperty` adds for a container's entries.
-const ENTRY_INDENTATION: usize = 2;
+pub(crate) const ENTRY_INDENTATION: usize = 2;
 /// `formatPrimitive` splits a string into lines past `kMinLineLength` and past
 /// `breakLength - indentationLvl - STRING_LINE_RESERVE` characters.
 const MIN_LINE_LENGTH: usize = 16;
-const STRING_LINE_RESERVE: usize = 4;
+pub(crate) const STRING_LINE_RESERVE: usize = 4;
 /// The internal brands `formatValue` and `formatRaw` test before a value's prototype: each
 /// is written its own way whatever its prototype, and a proxy is inspected through its target.
 const INSPECTED_BRANDS: [quench_runtime::BuiltinBrand; 18] = {
@@ -255,8 +255,7 @@ const INSPECTED_BRANDS: [quench_runtime::BuiltinBrand; 18] = {
         SetIterator, ModuleNamespaceObject, BoxedPrimitive,
     ]
 };
-/// The registry key of `util.inspect.custom`.
-const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
+pub(crate) use crate::modules::keys::INSPECT_CUSTOM;
 /// `strEscape`'s default quote; a string holding it, a backslash, or a character outside
 /// printable ASCII would be escaped or quoted otherwise, which this path leaves to `inspect`.
 const SINGLE_QUOTE: char = '\'';
@@ -490,13 +489,6 @@ fn group_array_elements(entries: Vec<String>, numeric: bool, indentation: usize)
         rows.push(row);
     }
     rows
-}
-
-/// `keyStrRegExp`: a key `formatProperty` writes unquoted.
-pub(super) fn identifier_key(key: &str) -> bool {
-    let mut characters = key.chars();
-    characters.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 /// Whether the SDK console could colorize `stream` (`shouldColorize`): `FORCE_COLOR` is set

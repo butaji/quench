@@ -592,7 +592,7 @@ impl LaneRecoverySpace {
         let mut chains = smallvec::SmallVec::<[Self; 1]>::new();
         let mut space = Self::default();
         for frame in frames {
-            let parent = frame.parent.map_or(Self::default(), |parent| chains[parent]);
+            let parent = frame.parent.map_or_else(Self::default, |parent| chains[parent]);
             let chain = Self { values: parent.values + fill_room::<SCRIPT_FILL_BLOCK>(usize::from(frame.registers)),
                 activations: parent.activations + 1 };
             space.values = space.values.max(chain.values);
@@ -1991,7 +1991,7 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
     /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
-    /// newest last, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
+    /// in the order first seen, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
@@ -2194,12 +2194,13 @@ impl LaneStack {
         self.activation_limit.set(limit);
     }
 
-    /// Records `target` as a callee of the call record whose link is `link`, newest last.
+    /// Records `target` as a callee of the call record whose link is `link`, in the order
+    /// first seen. The link names the latest callee, so a callee already recorded changes
+    /// nothing: a polymorphic site's steady state only reads its record.
     fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
-        if site.last() != Some(&target) {
-            site.retain(|recorded| *recorded != target);
+        if !site.contains(&target) {
             if site.len() == CALL_SITE_TARGETS {
                 site.remove(0);
             }
@@ -4958,7 +4959,11 @@ fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -
 /// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held;
 /// with the global var whose global object property answered it.
 #[inline(always)]
-fn lane_read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> (Option<Value>, Option<Atom>) {
+fn lane_read_capture_value<H: Host, const PLAIN: bool>(
+    cx: *mut LaneContext<H>,
+    depth: u16,
+    slot: u16,
+) -> (Option<Value>, Option<super::environment::RootRead>) {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
     
@@ -5001,16 +5006,29 @@ script_handler! {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
         let slot = ImmediateLayout::capture_slot(imm);
-        let (value, global_var) = lane_read_capture_value::<H, true>(cx, depth, slot);
+        let (value, source) = lane_read_capture_value::<H, true>(cx, depth, slot);
         // A global var's own data property on the global object becomes the record's hint
-        // (`lane_load_root_var`).
-        if let Some(atom) = global_var
-            && value.is_some()
-        {
+        // (`lane_load_root_var`); a retained global lexical binding's name and index in the
+        // realm's bindings do (`lane_load_root_lexical`).
+        if value.is_some() {
+            use super::environment::RootRead;
             let vm = unsafe { vm(cx) };
-            if let Some(hint) = vm.own_data_field_hint(vm.realm.globals, atom) {
-                set_field_hint(ip, hint);
-                requicken::<H>(ip, lane_load_root_var::<H>);
+            match source {
+                Some(RootRead::GlobalVar(atom)) => {
+                    if let Some(hint) = vm.own_data_field_hint::<false>(vm.realm.globals, atom) {
+                        set_field_hint(ip, hint);
+                        requicken::<H>(ip, lane_load_root_var::<H>);
+                    }
+                }
+                Some(RootRead::GlobalLexical(atom, index)) => {
+                    if let Ok(index) = u16::try_from(index)
+                        && index != NO_CALL_LINK
+                    {
+                        set_field_hint(ip, super::FieldCache::own(atom, index));
+                        requicken::<H>(ip, lane_load_root_lexical::<H>);
+                    }
+                }
+                None => {}
             }
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -5037,6 +5055,29 @@ script_handler! {
         }
         let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
             return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// A `LoadCapture` of a script's retained top-level `let`, `const` or class, whose name and
+    /// index in the active realm's global lexical bindings its record's hint holds
+    /// (`lane_load_capture_walk`): the binding at that index while it is that name's and
+    /// initialized, else the walk. Bindings are never removed from an active realm, so the
+    /// name at the index is the one a lookup of it finds.
+    fn lane_load_root_lexical<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let hint = i.field_hint();
+        let value = vm
+            .realm
+            .global_lexical_bindings
+            .get_index(usize::from(hint.slot))
+            .filter(|(atom, value)| **atom == hint.receiver && !value.is_deleted())
+            .map(|(_, value)| *value);
+        let Some(value) = value else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -10873,6 +10914,13 @@ const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
 #[inline(always)]
 fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -> Ip {
     let (r, ip, view) = lane_frame_state(cx, frame, pc);
+    // A frame call or return reached from an out-of-line path is a nested call, not a
+    // sibling one, so a run of calls and returns with no backward jump between them grew the
+    // stack until it overflowed (mandreel). Below the floor the lane loop dispatches the
+    // record instead, from the frame state the context now holds.
+    if below_floor() {
+        return ip;
+    }
     next!(cx, r, ip, view)
 }
 
@@ -12055,7 +12103,7 @@ script_handler! {
             return exit(ip);
         }
         if !lane_activation_room(vm, &target) {
-            return lane_script_call_frame::<H>(ip);
+            return lane_script_call_frame::<H>(ip, usize::from(target.room));
         }
         let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
             return exit(ip);
@@ -12148,9 +12196,16 @@ script_handler! {
             }
             None => {
                 r.set(done_read.a, Value::TRUE);
-                // SAFETY: the exit records the distance to its validated target.
+                // SAFETY: the step's records end at its `value` read, past the exit.
                 let exit = unsafe { ip.add(form.exit()) };
-                next!(cx, r, unsafe { exit.byte_offset((*exit).jump()) }, Carried::script(cx))
+                if THREADED {
+                    // SAFETY: the threaded test records the distance to its validated target.
+                    next!(cx, r, unsafe { exit.byte_offset((*exit).jump()) }, Carried::script(cx))
+                }
+                // An emitted exit is a `Jump` record, which reads no register: it runs itself,
+                // since a jump fused with the move at its target (`JumpFusions::THROUGH`) makes
+                // that move before landing past it (babel-wtb's callee after a for-in loop).
+                next!(cx, r, exit, Carried::script(cx))
             }
         }
     }
@@ -12323,6 +12378,74 @@ script_handler! {
 
 /// The global value property `lane_load_name_first` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
+
+script_handler! {
+    /// A `StoreName`'s first run: an assignment, outside a script's top level, to a name the
+    /// global object answers whenever no global lexical binding shadows it (as
+    /// `lane_load_name_first` decides for a read) takes `lane_store_global_name`; any other
+    /// store, an initializing one among them, always takes the general path.
+    #[inline(never)]
+    fn lane_store_name_first<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let function = vm
+            .lane_stack
+            .activations
+            .last()
+            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        let global = i.b == 0
+            && function != super::ROOT_FUNCTION_ID
+            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+            && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
+            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function);
+        if global {
+            requicken::<H>(ip, lane_store_global_name::<H>);
+            sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
+        }
+        requicken::<H>(ip, lane_exit::<H>);
+        exit(ip)
+    }
+}
+
+script_handler! {
+    /// A global name store (`lane_store_name_first`) through its record's hint: the global
+    /// object's own writable data field, which no realm's lexical declaration shadows while
+    /// the hint is held.
+    fn lane_store_global_name<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.hinted_own_field_store_hit(i.field_hint(), vm.realm.globals, i.imm(), r.get(i.a)) {
+            sibling!(lane_store_global_name_miss::<H>, r, ip, Carried::script(cx))
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_store_global_name` past its hint: the global object's own writable data field,
+    /// which becomes the hint where no realm declares the name lexically
+    /// (`Vm::global_name_hintable`); any other store takes the general path, a shadowed name's
+    /// from then on.
+    #[inline(never)]
+    fn lane_store_global_name_miss<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (atom, globals) = (i.imm(), vm.realm.globals);
+        // A lexical declaration of the name is never withdrawn, so its stores always take the
+        // general path.
+        if !vm.global_name_hintable(atom) {
+            requicken::<H>(ip, lane_exit::<H>);
+            return exit(ip);
+        }
+        let Some(hint) = vm
+            .own_data_field_hint::<true>(globals, atom)
+            .filter(|hint| vm.hinted_own_field_store_hit(*hint, globals, atom, r.get(i.a)))
+        else {
+            return exit(ip);
+        };
+        set_field_hint(ip, hint);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
 
 script_handler! {
     /// A `LoadName` of the global `undefined` (`lane_load_name_first`): its value, which no
@@ -12573,19 +12696,18 @@ script_handler! {
         // SAFETY: the call's window is registers of the running function, which the
         // activation or native call copies before anything can move them.
         let window = unsafe { lane_call_window(r, i) };
-        let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
+        let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             return lane_bound_arguments_call(cx, r, ip, i);
         };
         // The function a call through `call` calls is the site's callee for a body that
         // inlines it (`lane_unit::Planner::through_call`).
-        if matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
+        if through_call
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
             vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function });
         }
-        if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
-            let kind = *kind;
+        if let Some(kind @ FunctionKind::Native(_)) = kind {
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
                 return exit(ip);
             }
@@ -12601,7 +12723,7 @@ script_handler! {
 
 /// `lane_function_call` of a bound function with bound arguments, which lead the values the
 /// call passes (ECMA-262 10.4.1.1): the forwarded call with the values copied out
-/// (`Vm::forwarded_list_call`), a user function's activation or frame call
+/// (`Vm::forwarded_call`), a user function's activation or frame call
 /// (`FrameCallArguments::List`), else the general path.
 #[inline(never)]
 fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Ip {
@@ -12609,10 +12731,10 @@ fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     // SAFETY: as in `lane_function_call`; the values are copied before anything runs.
     let window = unsafe { lane_call_window(r, i) };
     let copied = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(window);
-    let Some((callee, receiver, args)) = vm.forwarded_list_call(r.get(i.b), r.get(i.c), copied) else {
+    let Some(super::function::Forwarded { callee, receiver, args, kind, .. }) = vm.forwarded_call(r.get(i.b), r.get(i.c), copied) else {
         return exit(ip);
     };
-    if !matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+    if !matches!(kind, Some(FunctionKind::User(..))) {
         return exit(ip);
     }
     let Some(target) = lane_passed_target(cx, callee, args.len()) else {
@@ -12933,13 +13055,13 @@ fn lane_list_activation<H: Host>(
         } else {
             smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
         };
-        let Some((target, receiver, args)) = vm.forwarded_list_call(callee, receiver, elements) else {
+        let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding declined".into());
             return None;
         };
         let args = args.as_slice();
-        if !matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+        if !matches!(kind, Some(FunctionKind::User(..))) {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding to a native".into());
             return None;
@@ -14658,7 +14780,7 @@ fn lane_activate<H: Host>(
         );
     }
     if !lane_activation_room(vm, target) {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room)));
     }
     // SAFETY: the call's window of `r` holds its `argc` values.
     let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
@@ -14832,7 +14954,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
     let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
     let history = vm.lane_stack.call_sites.borrow();
-    // The callees the site resolved or memoized, newest last (`LaneStack::note_site_callee`).
+    // The callees the site resolved or memoized, in the order first seen (`LaneStack::note_site_callee`).
     let recorded = history.get(&std::ptr::from_ref(&record.call_link).addr());
     // A collection since the site linked retires its entry; the callee's own entry of this
     // generation, where a call resolved it again, is the same target. A linked entry another
@@ -15699,7 +15821,7 @@ fn lane_activate_environment<H: Host>(
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < usize::from(target.room) + extra
     {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room) + extra));
     }
     // The rest array, made before the window is: the values past the other parameters,
     // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
@@ -16149,7 +16271,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < fill_room::<ACTIVATION_FILL_BLOCK>(window_size)
     {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, fill_room::<ACTIVATION_FILL_BLOCK>(window_size)));
     }
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
@@ -16263,18 +16385,19 @@ unsafe fn lane_keep_arguments(
 /// registers.
 #[cold]
 #[inline(never)]
-fn lane_script_call_frame<H: Host>(ip: Ip) -> Ip {
+fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     let cx = lane_context::<H>();
     let vm = unsafe { vm(cx) };
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < LANE_SCRIPT_WINDOW;
+    // The callee's own room, which a function of many registers makes larger than a common
+    // window: reserving less would send each of its calls at this depth here again.
+    let room = room.max(LANE_SCRIPT_WINDOW);
+    let values_full = stack.values.capacity() - stack.values.len() < room;
     let activations_full = stack.activations.len() == stack.activations.capacity();
     vm.materialize_lane_activations(cx);
     if values_full {
         let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack
-            .values
-            .reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
+        vm.lane_stack.values.reserve((2 * capacity).max(room));
     }
     if activations_full {
         let capacity = vm.lane_stack.activations.capacity();
@@ -18217,6 +18340,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
+        Op::StoreName => Some(lane_store_name_first::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Op::DefineArrayElement => Some(lane_define_array_element::<H>),
         Op::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
@@ -18736,7 +18860,7 @@ fn derive_lane_view<'live, H: Host>(
                     op.immediate_role() == ImmediateRole::JumpTarget
                         && instruction.imm() as usize <= pc
                 };
-            let selected = operand.and(if binds_memory {
+            let selected = operand.and_then(|_| if binds_memory {
                 Some(LaneHandler {
                     handler: lane_instance_binding::<H, true> as Handler,
                     produces: false,
@@ -19175,14 +19299,7 @@ fn derive_lane_view<'live, H: Host>(
     // entry stays a plain jump, since tables take the entry's jump without
     // running its record. This runs before the fusions below, which take a
     // following jump's record as a plain jump.
-    let mut entry_jumps = InstructionSet::new(records.len());
-    for (pc, &instruction) in decoded.iter().enumerate() {
-        if instruction.op() == Op::WasmBranchTable {
-            for entry in crate::bytecode::branch_table_entries(pc, instruction) {
-                entry_jumps.insert(entry);
-            }
-        }
-    }
+    let entry_jumps = branch_table_entry_records(&decoded);
     let record_bytes = size_of::<LaneInstruction>() as isize;
     for (pc, &instruction) in decoded.iter().enumerate() {
         let target = instruction.imm() as usize;
@@ -19771,11 +19888,11 @@ fn derive_lane_view<'live, H: Host>(
 }
 
 /// Whether an instruction's record may hold an own-field hint (`LaneInstruction::field_hint`):
-/// a field read or store's of its receiver, and a global name or top-level `var` read's of the
-/// global object (`lane_load_global_name`, `lane_load_root_var`), except a call's, which keeps
-/// a call link.
+/// a field read or store's of its receiver, and a global name or top-level `var` read's or a
+/// global name store's of the global object (`lane_load_global_name`, `lane_load_root_var`,
+/// `lane_store_global_name`), except a call's, which keeps a call link.
 fn holds_field_hint(op: Op) -> bool {
-    matches!(op, Op::GetField | Op::SetField | Op::LoadName | Op::LoadNameTypeof | Op::LoadCapture)
+    matches!(op, Op::GetField | Op::SetField | Op::LoadName | Op::LoadNameTypeof | Op::LoadCapture | Op::StoreName)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
@@ -19811,6 +19928,7 @@ fn install_loop_sites<'live, H: Host>(
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
+    let table_entries = branch_table_entry_records(decoded);
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
     // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
     // offset those records read with the site (the eslint npm scenario under --jit jumped to
@@ -19825,7 +19943,9 @@ fn install_loop_sites<'live, H: Host>(
             && [lane_move_pair::<H, true, false> as Handler, lane_move_pair::<H, true, true>]
                 .iter()
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
-        then || pair
+        // A branch table takes its entry's jump offset the same way (`lane_branch_table`):
+        // babel-minify-wtb's generator `switch` under --jit jumped to a site read as an offset.
+        then || pair || table_entries.contains(pc)
     };
     // The masks are derived for the first loop site only: a body without a backward jump
     // needs none, and every view under a loop tier had derived them (npm scenarios under
@@ -20834,6 +20954,19 @@ impl InstructionSet {
 }
 
 /// The instruction PCs targeted by a jump.
+/// The records of every branch table's entries, whose jump offsets the table reads.
+fn branch_table_entry_records(instructions: &[WideInstruction]) -> InstructionSet {
+    let mut entries = InstructionSet::new(instructions.len());
+    for (pc, &instruction) in instructions.iter().enumerate() {
+        if instruction.op() == Op::WasmBranchTable {
+            for entry in crate::bytecode::branch_table_entries(pc, instruction) {
+                entries.insert(entry);
+            }
+        }
+    }
+    entries
+}
+
 fn jump_targets(instructions: &[WideInstruction]) -> InstructionSet {
     let mut targets = InstructionSet::new(instructions.len());
     for instruction in instructions {

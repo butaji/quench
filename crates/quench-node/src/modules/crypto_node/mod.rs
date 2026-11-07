@@ -21,7 +21,7 @@ use crate::host::NodeHost;
 use errors::CryptoError;
 use quench_runtime::{BuiltinBrand, DescriptorFields, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 
-pub(crate) use crate::modules::stream_shared_vm::{arg, attempt, call_method, get, is_null, is_nullish, is_undefined, put};
+pub(crate) use crate::modules::stream_shared_vm::{arg, attempt, call_method, get, inherit, is_null, is_nullish, is_undefined, put};
 
 pub(crate) type Context<'a> = NativeContext<'a, NodeHost>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
@@ -525,14 +525,6 @@ pub(crate) fn subclass(c: &mut Context<'_>, operation: &str, name: &str, parent:
     Ok(constructor)
 }
 
-pub(crate) fn inherit(c: &mut Context<'_>, constructor: RootId, parent: RootId) -> Result<(), RootedError> {
-    let prototype = get(c, constructor, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(constructor, parent)?;
-    Ok(())
-}
-
 /// `Symbol.toStringTag` on a prototype, as WebIDL classes define it.
 pub(crate) fn to_string_tag(c: &mut Context<'_>, prototype: RootId, tag: &str) -> Result<(), RootedError> {
     let global = c.global_root()?;
@@ -759,7 +751,7 @@ pub(crate) fn alias_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome
     c.host_function_data()
 }
 
-/// An alias's setter: an own data property replaces the accessor.
+/// An alias or lazy property setter: an own data property replaces the accessor.
 pub(crate) fn alias_set(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let name = c.host_function_data()?;
     let value = arg(c, args, 0);

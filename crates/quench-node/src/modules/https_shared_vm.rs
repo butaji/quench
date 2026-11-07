@@ -38,7 +38,7 @@ const DEFAULT_MAX_CACHED_SESSIONS: f64 = 100.0;
 /// The protocol an HTTPS server negotiates by default.
 const HTTP1_ALPN: &str = "http/1.1";
 /// `http.globalAgent`'s options, which `https.globalAgent` shares.
-const GLOBAL_TIMEOUT: f64 = 5000.0;
+pub(crate) const GLOBAL_TIMEOUT: f64 = 5000.0;
 
 /// The number of the last request that brought its own `checkServerIdentity`
 /// (`perRequestCheckServerIdentityIndex`): each such request has an origin of its own.
@@ -101,13 +101,13 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let tls = crate::modules::tls_shared_vm::module(c)?;
     let tls_server = get(c, tls, "Server")?;
     let server = constructor(c, Https::Server, "Server")?;
-    crate::modules::http_shared_vm::inherit(c, server, tls_server)?;
+    crate::modules::stream_shared_vm::inherit(c, server, tls_server)?;
     let prototype = get(c, server, "prototype")?;
     server::install_server_methods(c, prototype)?;
     methods(c, prototype, &[("close", Https::Close)])?;
     let http_agent = get(c, http, "Agent")?;
     let agent = constructor(c, Https::Agent, "Agent")?;
-    crate::modules::http_shared_vm::inherit(c, agent, http_agent)?;
+    crate::modules::stream_shared_vm::inherit(c, agent, http_agent)?;
     let prototype = get(c, agent, "prototype")?;
     methods(c, prototype, &[
         ("createConnection", Https::CreateConnection),

@@ -13,17 +13,14 @@ const RANDOM_INT_BITS: u32 = 48;
 const RANDOM_INT_BYTES: usize = (RANDOM_INT_BITS / u8::BITS) as usize;
 /// The largest view `getRandomValues` fills.
 const RANDOM_VALUES_MAX_BYTES: usize = 65_536;
-/// RFC 4122: the version nibble of a random UUID, and the variant bits.
-const UUID_VERSION_4: u8 = 0x40;
+use crate::modules::blob_shared_vm::UUID_VERSION_4;
 const UUID_VERSION_MASK: u8 = 0x0f;
-const UUID_VARIANT_RFC4122: u8 = 0x80;
+use crate::modules::blob_shared_vm::UUID_VARIANT_RFC4122;
 const UUID_VARIANT_MASK: u8 = 0x3f;
-const UUID_BYTES: usize = 16;
-/// The bytes holding the version nibble and the variant bits.
-const UUID_VERSION_BYTE: usize = 6;
-const UUID_VARIANT_BYTE: usize = 8;
-/// The byte offsets after which a UUID's text has a hyphen.
-const UUID_GROUP_ENDS: [usize; 4] = [4, 6, 8, 10];
+use crate::modules::blob_shared_vm::UUID_BYTES;
+use crate::modules::blob_shared_vm::UUID_VERSION_BYTE;
+use crate::modules::blob_shared_vm::UUID_VARIANT_BYTE;
+use crate::modules::blob_shared_vm::UUID_GROUP_ENDS;
 
 pub(crate) fn fill(bytes: &mut [u8]) -> Result<(), openssl::error::ErrorStack> {
     openssl::rand::rand_bytes(bytes)

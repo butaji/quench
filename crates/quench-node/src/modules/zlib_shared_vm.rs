@@ -6,6 +6,7 @@
 //! `availOutBefore`, `inOff`, `flushFlag`) on the handle itself.
 
 use super::stream_shared_vm::{
+    inherit,
     arg, call_method, captures, closure, eos, get, is_nullish, is_undefined, next_tick, number, put, put_number,
     set_capture, Context, Outcome,
 };
@@ -227,7 +228,7 @@ const BYTES_READ_SET_WARNING: &str = "Setting zlib.bytesRead is deprecated. This
 /// An unset slot in a parameter array (`fill(-1)` on a `Uint32Array`).
 const UNSET_PARAMETER: u32 = u32::MAX;
 /// `2 ** 32`, the modulus of `ToUint32`.
-const UINT32_MODULUS: f64 = u32::MAX as f64 + 1.0;
+pub(crate) const UINT32_MODULUS: f64 = u32::MAX as f64 + 1.0;
 /// The number of slots in `_writeState`: output then input bytes left.
 const WRITE_STATE_SLOTS: f64 = 2.0;
 
@@ -1266,18 +1267,9 @@ fn accessor(c: &mut Context<'_>, target: RootId, name: &str, getter: RootId, set
     Ok(())
 }
 
-/// A constructor whose prototype and itself inherit from `parent`.
-fn subclass(c: &mut Context<'_>, constructor: RootId, parent: RootId) -> Outcome {
-    let prototype = get(c, constructor, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(constructor, parent)?;
-    Ok(prototype)
-}
-
 fn abstract_class(c: &mut Context<'_>, name: &str, parent: RootId) -> Outcome {
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("zlibAbstract"), name)?;
-    subclass(c, constructor, parent)?;
+    inherit(c, constructor, parent)?;
     Ok(constructor)
 }
 
@@ -1346,7 +1338,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
             Family::Brotli => brotli,
             Family::Zstd => zstd,
         };
-        subclass(c, constructor, parent)?;
+        inherit(c, constructor, parent)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(module, key, constructor, true, true, true)?;
         classes.push((name, constructor));

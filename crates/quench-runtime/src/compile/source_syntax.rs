@@ -10,7 +10,7 @@ pub(crate) fn call_offset<C: GetSpan>(call: &CallExpression<'_>, text: &str, com
             _ => (),
         }
     }
-    let after = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
+    let after = call.type_arguments.as_ref().map_or_else(|| call.callee.span().end, |arguments| arguments.span.end);
     delimiter(text, comments, after, call.span.end, '(')
 }
 

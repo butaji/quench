@@ -22,19 +22,6 @@ fn encoding_allocates(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
 }
 
-/// Whether the guarded direct-copy path is enabled in this process (`switches`).
-pub(super) fn emscripten_memcpy_direct_copy_enabled() -> bool {
-    super::switches::WASM_EMSCRIPTEN_MEMCPY_DIRECT.enabled()
-}
-
-pub(super) fn emscripten_memcpy_raw_i32_enabled() -> bool {
-    super::switches::WASM_EMSCRIPTEN_MEMCPY_RAW_I32.enabled()
-}
-
-pub(super) fn emscripten_memcpy_early_import_enabled() -> bool {
-    super::switches::WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.enabled()
-}
-
 pub(super) fn copy_within_relative_index(index: i64, length: usize) -> usize {
     if index < 0 {
         let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
@@ -52,30 +39,6 @@ fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
             *counter = (*counter).saturating_add(1);
         }
     }
-}
-
-fn note_emscripten_memcpy_raw_i32_hit(counter: *mut u64) {
-    if !counter.is_null() {
-        // SAFETY: the diagnostic counter lives for the compiled invocation.
-        unsafe {
-            *counter = (*counter).saturating_add(1);
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_direct_copy_for_test<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
-    super::switches::with_switch(&super::switches::WASM_EMSCRIPTEN_MEMCPY_DIRECT, enabled, run)
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_raw_i32_for_test<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
-    super::switches::with_switch(&super::switches::WASM_EMSCRIPTEN_MEMCPY_RAW_I32, enabled, run)
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_early_import_for_test<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
-    super::switches::with_switch(&super::switches::WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT, enabled, run)
 }
 
 /// The main realm's interface prototypes, which every new Wasm object of the matching kind
@@ -312,7 +275,7 @@ fn reference_value_type(element_type: wasmparser::RefType) -> WasmType {
 fn reference_value_type_in(element_type: wasmparser::RefType, declarations: &crate::WasmTypes) -> WasmType {
     declarations
         .callable_value_type(wasmparser::ValType::Ref(element_type))
-        .unwrap_or(WasmType::Reference {
+        .unwrap_or_else(|| WasmType::Reference {
             kind: crate::WasmReferenceKind::External,
             nullable: element_type.is_nullable(),
         })
@@ -1427,14 +1390,13 @@ impl<H: Host> Vm<H> {
                 .environment_slot(view_environment, view_slot)
                 .unwrap_or(Value::UNDEFINED);
             let copy_within_atom = self.intern_atom("copyWithin");
-            let direct_copy = emscripten_memcpy_direct_copy_enabled()
-                && self.try_emscripten_memcpy_same_memory(
-                    view,
-                    current_memory,
-                    signature,
-                    args,
-                    copy_within_atom,
-                )?;
+            let direct_copy = self.try_emscripten_memcpy_same_memory(
+                view,
+                current_memory,
+                signature,
+                args,
+                copy_within_atom,
+            )?;
             if direct_copy {
                 note_emscripten_memcpy_fast_path(memcpy_fast_path_hits);
                 Value::UNDEFINED
@@ -1524,33 +1486,6 @@ impl<H: Host> Vm<H> {
             indices,
             copy_within_atom,
         ))
-    }
-
-    /// The compiled callout's opt-in raw-i32 admission path. It reloads the
-    /// captured view here on every call and shares W-08's complete memory guard.
-    pub(super) fn try_emscripten_memcpy_same_memory_raw_capture(
-        &mut self,
-        view_environment: Value,
-        view_slot: usize,
-        current_memory: Value,
-        indices: [i32; 3],
-        raw_i32_fast_path_hits: *mut u64,
-    ) -> bool {
-        let view = self
-            .heap
-            .environment_slot(view_environment, view_slot)
-            .unwrap_or(Value::UNDEFINED);
-        let copy_within_atom = self.intern_atom("copyWithin");
-        let hit = self.try_emscripten_memcpy_same_memory_raw(
-            view,
-            current_memory,
-            indices,
-            copy_within_atom,
-        );
-        if hit {
-            note_emscripten_memcpy_raw_i32_hit(raw_i32_fast_path_hits);
-        }
-        hit
     }
 
     fn try_emscripten_memcpy_same_memory_raw(

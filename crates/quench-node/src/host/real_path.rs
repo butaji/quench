@@ -44,7 +44,7 @@ fn resolve(path: &Path, known: &mut HashMap<PathBuf, PathBuf>, followed: &mut u3
             Component::Normal(name) => {
                 let next = current.join(name);
                 if let Some(real) = known.get(&next) {
-                    current = real.clone();
+                    current.clone_from(real);
                     continue;
                 }
                 let real = if std::fs::symlink_metadata(&next).ok()?.file_type().is_symlink() {

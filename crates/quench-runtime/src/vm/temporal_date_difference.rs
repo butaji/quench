@@ -1,11 +1,11 @@
 use super::temporal_date::{self, IsoDate};
 use super::*;
 
-const DURATION_YEARS_FIELD: usize = 0;
-const DURATION_MONTHS_FIELD: usize = 1;
-const DURATION_WEEKS_FIELD: usize = 2;
-const DURATION_DAYS_FIELD: usize = 3;
-const MONTHS_PER_YEAR: i128 = 12;
+use crate::vm::temporal_date_arithmetic::DURATION_YEARS_FIELD;
+use crate::vm::temporal_date_arithmetic::DURATION_MONTHS_FIELD;
+use crate::vm::temporal_date_arithmetic::DURATION_WEEKS_FIELD;
+use crate::vm::temporal_date_arithmetic::DURATION_DAYS_FIELD;
+pub(crate) const MONTHS_PER_YEAR: i128 = 12;
 const DAYS_PER_WEEK: i64 = 7;
 
 const DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT: f64 = 1_000_000_000.0;
@@ -261,7 +261,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(ParsedOption::Missing);
         }
-        let name = self.to_string(p, value)?.to_string();
+        let name = self.to_string(p, value)?;
         Ok(match parse_date_unit(&name) {
             Some(unit) => ParsedOption::Valid(unit),
             None => ParsedOption::Invalid,
@@ -291,7 +291,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(ParsedOption::Missing);
         }
-        let mode = self.to_string(p, value)?.to_string();
+        let mode = self.to_string(p, value)?;
         Ok(match parse_date_rounding_mode(&mode) {
             Some(mode) => ParsedOption::Valid(mode),
             None => ParsedOption::Invalid,

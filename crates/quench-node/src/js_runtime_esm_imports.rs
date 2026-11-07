@@ -167,12 +167,12 @@ fn convert_import_statement(after: &str) -> Option<(String, String)> {
     let rest = rest.strip_prefix("mport").unwrap_or(rest);
     if rest.starts_with("type ") {
         let (_spec, remainder) = split_import_body(rest.trim_start_matches("type "))?;
-        return Some((String::new(), remainder.to_string()));
+        return Some((String::new(), remainder));
     }
     if rest.starts_with("type{") || rest.starts_with("type {") {
         let body = rest.trim_start_matches("type").trim_start();
         let (spec, remainder) = split_import_body(body)?;
-        return Some((String::new(), spec.to_string() + &remainder));
+        return Some((String::new(), spec + &remainder));
     }
     split_import_body(rest)
 }

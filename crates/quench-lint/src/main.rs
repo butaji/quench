@@ -1,0 +1,77 @@
+//! Fails when the repository says the same thing twice (`duplicates`) or when a function or
+//! file outgrows the manifesto's size laws (`shape`).
+//!
+//! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
+
+mod duplicates;
+mod shape;
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
+
+const DEFAULT_ROOTS: &[&str] = &["crates", "quench-bench/src", "tools"];
+/// Checked-out third-party corpora and build output, not Quench code.
+const SKIPPED_DIRECTORIES: &[&str] = &["target", "testsuite", "node_modules", "jetstream", "js-engine-benchmark"];
+const OVERSIZED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/oversized.txt");
+const UPDATE_FLAG: &str = "--update";
+
+fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let skipped = path.file_name().is_some_and(|name| SKIPPED_DIRECTORIES.iter().any(|skip| name == *skip));
+        if path.is_dir() && !skipped {
+            rust_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures), String> {
+    let mut repeated = duplicates::Duplicates::default();
+    let mut oversized = shape::Measures::new();
+    for path in files {
+        let file = path.display().to_string();
+        let source = fs::read_to_string(path).map_err(|error| format!("{file}: {error}"))?;
+        let syntax =
+            syn::parse_file(&source).map_err(|error| format!("{file}:{}: {error}", error.span().start().line))?;
+        repeated.scan(&file, &syntax);
+        shape::scan(&file, &source, &syntax, &mut oversized);
+    }
+    Ok((repeated, oversized))
+}
+
+fn main() -> ExitCode {
+    let (update, roots): (Vec<String>, Vec<String>) = std::env::args().skip(1).partition(|arg| arg == UPDATE_FLAG);
+    let roots = if roots.is_empty() { DEFAULT_ROOTS.iter().map(|root| root.to_string()).collect() } else { roots };
+    let mut files = Vec::new();
+    roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
+    files.sort();
+    let (repeated, oversized) = match scan(&files) {
+        Ok(found) => found,
+        Err(error) => {
+            eprintln!("quench-lint: cannot read {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let recorded = shape::parse(&fs::read_to_string(OVERSIZED).unwrap_or_default());
+    let shrunk: shape::Measures = recorded
+        .iter()
+        .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))
+        .collect();
+    let departures = shape::compare(if update.is_empty() { &recorded } else { &shrunk }, &oversized);
+    if !update.is_empty() && departures == 0 {
+        let _ = fs::write(OVERSIZED, shape::render(&oversized));
+    }
+    let violations = repeated.report() + departures;
+    if violations == 0 {
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("quench-lint: {violations} violations in {} files", files.len());
+    ExitCode::FAILURE
+}

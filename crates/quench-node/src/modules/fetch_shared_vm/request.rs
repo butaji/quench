@@ -40,13 +40,13 @@ members!(Member, "fetchRequest", [
 
 /// A request's fields.
 pub(crate) mod field {
-    pub(crate) const METHOD: &str = "method";
-    pub(crate) const URL: &str = "url";
-    pub(crate) const HEADERS: &str = "headers";
-    pub(crate) const HEADERS_STATE: &str = "headersState";
-    pub(crate) const BODY: &str = "body";
-    pub(crate) const SIGNAL: &str = "signal";
-    pub(crate) const REDIRECT: &str = "redirect";
+    pub(crate) use crate::modules::keys::METHOD;
+    pub(crate) use crate::modules::keys::URL;
+    pub(crate) use crate::modules::keys::HEADERS;
+    pub(crate) use crate::modules::keys::HEADERS_STATE;
+    pub(crate) use crate::modules::keys::BODY;
+    pub(crate) use crate::modules::keys::SIGNAL;
+    pub(crate) use crate::modules::keys::REDIRECT;
     pub(crate) const MODE: &str = "mode";
     pub(crate) const CREDENTIALS: &str = "credentials";
     pub(crate) const CACHE: &str = "cache";
