@@ -20,6 +20,9 @@ const MIN_COMPACTED_HOLES: usize = 16;
 /// The key a deleted slot holds; no JavaScript value is the deleted sentinel.
 const HOLE: Value = Value::DELETED;
 
+mod lazy;
+pub(crate) use lazy::Entries;
+
 pub(crate) trait CollectionEntry: Copy {
     fn key(&self) -> Value;
     fn hole() -> Self;

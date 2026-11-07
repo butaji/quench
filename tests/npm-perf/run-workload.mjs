@@ -56,10 +56,10 @@ function parseRss(stderr) {
   throw new Error("timing tool did not report maximum resident set size");
 }
 
-// Benchmarks measure a cold boot: Quench neither restores a startup snapshot nor loads
-// bytecode compiled by an earlier run (an empty QUENCH_COMPILE_CACHE turns the cache off),
-// so its rows pay the same builtin loading and module compilation the peers pay.
-const QUENCH_BENCH_ENV = { QUENCH_STARTUP_SNAPSHOT: "off", QUENCH_COMPILE_CACHE: "" };
+// Benchmarks measure a cold boot: under a cache home that cannot be created, Quench neither
+// restores a startup snapshot nor loads bytecode compiled by an earlier run, so its rows pay
+// the same builtin loading and module compilation the peers pay.
+const QUENCH_BENCH_ENV = { XDG_CACHE_HOME: "/dev/null" };
 
 function engineSpecs() {
   if (phase === "no-jit") {
@@ -240,8 +240,6 @@ async function runOne(spec, round) {
       QUENCH_BENCH_WARMUPS: env.QUENCH_BENCH_WARMUPS ?? "250",
       ...Object.fromEntries([
         "QUENCH_DEV",
-        "QUENCH_STARTUP_SNAPSHOT",
-        "QUENCH_COMPILE_CACHE",
         "QUENCH_GC_YOUNG",
         "QUENCH_GC_YOUNG_NUM",
         "QUENCH_GC_YOUNG_DEN",

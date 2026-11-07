@@ -351,7 +351,7 @@ mod tests {
     #[test]
     #[cfg(feature = "jit")]
     fn predicated_integer_comparisons_preserve_canonical_results() {
-        let isa = super::super::target_isa("speed").unwrap();
+        let isa = super::super::target_isa().unwrap();
         for cc in [ir::condcodes::IntCC::SignedLessThan, ir::condcodes::IntCC::UnsignedLessThan] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([ir::AbiParam::new(ir::types::I64), ir::AbiParam::new(ir::types::I32), ir::AbiParam::new(ir::types::I32)]);
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     #[cfg(feature = "jit")]
     fn nested_select_factoring_preserves_nonzero_conditions_and_exact_bits() {
-        let isa = super::super::target_isa("speed").unwrap();
+        let isa = super::super::target_isa().unwrap();
         let rows = [
             (0, 2, 0, 0x7ff8_0000_0000_0042, 0x8000_0000_0000_0000),
             (2, 2, 0, 0x7ff8_0000_0000_0042, 0x8000_0000_0000_0000),
@@ -548,7 +548,7 @@ mod tests {
     #[cfg(feature = "jit")]
     fn complementary_selects_preserve_arbitrary_bytes_and_integer_boundaries() {
         use ir::condcodes::IntCC;
-        let isa = super::super::target_isa("speed").unwrap();
+        let isa = super::super::target_isa().unwrap();
         for ty in [ir::types::I8, ir::types::I32, ir::types::I64] {
             let shift = ir::types::I64.bits() - ty.bits();
             let mask = u64::MAX >> shift;
@@ -610,7 +610,7 @@ mod tests {
             Arm::Add { constant_first: true, other_incremented: true },
             Arm::One,
         ];
-        let isa = super::super::target_isa("speed").unwrap();
+        let isa = super::super::target_isa().unwrap();
         for ty in [ir::types::I8, ir::types::I16, ir::types::I32, ir::types::I64] {
             let mask = u64::MAX >> (ir::types::I64.bits() - ty.bits());
             let sign = 1_u64 << (ty.bits() - 1);

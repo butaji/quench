@@ -2649,13 +2649,13 @@ const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
 #[inline(always)]
-fn capture_reads(capture: *const usize) -> *const usize {
+pub(super) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
 #[inline(always)]
-fn capture_stores(capture: *const usize) -> Option<*const usize> {
+pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
     (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture))
 }
 
@@ -12379,7 +12379,7 @@ impl<H: Host> Vm<H> {
     /// The capture slots a frameless target whose closure has environment `env` reads
     /// (`ScriptCallTarget::capture`), tagged `CAPTURE_STORES` when they admit every store,
     /// whose barrier this takes once.
-    fn target_capture(
+    pub(super) fn target_capture(
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,
@@ -12604,6 +12604,7 @@ script_handler! {
         if ARGC > target.params || vm.with_scope_entered || !lane_activation_room(vm, target) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
         let stack = &mut vm.lane_stack;
         // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
         // the leaf is materialized: no collection runs before.
@@ -17010,9 +17011,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
@@ -17181,9 +17180,7 @@ fn lane_activate_environment<H: Host>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
     Ok((callee_registers, base))
 }
 
@@ -17621,9 +17618,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     Ok((callee_registers, start))
 }
@@ -23383,9 +23378,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
             "a returning activation's context is its own"
         );
         let vm = vm(cx);
-        if vm.programs.js_jit_diagnostics_enabled() {
-            vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
-        }
+        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
         // SAFETY: the program store keeps a derived view alive with its program.
         (*entry.view).start()
     }
@@ -23440,9 +23433,7 @@ unsafe fn lane_enter_filled<H: Host>(
         (*cx).env = entry.env;
         (*cx).capture = entry.capture;
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
-    }
+    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
     // SAFETY: the program store keeps a derived view alive with its program.
     unsafe { (*entry.view).start() }
 }

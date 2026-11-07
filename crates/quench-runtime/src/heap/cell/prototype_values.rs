@@ -9,28 +9,13 @@ use std::rc::Rc;
 // nothing per read. Guest heaps and their native publications are thread-confined (Rc
 // ownership): another thread's prototype writes never retire this thread's code.
 //
-// Interpreter-side proofs (method and promise caches) still compare an epoch per use, which
-// every retirement advances; native code reads no epoch.
+// Interpreter caches hold the same dependency (`watch_prototype_values`): no epoch is compared
+// per use.
 thread_local! {
     static PROTOTYPE_VALUE_READERS: std::cell::RefCell<crate::code_dependencies::CodeReaders> =
         std::cell::RefCell::new(crate::code_dependencies::CodeReaders::default());
-    static PROTOTYPE_VALUE_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Changes whenever what a prototype offers its inheritors can have changed, for interpreter
-/// caches that check it per use.
-#[inline(always)]
-pub(crate) fn prototype_value_epoch() -> u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::get)
-}
-
-/// Where a VM loads `prototype_value_epoch` from (`Vm::prototype_value_epoch`).
-pub(crate) fn prototype_value_epoch_address() -> *const u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::as_ptr)
-}
-
-fn advance_epoch() {
-    PROTOTYPE_VALUE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+    /// Per holder shape, the watch interpreter caches share (`watch_prototype_values`).
+    static PROTOTYPE_VALUE_WATCHES: std::cell::RefCell<Vec<Option<PrototypeValueWatch>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Makes `code` retire when a prototype of exact shape `holder` changes a value or any
@@ -39,15 +24,35 @@ pub(crate) fn subscribe_prototype_values(holder: u32, code: &Rc<dyn crate::code_
     PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().subscribe(holder, code))
 }
 
+/// The dependency an interpreter cache holds on the values of prototypes of exact shape
+/// `holder`: published until one changes a value or any prototype changes its layout. Every
+/// cache on the holder shares it, so it subscribes once per change; `None` where the reader
+/// table is full.
+pub(crate) fn watch_prototype_values(holder: u32) -> Option<PrototypeValueWatch> {
+    PROTOTYPE_VALUE_WATCHES.with(|watches| {
+        let mut watches = watches.borrow_mut();
+        let index = holder as usize;
+        let len = watches.len().max(index + 1);
+        watches.resize(len, None);
+        if let Some(watch) = watches[index].as_ref().filter(|watch| watch.is_published()) {
+            return Some(watch.clone());
+        }
+        let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
+        let code: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
+        subscribe_prototype_values(holder, &code).then(|| watches[index].insert(watch).clone())
+    })
+}
+
+/// What `watch_prototype_values` gives: `is_published` while the values it watches hold.
+pub(crate) type PrototypeValueWatch = Rc<crate::code_dependencies::PublishedCode<()>>;
+
 pub(super) fn retire(holder: u32) {
-    advance_epoch();
     // Retiring drops code, which never writes a prototype, so the table is not reentered.
     PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().retire(holder));
 }
 
 /// Retires all of it: a layout change moves what every slot holds.
 pub(super) fn reset() {
-    advance_epoch();
     PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().reset());
 }
 
@@ -75,5 +80,16 @@ mod tests {
         assert!(!other_flag.is_set(), "a write to another holder shape retires nothing else");
         super::super::advance_prototype_layout_epoch();
         assert!(other_flag.is_set(), "a layout change retires every prototype value reader");
+    }
+
+    #[test]
+    fn caches_on_one_holder_share_a_watch_until_its_values_change() {
+        let first = watch_prototype_values(7).unwrap();
+        let second = watch_prototype_values(7).unwrap();
+        assert!(Rc::ptr_eq(&first, &second), "one subscription serves every cache on the holder");
+        retire(7);
+        assert!(!first.is_published());
+        let third = watch_prototype_values(7).unwrap();
+        assert!(third.is_published() && !Rc::ptr_eq(&first, &third));
     }
 }
