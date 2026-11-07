@@ -62,6 +62,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // The arena allocates downward: everything the body allocates lies before this.
         let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
         let checkpoint = LazyBodyCheckpoint::of(self);
+        let call_assignment_targets = self.call_assignment_targets;
         self.lazy_depth += 1;
         let body = self.parse_function_body();
         self.lazy_depth -= 1;
@@ -83,7 +84,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return body;
         }
         if let Some(check) = self.options.lazy_body_check {
-            self.check_lazy_body(check, &function, &body, inherited_strict);
+            let targets = self.call_assignment_targets != call_assignment_targets;
+            self.check_lazy_body(check, &function, &body, inherited_strict, targets);
             // The check's nodes lie past the marker unless they took a new arena chunk; then
             // the body stays whole and the program's own checks see it as well.
             if allocator.capacity() != checkpoint.arena_capacity {
@@ -116,6 +118,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         function: &LazyFunction<'_, 'a>,
         body: &ArenaBox<'a, FunctionBody<'a>>,
         inherited_strict: bool,
+        call_assignment_targets: bool,
     ) {
         let end = body.span.end;
         let span = Span::new(function.start, end);
@@ -141,7 +144,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         statements.push(statement);
         let program = Program::new(span, self.source_type, self.source_text, [], None, directives, statements, self);
         // SAFETY: `ParseOptions::lazy_body_check` outlives the parse.
-        unsafe { check.call(&program) };
+        unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets }) };
         std::mem::forget(program);
     }
 

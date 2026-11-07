@@ -533,6 +533,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.error(diagnostics::reg_exp_flag_u_and_v(span));
         }
 
+        self.regexp_literals.push(span);
         RegExpLiteral::boxed(span, RegExp { pattern, flags }, Some(Str::from(raw)), self)
     }
 

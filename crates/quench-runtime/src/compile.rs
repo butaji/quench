@@ -1117,7 +1117,7 @@ impl Engine {
         let mut facts = lazy_bodies::BodyFacts::default();
         #[cfg(feature = "aot")]
         { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut check = |program: &oxc_ast::ast::Program<'_>| facts.check(program, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         // SAFETY: `check` lives through the parse, which alone calls it.
         let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
         let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check);
@@ -1167,7 +1167,7 @@ impl Engine {
             diagnostic.span = span;
             return Err(vec![diagnostic]);
         }
-        if let Some(error) = early::regexp_early_error(&parsed.program) {
+        if let Some(error) = early::regexp_early_error(&parsed) {
             return Err(vec![match error {
                 early::RegExpEarlyError::StackExhausted => Diagnostic::stack_exhausted(name),
                 early::RegExpEarlyError::Syntax(message) => Diagnostic {
@@ -1194,7 +1194,7 @@ impl Engine {
             // eval still has Script semantics for declarations and scopes.
             parsed.program.source_type = SourceType::script().with_typescript(source_type.is_typescript());
         }
-        if let Some(span) = annex_b_targets::invalid_target(&parsed.program) {
+        if let Some(span) = annex_b_targets::invalid_parsed_target(&parsed) {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
