@@ -27,38 +27,33 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
 
-/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and every value read
-/// under the current `PROTOTYPE_VALUE_EPOCH`: a layout change moves what a slot holds.
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and all code that
+/// holds a prototype's value as a constant: a layout change moves what a slot holds.
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
-    advance_prototype_value_epoch();
+    PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().reset());
 }
 
-// Changes whenever what an object used as a prototype offers its inheritors can have
-// changed: its layout (`advance_prototype_layout_epoch`) or the value of any of its slots
-// (`Object::note_prototype_value_write`). Native code that took an inherited value as a
-// constant reads it while this holds the epoch it was compiled under.
-// Guest heaps and their native publications are thread-confined (Rc ownership).
-// A different thread cannot mutate a constant's owner; its prototype writes must
-// not permanently retire this thread's compiled methods. The cell's address is
-// stable for the lifetime of the thread that owns those methods.
+// The code that took a value a prototype offers its inheritors as a constant, by the
+// prototype's exact shape: a Stable fact (`typed_ir::BindingTime::Stable`). A write to a slot
+// of a prototype of that shape (`Object::note_prototype_value_write`) retires that code, and a
+// layout change retires all of it (`advance_prototype_layout_epoch`), so the code itself checks
+// nothing per read. Guest heaps and their native publications are thread-confined (Rc
+// ownership): another thread's prototype writes never retire this thread's code.
 thread_local! {
-    static PROTOTYPE_VALUE_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static PROTOTYPE_VALUE_READERS: std::cell::RefCell<crate::code_dependencies::CodeReaders> =
+        std::cell::RefCell::new(crate::code_dependencies::CodeReaders::default());
 }
 
-/// The current `PROTOTYPE_VALUE_EPOCH`.
-#[inline(always)]
-pub(crate) fn prototype_value_epoch() -> u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::get)
+/// Makes `code` retire when a prototype of exact shape `holder` changes a value or any
+/// prototype changes its layout; `false` where the reader table is full.
+pub(crate) fn subscribe_prototype_values(holder: u32, code: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+    PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().subscribe(holder, code))
 }
 
-/// Where native code loads `PROTOTYPE_VALUE_EPOCH` from.
-pub(crate) fn prototype_value_epoch_address() -> *const u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::as_ptr)
-}
-
-fn advance_prototype_value_epoch() {
-    PROTOTYPE_VALUE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+fn retire_prototype_value_readers(holder: u32) {
+    // Retiring drops code, which never writes a prototype, so the table is not reentered.
+    PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().retire(holder));
 }
 
 #[derive(Clone, Debug, Default)]
@@ -72,17 +67,27 @@ mod cell_layout_tests {
     use super::*;
 
     #[test]
-    fn prototype_value_epochs_follow_the_native_owner_thread() {
-        let before = prototype_value_epoch();
-        let address = prototype_value_epoch_address();
+    fn prototype_value_readers_retire_on_their_holder_or_any_layout_change_on_this_thread() {
+        use crate::code_dependencies::{DependentCode, Invalidation, PublishedCode};
+        let publish = || {
+            let invalidation = Invalidation::default();
+            let code = Rc::new(PublishedCode::with_invalidation((), invalidation.clone()));
+            (code, invalidation)
+        };
+        let (holder_code, holder_flag) = publish();
+        let (other_code, other_flag) = publish();
+        let as_reader = |code: &Rc<PublishedCode<()>>| -> Rc<dyn DependentCode> { code.clone() };
+        assert!(subscribe_prototype_values(5, &as_reader(&holder_code)));
+        assert!(subscribe_prototype_values(6, &as_reader(&other_code)));
         std::thread::spawn(advance_prototype_layout_epoch).join().unwrap();
-        assert_eq!(prototype_value_epoch(), before, "another VM thread owns no local constant");
-        advance_prototype_value_epoch();
-        assert_eq!(prototype_value_epoch(), before.wrapping_add(1));
+        assert!(!holder_flag.is_set() && !other_flag.is_set(), "another VM thread retires none of this thread's code");
+        retire_prototype_value_readers(5);
+        assert!(holder_flag.is_set() && !holder_code.is_published());
+        assert!(!other_flag.is_set(), "a write to another holder shape retires nothing else");
         advance_prototype_layout_epoch();
-        assert_eq!(prototype_value_epoch(), before.wrapping_add(2));
-        assert_eq!(prototype_value_epoch_address(), address, "native loads retain one address");
+        assert!(other_flag.is_set(), "a layout change retires every prototype value reader");
     }
+
 
     /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
     /// and its element backing.
@@ -2509,7 +2514,7 @@ impl Object {
     #[inline(always)]
     pub(crate) fn note_prototype_value_write(&self) {
         if self.was_used_as_prototype() {
-            advance_prototype_value_epoch();
+            retire_prototype_value_readers(self.exact_shape());
         }
     }
 

@@ -9,15 +9,42 @@ pub(crate) trait DependentCode {
     fn retire(&self);
 }
 
+/// The word a body's code reads at its invalidation points: zero while every assumption the
+/// code folded holds, nonzero once a change retired it. Code that holds an assumption (a
+/// Stable fact, `typed_ir::BindingTime::Stable`) pays no check per use: it reads this word
+/// once at entry and again only after a call that may have changed the assumption's subject,
+/// and leaves at the exact PC where it is set.
+#[derive(Clone, Default)]
+pub(crate) struct Invalidation(Rc<std::cell::Cell<u64>>);
+
+impl Invalidation {
+    /// The word's address, which lives as long as any holder of this invalidation.
+    pub(crate) fn address(&self) -> usize { self.0.as_ptr() as usize }
+    #[cfg(test)]
+    pub(crate) fn is_set(&self) -> bool { self.0.get() != 0 }
+    fn set(&self) { self.0.set(1); }
+}
+
 /// Publication owns future entry; execution and recovery own independent leases.
 /// No borrow of the publication survives acquiring a lease or retiring it.
-pub(crate) struct PublishedCode<T>(std::cell::RefCell<Option<Rc<T>>>);
+pub(crate) struct PublishedCode<T> {
+    code: std::cell::RefCell<Option<Rc<T>>>,
+    /// Set when the code retires, for runs already inside it (`Invalidation`).
+    invalidation: Invalidation,
+}
 
 impl<T> PublishedCode<T> {
-    pub(crate) fn new(code: T) -> Self { Self(std::cell::RefCell::new(Some(Rc::new(code)))) }
-    pub(crate) fn lease(&self) -> Option<Rc<T>> { self.0.borrow().clone() }
-    pub(crate) fn is_published(&self) -> bool { self.0.borrow().is_some() }
-    pub(crate) fn retire(&self) { self.0.borrow_mut().take(); }
+    pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
+    /// Code compiled to read `invalidation` at its invalidation points.
+    pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation }
+    }
+    pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
+    pub(crate) fn is_published(&self) -> bool { self.code.borrow().is_some() }
+    pub(crate) fn retire(&self) {
+        self.invalidation.set();
+        self.code.borrow_mut().take();
+    }
 }
 
 impl<T> DependentCode for PublishedCode<T> {
@@ -132,6 +159,21 @@ impl Drop for CodeReaders {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn retirement_sets_the_invalidation_word_running_code_reads() {
+        let invalidation = Invalidation::default();
+        let publication = Rc::new(PublishedCode::with_invalidation((), invalidation.clone()));
+        let reader: Rc<dyn DependentCode> = publication.clone();
+        let mut readers = CodeReaders::default();
+        assert!(readers.subscribe(3, &reader));
+        assert!(!invalidation.is_set());
+        // SAFETY: the word is live while `invalidation` holds it.
+        assert_eq!(unsafe { *(invalidation.address() as *const u64) }, 0);
+        readers.retire(3);
+        assert!(invalidation.is_set(), "a run already inside the code leaves at its next invalidation point");
+        assert_ne!(unsafe { *(invalidation.address() as *const u64) }, 0);
+    }
 
     #[test]
     fn retirement_unlinks_entry_but_preserves_execution_and_recovery_leases() {

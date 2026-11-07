@@ -186,7 +186,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
-        self.method_cache_atoms.insert(cache.atom);
+        // Code that stores the atom directly held "no cache names it" as a Stable fact.
+        if self.method_cache_atoms.insert(cache.atom) {
+            self.method_atom_readers.retire(cache.atom);
+        }
         if let Some(set) = self
             .megamorphic_methods
             .iter_mut()
@@ -504,12 +507,15 @@ impl MethodCacheAtoms {
         self.words.get(word).is_some_and(|bits| bits & bit != 0)
     }
 
-    pub(super) fn insert(&mut self, atom: Atom) {
+    /// Names `atom`; whether it was not named before.
+    pub(super) fn insert(&mut self, atom: Atom) -> bool {
         let (word, bit) = Self::position(atom);
         if word >= self.words.len() {
             self.words.resize(word + 1, 0);
         }
+        let new = self.words[word] & bit == 0;
         self.words[word] |= bit;
+        new
     }
 
     pub(super) fn clear(&mut self) {

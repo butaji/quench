@@ -1048,17 +1048,23 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
-    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod, heap: &mut crate::heap::Heap)
-        -> Option<Rc<super::compiled::PublishedLaneMethod>>
+    /// Publishes a compiled body with the dependencies its code took: its slots' types, and
+    /// its Stable facts (prototype values by holder shape, unnamed method atoms in
+    /// `method_atoms`), each of whose change retires it and sets its invalidation word.
+    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod, heap: &mut crate::heap::Heap,
+        method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<super::compiled::PublishedLaneMethod>>
     {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
-        let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
+        let invalidation = method.invalidation.clone();
+        let published = Rc::new(super::compiled::PublishedLaneMethod::with_invalidation(method, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
-        for dependency in &published.lease().expect("new publication").slot_dependencies {
-            if !heap.subscribe_slot(*dependency, &code) {
-                published.retire();
-                return None;
-            }
+        let method = published.lease().expect("new publication");
+        let subscribed = method.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, &code))
+            && method.stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, &code))
+            && method.stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, &code));
+        if !subscribed {
+            published.retire();
+            return None;
         }
         if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
         Some(published)

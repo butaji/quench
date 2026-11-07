@@ -166,8 +166,9 @@ pub(crate) struct NativeFieldLoad {
     /// Historical pointee shape, not a heap-access proof.
     pub(crate) target_shape: Option<u32>,
     /// For a holder read, the value its proved immediate prototype holds when the code was
-    /// compiled (`Vm::inherited_constant`): a read takes it while the receiver's prototype is
-    /// that one and no prototype has changed since (`heap::prototype_value_epoch`).
+    /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
+    /// prototype is that one; a change of the value retires the code that took it
+    /// (`heap::subscribe_prototype_values`).
     pub(crate) inherited: Option<InheritedConstant>,
 }
 
@@ -176,19 +177,18 @@ pub(crate) struct NativeFieldLoad {
 pub(crate) const INHERITED_PROTOTYPES: usize = 4;
 
 /// An inherited read's values, each fixed by the receiver's prototype link that names its
-/// holder, under the prototype value epoch they were read at.
+/// holder, as they were when the code was compiled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct InheritedConstant {
     values: [(u32, Value); INHERITED_PROTOTYPES],
     count: u8,
-    pub(crate) epoch: u64,
 }
 
 impl InheritedConstant {
-    /// The values `holders` (prototype link and value) give, read under `epoch`; `None`
-    /// where there are none or more than the read folds.
-    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value)>, epoch: u64) -> Option<Self> {
-        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], count: 0, epoch };
+    /// The values `holders` (prototype link and value) give; `None` where there are none or
+    /// more than the read folds.
+    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value)>) -> Option<Self> {
+        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], count: 0 };
         for holder in holders {
             *constant.values.get_mut(usize::from(constant.count))? = holder;
             constant.count += 1;
@@ -200,10 +200,9 @@ impl InheritedConstant {
         &self.values[..usize::from(self.count)]
     }
 
-    /// These values and `other`'s, read under one epoch, each prototype once; `None` where
-    /// the epochs differ, a prototype holds two values, or there are more than the read folds.
+    /// These values and `other`'s, each prototype once; `None` where a prototype holds two
+    /// values or there are more than the read folds.
     pub(crate) fn joined(self, other: Self) -> Option<Self> {
-        if self.epoch != other.epoch { return None; }
         let mut values: Vec<(u32, Value)> = self.values().to_vec();
         for (prototype, value) in other.values() {
             match values.iter().find(|(known, _)| known == prototype) {
@@ -212,7 +211,7 @@ impl InheritedConstant {
                 None => values.push((*prototype, *value)),
             }
         }
-        Self::of(values, self.epoch)
+        Self::of(values)
     }
 }
 

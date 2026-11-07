@@ -22082,7 +22082,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert_eq!(method.inlined.len(), 1);
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
         vm.collect_now(&program);
         assert!(published.lease().is_some(), "a live callee binding survives collection");
         match transition {
@@ -22092,7 +22092,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None, &[]).unwrap();
-                let dead = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+                let dead = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
                 vm.collect_now(&program);
                 assert!(!vm.heap.is_live(orphan));
                 assert!(dead.lease().is_none(), "retire before the function locator can be reused");
@@ -24125,4 +24125,36 @@ fn lane_bodies_keep_the_callees_they_inline_across_collections() {
         let atom = vm.intern_atom("answer");
         assert_eq!(vm.own_property(vm.realm.globals, atom).and_then(Value::as_number), Some((0..40).map(|round| f64::from(200 * round + 300)).sum()));
     }
+}
+
+/// Stable facts change while compiled bodies hold them: a prototype's value, written by a
+/// callee in the middle of a hot loop that read it as a constant, and a method name a cache
+/// first names after a loop stored that name directly. Each mode computes the same values.
+#[test]
+fn stable_facts_changed_mid_run_leave_compiled_bodies_with_exact_results() {
+    let source = r#"
+        var C = function () {}; C.prototype.k = 1; var c = new C();
+        function bump() { C.prototype.k = C.prototype.k + 1; }
+        function read(n) { var s = 0; for (var i = 0; i < n; i++) { s = (s + c.k) | 0; if (i === 50) bump(); } return s; }
+        var reads = 0; for (var j = 0; j < 400; j++) reads = (reads + read(100)) | 0;
+        var o = { a: 0, b: 0 };
+        function store(x) { for (var i = 0; i < 20; i++) { o.a = x + i; } return o.a; }
+        var stores = 0; for (var j = 0; j < 400; j++) stores = (stores + store(j)) | 0;
+        var named = { a() { return 7; } }; var calls = 0;
+        for (var j = 0; j < 50; j++) calls += named.a();
+        for (var j = 0; j < 400; j++) stores = (stores + store(j)) | 0;
+        globalThis.answer = [reads, stores, calls, C.prototype.k, o.a].join(",");
+    "#;
+    let program = Engine::specialize(source, "stable-facts-mid-run.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_lane_methods();
+        vm.execute(&program).unwrap();
+        let answer = vm.intern_atom("answer");
+        let value = vm.own_property(vm.realm.globals, answer).unwrap();
+        answers.push(vm.heap.string(value).unwrap().to_string());
+    }
+    assert_eq!(answers[0], answers[1], "interpreted and compiled runs agree");
 }
