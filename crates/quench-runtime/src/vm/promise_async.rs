@@ -29,18 +29,19 @@ impl<H: Host> Vm<H> {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Continuation {
-        self.release_dead_registers(&mut frame);
-        Continuation::suspend(frame, completion, resume_register, promise)
+        let live_registers = self.release_dead_registers(&mut frame);
+        let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
+        continuation.live_registers = live_registers;
+        continuation
     }
 
-    fn release_dead_registers(&self, frame: &mut super::Frame) {
-        let Some(mask) = self
+    /// Clears the registers dead at `frame`'s suspension and returns the live ones, when
+    /// liveness covers its function.
+    fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<crate::compile::liveness::RegisterSet> {
+        let mask = self
             .programs
             .residual(frame.program)
-            .and_then(|program| program.register_root_mask(frame.function, frame.pc))
-        else {
-            return;
-        };
+            .and_then(|program| program.register_root_mask(frame.function, frame.pc))?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         type RegisterSet = crate::compile::liveness::RegisterSet;
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
@@ -58,6 +59,7 @@ impl<H: Host> Vm<H> {
                 dead &= u64::MAX.checked_shl(end).unwrap_or(0);
             }
         }
+        Some(mask)
     }
 
     pub(super) fn call_user_maybe_async(

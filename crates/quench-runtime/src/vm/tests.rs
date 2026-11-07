@@ -6876,6 +6876,47 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.release_root(root));
 }
 
+/// A suspended async activation is traced by the registers live at its await alone
+/// (`Continuation::live_registers`): what it made between awaits survives minor collections
+/// under either promotion age and full ones, and reads back whole when it resumes.
+#[test]
+fn suspended_async_activations_keep_their_live_values_across_collections() {
+    use crate::heap::PromotionAge;
+
+    let source = r#"
+        async function tick() {}
+        function churn(n) { let keep = null; for (let i = 0; i < n; i++) keep = { i, next: keep }; return n; }
+        async function chain(id) {
+            await tick();
+            const made = { id, list: [id, id + 1] };
+            let sum = 0;
+            for (let step = 0; step < 4; step++) {
+                const inner = { step, made };
+                await tick();
+                sum += churn(64);
+                if (id % 50 === 0) $262.gc();
+                await tick();
+                if (inner.made !== made || inner.step !== step) throw new Error('lost ' + id);
+            }
+            return made.list[1] - made.id + sum;
+        }
+        const all = [];
+        for (let i = 0; i < 300; i++) all.push(chain(i));
+        Promise.all(all).then(
+            values => print(values.length + ' ' + values[0] + ' ' + values[299]),
+            error => print('FAIL ' + error.message));
+    "#;
+    for age in PromotionAge::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.heap.set_promotion_age_for_test(age);
+        let program = Engine::specialize(source, "suspended-live-values.js").unwrap();
+        vm.execute(&program).unwrap();
+        vm.drain_jobs(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["300 257 257"], "{age:?}");
+    }
+}
+
 #[test]
 fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     let mut frame = super::Frame {

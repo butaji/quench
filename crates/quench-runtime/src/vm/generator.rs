@@ -1310,6 +1310,8 @@ impl<H: Host> Vm<H> {
         {
             continuation.frame.pc += 1;
             continuation.resume_register = None;
+            // The written register need not be live at the suspension the mask describes.
+            continuation.live_registers = None;
             if let Some(register) = continuation.frame.registers.get_mut(usize::from(destination)) {
                 *register = value;
             }
