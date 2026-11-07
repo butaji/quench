@@ -717,7 +717,7 @@ impl Cell {
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
             }
-            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
+            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.as_ref().clone(), *ty) => {
                 writer.u8(tag::JS_TAG);
             }
             Self::WasmBits64(_)
