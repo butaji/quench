@@ -367,7 +367,7 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// What its lane bodies did, under `QUENCH_JS_JIT_STATS` (`LaneBodyStats`).
+    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
@@ -8878,7 +8878,7 @@ fn lane_loop_run<H: Host>(
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
             LoopOutcome::NotEntered(widening) => {
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                if crate::trace::Channel::OsrReject.on() {
                     eprintln!(
                         "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
                         site.function,
@@ -8899,7 +8899,7 @@ fn lane_loop_run<H: Host>(
                 // Attribute a guard exit to its recovery PC before the lane resumes.
                 // Reuse the opt-in OSR trace; ordinary execution keeps no extra table
                 // or per-site allocation, and the exit budget is unchanged.
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                if crate::trace::Channel::OsrReject.on() {
                     eprintln!(
                         "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
                         program.raw(), site.function, site.header,

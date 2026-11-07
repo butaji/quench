@@ -2815,14 +2815,14 @@ impl<'a> Compiler<'a> {
         self.compile_plain_function(again, context)
     }
 
-    /// Checks, under `QUENCH_LAZY_FACTS_LOG`, that the free names of function `id` (starting
+    /// Checks, under `QUENCH_TRACE=lazy-facts`, that the free names of function `id` (starting
     /// at `start`), resolved through the scopes it closes over, are the captures its compiled
     /// subtree made of bindings outside it: what a lazily compiled function would report to
     /// the layouts around it without its code (TOD-196).
     #[cfg(feature = "verify-replay")]
     fn verify_predicted_captures(&self, id: u32, start: u32, scopes: &capture_scope::ScopeChain) {
         // Only a replayable source's functions can compile lazily.
-        if std::env::var_os("QUENCH_LAZY_FACTS_LOG").is_none() || self.replay_target.is_some() || !self.replayable_source {
+        if !crate::trace::Channel::LazyFacts.on() || self.replay_target.is_some() || !self.replayable_source {
             return;
         }
         let Some(names) = self.free_names.get(&start) else {
@@ -3274,7 +3274,7 @@ impl<'a> Compiler<'a> {
             return Err(self.errors);
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             // Per-function-count structures, at the point the whole module has been lowered:
             // the tables that grow with the number of functions rather than with the source.
             let records = self.functions.len();
@@ -3403,7 +3403,7 @@ impl<'a> Compiler<'a> {
             self.rewrite_function(function);
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() && released.is_empty() {
+        if crate::trace::Channel::Memory.on() && released.is_empty() {
             let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
             capture_profile::report(&records);
         }
@@ -3431,7 +3431,7 @@ impl<'a> Compiler<'a> {
             function.shrink_to_fit();
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() && released.is_empty() {
+        if crate::trace::Channel::Memory.on() && released.is_empty() {
             let records: Vec<BcFunction> = functions
                 .iter()
                 .enumerate()
@@ -3555,7 +3555,7 @@ impl<'a> Compiler<'a> {
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             program_profile::ProgramFootprint::report(&program);
         }
         Ok(program)

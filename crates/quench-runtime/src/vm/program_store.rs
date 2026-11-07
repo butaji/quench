@@ -136,7 +136,7 @@ const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 /// paying for the complete-semantics baseline.
 pub(super) const JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD: u8 = 8;
 /// The general baseline's compile cost in interpreted-instruction units: a fixed part
-/// and a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_JS_JIT_STATS`
+/// and a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_TRACE=js-jit`
 /// against roughly 50 ns per interpreted instruction: requiring jackspeak, about 0.8 ms
 /// plus 32 µs per instruction; npm's semver scenario, 1.4 ms for a four-instruction body
 /// and 40 to 76 µs per instruction for 160 to 200.
@@ -1020,8 +1020,7 @@ impl Default for ProgramStore {
                 "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
             )
             .is_some_and(|value| value == "1"),
-            js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
-                .is_some_and(|value| value == "1")
+            js_jit_diagnostics: crate::trace::Channel::JsJit.on()
                 .then(FxHashMap::default),
             js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
                 .is_some_and(|value| value == "1"),
@@ -2206,7 +2205,7 @@ impl ProgramStore {
         self.js_jit_general_dispatch_enabled
     }
 
-    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
+    /// Records the counters `QUENCH_TRACE=js-jit` enables, for a test to read.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn enable_js_jit_diagnostics(&mut self) {
         self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
@@ -3545,7 +3544,7 @@ impl ProgramStore {
 }
 
 impl ProgramStore {
-    /// Whether dropping the store reports something (`QUENCH_JS_JIT_STATS`).
+    /// Whether dropping the store reports something (`QUENCH_TRACE=js-jit`).
     pub(crate) fn reports_on_drop(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }

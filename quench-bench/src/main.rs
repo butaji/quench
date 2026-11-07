@@ -27,10 +27,9 @@ const FIXTURES: &[&str] = &[
     "richards.js",
     "splay.js",
 ];
-use analysis::{MIN_DIAGNOSTIC_SCREEN_ROUNDS, MIN_QUALIFYING_ROUNDS};
+use analysis::{MIN_QUALIFYING_ROUNDS, SELECTIVE_HANDOFF_CONFIG};
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
-const QUENCH_WASM_JIT_SELECTIVE: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
 const SUITE_REPORT_SCHEMA: u32 = 16;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
@@ -941,7 +940,7 @@ fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
     }
     if options.suite != Suite::JetStream3
         || options.jit_mode != JitMode::Jit
-        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
+        || options.rounds < SELECTIVE_HANDOFF_CONFIG.minimum_rounds
         || options.jit_diagnostics
         || options.jit_wasm_root.is_some()
         || options.jit_wasm_root_only
@@ -958,11 +957,12 @@ fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
         return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
             .then_some("--preflight-only cannot select fixtures");
     }
-    let one_pinned_fixture = options.fixture.as_deref() == Some("gcc-loops-wasm")
+    let pinned = SELECTIVE_HANDOFF_CONFIG.fixture_name;
+    let one_pinned_fixture = options.fixture.as_deref() == Some(pinned)
         || options
             .fixtures
             .as_ref()
-            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm");
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == pinned);
     (!one_pinned_fixture || options.all).then_some(
         "--jit-wasm-selective-ab is pinned to the single JetStream fixture gcc-loops-wasm",
     )
@@ -1249,25 +1249,21 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
 }
 
 fn quench_selective_ab_pair(options: &Options) -> [EngineSpec; 2] {
-    let mut selective_off = quench_engine(options);
-    let mut selective_on = quench_engine(options);
-    selective_off.name = "quench_selective_handoff_off";
-    selective_on.name = "quench_selective_handoff_on";
-    selective_off
-        .env
-        .insert(QUENCH_WASM_JIT_SELECTIVE.into(), "0".into());
-    selective_on
-        .env
-        .insert(QUENCH_WASM_JIT_SELECTIVE.into(), "1".into());
-    selective_off.jit_proof = format!(
-        "{}; diagnostic selective CallKnown handoff A/B arm with {QUENCH_WASM_JIT_SELECTIVE}=0; not for qualification",
-        selective_off.jit_proof
-    );
-    selective_on.jit_proof = format!(
-        "{}; diagnostic selective CallKnown handoff A/B arm with {QUENCH_WASM_JIT_SELECTIVE}=1; not for qualification",
-        selective_on.jit_proof
-    );
-    [selective_off, selective_on]
+    let config = &SELECTIVE_HANDOFF_CONFIG;
+    [
+        (config.off_engine, config.off_value),
+        (config.on_engine, config.on_value),
+    ]
+    .map(|(name, value)| {
+        let mut arm = quench_engine(options);
+        arm.name = name;
+        arm.env.insert(config.switch_env.into(), value.into());
+        arm.jit_proof = format!(
+            "{}; diagnostic selective CallKnown handoff A/B arm with {}={value}; not for qualification",
+            arm.jit_proof, config.switch_env
+        );
+        arm
+    })
 }
 
 /// Runs `typeof WebAssembly` with the engine's measurement arguments and environment.
@@ -1378,8 +1374,7 @@ fn quench_engine(options: &Options) -> EngineSpec {
     };
     let mut environment = BTreeMap::new();
     if options.jit_diagnostics {
-        environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
-        environment.insert("QUENCH_JS_JIT_STATS".into(), "1".into());
+        environment.insert("QUENCH_TRACE".into(), "wasm-jit,js-jit".into());
     }
     if options.jit_js_general_dispatch {
         environment.insert(QUENCH_JS_JIT_GENERAL_DISPATCH.into(), "1".into());
@@ -1390,7 +1385,8 @@ fn quench_engine(options: &Options) -> EngineSpec {
         }
     }
     if options.jit_wasm_selective {
-        environment.insert("QUENCH_WASM_JIT_SELECTIVE".into(), "1".into());
+        let config = &SELECTIVE_HANDOFF_CONFIG;
+        environment.insert(config.switch_env.into(), config.on_value.into());
     }
     if options.jit_wasm_root_only {
         environment.insert("QUENCH_WASM_JIT_ROOT_ONLY".into(), "1".into());
@@ -3199,7 +3195,7 @@ mod jit_js_general_dispatch_tests {
 #[cfg(test)]
 mod jit_wasm_selective_ab_tests {
     use super::{
-        JitMode, QUENCH_WASM_JIT_SELECTIVE, Suite, jit_wasm_selective_ab_error, parse_options_from,
+        JitMode, SELECTIVE_HANDOFF_CONFIG, Suite, jit_wasm_selective_ab_error, parse_options_from,
         quench_selective_ab_pair,
     };
 
@@ -3259,11 +3255,11 @@ mod jit_wasm_selective_ab_tests {
         let mut off_environment = selective_off.env.clone();
         let mut on_environment = selective_on.env.clone();
         assert_eq!(
-            off_environment.remove(QUENCH_WASM_JIT_SELECTIVE).as_deref(),
+            off_environment.remove(SELECTIVE_HANDOFF_CONFIG.switch_env).as_deref(),
             Some("0")
         );
         assert_eq!(
-            on_environment.remove(QUENCH_WASM_JIT_SELECTIVE).as_deref(),
+            on_environment.remove(SELECTIVE_HANDOFF_CONFIG.switch_env).as_deref(),
             Some("1")
         );
         assert_eq!(off_environment, on_environment);
