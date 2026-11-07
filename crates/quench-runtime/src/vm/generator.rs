@@ -469,7 +469,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.with_call_roots([generator, value, promise], |vm| {
             if let Some(record) = vm.generator_record_mut(generator) {
-                record.state = GeneratorState::Executing;
+                record.await_return();
             }
             let awaited = match vm.promise_for_value(p, value) {
                 Ok(promise) => promise,

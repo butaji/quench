@@ -108,7 +108,7 @@ mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
 mod field_store;
-pub(crate) use field_store::{FieldStore, StoreReceiver};
+pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
@@ -4032,9 +4032,6 @@ impl ResidualProgram {
             let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
-        }
-        if purpose == RecordUse::Kept {
-            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
         }
         let deferred = self
             .encoded_records

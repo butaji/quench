@@ -1841,7 +1841,7 @@ impl<H: Host> Vm<H> {
                     p.source_name, self.frames[frame].function, pc,
                 )));
             }
-            if crate::DYNAMIC_EXECUTION_ENABLED && native_step.is_none() && !resumed && pc == 0 {
+            if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0 {
                 match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
                     super::compiled::JsTierFrameEntry::Interpreter => {}
                     super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
@@ -1854,7 +1854,7 @@ impl<H: Host> Vm<H> {
                         native_step = Some(step);
                     }
                 }
-            } else if crate::DYNAMIC_EXECUTION_ENABLED && native_step.is_none() && !resumed {
+            } else if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed {
                 // A compiled caller resumes at the bytecode after a callout or
                 // at a hot loop header. Re-enter its shared CFG from that exact
                 // PC instead of sending the rest of the activation through the
@@ -2318,8 +2318,8 @@ impl<H: Host> Vm<H> {
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
                 // `this.x = v` is the same cached write with an authoritative `this`.
-                op if op.is_field_store()
-                    && let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
+                crate::bytecode::field_store_op!()
+                    if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
                         p,

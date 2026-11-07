@@ -45,6 +45,9 @@ bench-alloc-routes = ["bench-primitives"]
 # Recompiles each replayable function after its program loads and logs any difference
 # (`QUENCH_TRACE=replay=<path>`); verification builds only.
 verify-replay = []
+# Every tier threshold at its floor, so short programs (Test262) run compiled code; the
+# results must equal the interpreter's. Verification builds only.
+tier-stress = []
 
 [dependencies]
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }
