@@ -48,7 +48,7 @@ pub(super) fn report(functions: &[Function]) {
             !function
                 .code
                 .iter()
-                .any(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
+                .any(|instruction| instruction.op().addresses_capture())
         })
         .count();
     eprintln!(

@@ -261,6 +261,17 @@
 (rule 4 (lower inst @ (smul_overflow _ x y @ (value_type $I64)))
       (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rm_raw x (gpr_mem_64_for_ty $I64 y)))))
 
+;; Quench: a constant factor is the three-operand form's immediate (imm8 when it
+;; fits), not a constant-pool load per product. OF has the same meaning.
+(rule 6 (lower inst @ (smul_overflow $I32 x (i32_from_iconst (i8_from_i32 y))))
+      (overflow_op inst (CC.O) (asm_produce_flags (x64_imull_rmi_sxb_raw (gpr_mem_32_for_ty $I32 x) y))))
+(rule 5 (lower inst @ (smul_overflow $I32 x (i32_from_iconst y)))
+      (overflow_op inst (CC.O) (asm_produce_flags (x64_imull_rmi_raw (gpr_mem_32_for_ty $I32 x) (i32_cast_unsigned y)))))
+(rule 6 (lower inst @ (smul_overflow $I64 x (i32_from_iconst (i8_from_i32 y))))
+      (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rmi_sxb_raw (gpr_mem_64_for_ty $I64 x) y))))
+(rule 5 (lower inst @ (smul_overflow $I64 x (i32_from_iconst y)))
+      (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rmi_sxl_raw (gpr_mem_64_for_ty $I64 x) y))))
+
 ;;;; Rules for `sadd_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (rule (lower (sadd_sat (multi_lane 8 16) x y))

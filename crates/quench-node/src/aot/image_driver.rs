@@ -40,13 +40,13 @@ fn run() -> Result<std::process::ExitCode, String> {
     );
     #[cfg(not(quench_native_bootstrap))]
     let result = quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT);
-    quench_node::host::resident_pages::phase_peak("native run complete");
     result.map(|completion| completion.exit_code())
 }
 
+quench_node::install_process_start!();
+
 fn main() -> std::process::ExitCode {
-    #[cfg(target_os = "linux")]
-    if let Err(error) = quench_node::shared_run::initialize_cli_process_signals() {
+    if let Err(error) = quench_node::host::process_start::begin_main() {
         eprintln!("quench: {error}");
         return std::process::ExitCode::FAILURE;
     }

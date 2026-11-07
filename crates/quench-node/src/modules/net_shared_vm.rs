@@ -687,10 +687,7 @@ pub(crate) fn write_with_completion(
             Ok(0) => stream.write_failure = Some(std::io::ErrorKind::WriteZero.into()),
             Ok(written) => stream.write_offset += written,
             Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                ) => {}
+                if crate::io_transient::is_transient(error.kind()) => {}
             Err(error) => stream.write_failure = Some(error),
         }
     }
@@ -1101,10 +1098,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
                 Ok(written) => socket.write_offset += written,
                 Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                    ) => {}
+                    if crate::io_transient::is_transient(error.kind()) => {}
                 Err(error) => {
                     events.push(TransportEvent::Error {
                         socket: id,
@@ -2949,10 +2943,7 @@ pub(crate) fn try_native_write(
         Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
         Ok(written) => written,
         Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-            ) =>
+            if crate::io_transient::is_transient(error.kind()) =>
         {
             0
         }

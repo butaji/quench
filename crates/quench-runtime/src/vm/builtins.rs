@@ -1218,13 +1218,6 @@ impl<H: Host> Vm<H> {
         self.name_atom_memo.record(name, atom);
         atom
     }
-    pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
-        if let Some(atom) = self.lookup_js_atom(name) {
-            return atom;
-        }
-        let hash = Self::atom_hash_units(name.units());
-        self.insert_dynamic_atom(name.clone(), hash)
-    }
     pub(super) fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = self.atom_sequence.len() as Atom;
         self.record_array_index_atom(name.host_string(), atom);

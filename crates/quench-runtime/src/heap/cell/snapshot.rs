@@ -579,21 +579,21 @@ impl Cell {
             Self::Map { object, entries } => {
                 writer.u8(tag::MAP);
                 write_object(writer, object)?;
-                let (slots, live, iterators) = entries.snapshot_parts()?;
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
                 writer.len(slots.len());
                 for (key, value) in slots {
                     writer.value(*key);
                     writer.value(*value);
                 }
-                writer.len(live);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
                 writer.values(iterators);
             }
             Self::Set { object, entries } => {
                 writer.u8(tag::SET);
                 write_object(writer, object)?;
-                let (slots, live, iterators) = entries.snapshot_parts()?;
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
                 writer.values(slots);
-                writer.len(live);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
                 writer.values(iterators);
             }
             Self::ShadowRealm { object, caller_global, realm_global } => {
@@ -717,8 +717,8 @@ impl Cell {
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
             }
-            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.as_ref().clone(), *ty) => {
-                writer.u8(tag::JS_TAG);
+            Self::WasmTag { object, declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
+                writer.u8(tag::JS_TAG); write_object(writer, object)?;
             }
             Self::WasmBits64(_)
             | Self::WasmV128(_)
@@ -780,16 +780,16 @@ impl Cell {
             tag::MAP => {
                 let object = boxed_object(reader)?;
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let live = reader.len()?;
-                let iterators = reader.values()?;
-                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
+                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+                let (live, iterators) = (reader.len()?, reader.values()?);
+                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SET => {
                 let object = boxed_object(reader)?;
                 let slots = reader.values()?;
-                let live = reader.len()?;
-                let iterators = reader.values()?;
-                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
+                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+                let (live, iterators) = (reader.len()?, reader.values()?);
+                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
@@ -842,7 +842,7 @@ impl Cell {
                 }
                 Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
             }
-            tag::JS_TAG => crate::vm::js_tag_cell(),
+            tag::JS_TAG => crate::vm::js_tag_cell(boxed_object(reader)?),
             tag::BIGINT => Self::bigint(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?)),
             tag::SYMBOL => Self::Symbol(SymbolData {
                 description: reader.option_string()?.map(String::into_boxed_str),

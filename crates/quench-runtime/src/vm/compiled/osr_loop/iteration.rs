@@ -1,4 +1,4 @@
-use super::{exits_before_effects, Op, WideInstruction};
+use super::{exits_before_effects, WideInstruction};
 
 /// Whether native code can run a whole iteration: the back-edge is reachable from the header
 /// past no exit but a call's, which the lane resumes after (`LoopRegion::call_boundary_pcs`).
@@ -12,7 +12,7 @@ pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32) -
         if !seen.insert(offset) {
             continue;
         }
-        if exits_before_effects(op) && !matches!(op, Op::Call | Op::CallArray) {
+        if exits_before_effects(op) && !op.is_ordinary_call() {
             blocked = blocked.min(offset);
             continue;
         }

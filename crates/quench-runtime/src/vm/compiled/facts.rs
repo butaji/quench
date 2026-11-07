@@ -264,10 +264,6 @@ fn transfer(
             else if numeric { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
         }
-        Op::Call if super::guarded_call_instruction(instruction) => {
-            set(types, instruction.result_register(), Type::ANY);
-            Flow::Next
-        }
         Op::Call if native_calls => {
             for ty in types.iter_mut() {
                 *ty = ty.without_object_shape();
@@ -417,7 +413,6 @@ mod tests {
             "function caller(f, value) { f(value); return value; }", "shape-call.js").unwrap();
         let function = program.function(1);
         let call = function.instructions().find(|instruction| instruction.op() == Op::Call).unwrap();
-        assert!(!super::super::guarded_call_instruction(call));
         let null = Type::language(crate::ValueType::Null);
         for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
             Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
@@ -438,7 +433,7 @@ mod tests {
         let instructions: Vec<_> = function.instructions().collect();
         let leaders = super::super::lane_region::leaders(&instructions);
         let edges: Vec<_> = instructions.iter().enumerate().filter_map(|(pc, instruction)|
-            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc).map(|target| (target, pc))).collect();
         let header = edges.iter().map(|(header, _)| *header).min().unwrap();
         let back = edges.iter().filter(|(target, _)| *target == header).map(|(_, pc)| *pc).max().unwrap();

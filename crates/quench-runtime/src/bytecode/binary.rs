@@ -79,17 +79,16 @@ fn write_eval_binding(out: &mut BinaryWriter, binding: &EvalBinding) {
     out.u8(binding.declaration as u8);
 }
 
-pub(super) fn write_program(
-    program: &super::ResidualProgram,
-    path: &std::path::Path,
-) -> Result<(), String> {
+pub(super) fn write_program(program: &super::ResidualProgram, path: &std::path::Path) -> Result<(), String> {
+    crate::vm::freeze_call_sites(program);
     let (bytes, _) = encode_program(program, AtomEncoding::Program, SourceEncoding::Included);
     std::fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
 /// A compact encoding of `program` for a compile cache, with the program's atom ids in the
 /// order its table names them (`decode_compact_program` maps each name to its reader's id).
-/// The source text is left out: whoever decodes it supplies the same text.
+/// The source text is left out: whoever decodes it supplies the same text. Its reader, this
+/// build, parses call sites for a diagnostic alone (each entry's had cost mandreel 14 MB).
 pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
     let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()), SourceEncoding::External);
     (sealed(bytes), order)
@@ -98,6 +97,7 @@ pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u
 /// An entry program's cached form (`ResidualProgram::encode_trusted`): the lossless encoding
 /// under the program's own atom ids, which seed the VM's, followed by its checksum.
 pub(super) fn encode_trusted_program(program: &super::ResidualProgram) -> Vec<u8> {
+    crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Program, SourceEncoding::Included).0)
 }
 
@@ -209,7 +209,6 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
-        crate::vm::freeze_source_call_sites(source);
         out.bool(source.call_sites.get().is_some());
         if let Some(sites) = source.call_sites.get() {
             out.u32(sites.len() as u32);
@@ -449,6 +448,7 @@ pub(super) fn decode_compact_program(
 
 #[cfg(feature = "aot")]
 pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
+    crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)
 }
 
@@ -975,15 +975,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for binding in &name_bindings {
             write_eval_binding(out, binding);
         }
-        out.u32(function.environment_clones.len() as u32);
-        for clone in &function.environment_clones {
-            for slots in [&clone.fresh, &clone.reset] {
-                out.u32(slots.len() as u32);
-                for slot in slots {
-                    out.u16(*slot);
-                }
-            }
-        }
+        function.environment_clones.write(out);
         match &function.selective_capture_slots {
             Some(slots) => {
                 out.u8(1);
@@ -1201,12 +1193,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let environment_atoms = input.list(|input| input.atom())?;
         let mut name_bindings = input.list(read_eval_binding)?;
         input.restore_atom_order(&mut name_bindings);
-        let environment_clones = input.list(|input| {
-            Ok(crate::bytecode::EnvironmentClone {
-                fresh: input.list(|input| input.u16())?,
-                reset: input.list(|input| input.u16())?,
-            })
-        })?;
+        let environment_clones = crate::bytecode::EnvironmentClones::read(input)?;
         let selective_capture_slots = match input.u8()? {
             0 => None,
             1 => Some(input.u16s()?.into()),
@@ -1342,7 +1329,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_atoms: environment_atoms.into(),
             selective_capture_slots,
             inherited_with_scope,
-            environment_clones: environment_clones.into(),
+            environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
             global_declarations: super::GlobalDeclarations {
