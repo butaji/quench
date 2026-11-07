@@ -13137,6 +13137,9 @@ impl<H: Host> Vm<H> {
     /// Whether a lane-entered frame must hand control to the general frame
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
+        // A lane that completed the instruction it stopped at (`Vm::lane_returned`) leaves
+        // only that completion: entering the tier there would run the instruction again.
+        if self.lane_returned.is_some() { return false; }
         match self.programs.js_tier(id, function) {
             Some(super::program_store::JsTierState::GeneralCompileDue) => true,
             Some(super::program_store::JsTierState::Compiled(compiled)) => {

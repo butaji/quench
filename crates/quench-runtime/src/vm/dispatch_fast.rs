@@ -1057,9 +1057,9 @@ impl LaneView {
     }
 
     /// Starts the function's frameless activations at the tier prologue, which enters the
-    /// JavaScript tier with its `params` parameters (`lane_tier_prologue`). The prologue's
-    /// fields hold those: `imm` the function, `a` its parameter count.
-    fn claim_for_tier(&self, handler: Handler, function: u32, params: u16) {
+    /// JavaScript tier with its `params` parameters (`lane_tier_prologue`). Its fields: `imm`
+    /// the function, `a` its parameter count, `b` whether it binds `this` (`lane_body_entry`).
+    fn claim_for_tier(&self, handler: Handler, function: u32, params: u16, binds_this: bool) {
         let prologue = self.prologue.get();
         // SAFETY: the lane runs on the view's thread, and nothing reads the prologue while
         // the start does not name it.
@@ -1068,7 +1068,7 @@ impl LaneView {
                 handler: handler as *const (),
                 operand: LaneOperand { imm: function },
                 a: params,
-                b: 0,
+                b: u16::from(binds_this),
                 c: 0,
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
             };
@@ -12294,7 +12294,7 @@ impl<H: Host> Vm<H> {
             && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.lane_tier_unclaimed())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params);
+            unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
         }
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {

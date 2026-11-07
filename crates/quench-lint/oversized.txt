@@ -1382,7 +1382,7 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 628
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 525
 file-lines crates/quench-runtime/src/vm/collections.rs 1534
-file-lines crates/quench-runtime/src/vm/compiled.rs 19632
+file-lines crates/quench-runtime/src/vm/compiled.rs 19635
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 518
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 714
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5990
