@@ -772,7 +772,7 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_super_constructio
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_tier_enter 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_unary_value 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_body 29
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 65
+complexity crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 64
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 13
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 21
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_register_operands 40
@@ -1330,7 +1330,7 @@ file-lines crates/quench-node-test/tests/shared_regressions.rs 634
 file-lines crates/quench-node/src/aot/graph/loader_bindings.rs 636
 file-lines crates/quench-node/src/host/hmr.rs 843
 file-lines crates/quench-node/src/host/node_host.rs 580
-file-lines crates/quench-node/src/host/resident_pages.rs 1247
+file-lines crates/quench-node/src/host/resident_pages.rs 1144
 file-lines crates/quench-node/src/host/shared_vm.rs 3276
 file-lines crates/quench-node/src/host/shared_vm/commonjs.rs 3365
 file-lines crates/quench-node/src/host/startup_snapshot.rs 577
@@ -1447,7 +1447,7 @@ file-lines crates/quench-node/src/modules/webstreams_shared_vm/mod.rs 1003
 file-lines crates/quench-node/src/modules/webstreams_shared_vm/readable.rs 1560
 file-lines crates/quench-node/src/modules/webstreams_shared_vm/writable.rs 943
 file-lines crates/quench-node/src/modules/worker_shared_vm/api.rs 1059
-file-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs 716
+file-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs 714
 file-lines crates/quench-node/src/modules/zlib_shared_vm.rs 1397
 file-lines crates/quench-node/src/shared_run.rs 1553
 file-lines crates/quench-node/tests/aot-bootstrap.rs 2030
@@ -1517,7 +1517,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1972
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23577
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23559
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1527,7 +1527,7 @@ file-lines crates/quench-runtime/src/vm/error.rs 2691
 file-lines crates/quench-runtime/src/vm/eval.rs 1369
 file-lines crates/quench-runtime/src/vm/gc.rs 1316
 file-lines crates/quench-runtime/src/vm/generator.rs 1803
-file-lines crates/quench-runtime/src/vm/index.rs 966
+file-lines crates/quench-runtime/src/vm/index.rs 942
 file-lines crates/quench-runtime/src/vm/intl_collator.rs 695
 file-lines crates/quench-runtime/src/vm/intl_datetime.rs 1997
 file-lines crates/quench-runtime/src/vm/intl_datetime_parts.rs 610
@@ -2404,11 +2404,11 @@ function-lines crates/quench-node/src/modules/zlib_native_brotli_rust.rs::Codec:
 function-lines crates/quench-node/src/modules/zlib_native_brotli_rust.rs::Codec::write 65
 function-lines crates/quench-node/src/modules/zlib_native_codec_zlib.rs::Codec::new 44
 function-lines crates/quench-node/src/modules/zlib_native_codec_zlib.rs::Codec::process 51
-function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::arguments 48
-function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::binding 58
+function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::arguments 42
+function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::binding 54
 function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::initialize 57
 function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::poll 66
-function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::write 47
+function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::write 44
 function-lines crates/quench-node/src/modules/zlib_native_zstd.rs::Codec::new 92
 function-lines crates/quench-node/src/modules/zlib_native_zstd.rs::Codec::write 135
 function-lines crates/quench-node/src/modules/zlib_shared_vm.rs::build 62
@@ -3153,7 +3153,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_tier_enter 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_unary_value 48
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_body 86
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_call_tests::leaf_bodies_take_the_leaf_entry_and_others_activate 47
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 72
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 70
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 74
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_operator_pairs 56
