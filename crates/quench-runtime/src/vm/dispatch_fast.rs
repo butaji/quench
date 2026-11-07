@@ -14348,7 +14348,7 @@ fn lane_native_value<H: Host>(
                 return Some(if holds { Value::TRUE } else { Value::FALSE });
             }
         }
-        Native::RegExpExec | Native::RegExpTest | Native::StringReplace => {
+        Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
             return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
         }
         // A generator's resumption runs its body, guest code that no in-place shortcut of
@@ -14876,7 +14876,7 @@ fn lane_native_complete<H: Host>(
     Resumed::At(r, following(ip), Carried::script(cx))
 }
 
-/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` of a RegExp, made in
+/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` or `match` of a RegExp, made in
 /// place when it runs no guest code and raises nothing, so it observes no frame
 /// (`Vm::steady_regexp_call`, `Vm::steady_string_replace`); any other such call goes on as
 /// `lane_string_or_native_call` makes it.
@@ -14896,6 +14896,7 @@ fn lane_regexp_call<H: Host>(
     let result_used = ImmediateLayout::lane_call_result_used(i.imm());
     let steady = match (native, args) {
         (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
+        (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
         (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
         _ => None,
     };
