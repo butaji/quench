@@ -90,6 +90,7 @@ impl<'a, C: Config> CoverGrammar<'a, Expression<'a>, C> for SimpleAssignmentTarg
                 if p.options.allow_call_assignment_targets && !call.optional =>
             {
                 let span = call.span;
+                p.call_assignment_targets += 1;
                 let property =
                     IdentifierName::new(span, p.ident(crate::CALL_ASSIGNMENT_TARGET_MARKER), p);
                 Self::from(MemberExpression::new_static_member_expression(
