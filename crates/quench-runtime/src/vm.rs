@@ -28,7 +28,7 @@ mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
 mod wasm_js;
-pub(crate) use wasm_js::{js_tag_cell, js_tag_type};
+pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
@@ -3130,14 +3130,14 @@ impl<H: Host> Vm<H> {
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
+        self.json_parse_cache = Default::default();
         self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();
         self.intrinsic_natives.clear();
         self.regexp_subjects.clear();
         self.regexp_matchers.clear();
-        self.atom_classes
-            .resize_with(self.atom_text.len(), Default::default);
+        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();

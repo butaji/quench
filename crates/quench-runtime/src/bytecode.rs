@@ -118,12 +118,12 @@ pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
 /// Prefix of the compiler's hidden local for a block-scoped binding renamed apart from a
 /// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
 pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
-
+/// Separates the count `hidden_local` appends to a repeated hidden name; no source name has it.
+pub(crate) const HIDDEN_LOCAL_SUFFIX: char = '\0';
 /// The name a hidden renamed block binding has in source; other names are unchanged.
 pub(crate) fn source_binding_name(name: &str) -> &str {
-    name.strip_prefix(BLOCK_BINDING_MARKER).unwrap_or(name)
+    name.strip_prefix(BLOCK_BINDING_MARKER).map_or(name, |name| name.split(HIDDEN_LOCAL_SUFFIX).next().unwrap_or(name))
 }
-
 /// Whether a local named `name` must live in its function's environment whatever its
 /// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
 /// names, ...) are reached by name, not only through capture slots. A renamed block binding
@@ -137,12 +137,12 @@ pub(crate) const HOME_BINDING_PREFIX: &str = "\0quench:home:";
 /// Whether the runtime finds local `name` by name from outside its own activation, so a
 /// closure that never captures it may still read it: a home object (`HOME_BINDING_PREFIX`),
 /// or a compiler binding its function's environment declares (`declares_environment_atom`),
-/// which by-name loads of compiler bindings resolve.
-pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: bool) -> bool {
+/// which by-name loads of compiler bindings resolve (asked lazily: it scans the atoms).
+pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl FnOnce() -> bool) -> bool {
     name.starts_with(HOME_BINDING_PREFIX)
-        || (declared_in_environment && local_name_requires_environment(name))
+        || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, branch_table_entries, for_each_instruction_successor};
+pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;

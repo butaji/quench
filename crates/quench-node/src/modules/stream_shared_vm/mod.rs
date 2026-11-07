@@ -270,11 +270,10 @@ const _: () = {
     }
 };
 
-pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
-    match c.host_mut().shared_state().borrow().stream_intrinsics {
-        Some(intrinsics) => Ok(intrinsics),
-        None => Err(RootedError::host("stream module is not initialized")),
-    }
+/// What `pick` reads of the intrinsics, without copying the rest.
+pub(crate) fn intrinsic<T>(c: &mut Context<'_>, pick: impl FnOnce(&Intrinsics) -> T) -> Result<T, RootedError> {
+    let picked = c.host_mut().shared_state().borrow().stream_intrinsics.as_ref().map(pick);
+    picked.ok_or_else(|| RootedError::host("stream module is not initialized"))
 }
 
 pub(crate) fn arg(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
@@ -303,12 +302,12 @@ pub(crate) fn inherit(c: &mut Context<'_>, constructor: RootId, parent: RootId) 
 }
 
 pub(crate) fn get_slot(c: &mut Context<'_>, object: RootId, slot: Slot) -> Outcome {
-    let key = intrinsics(c)?.slot(slot);
+    let key = intrinsic(c, |i| i.slot(slot))?;
     c.get_property_rooted(object, key)
 }
 
 pub(crate) fn put_slot(c: &mut Context<'_>, object: RootId, slot: Slot, value: RootId) -> Result<(), RootedError> {
-    let key = intrinsics(c)?.slot(slot);
+    let key = intrinsic(c, |i| i.slot(slot))?;
     c.set_property_rooted(object, key, value, object).map(drop)
 }
 
@@ -415,7 +414,7 @@ pub(crate) fn set_capture(c: &mut Context<'_>, index: usize, value: RootId) -> R
 
 /// `process.nextTick(operation, ...args)` for one of the module's scheduled operations.
 pub(crate) fn tick(c: &mut Context<'_>, operation: Tick, args: &[RootId]) -> Result<(), RootedError> {
-    let callback = intrinsics(c)?.tick(operation);
+    let callback = intrinsic(c, |i| i.tick(operation))?;
     next_tick(c, callback, args)
 }
 
@@ -437,7 +436,7 @@ pub(crate) fn attempt<T>(result: Result<T, RootedError>) -> Result<Result<T, Roo
 
 /// `await value`, continuing with `fulfilled(result)` or `rejected(reason)` as reactions.
 pub(crate) fn await_then(c: &mut Context<'_>, value: RootId, fulfilled: RootId, rejected: RootId) -> Result<(), RootedError> {
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let promise = if promise_resolves_to_itself(c, value, intrinsics.promise)? {
         value
     } else {
@@ -476,7 +475,7 @@ pub(crate) enum Key {
 fn key_root(c: &mut Context<'_>, key: Key) -> Outcome {
     Ok(match key {
         Key::Name(name) => c.string_rooted(name),
-        Key::Symbol(slot) => intrinsics(c)?.slot(slot),
+        Key::Symbol(slot) => intrinsic(c, |i| i.slot(slot))?,
     })
 }
 

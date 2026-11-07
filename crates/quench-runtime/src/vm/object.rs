@@ -244,11 +244,14 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
-        if self.shape_is_dictionary(shape) {
-            let index = self.shapes[shape as usize]
-                .lookup_index
-                .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
+        // A shape's lookup index, once it has one, is the home of its key -> slot facts; the
+        // memo stands in only for index-less shapes, so a wide object's keys never evict them.
+        let entry = &self.shapes[shape as usize];
+        if let Some(index) = entry.lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
+        }
+        if entry.dictionary_trigger.is_some() {
+            return self.shape_lookup_index(shape).slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
             return slot.map(|slot| slot as usize);
@@ -1065,7 +1068,7 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-    fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
+    pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
             PropertyKey::String(atom) | PropertyKey::Private(atom) => {
                 self.invalidate_method_caches_for_atom(atom);
@@ -2223,17 +2226,16 @@ impl<H: Host> Vm<H> {
         .then_some(hint.value)
     }
 
-    /// The object part of a direct object, array or function, whose own shape and prototype
-    /// link a prototype-held hint tests (`holder_hint_hit`).
+    /// The object part of a direct object, array, function or ordinary builtin, whose own
+    /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() {
             return Some(self.heap.object_record_by_id(record_id));
         }
-        if let Some(array) = self.heap.record_array(object) {
-            return Some(array);
-        }
-        object.direct_function_index().and_then(|_| self.heap.function(object)).map(|function| &function.object)
+        if let Some(array) = self.heap.record_array(object) { return Some(array); }
+        let function = object.direct_function_index().and_then(|_| self.heap.function(object));
+        function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`
@@ -3782,23 +3784,18 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
-        let (slot, exists) = {
+        let (slot, old) = {
             let data = self
                 .object_data(object)
                 .ok_or_else(|| JsError("property write on non-object".into()))?;
             let slot = self.property_shape_slot(data.shape(), key);
-            let exists = slot.is_some_and(|slot| self.heap.property_get(data, slot).is_some());
-            (slot, exists)
+            let old = slot.and_then(|slot| self.heap.property_get(data, slot));
+            (slot, old)
         };
-        self.check_property_key_write(object, key, exists)?;
-        let invalidates_method = slot.is_some_and(|slot| self.callable_write(object, slot, value));
-        if let Some(slot) = slot {
-            self.heap.property_set(object, slot, value);
-        } else {
-            return self.create_shape_property(object, key, value);
-        }
-        if invalidates_method {
-            self.invalidate_method_caches_for_key(key);
+        self.check_property_key_write(object, key, old.is_some())?;
+        match slot {
+            Some(slot) => self.write_shape_slot(object, key, slot, old, value),
+            None => return self.create_shape_property(object, key, value),
         }
         Ok(())
     }

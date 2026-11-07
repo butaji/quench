@@ -109,7 +109,7 @@ pub(crate) fn initialized_before_reads(
                     }),
                 }
                 let mut falls_through = false;
-                function.for_each_successor(pc, instruction, |successor, edge| {
+                blocks.successors.at(pc).for_each(|(successor, edge)| {
                     if blocks.continues(pc, successor, edge) {
                         falls_through = true;
                         return;
@@ -142,17 +142,20 @@ struct BasicBlocks {
     /// The block starting at each pc, with one entry past the end for the function's end.
     block_at: Vec<Option<u32>>,
     count: usize,
+    /// Every pc's successors, listed once for all the passes over the blocks.
+    successors: super::Successors,
 }
 
 impl BasicBlocks {
     fn of(function: &Function, decoded: &[WideInstruction]) -> Self {
+        let successors = super::Successors::of(function, decoded);
         let end = decoded.len();
         let mut leader = BitSet::new(end + 1);
         leader.insert(0);
-        for (pc, &instruction) in decoded.iter().enumerate() {
+        for pc in 0..end {
             let mut only_falls_through = true;
             let mut falls_through = false;
-            function.for_each_successor(pc, instruction, |successor, edge| {
+            successors.at(pc).for_each(|(successor, edge)| {
                 if successor == pc + 1 && edge == ControlEdge::Normal {
                     falls_through = true;
                 } else {
@@ -173,7 +176,7 @@ impl BasicBlocks {
         let count = starts.len();
         // The function's end is a join point no instruction follows.
         starts.retain(|&pc| pc < end);
-        Self { starts, block_at, count }
+        Self { starts, block_at, count, successors }
     }
 
     fn at(&self, pc: usize) -> Option<usize> {

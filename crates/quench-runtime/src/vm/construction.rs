@@ -305,7 +305,7 @@ impl<H: Host> Vm<H> {
                         | Native::WasmInstance
                         | Native::WasmMemory
                         | Native::WasmTable
-                        | Native::WasmGlobal
+                        | Native::WasmGlobal | Native::WasmTag
                         | Native::WasmCompileError
                         | Native::WasmLinkError
                         | Native::WasmRuntimeError

@@ -3,7 +3,7 @@
 # The order names symbols with the profile's crate hashes; a change that moves those hashes
 # silently disables it (TOD-171). Fails below the minimum share (percent, default 90).
 #
-#   tools/check-link-order.sh target/production/quench-node crates/quench-node/link/x86_64-linux.order
+#   tools/check-link-order.sh target/release/quench-node crates/quench-node/link/x86_64-linux.order
 set -euo pipefail
 binary=$1
 order=$2

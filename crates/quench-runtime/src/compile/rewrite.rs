@@ -3,6 +3,8 @@ use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
 };
 use super::liveness::{RegisterSet, register_bit};
+mod copies;
+use copies::forward_move_sources;
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -624,88 +626,6 @@ struct CoalescedSpan {
     target: usize,
     source: RegisterSet,
     destination_out: RegisterSet,
-}
-
-/// Lets the instruction after a `Move` read the move's source in place of its destination when
-/// the move feeds only that instruction: `d = Move s; x(d)` becomes `Nop; x(s)`, the forward
-/// counterpart of `coalesce_distant_producer_moves`. The consumer must be reachable only through
-/// the move, `d` dead after it and not promoted local storage (whose writes legacy `f.arguments`
-/// reflection reads), and neither instruction inside a handler region. Only register, operand
-/// and field-base fields are rewritten; the consumer's use and definition masks confirm that the
-/// rewrite trades `d` for `s` and changes nothing else it reads or writes.
-fn forward_move_sources(
-    function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
-    field_sites: &[FieldSite],
-    superinstructions: &[Superinstruction],
-    current: &mut Option<CodeFacts>,
-) -> bool {
-    if !function
-        .code
-        .iter()
-        .any(|instruction| instruction.op() == Op::Move)
-    {
-        return false;
-    }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
-    else {
-        return false;
-    };
-    let CodeLiveness { transfers, live } = &analysis;
-    let protected = protected_positions(
-        &function.code,
-        &function.wide,
-        &function.handlers,
-        function.parameter_end_pc,
-        &function.binding_sites,
-    );
-    let storage = function
-        .local_registers
-        .iter()
-        .fold(0, |mask, entry| mask | register_bit(entry.register));
-    let in_handler = |pc: usize| {
-        function
-            .handlers
-            .iter()
-            .any(|handler| handler.start as usize <= pc && pc < handler.end as usize)
-    };
-    let mut changed = Vec::new();
-    let mut pc = 0;
-    while pc + 1 < function.code.len() {
-        let (mov, consumer) = (function.code[pc], function.code[pc + 1]);
-        let candidate = mov.op() == Op::Move && !mov.is_wide() && !consumer.is_wide();
-        let rewritten = candidate
-            .then(|| {
-                let (source, destination) = (mov.register_b(), mov.result_register());
-                let (read, written) = transfers[pc + 1];
-                let viable = source != destination
-                    && !protected.contains(pc + 1)
-                    && !in_handler(pc)
-                    && !in_handler(pc + 1)
-                    && register_bit(destination) & storage == 0
-                    && read & register_bit(destination) != 0
-                    && liveness::live_out(function, live, pc + 1, consumer.as_wide())
-                        & register_bit(destination)
-                        == 0;
-                let rewritten = substitute_register_read(consumer, destination, source)?;
-                let expected = (read & !register_bit(destination)) | register_bit(source);
-                (viable
-                    && liveness::uses(rewritten.as_wide(), methods, field_sites, superinstructions)
-                        == expected
-                    && liveness::definitions(rewritten.as_wide(), superinstructions) == written)
-                    .then_some(rewritten)
-            })
-            .flatten();
-        if let Some(rewritten) = rewritten {
-            function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
-            function.code[pc + 1] = rewritten;
-            changed.extend([pc, pc + 1]);
-            pc += 2;
-        } else {
-            pc += 1;
-        }
-    }
-    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
 /// `instruction` reading register `to` wherever a register, operand or field-base field reads

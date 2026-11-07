@@ -623,7 +623,7 @@ pub(crate) enum Native {
     WasmInstance, WasmInstanceExportsGetter,
     WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
     WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
-    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf,
+    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf, WasmTag,
     WasmCompileError, WasmLinkError, WasmRuntimeError,
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
     WasmExportedFunction,
