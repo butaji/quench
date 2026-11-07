@@ -91,7 +91,7 @@ mod tests {
             [],
         )]);
         let tag = vm.heap.alloc(Cell::WasmTag {
-            declarations,
+            declarations: Box::new(declarations),
             ty: 0,
         });
         let bits = vm.heap.alloc(Cell::WasmBits64(0x7ffc_1234_5678_9abc));

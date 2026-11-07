@@ -1929,7 +1929,7 @@ pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
 /// `WebAssembly.JSTag`'s cell (`js_tag_type`).
 pub(crate) fn js_tag_cell() -> Cell {
     let (declarations, ty) = js_tag_type();
-    Cell::WasmTag { declarations, ty }
+    Cell::WasmTag { declarations: Box::new(declarations), ty }
 }
 
 #[cfg(test)]
