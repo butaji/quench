@@ -12125,9 +12125,7 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    // The tier's claim changes after this first resolution, and a leaf runs
-                    // the records the tier would claim, so only a VM whose JS tier never runs
-                    // calls a view as a leaf.
+                    // A leaf runs records the tier may claim after this first resolution.
                     .filter(|_| !self.js_tier_runs())
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
