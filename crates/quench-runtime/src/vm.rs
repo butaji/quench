@@ -119,7 +119,7 @@ mod boolean;
 mod builtins;
 mod call_arguments;
 mod call_printer;
-pub(crate) use call_printer::freeze_call_sites;
+pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod coercion;
 mod collections;
 mod construction;

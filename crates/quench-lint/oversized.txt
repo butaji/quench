@@ -511,7 +511,7 @@ complexity crates/quench-runtime/src/compile.rs::Compiler<'a>::name_made_functio
 complexity crates/quench-runtime/src/compile.rs::Compiler<'a>::program 40
 complexity crates/quench-runtime/src/compile.rs::Compiler<'a>::promoted_local_plan 20
 complexity crates/quench-runtime/src/compile.rs::Engine::specialize_eval_with_context 15
-complexity crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 43
+complexity crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 44
 complexity crates/quench-runtime/src/compile.rs::Engine::static_module_exports 16
 complexity crates/quench-runtime/src/compile.rs::Engine::static_module_throw 13
 complexity crates/quench-runtime/src/compile/arrow.rs::Compiler<'_>::compile_arrow_function 19
@@ -609,6 +609,7 @@ complexity crates/quench-runtime/src/vm/array_flatten.rs::Vm<H>::flatten_into 12
 complexity crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_callback_with_length 43
 complexity crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_index_of_native 12
 complexity crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_last_index_of_with_length 12
+complexity crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::dense_index_of 14
 complexity crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_from_native 24
 complexity crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_modern_native 12
 complexity crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomic_bigint 21
@@ -1363,12 +1364,12 @@ file-lines crates/quench-regexp/src/lib.rs 3475
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2526
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4585
-file-lines crates/quench-runtime/src/bytecode/binary.rs 1797
+file-lines crates/quench-runtime/src/bytecode.rs 4586
+file-lines crates/quench-runtime/src/bytecode/binary.rs 1798
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1538
-file-lines crates/quench-runtime/src/compile.rs 4440
+file-lines crates/quench-runtime/src/compile.rs 4442
 file-lines crates/quench-runtime/src/compile/ast.rs 1315
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
@@ -1403,11 +1404,11 @@ file-lines crates/quench-runtime/src/value_vec.rs 1200
 file-lines crates/quench-runtime/src/vm.rs 3580
 file-lines crates/quench-runtime/src/vm/array.rs 1194
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
-file-lines crates/quench-runtime/src/vm/array_indexed.rs 520
+file-lines crates/quench-runtime/src/vm/array_indexed.rs 533
 file-lines crates/quench-runtime/src/vm/array_modern.rs 930
 file-lines crates/quench-runtime/src/vm/atomics.rs 913
 file-lines crates/quench-runtime/src/vm/builtins.rs 1460
-file-lines crates/quench-runtime/src/vm/call_printer.rs 651
+file-lines crates/quench-runtime/src/vm/call_printer.rs 674
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 525
 file-lines crates/quench-runtime/src/vm/collections.rs 1530
@@ -1424,7 +1425,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 657
 file-lines crates/quench-runtime/src/vm/date.rs 1337
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1972
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 21592
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 21599
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 2924
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -2486,7 +2487,7 @@ function-lines crates/quench-runtime/src/bytecode.rs::Function::super_forwarding
 function-lines crates/quench-runtime/src/bytecode.rs::ImmediateRole::binding_time 63
 function-lines crates/quench-runtime/src/bytecode.rs::ResidualProgram::built_record 43
 function-lines crates/quench-runtime/src/bytecode/binary.rs::decode_program 267
-function-lines crates/quench-runtime/src/bytecode/binary.rs::encode_program 225
+function-lines crates/quench-runtime/src/bytecode/binary.rs::encode_program 226
 function-lines crates/quench-runtime/src/bytecode/binary.rs::read_function 294
 function-lines crates/quench-runtime/src/bytecode/binary.rs::write_function 156
 function-lines crates/quench-runtime/src/bytecode/closure_reads.rs::ClosureReads::derive 47
@@ -2530,7 +2531,7 @@ function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::verify_predic
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::with_layout 68
 function-lines crates/quench-runtime/src/compile.rs::Engine::module_link_plan 44
 function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_eval_with_context 64
-function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 294
+function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 296
 function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_with_mode_and_private_names 45
 function-lines crates/quench-runtime/src/compile.rs::Engine::static_module_exports 74
 function-lines crates/quench-runtime/src/compile.rs::Engine::static_module_throw 51
@@ -2750,6 +2751,7 @@ function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_copy_
 function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_index_of_native 41
 function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_last_index_of_with_length 42
 function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_reduce_with_length 61
+function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::dense_index_of 48
 function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_from_async_start 77
 function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_from_native 126
 function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::store_sorted 42

@@ -10929,6 +10929,13 @@ const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
 #[inline(always)]
 fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -> Ip {
     let (r, ip, view) = lane_frame_state(cx, frame, pc);
+    // A frame call or return reached from an out-of-line path is a nested call, not a
+    // sibling one, so a run of calls and returns with no backward jump between them grew the
+    // stack until it overflowed (mandreel). Below the floor the lane loop dispatches the
+    // record instead, from the frame state the context now holds.
+    if below_floor() {
+        return ip;
+    }
     next!(cx, r, ip, view)
 }
 

@@ -186,6 +186,19 @@ impl<H: Host> Vm<H> {
             || self.heap.string(search).is_some()
             || matches!(self.heap.get(search), Some(Cell::BigInt(_)));
         let elements = self.heap.array(array)?.elements();
+        let mut start = start;
+        if !by_contents {
+            // Identity: one word compare per element, as ai-astar's `openList.indexOf(node)`
+            // makes over a list of objects; a hole leaves the rest to the loop below.
+            let end = length.min(elements.len()).max(start);
+            match elements[start..end].iter().position(|value| *value == search || value.is_deleted()) {
+                Some(offset) if !elements[start + offset].is_deleted() => {
+                    return Some(Value::number((start + offset) as f64));
+                }
+                Some(offset) => start += offset,
+                None => return Some(Value::number(-1.0)),
+            }
+        }
         for (index, value) in elements.iter().enumerate().take(length).skip(start) {
             if value.is_deleted() {
                 if !self.inherited_index_absent(array, index) {

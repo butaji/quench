@@ -206,6 +206,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
+        crate::vm::freeze_source_call_sites(source);
         out.bool(source.call_sites.get().is_some());
         if let Some(sites) = source.call_sites.get() {
             out.u32(sites.len() as u32);

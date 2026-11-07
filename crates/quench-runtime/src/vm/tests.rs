@@ -2309,7 +2309,7 @@ fn hot_loop_keeps_branch_table_entries_as_jumps() {
     vm.execute(&program).unwrap();
     let name = vm.intern_atom("result");
     let value = vm.own_property(vm.realm.globals, name).unwrap();
-    assert_eq!(vm.to_string(&program, value).unwrap().to_string(), "3500000");
+    assert_eq!(vm.to_string(&program, value).unwrap(), "3500000");
 }
 
 #[test]
