@@ -15,7 +15,7 @@ use crate::shape::Measures;
 
 /// Expressions that read a name out of the guest program's code. A built-in's dispatch on a
 /// property key it defines reads the key at run time instead, and is not counted.
-const GUEST_NAME_READS: &[&str] = &["atoms [", "field_name (", "field_is ("];
+const GUEST_NAME_READS: &[&str] = &["atoms [", "atoms . get (", "field_name (", "field_is ("];
 
 /// Paths that hold only tests and benchmarks of Quench itself.
 const TEST_PATHS: &[&str] = &["test", "primitive_bench"];
@@ -61,6 +61,21 @@ fn specific_literals(tokens: &impl ToTokens) -> usize {
     }).sum()
 }
 
+/// Whether `expr` compares anything with a program-specific string literal.
+fn compares_literal(expr: &syn::Expr) -> bool {
+    struct Finds(bool);
+    impl<'ast> Visit<'ast> for Finds {
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            self.0 |= matches!(binary.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_))
+                && specific_literals(&binary.left) + specific_literals(&binary.right) > 0;
+            syn::visit::visit_expr_binary(self, binary);
+        }
+    }
+    let mut finds = Finds(false);
+    finds.visit_expr(expr);
+    finds.0
+}
+
 impl<'ast> Visit<'ast> for Tests {
     fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
         if matches!(binary.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_)) {
@@ -84,6 +99,17 @@ impl<'ast> Visit<'ast> for Tests {
         let tester = call.func.to_token_stream().to_string().ends_with("field_is");
         self.0 += usize::from(tester && call.args.iter().any(|arg| specific_literals(arg) > 0));
         syn::visit::visit_expr_call(self, call);
+    }
+
+    /// A name read and then tested in a closure (`atoms.get(atom).is_some_and(|name| name == "x")`).
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if reads_guest_name(&call.receiver) {
+            let mut inner = Tests(0);
+            call.args.iter().for_each(|arg| inner.visit_expr(arg));
+            let compares = call.args.iter().any(|arg| compares_literal(arg));
+            self.0 += usize::from(inner.0 == 0 && compares);
+        }
+        syn::visit::visit_expr_method_call(self, call);
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {

@@ -14018,8 +14018,8 @@ unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value]
 }
 
 /// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
-/// `receiver` and `args`: dense `push` and `pop`, `charCodeAt` and collection lookups in
-/// place, else `lane_string_or_native_call`. `None` leaves the call to the general path,
+/// `receiver` and `args`: the in-place cases every tier shares (`Vm::steady_native_value`),
+/// the lane's own, else `lane_string_or_native_call`. `None` leaves the call to the general path,
 /// which raises an error the call stashed in `Vm::lane_raised`. Out of line: its calls take
 /// stack temporaries, which a handler inlining them would hold on its common path.
 #[inline(never)]
@@ -14050,29 +14050,7 @@ fn lane_native_value<H: Host>(
                 return value;
             }
         }
-        Native::ArrayPush => return vm.array_push_dense(receiver, args),
-        Native::ArrayPop => return vm.array_pop_dense(receiver),
-        Native::StringCharCodeAt if !args.is_empty() => {
-            if let Some(value) = string_char_code_at(vm, receiver, args[0]) {
-                return Some(value);
-            }
-        }
-        Native::StringCharAt if !args.is_empty() => {
-            if let Some(value) = string_char_at_ascii(vm, receiver, args[0]) {
-                return Some(value);
-            }
-        }
-        Native::MapGet
-        | Native::MapHas
-        | Native::SetHas
-        | Native::WeakMapGet
-        | Native::WeakMapHas
-        | Native::WeakSetHas => {
-            let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-            if let Some(value) = vm.pure_collection_lookup(native, receiver, key) {
-                return Some(value);
-            }
-        }
+        _ if let Some(value) = vm.steady_native_value(native, receiver, args) => return Some(value),
         Native::MapSet if vm.map_set(receiver, args) => {
             note_allocation(vm);
             return Some(receiver);
@@ -14082,11 +14060,6 @@ fn lane_native_value<H: Host>(
             if let Some(object) = vm.object_create(proto) {
                 note_allocation(vm);
                 return Some(object);
-            }
-        }
-        Native::ArrayIsArray => {
-            if let Some(holds) = vm.steady_is_array(args.first().copied().unwrap_or(Value::UNDEFINED)) {
-                return Some(if holds { Value::TRUE } else { Value::FALSE });
             }
         }
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
@@ -14110,6 +14083,27 @@ fn lane_native_value<H: Host>(
         _ => {}
     }
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
+}
+
+impl<H: Host> Vm<H> {
+    /// A native call's value where its common case completes in place, without guest code,
+    /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
+    /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
+    /// own steps begin with the same cases.
+    pub(super) fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        let first = args.first().copied();
+        match native {
+            Native::ArrayPush => self.array_push_dense(receiver, args),
+            Native::ArrayPop => self.array_pop_dense(receiver),
+            Native::StringCharCodeAt => string_char_code_at(self, receiver, first?),
+            Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
+            Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
+            | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
+            Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
+                .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
+            _ => None,
+        }
+    }
 }
 
 /// `charCodeAt` of a flat string at an integer index: the unit there, or NaN outside the
