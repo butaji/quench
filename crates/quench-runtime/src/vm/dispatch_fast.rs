@@ -5024,7 +5024,7 @@ script_handler! {
             && value.is_some()
         {
             let vm = unsafe { vm(cx) };
-            if let Some(hint) = vm.own_data_field_hint(vm.realm.globals, atom) {
+            if let Some(hint) = vm.own_data_field_hint::<false>(vm.realm.globals, atom) {
                 set_field_hint(ip, hint);
                 requicken::<H>(ip, lane_load_root_var::<H>);
             }
@@ -12341,6 +12341,74 @@ script_handler! {
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
+    /// A `StoreName`'s first run: an assignment, outside a script's top level, to a name the
+    /// global object answers whenever no global lexical binding shadows it (as
+    /// `lane_load_name_first` decides for a read) takes `lane_store_global_name`; any other
+    /// store, an initializing one among them, always takes the general path.
+    #[inline(never)]
+    fn lane_store_name_first<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let function = vm
+            .lane_stack
+            .activations
+            .last()
+            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        let global = i.b == 0
+            && function != super::ROOT_FUNCTION_ID
+            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+            && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
+            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function);
+        if global {
+            requicken::<H>(ip, lane_store_global_name::<H>);
+            sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
+        }
+        requicken::<H>(ip, lane_exit::<H>);
+        exit(ip)
+    }
+}
+
+script_handler! {
+    /// A global name store (`lane_store_name_first`) through its record's hint: the global
+    /// object's own writable data field, which no realm's lexical declaration shadows while
+    /// the hint is held.
+    fn lane_store_global_name<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.hinted_own_field_store_hit(i.field_hint(), vm.realm.globals, i.imm(), r.get(i.a)) {
+            sibling!(lane_store_global_name_miss::<H>, r, ip, Carried::script(cx))
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_store_global_name` past its hint: the global object's own writable data field,
+    /// which becomes the hint where no realm declares the name lexically
+    /// (`Vm::global_name_hintable`); any other store takes the general path, a shadowed name's
+    /// from then on.
+    #[inline(never)]
+    fn lane_store_global_name_miss<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (atom, globals) = (i.imm(), vm.realm.globals);
+        // A lexical declaration of the name is never withdrawn, so its stores always take the
+        // general path.
+        if !vm.global_name_hintable(atom) {
+            requicken::<H>(ip, lane_exit::<H>);
+            return exit(ip);
+        }
+        let Some(hint) = vm
+            .own_data_field_hint::<true>(globals, atom)
+            .filter(|hint| vm.hinted_own_field_store_hit(*hint, globals, atom, r.get(i.a)))
+        else {
+            return exit(ip);
+        };
+        set_field_hint(ip, hint);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A `LoadName` of the global `undefined` (`lane_load_name_first`): its value, which no
     /// binding can change.
     fn lane_load_undefined_global<KIND: u8>(cx, r, ip, i, view) {
@@ -18235,6 +18303,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
+        Op::StoreName => Some(lane_store_name_first::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Op::DefineArrayElement => Some(lane_define_array_element::<H>),
         Op::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
@@ -19789,11 +19858,11 @@ fn derive_lane_view<'live, H: Host>(
 }
 
 /// Whether an instruction's record may hold an own-field hint (`LaneInstruction::field_hint`):
-/// a field read or store's of its receiver, and a global name or top-level `var` read's of the
-/// global object (`lane_load_global_name`, `lane_load_root_var`), except a call's, which keeps
-/// a call link.
+/// a field read or store's of its receiver, and a global name or top-level `var` read's or a
+/// global name store's of the global object (`lane_load_global_name`, `lane_load_root_var`,
+/// `lane_store_global_name`), except a call's, which keeps a call link.
 fn holds_field_hint(op: Op) -> bool {
-    matches!(op, Op::GetField | Op::SetField | Op::LoadName | Op::LoadNameTypeof | Op::LoadCapture)
+    matches!(op, Op::GetField | Op::SetField | Op::LoadName | Op::LoadNameTypeof | Op::LoadCapture | Op::StoreName)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
