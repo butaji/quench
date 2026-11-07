@@ -57,6 +57,10 @@ pub(in crate::vm) fn with_switch<R>(switch: &Switch, enabled: bool, run: impl Fn
     run()
 }
 
+/// A `tier-stress` build turns on every JavaScript compilation arm, so its Test262 run checks
+/// each tier against the interpreter.
+const STRESS: bool = cfg!(feature = "tier-stress");
+
 /// Wasm modules stay selective for good, compiling only their hot roots
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
@@ -66,9 +70,9 @@ pub(in crate::vm) static WASM_JIT_ROOT_FIRST: Switch = Switch::new("QUENCH_WASM_
 /// TOD-191's correctness oracle may force hot candidates past the payback model so guarded
 /// exits can be tested independently of profitability. Diagnostic only; never set by score
 /// harnesses.
-pub(in crate::vm) static JS_JIT_UNPRICED_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH", false);
-pub(in crate::vm) static JS_JIT_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_DISPATCH", false);
-pub(in crate::vm) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_METHODS", false);
+pub(in crate::vm) static JS_JIT_UNPRICED_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH", STRESS);
+pub(in crate::vm) static JS_JIT_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_DISPATCH", STRESS);
+pub(in crate::vm) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_METHODS", STRESS);
 
 #[cfg(test)]
 const ALL: &[&Switch] = &[

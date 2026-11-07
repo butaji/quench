@@ -114,7 +114,20 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
 
-pub(in crate::vm) const TIERS: Tiers = Tiers {
+/// The thresholds every tier controller compares against: the measured row, or under
+/// `tier-stress` the floor row, which makes every eligible site compile on its first chance.
+pub(in crate::vm) const TIERS: Tiers = if cfg!(feature = "tier-stress") { STRESS } else { MEASURED };
+
+/// Each threshold at the least value its controller accepts. Thresholds only price
+/// compilation, so this row must compute what `MEASURED` computes.
+const STRESS: Tiers = Tiers {
+    loops: Loops { threshold: 2, ..MEASURED.loops },
+    lane_body: LaneBody { warmup_entries: 2, trial_runs: 2, reoptimize_exits: 2, min_instructions: 0, ..MEASURED.lane_body },
+    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
+    wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+};
+
+const MEASURED: Tiers = Tiers {
     loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, element_sample: 8, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
@@ -135,6 +148,12 @@ pub(in crate::vm) const TIERS: Tiers = Tiers {
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
 };
+
+/// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
+/// observes every PC up to its stop, and a tier would run past it.
+pub(in crate::vm) const fn tiers_enter(stops: bool) -> bool {
+    crate::DYNAMIC_EXECUTION_ENABLED && !stops
+}
 
 /// What a memory policy lets the tiers compile.
 pub(in crate::vm) struct PolicyTiers {

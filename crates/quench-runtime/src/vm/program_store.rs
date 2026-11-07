@@ -176,7 +176,6 @@ fn promote_general_dispatch_if_paid(
         JsTierState::Hot { .. }
             | JsTierState::Rejected { .. }
             | JsTierState::GeneralPromotionPending { .. }
-            | JsTierState::Unsupported
     ) || !general_dispatch_work_due(
         accumulated_work,
         u64::try_from(instructions.max(1)).unwrap_or(u64::MAX),
@@ -388,6 +387,8 @@ pub(super) enum JsTierState {
         entries: u64,
         reason: &'static str,
     },
+    /// Terminal: no tier compiles the function again. Its rejections are deterministic (the same
+    /// bytecode lowers to the same code), so a retry only repeats the compile.
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
@@ -2360,7 +2361,6 @@ impl ProgramStore {
                         JsTierState::Hot { .. }
                             | JsTierState::Rejected { .. }
                             | JsTierState::GeneralPromotionPending { .. }
-                            | JsTierState::Unsupported
                     )
                 )
         }) {
