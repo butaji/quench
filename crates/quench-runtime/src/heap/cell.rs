@@ -11,8 +11,10 @@ use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod modes;
 mod prototype_values;
 mod snapshot;
+pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
@@ -1859,10 +1861,7 @@ struct ObjectExtras {
     /// An array's storage position, displaced from its first payload word.
     arena_start: u32,
     arguments_map: Option<Vec<u16>>,
-    arguments_object: bool,
-    raw_json: bool,
-    error_data: bool,
-    module_namespace: bool,
+    brand: ObjectBrand,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
     structured_serialization: StructuredSerialization,
@@ -1871,17 +1870,9 @@ struct ObjectExtras {
     deferred_module: Option<crate::ModuleSource>,
     private_elements: Vec<PrivateElement>,
     stack_data: Option<StackData>,
-    /// An index-keyed property descriptor has been recorded for this object; never cleared.
-    indexed_descriptors: bool,
-    /// A `length` descriptor has been recorded for this object, as a non-writable array
-    /// length is; never cleared.
-    length_descriptor: bool,
-    /// Any property descriptor beside the shape has been recorded for this object
-    /// (`Vm::insert_descriptor`); never cleared.
-    side_descriptors: bool,
-    /// The array has held sparse elements (`Heap::sparse_set`), so its length may exceed its
-    /// dense elements'; never cleared. An array without extras has its dense length.
-    sparse_elements: bool,
+    /// What has been recorded about the object's properties beside its shape; bits are set
+    /// once and never cleared (`ElementFacts`).
+    element_facts: ElementFacts,
     /// A prototype's subject in its heap's dependency table, which its layout and element
     /// changes retire (`Object::note_prototype_layout_change`).
     watch: super::dependencies::Watch,
@@ -2536,7 +2527,7 @@ impl Object {
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
     pub(crate) fn error(proto: Value) -> Self {
         let mut object = Self::new(proto);
-        object.extras_mut().error_data = true;
+        object.extras_mut().brand = ObjectBrand::Error;
         object
     }
 
@@ -2559,7 +2550,7 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.error_data)
+        self.brand() == ObjectBrand::Error
     }
 
     /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
@@ -2672,8 +2663,24 @@ impl Object {
     /// namespace, whose exotic own properties its shape does not describe.
     #[inline(always)]
     pub(crate) fn admits_cached_add(&self) -> bool {
-        self.is_extensible()
-            && self.extras().is_none_or(|extras| !extras.arguments_object && !extras.module_namespace)
+        self.is_extensible() && !self.has_exotic_access()
+    }
+    /// Whether the object's property access is not the ordinary one its shape describes: an
+    /// arguments object, a module namespace or a proxy's own object. A header bit, so fast
+    /// paths need not read the extras (`ObjectBrand`).
+    #[inline(always)]
+    pub(crate) fn has_exotic_access(&self) -> bool {
+        self.auxiliary & crate::value_vec::EXOTIC_ACCESS != 0
+    }
+    fn brand(&self) -> ObjectBrand {
+        self.extras().map_or(ObjectBrand::Ordinary, |extras| extras.brand)
+    }
+    #[inline(always)]
+    fn element_facts(&self) -> ElementFacts {
+        self.extras().map_or(ElementFacts(0), |extras| extras.element_facts)
+    }
+    fn mark_element_fact(&mut self, bit: u8) {
+        self.extras_mut().element_facts.0 |= bit;
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
@@ -2708,62 +2715,57 @@ impl Object {
         self.extras_mut().arguments_map = Some(mapping);
     }
     pub(crate) fn set_arguments_object(&mut self) {
-        self.extras_mut().arguments_object = true;
+        self.extras_mut().brand = ObjectBrand::Arguments;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     /// Whether the object's elements are ordinary and all dense, as `dense_array_length`
     /// needs them: it is extensible and not frozen, and holds no indexed or `length`
     /// descriptor, no arguments mapping and never held sparse elements
-    /// (`mark_sparse_elements`, which every sparse write makes). Read from the integrity bits
-    /// and one extras record.
+    /// (`mark_sparse_elements`, which every sparse write makes). Read from the header bits
+    /// and one mask of the extras' element facts.
     #[inline(always)]
     pub(crate) fn holds_ordinary_elements(&self) -> bool {
         self.meta & VALUE_VEC_INTEGRITY_BITS == 0
-            && self.extras().is_none_or(|extras| {
-                !extras.indexed_descriptors
-                    && !extras.arguments_object
-                    && !extras.length_descriptor
-                    && !extras.sparse_elements
-            })
+            && !self.has_exotic_access()
+            && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.arguments_object)
+        self.brand() == ObjectBrand::Arguments
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.indexed_descriptors)
+        self.element_facts().has(ElementFacts::INDEXED_DESCRIPTORS)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.note_prototype_layout_change();
         super::array_proofs::retire_array_storage_proofs();
-        self.extras_mut().indexed_descriptors = true;
+        self.mark_element_fact(ElementFacts::INDEXED_DESCRIPTORS);
     }
     pub(crate) fn mark_sparse_elements(&mut self) {
-        self.extras_mut().sparse_elements = true;
+        self.mark_element_fact(ElementFacts::SPARSE_ELEMENTS);
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.length_descriptor)
+        self.element_facts().has(ElementFacts::LENGTH_DESCRIPTOR)
     }
     pub(crate) fn mark_length_descriptor(&mut self) {
-        self.extras_mut().length_descriptor = true;
+        self.mark_element_fact(ElementFacts::LENGTH_DESCRIPTOR);
     }
     /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
     /// object without one need not probe the table.
     #[inline(always)]
     pub(crate) fn has_side_descriptors(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.side_descriptors)
+        self.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)
     }
     /// A prototype's side descriptors can name keys its shape lacks, which retires the
     /// proofs (`prototype_layout_epoch`) that found them absent.
     pub(crate) fn mark_side_descriptors(&mut self) {
         self.note_prototype_layout_change();
-        self.extras_mut().side_descriptors = true;
+        self.mark_element_fact(ElementFacts::SIDE_DESCRIPTORS);
     }
     pub(crate) fn is_raw_json(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.raw_json)
+        self.brand() == ObjectBrand::RawJson
     }
     pub(crate) fn set_raw_json(&mut self) {
-        self.extras_mut().raw_json = true;
+        self.extras_mut().brand = ObjectBrand::RawJson;
     }
 
     pub(crate) fn external_address(&self) -> Option<usize> {
@@ -2776,7 +2778,7 @@ impl Object {
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.module_namespace)
+        self.brand() == ObjectBrand::ModuleNamespace
     }
     /// A proxy's own object: the handler answers every access, so no shape a cache records
     /// may match it.
@@ -2786,7 +2788,7 @@ impl Object {
         object
     }
     pub(crate) fn set_module_namespace(&mut self) {
-        self.extras_mut().module_namespace = true;
+        self.extras_mut().brand = ObjectBrand::ModuleNamespace;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
@@ -3566,15 +3568,15 @@ impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
 /// An iterator's protocol caches, helper state and generator record: needed by
 /// helpers, wrapped iterators and generators, while built-in stepping only reads
 /// `source`, `kind`, `index` and `done`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct IteratorExt {
     /// Upper half of the iterator position; nonzero only for array-likes iterated past
     /// 2^32 elements, whose lengths reach 2^53 - 1.
     pub(crate) position_high: u32,
     pub(crate) next_method: Option<Value>,
     pub(crate) helper: Option<Box<IteratorHelper>>,
-    pub(crate) helper_running: bool,
-    pub(crate) helper_started: bool,
+    /// Where `helper` is in its life; the record's `done` ends it.
+    pub(crate) helper_phase: HelperPhase,
     pub(crate) generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
 }
 
@@ -3817,14 +3819,12 @@ pub(crate) enum Cell {
         kind: TypedArrayKind,
         object: Box<BufferViewObject>,
         buffer: Value,
-        length: usize,
-        length_tracking: bool,
+        length: ViewLength,
     },
     DataView {
         object: Box<BufferViewObject>,
         buffer: Value,
-        length: usize,
-        length_tracking: bool,
+        length: ViewLength,
     },
     Map {
         object: Box<Object>,

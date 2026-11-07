@@ -63,25 +63,23 @@ impl<H: Host> Vm<H> {
                 object,
                 buffer,
                 length,
-                length_tracking,
             }) => Some(Metadata::View {
                 kind: format!("{:?}", kind),
                 buffer: *buffer,
                 offset: object.offset,
-                length: *length,
-                tracking: *length_tracking,
+                length: length.get().unwrap_or(0),
+                tracking: length.is_tracking(),
             }),
             Some(Cell::DataView {
                 object,
                 buffer,
                 length,
-                length_tracking,
             }) => Some(Metadata::View {
                 kind: "DataView".into(),
                 buffer: *buffer,
                 offset: object.offset,
-                length: *length,
-                tracking: *length_tracking,
+                length: length.get().unwrap_or(0),
+                tracking: length.is_tracking(),
             }),
             _ => None,
         })
@@ -226,8 +224,7 @@ impl<H: Host> Vm<H> {
                             offset: *offset,
                         }),
                         buffer,
-                        length: *length,
-                        length_tracking: *tracking,
+                        length: crate::heap::ViewLength::new(*length, *tracking),
                     })
                 } else {
                     let kind = match kind.as_str() {
@@ -265,8 +262,7 @@ impl<H: Host> Vm<H> {
                             offset: *offset,
                         }),
                         buffer,
-                        length: *length,
-                        length_tracking: *tracking,
+                        length: crate::heap::ViewLength::new(*length, *tracking),
                     })
                 }
             }

@@ -9315,16 +9315,10 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     index: 0,
                     done: false,
                     ext: crate::heap::IteratorExt {
-                        position_high: 0,
-                        next_method: None,
-                        helper: None,
-                        helper_running: false,
-                        helper_started: false,
                         generator: Some(Box::new(GeneratorRecord {
                             continuation: Some(continuation),
                             realm,
-                            done: false,
-                            running: false,
+                            state: super::activation::GeneratorState::Suspended,
                             requests: [AsyncGeneratorRequest {
                                 operation: AsyncGeneratorOperation::Next,
                                 promise: request_promise,
@@ -9332,6 +9326,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                             }]
                             .into(),
                         })),
+                        ..Default::default()
                     },
                 });
                 vm.heap.root(value)
@@ -9667,14 +9662,7 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                         kind: super::IteratorKind::AsyncFromSync,
                         index: 0,
                         done: false,
-                        ext: crate::heap::IteratorExt {
-                            position_high: 0,
-                            next_method: None,
-                            helper: None,
-                            helper_running: false,
-                            helper_started: false,
-                            generator: None,
-                        },
+                        ext: crate::heap::IteratorExt::default(),
                     }),
                 };
                 let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -9876,8 +9864,6 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     index: 0,
                     done: false,
                     ext: crate::heap::IteratorExt {
-                        position_high: 0,
-                        next_method: None,
                         helper: Some(Box::new(
                             crate::heap::IteratorHelper::RegExpStringMatchAll {
                                 input: JsString::from_units(if full {
@@ -9889,9 +9875,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                                 unicode: true,
                             },
                         )),
-                        helper_running: false,
-                        helper_started: false,
-                        generator: None,
+                        ..Default::default()
                     },
                 });
                 let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());

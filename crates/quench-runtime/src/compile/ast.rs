@@ -10,6 +10,7 @@ mod literal_template;
 mod object;
 mod optional;
 mod statement;
+mod static_constants;
 mod super_ops;
 mod try_statement;
 
@@ -58,6 +59,9 @@ struct IteratorClosure {
 struct LexicalScope {
     bindings: FxHashMap<Atom, Atom>,
     kinds: FxHashMap<Atom, LexicalBindingKind>,
+    /// The static values of its initialized `const` bindings; `None` where control can enter
+    /// past a declaration (a switch's cases), so no read folds (`static_constants`).
+    constants: Option<FxHashMap<Atom, Constant>>,
     catch_parameter: bool,
     pub(super) with_depth: u16,
 }
@@ -885,22 +889,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         bindings: FxHashMap<Atom, Atom>,
         immutable: FxHashSet<Atom>,
     ) {
-        let kinds = bindings
-            .keys()
-            .map(|atom| {
-                (
-                    *atom,
-                    if immutable.contains(atom) {
-                        LexicalBindingKind::Immutable
-                    } else {
-                        LexicalBindingKind::Mutable
-                    },
-                )
-            })
-            .collect();
+        let kind = |atom| if immutable.contains(atom) { LexicalBindingKind::Immutable } else { LexicalBindingKind::Mutable };
+        let kinds = bindings.keys().map(|atom| (*atom, kind(atom))).collect();
         self.enter_lexical_scope(LexicalScope {
             bindings,
             kinds,
+            constants: Some(FxHashMap::default()),
             catch_parameter: false,
             with_depth: self.with_depth,
         });
@@ -915,6 +909,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.enter_lexical_scope(LexicalScope {
             bindings: FxHashMap::from_iter([(name, binding)]),
             kinds: FxHashMap::from_iter([(name, LexicalBindingKind::FunctionName)]),
+            constants: None,
             catch_parameter: false,
             with_depth: self.with_depth,
         });
@@ -1055,6 +1050,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             self.collect_lexical_binding(statement, &mut scope, &mut immutable);
         }
         self.push_immutable_lexical_bindings(scope, immutable);
+        self.lexical_scopes.last_mut().expect("switch lexical scope").constants = None;
         self.initialize_lexical_scope();
     }
 

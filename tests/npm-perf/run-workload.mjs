@@ -239,7 +239,7 @@ async function runOne(spec, round) {
       QUENCH_BENCH_ROUNDS: env.QUENCH_BENCH_ROUNDS ?? "5000",
       QUENCH_BENCH_WARMUPS: env.QUENCH_BENCH_WARMUPS ?? "250",
       ...Object.fromEntries([
-        "QUENCH_MEMORY_POLICY",
+        "QUENCH_DEV",
         "QUENCH_STARTUP_SNAPSHOT",
         "QUENCH_COMPILE_CACHE",
         "QUENCH_GC_YOUNG",

@@ -1,5 +1,6 @@
 use super::property_key::PropertyKey;
 use super::*;
+pub(super) use super::shape_lookup::derive_shape_lookup_index;
 use crate::value::HeapReference;
 
 #[cfg(all(test, feature = "aot"))]
@@ -174,54 +175,6 @@ mod shape_trace {
             eprintln!("  shape {count:>9} {label}");
         }
     }
-}
-
-pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
-    let mut entries = Vec::new();
-    let mut seen_keys = FxHashSet::default();
-    let mut seen_slots = FxHashSet::default();
-    let mut attributes = FxHashMap::default();
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        let shape = &shapes[id as usize];
-        match shape.transition {
-            ShapeTransition::Add {
-                key,
-                slot,
-                attributes: value,
-            } => {
-                if seen_keys.insert(key) {
-                    entries.push((key, slot));
-                }
-                if seen_slots.insert(slot) && value != DEFAULT_DATA_ATTRIBUTES {
-                    attributes.insert(slot, value.shape());
-                }
-            }
-            ShapeTransition::Delete { key, slot } => {
-                seen_keys.insert(key);
-                seen_slots.insert(slot);
-            }
-            ShapeTransition::Descriptor {
-                slot,
-                attributes: value,
-            } => {
-                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
-                    attributes.insert(slot, value);
-                }
-            }
-            ShapeTransition::FunctionName { .. }
-            | ShapeTransition::FunctionNameReconfigured
-            | ShapeTransition::FunctionLengthReconfigured
-            | ShapeTransition::Constructed { .. }
-            | ShapeTransition::Root
-            | ShapeTransition::Vacant
-            | ShapeTransition::Dictionary { .. } => {}
-        }
-        current = shape.parent();
-    }
-    entries.reverse();
-    entries.shrink_to_fit();
-    ShapeLookupIndex::new(entries, attributes)
 }
 
 /// What the inline field caches know about one read.
@@ -871,8 +824,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(holder) else {
                 return false;
             };
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || data.boxed_primitive().is_some()
                 || !self.lacks_own_index(holder, index)
             {
@@ -918,8 +870,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(holder) else {
                 return false;
             };
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || data.boxed_primitive().is_some()
                 || data.has_indexed_descriptors()
                 || self.shape_has_index_key(data.shape())
@@ -3429,8 +3380,7 @@ impl<H: Host> Vm<H> {
             }
             let data = self.inherited_chain_link(prototype, atom, function_links)?;
             let shape = data.shape();
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || self.shape_is_dictionary(shape)
             {
                 return None;
@@ -3967,7 +3917,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.object(object) else {
             return false;
         };
-        if data.is_module_namespace() || data.is_arguments_object() {
+        if data.has_exotic_access() {
             return false;
         }
         let index = self.field_cache_index(site);
@@ -4486,8 +4436,7 @@ impl<H: Host> Vm<H> {
             }
             let data = self.heap.object_record(prototype)?;
             let shape = data.shape();
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || self.shape_is_dictionary(shape)
                 || self
                     .property_attributes(prototype, key)
@@ -4625,8 +4574,7 @@ impl<H: Host> Vm<H> {
                 return false;
             };
             if data.shape() != *expected_shape
-                || data.is_module_namespace()
-                || data.is_arguments_object()
+                || data.has_exotic_access()
             {
                 return false;
             }
@@ -4653,7 +4601,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.object(object) else {
             return false;
         };
-        if data.is_module_namespace() || data.is_arguments_object() {
+        if data.has_exotic_access() {
             return false;
         }
         let site = self.field_cache_index(site);

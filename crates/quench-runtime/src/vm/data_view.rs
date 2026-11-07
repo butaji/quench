@@ -171,8 +171,7 @@ impl<H: Host> Vm<H> {
                 offset,
             }),
             buffer,
-            length,
-            length_tracking: self.array_buffer_resizable(buffer) && requested_length.is_none(),
+            length: crate::heap::ViewLength::new(length, self.array_buffer_resizable(buffer) && requested_length.is_none()),
         }))
     }
 
@@ -192,21 +191,14 @@ impl<H: Host> Vm<H> {
                 buffer,
                 object,
                 length,
-                length_tracking,
                 ..
             }) => Some((
                 *buffer,
                 object.offset,
-                if *length_tracking {
-                    match self.heap.get(*buffer) {
-                        Some(Cell::ArrayBuffer { bytes, .. }) => {
-                            bytes.len().saturating_sub(object.offset)
-                        }
-                        _ => 0,
-                    }
-                } else {
-                    *length
-                },
+                length.get().unwrap_or_else(|| match self.heap.get(*buffer) {
+                    Some(Cell::ArrayBuffer { bytes, .. }) => bytes.len().saturating_sub(object.offset),
+                    _ => 0,
+                }),
             )),
             _ => None,
         }
@@ -231,8 +223,7 @@ impl<H: Host> Vm<H> {
                 object,
                 buffer,
                 length,
-                length_tracking: false,
-            } => (*buffer, object.offset, *length),
+            } => (*buffer, object.offset, length.get()?),
             _ => return None,
         };
         let index = args

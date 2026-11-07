@@ -1,13 +1,11 @@
 //! Memoized atom answers for names. Host glue passes the same `&'static str` property
 //! names on every call, so the text's address and length usually name its atom; each hit is
 //! still confirmed against the atom's text, which keeps a reused address of a transient
-//! string from ever answering wrongly. A keyed access passes the same heap strings (a
-//! bytecode constant's `'data'`, a header name) on every call: a heap string's text never
-//! changes and its value names the same cell while the collection epoch holds, so its value
-//! under that epoch names its atom outright. Entries are dropped when atoms are reassigned
-//! (VM reset, snapshot restore).
+//! string from ever answering wrongly. A heap string's atom is the string record's own
+//! (`Heap::string_atom`). Entries are dropped when atoms are reassigned (VM reset, snapshot
+//! restore).
 
-use super::{Atom, Value};
+use super::Atom;
 
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;
@@ -39,21 +37,9 @@ struct Entry {
     atom: Atom,
 }
 
-/// Direct-mapped heap-string entries: a power of two that holds the distinct string keys a
-/// request's keyed accesses use (event names, header names, option keys).
-const STRING_ATOM_MEMO_ENTRIES: usize = 1 << 8;
-
-#[derive(Clone, Copy)]
-struct StringEntry {
-    string: Value,
-    epoch: u64,
-    atom: Atom,
-}
-
 #[derive(Default)]
 pub(super) struct NameAtomMemo {
     entries: super::shape_memo::DirectMappedTable<Entry, NAME_ATOM_MEMO_ENTRIES>,
-    strings: super::shape_memo::DirectMappedTable<StringEntry, STRING_ATOM_MEMO_ENTRIES>,
     #[cfg(feature = "profile-memory")]
     query_counts: std::cell::Cell<[u64; QueryOutcome::COUNT]>,
 }
@@ -97,24 +83,8 @@ impl NameAtomMemo {
         self.entries.set(Self::index(name), Entry { address: name.as_ptr() as usize, len: name.len(), atom });
     }
 
-    fn string_index(string: Value) -> usize {
-        super::shape_memo::direct_mapped_index(string, STRING_ATOM_MEMO_ENTRIES)
-    }
-
-    /// The existing atom the heap string `string` names, recorded under collection `epoch`.
-    #[inline(always)]
-    pub(super) fn string_atom(&self, string: Value, epoch: u64) -> Option<Atom> {
-        let entry = self.strings.get(Self::string_index(string))?;
-        (entry.string == string && entry.epoch == epoch).then_some(entry.atom)
-    }
-
-    pub(super) fn record_string(&self, string: Value, epoch: u64, atom: Atom) {
-        self.strings.set(Self::string_index(string), StringEntry { string, epoch, atom });
-    }
-
     pub(super) fn clear(&self) {
         self.entries.clear();
-        self.strings.clear();
     }
 }
 

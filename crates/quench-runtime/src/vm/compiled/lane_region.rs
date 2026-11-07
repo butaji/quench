@@ -208,7 +208,8 @@ impl ReceiverRecovery {
     fn for_body(body: &crate::bytecode::Function) -> Self {
         if body.instructions().all(|instruction| {
             !instruction.writes_current_this()
-                && !matches!(instruction.op(), Op::LoadThis | Op::SetThisField | Op::SetThisFieldStrict)
+                && instruction.op() != Op::LoadThis
+                && !instruction.stores_to_this()
                 && (instruction.op() != Op::GetField || matches!(instruction.field_lookup(),
                     Some(FieldLookup::Atom { base, .. }) if base != crate::bytecode::FieldBase::THIS))
         }) { Self::ObjectOrNullish } else { Self::Object }
@@ -951,8 +952,7 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
 /// Whether `instruction` is a store natively: of its atom, into a slot the object already
 /// has, so it changes no shape, layout or other property; anything else leaves first.
 fn stores_own(instruction: WideInstruction) -> bool {
-    matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict)
-        && !instruction.returns_from_frame()
+    instruction.op().is_field_store() && !instruction.returns_from_frame()
 }
 
 /// Whether `instruction` is an element store natively: into a record array, whose elements
@@ -1178,9 +1178,9 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
                 }
             }
             if stores_own(instruction) {
-                let receiver = match instruction.op() {
-                    Op::SetField | Op::SetFieldStrict => Some(instruction.register_b()),
-                    _ => match unit.origins[pc] {
+                let receiver = match instruction.field_store_register() {
+                    Some(register) => Some(register),
+                    None => match unit.origins[pc] {
                         super::lane_unit::Origin::Inlined { frame, .. } => Some(unit.frames[frame].receiver),
                         _ => None,
                     },
@@ -2059,7 +2059,7 @@ impl Lowering<'_, '_> {
         // run that makes no call changes neither (`emit_js_own_field_set`, `store_field`).
         let mut store_atoms = BTreeMap::new();
         let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => Some(instruction.atom_index()),
+            op if op.is_field_store() => Some(instruction.atom_index()),
             Op::GetField if instruction.writes_current_this() => match instruction.field_lookup() {
                 Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
                 _ => None,
@@ -2085,8 +2085,7 @@ impl Lowering<'_, '_> {
         self.builder.def_var(capture_len, len);
         let mut miss = None;
         let object_table = instructions.iter().enumerate().any(|(pc, instruction)|
-            self.facts.reached(pc) && matches!(instruction.op(),
-                Op::GetField | Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict))
+            self.facts.reached(pc) && instruction.op().is_named_field_access())
             .then(|| {
                 let base = emit_js_payload_word(&mut self.builder, self.payload,
                     std::mem::offset_of!(JsStepDispatch, object_record_base));
@@ -2174,12 +2173,12 @@ impl Lowering<'_, '_> {
                             }
                             _ => {},
                         },
-                        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => sites.push(instruction.cache_site_index()),
+                        op if op.is_field_store() => sites.push(instruction.cache_site_index()),
                         _ => {},
                     }
                     let repeated = _loops.iter().any(|&(header, back)| (header..=back).contains(&pc));
                     for site in sites {
-                        let writes = if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) {
+                        let writes = if instruction.op().is_field_store() {
                             self.facts.before(pc, instruction.register_a(), instructions, _leaders,
                                 &self.program.constants, &writes, self.native_calls)
                         } else if instruction.writes_current_this()
@@ -2217,7 +2216,7 @@ impl Lowering<'_, '_> {
         // writes once per physical slot, independently of cache-row binding availability.
         let mut domains = BTreeMap::<(u32, u16), Type>::new();
         for instruction in instructions {
-            if !matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) { continue; }
+            if !instruction.op().is_field_store() { continue; }
             if let Some(fields) = self.fields.get(&instruction.cache_site_index())
                 && let [field] = fields.as_slice()
                 && field.ty != Type::NEVER {
@@ -2278,10 +2277,10 @@ impl Lowering<'_, '_> {
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
                         else { base.register_index().map(usize::from) })
                 }
-                Op::SetField | Op::SetFieldStrict => Some(usize::from(instruction.register_b())),
-                Op::SetThisField | Op::SetThisFieldStrict => Some(match self.unit.origins[pc] {
-                    super::lane_unit::Origin::Inlined { frame, .. } => usize::from(self.unit.frames[frame].receiver),
-                    _ => count,
+                op if op.is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
+                    (Some(register), _) => usize::from(register),
+                    (None, super::lane_unit::Origin::Inlined { frame, .. }) => usize::from(self.unit.frames[frame].receiver),
+                    (None, _) => count,
                 }),
                 _ => None,
             };
@@ -2583,7 +2582,7 @@ impl Lowering<'_, '_> {
             }
             Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
                 .iter().all(|register| *register < self.unit.registers) => Some(self.set_index(state, pc32, instruction)),
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
+            _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction)
             }
@@ -4729,8 +4728,8 @@ impl Lowering<'_, '_> {
         if source >= self.unit.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
             return None;
         }
-        let register = if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
-            Some(instruction.register_b())
+        let register = if let Some(register) = instruction.field_store_register() {
+            Some(register)
         } else if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc) {
             Some(self.unit.frames[*frame].receiver)
         } else { None };

@@ -1037,7 +1037,7 @@ pub(super) fn captured_field_store_candidate(
                 || capture.result_register() == read.result_register()
                 || binary.operand_b().register_index() != Some(read.result_register())
                 || binary.operand_c().register_index() != Some(capture.result_register())
-                || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+                || !store.stores_to_this()
                 || atom != store.atom_index()
             { return None; }
             let operation = super::operations::NumberBitwise::from_js_instruction(binary.op(), binary.binary_operator())?;
@@ -1047,7 +1047,7 @@ pub(super) fn captured_field_store_candidate(
     };
     if capture.result_flags() != 0
         || capture.capture_depth() != 0
-        || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        || !store.stores_to_this()
         || store.result_flags() != 0 || store.register_a() != source
         || undefined.op() != Op::LoadConst || undefined.result_flags() != 0
         || !matches!(program.constants.get(undefined.constant_index()), Some(crate::bytecode::Constant::Undefined))

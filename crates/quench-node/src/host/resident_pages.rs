@@ -26,10 +26,6 @@ pub extern "C" fn quench_entry_compiled() {
 #[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
 
-/// Opts into platform-specific resident-memory readings at start-up phase boundaries.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const RSS_PHASES_ENV: &str = "QUENCH_RSS_PHASES";
-
 /// The kernel's per-process status, for `phase_peak`.
 #[cfg(target_os = "linux")]
 const STATUS_PATH: &str = "/proc/self/status";
@@ -40,13 +36,13 @@ const RESET_PEAK: &str = "5";
 #[cfg(target_os = "linux")]
 const CLEAR_REFS_PATH: &str = "/proc/self/clear_refs";
 
-/// Diagnostic (`RSS_PHASES_ENV`): reports on stderr the peak resident set since the previous
+/// Diagnostic (`QUENCH_TRACE=rss-phases`): reports on stderr the peak resident set since the previous
 /// boundary, and the resident anonymous and file pages now, then resets the peak, so that
 /// each phase of a run (load, start-up, entry compilation, the run up to its first
 /// collection, the rest) reports its own peak.
 #[cfg(target_os = "linux")]
 pub fn phase_peak(phase: &str) {
-    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+    if !quench_runtime::trace::Channel::RssPhases.on() {
         return;
     }
     let status = std::fs::read_to_string(STATUS_PATH).unwrap_or_default();
@@ -66,7 +62,7 @@ pub fn phase_peak(phase: &str) {
 /// boundary samples, not Linux's resettable per-phase peak or anonymous/file split.
 #[cfg(target_os = "macos")]
 pub fn phase_peak(phase: &str) {
-    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+    if !quench_runtime::trace::Channel::RssPhases.on() {
         return;
     }
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
@@ -103,8 +99,8 @@ const CODE_MAPPING: &str = "r-xp";
 /// (`at_compile_phase`) each come at most once per this interval,
 /// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
 /// the same loader and compiler code, which a release would only refault (semver scenario
-/// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
-/// even a 10 ms interval there raised V8-v7 NavierStokes max RSS 5236 -> 5516 KiB.
+/// 926 -> 741 ms). Collections release them only under memory-first
+/// (`release_at_collection`).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -173,28 +169,26 @@ pub fn release_read_only_pages() {
     }
 }
 
-/// How far apart the default policy's collection-time releases are kept
-/// (`release_at_collection`): V8-v7 Richards no-JIT max RSS 3196-3296 KiB at
-/// `LOAD_RELEASE_INTERVAL`, 3048 at 10 ms and at 2 ms, Score unchanged (static incremental
-/// production build, pinned, x86_64 4 vCPU, 2026-11-01): past 10 ms what stays resident between
-/// releases is the run's working set.
+/// The least time between the default policy's collection-time trims (`release_at_collection`):
+/// V8-v7 Richards no-JIT max RSS 3196-3296 KiB at 100 ms, 3048 at 10 and 2 ms (x86_64, 2026-11-01).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
-/// The release at a collection boundary (`at_collection_boundary`): the read-only pages and
-/// the allocator's free pages. A policy that returns pages at collections releases at every
-/// boundary; the default releases at most once per `COLLECTION_RELEASE_INTERVAL` on the shared
-/// release clock, so a run's hot code refaults at most that often. Without it the default
-/// kept every code page a run had touched and every free page its sweeps left: V8-v7
-/// Richards max RSS about 10 MB against 3.8 MB released at every boundary, while releasing at
-/// every young collection cost RayTrace about 40% of its Score in refaults.
+/// A collection boundary's release (`at_collection_boundary`). Memory-first returns the
+/// read-only pages and the system allocator's free pages at every boundary. The default only
+/// trims, paced, and keeps the code a run executes again right after: releasing it lowered no
+/// JetStream 3 peak RSS (8 tests, x86_64, 2026-11-07) and cost Babylon 12% of its score.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_at_collection(returns_pages: bool) {
-    if !returns_pages && released_within(COLLECTION_RELEASE_INTERVAL) {
-        return;
+    static LAST_TRIM: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let mut last = LAST_TRIM.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if returns_pages || last.is_none_or(|last| last.elapsed() >= COLLECTION_RELEASE_INTERVAL) {
+        *last = Some(std::time::Instant::now());
+        if returns_pages {
+            release_read_only_pages();
+        }
+        release_free_heap_pages();
     }
-    release_read_only_pages();
-    release_free_heap_pages();
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
