@@ -5,7 +5,7 @@ use super::errors::{self, StreamError};
 use super::readable::{adopt_options, encode, is_buffer, is_view, length_of, needs_new, shape_events, view_to_buffer};
 use super::state::{self, bits, change, reset_buffer, writable::*};
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsics, is_null,
+    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsic, intrinsics, is_null,
     is_nullish, is_string, next_tick, number, put, put_number, put_slot, tick, Class, Context, Key, Outcome, Slot,
     Tick,
 };
@@ -45,7 +45,7 @@ pub(crate) fn constructor(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
             super::utils::add_abort_signal(c, signal, this)?;
         }
     }
-    let stream = intrinsics(c)?.class(Class::Stream);
+    let stream = intrinsic(c, |i| i.class(Class::Stream))?;
     c.call_rooted(stream, this, &[options])?;
     destroy::construct_if_defined(c, this)?;
     Ok(c.undefined())
@@ -106,7 +106,7 @@ enum Written {
 /// `_write(stream, chunk, encoding, cb)`.
 fn write_chunk(c: &mut Context<'_>, stream: RootId, chunk: RootId, encoding: RootId, callback: RootId) -> Result<Written, RootedError> {
     let state = state_of(c, stream)?;
-    let callback = if c.is_callable_rooted(callback)? { callback } else { intrinsics(c)?.nop };
+    let callback = if c.is_callable_rooted(callback)? { callback } else { intrinsic(c, |i| i.nop)? };
     if is_null(c, chunk) {
         return Err(errors::throw(c, StreamError::NullValues));
     }
@@ -207,7 +207,7 @@ pub(crate) fn set_default_encoding(c: &mut Context<'_>, this: RootId, args: &[Ro
 
 /// `state.writecb = cb` unless it is `nop`.
 fn hold_callback(c: &mut Context<'_>, state: RootId, callback: RootId) -> Result<(), RootedError> {
-    let nop = intrinsics(c)?.nop;
+    let nop = intrinsic(c, |i| i.nop)?;
     if !c.strict_equal_rooted(callback, nop)? {
         put_slot(c, state, Slot::WriteCbValue, callback)?;
         change(c, state, WRITE_CB, 0)?;
@@ -237,7 +237,7 @@ fn write_or_buffer(c: &mut Context<'_>, stream: RootId, state: RootId, chunk: Ro
         if bits(c, state)? & ALL_BUFFERS != 0 && !all_buffers {
             change(c, state, 0, ALL_BUFFERS)?;
         }
-        let nop = intrinsics(c)?.nop;
+        let nop = intrinsic(c, |i| i.nop)?;
         if bits(c, state)? & ALL_NOOP != 0 && !c.strict_equal_rooted(callback, nop)? {
             change(c, state, 0, ALL_NOOP)?;
         }
@@ -497,7 +497,7 @@ fn clear_buffer(c: &mut Context<'_>, stream: RootId, state: RootId) -> Result<()
         put_number(c, state, "pendingcb", pending - (count - 1.0))?;
         let all_noop = bits(c, state)? & ALL_NOOP != 0;
         let callback = if all_noop {
-            intrinsics(c)?.nop
+            intrinsic(c, |i| i.nop)?
         } else {
             let first_root = c.number(first);
             closure(c, "streamWritevCallback", "", &[buffered, first_root])?
@@ -825,7 +825,7 @@ pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) ->
     let key = c.string_rooted("WritableState");
     c.define_data_property_rooted(constructor, key, state_class, true, true, true)?;
     let has_instance = c.host_function_named(crate::host::shared_vm::operation!("streamWritableHasInstance"), "value")?;
-    let key = intrinsics(c)?.slot(Slot::HasInstance);
+    let key = intrinsic(c, |i| i.slot(Slot::HasInstance))?;
     c.define_data_property_rooted(constructor, key, has_instance, false, false, false)?;
     define_methods(c, prototype, PROTOTYPE_METHODS)?;
     let null = c.null();

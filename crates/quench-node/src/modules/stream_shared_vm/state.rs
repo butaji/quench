@@ -3,7 +3,7 @@
 
 use super::errors::{self, StreamError};
 use super::{
-    arg, call_method, define_accessor, define_methods, get, get_slot, intrinsics, is_nullish, is_undefined, put,
+    arg, call_method, define_accessor, define_methods, get, get_slot, intrinsic, is_nullish, is_undefined, put,
     put_number, put_slot, Class, Context, Key, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -212,7 +212,7 @@ fn absent_value(c: &mut Context<'_>, absent: Absent) -> Outcome {
     match absent {
         Absent::Null => Ok(c.null()),
         Absent::Undefined => Ok(c.undefined()),
-        Absent::Nop => Ok(intrinsics(c)?.nop),
+        Absent::Nop => Ok(intrinsic(c, |i| i.nop)?),
         Absent::EmptyArray => c.array_rooted(&[]),
     }
 }
@@ -584,7 +584,7 @@ pub(crate) fn chunk_size(c: &mut Context<'_>, state: RootId, chunk: RootId) -> R
 
 /// A new state of `class` for `stream`.
 pub(crate) fn create(c: &mut Context<'_>, class: Class, options: RootId, stream: RootId, duplex: bool) -> Outcome {
-    let constructor = intrinsics(c)?.class(class);
+    let constructor = intrinsic(c, |i| i.class(class))?;
     let duplex = c.boolean(duplex);
     c.construct_rooted(constructor, constructor, &[options, stream, duplex])
 }

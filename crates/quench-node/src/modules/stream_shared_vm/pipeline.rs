@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::utils::{self, is_iterable, is_node_stream, is_readable_node_stream};
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsics, is_nullish, next_tick,
+    arg, await_then, call_method, captures, closure, get, intrinsic, intrinsics, is_nullish, next_tick,
     number, on, once, put, put_bool, put_number, remove_listener, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -169,9 +169,9 @@ fn async_iterable(c: &mut Context<'_>, value: RootId) -> Outcome {
         return Ok(value);
     }
     if is_readable_node_stream(c, value, false)? {
-        let readable = intrinsics(c)?.class(Class::Readable);
+        let readable = intrinsic(c, |i| i.class(Class::Readable))?;
         let prototype = get(c, readable, "prototype")?;
-        let key = intrinsics(c)?.slot(Slot::AsyncIterator);
+        let key = intrinsic(c, |i| i.slot(Slot::AsyncIterator))?;
         let method = c.get_property_rooted(prototype, key)?;
         return c.call_rooted(method, value, &[]);
     }
@@ -205,7 +205,7 @@ fn function_stage(
         }
         return Ok(produced);
     }
-    let pass_through = intrinsics(c)?.class(Class::PassThrough);
+    let pass_through = intrinsic(c, |i| i.class(Class::PassThrough))?;
     let options = c.object_rooted()?;
     put_bool(c, options, "objectMode", true)?;
     let destination = c.construct_rooted(pass_through, pass_through, &[options])?;
@@ -384,7 +384,7 @@ fn finish_impl(c: &mut Context<'_>, record: RootId, error: RootId, last: bool) -
     }
     let disposable = get(c, record, "disposable")?;
     if !is_nullish(c, disposable) {
-        let key = intrinsics(c)?.slot(Slot::Dispose);
+        let key = intrinsic(c, |i| i.slot(Slot::Dispose))?;
         let dispose = c.get_property_rooted(disposable, key)?;
         c.call_rooted(dispose, disposable, &[])?;
     }

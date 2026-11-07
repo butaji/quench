@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::readable::is_buffer;
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsics, is_null, is_nullish, is_string,
+    arg, await_then, call_method, captures, closure, get, intrinsic, intrinsics, is_null, is_nullish, is_string,
     next_tick, put, put_bool, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -25,7 +25,7 @@ fn options(c: &mut Context<'_>, high_water_mark: bool, opts: RootId) -> Outcome 
 }
 
 fn new_readable(c: &mut Context<'_>, options: RootId) -> Outcome {
-    let readable = intrinsics(c)?.class(Class::Readable);
+    let readable = intrinsic(c, |i| i.class(Class::Readable))?;
     c.construct_rooted(readable, readable, &[options])
 }
 
