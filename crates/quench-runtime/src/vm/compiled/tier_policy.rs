@@ -50,6 +50,10 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
+    /// The bodies a function may lose without any run of theirs completing before it
+    /// declines: a shape compaction or a dead native call drops a body, and one that never
+    /// completed paid its compile for nothing. Each such body doubles the next one's warm-up.
+    pub(in crate::vm) max_wasted: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
@@ -114,13 +118,31 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
 
-pub(in crate::vm) const TIERS: Tiers = Tiers {
+/// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
+/// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
+pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
+
+/// The thresholds every tier controller compares against: the measured row, or under
+/// `STRESS` the floor row, which makes every eligible site compile on its first chance.
+pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
+
+/// Each threshold at the least value its controller accepts. Thresholds only price
+/// compilation, so this row must compute what `MEASURED` computes.
+const FLOOR: Tiers = Tiers {
+    loops: Loops { threshold: 2, ..MEASURED.loops },
+    lane_body: LaneBody { warmup_entries: 2, trial_runs: 2, reoptimize_exits: 2, min_instructions: 0, ..MEASURED.lane_body },
+    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
+    wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+};
+
+const MEASURED: Tiers = Tiers {
     loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, element_sample: 8, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
         trial_runs: 1024,
         reoptimize_exits: 64,
         max_recompiles: 4,
+        max_wasted: 2,
         max_lifetimes: 8,
         min_instructions: 24,
     },
@@ -135,6 +157,12 @@ pub(in crate::vm) const TIERS: Tiers = Tiers {
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
 };
+
+/// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
+/// observes every PC up to its stop, and a tier would run past it.
+pub(in crate::vm) const fn tiers_enter(stops: bool) -> bool {
+    crate::DYNAMIC_EXECUTION_ENABLED && !stops
+}
 
 /// What a memory policy lets the tiers compile.
 pub(in crate::vm) struct PolicyTiers {
@@ -182,6 +210,8 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TIERS.lane_body;
         assert!(lane.warmup_entries > 0 && lane.trial_runs > 0);
+        // The warm-up doubles per dropped body, at most seven times, and must not overflow.
+        assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
         let looks = TIERS.js_function.promotion_looks;

@@ -204,37 +204,23 @@ pub(super) enum RegExpEarlyError {
     StackExhausted,
 }
 
-pub(super) fn regexp_early_error(program: &Program<'_>) -> Option<RegExpEarlyError> {
-    let mut validator = RegExpEarlyErrors(None);
-    validator.visit_program(program);
-    validator.0
+/// The early error of the last regular expression literal of `parsed` that has one, found
+/// from the literals the parser listed (`ParserReturn::regexp_literals`), lazily parsed
+/// bodies' included.
+pub(super) fn regexp_early_error(parsed: &oxc_parser::ParserReturn<'_>) -> Option<RegExpEarlyError> {
+    let text = parsed.program.source_text;
+    parsed.regexp_literals.iter().filter_map(|span| regexp_literal_error(text.get(span.start as usize..span.end as usize)?)).next_back()
 }
 
-struct RegExpEarlyErrors(Option<RegExpEarlyError>);
-
-impl<'a> Visit<'a> for RegExpEarlyErrors {
-    fn visit_reg_exp_literal(&mut self, literal: &oxc_ast::ast::RegExpLiteral<'a>) {
-        let Some(raw) = literal.raw.as_ref() else {
-            return;
-        };
-        let text = raw.as_str();
-        let Some(separator) = text.rfind('/') else {
-            return;
-        };
-        let pattern = &text[1..separator];
-        let flags = &text[separator + 1..];
-        if let Err(error) = validate_modifier_groups(pattern, flags.contains('v')) {
-            self.0 = Some(RegExpEarlyError::Syntax(error));
-            return;
-        }
-        if let Err(error) = super::regexp::validate_pattern(pattern, flags) {
-            self.0 = Some(if quench_regexp::is_stack_exhaustion_message(&error) {
-                RegExpEarlyError::StackExhausted
-            } else {
-                RegExpEarlyError::Syntax(error)
-            });
-        }
+fn regexp_literal_error(text: &str) -> Option<RegExpEarlyError> {
+    let separator = text.rfind('/')?;
+    let pattern = text.get(1..separator)?;
+    let flags = &text[separator + 1..];
+    if let Err(error) = validate_modifier_groups(pattern, flags.contains('v')) {
+        return Some(RegExpEarlyError::Syntax(error));
     }
+    let error = super::regexp::validate_pattern(pattern, flags).err()?;
+    Some(if quench_regexp::is_stack_exhaustion_message(&error) { RegExpEarlyError::StackExhausted } else { RegExpEarlyError::Syntax(error) })
 }
 
 /// Validate `(?flags-flags:...)` groups. A character class is atoms, never groups:

@@ -54,7 +54,6 @@ mod osr_loop;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
-pub(super) mod switches;
 pub(super) mod tier_policy;
 #[cfg(test)]
 mod stable_fact_tests;
@@ -62,6 +61,9 @@ mod stable_fact_tests;
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+#[path = "compiled/lane_compile.rs"]
+mod lane_compile;
+pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
@@ -4795,8 +4797,6 @@ const TRAPS: [crate::WasmTrap; 6] = [
     crate::WasmTrap::InvalidConversionToInteger,
 ];
 
-const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
-const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -4812,24 +4812,14 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return Ok(mode.root);
     }
-    static ROOT: std::sync::OnceLock<Result<Option<usize>, ()>> = std::sync::OnceLock::new();
-    *ROOT.get_or_init(|| {
-        let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
-            return Ok(None);
-        };
-        root.to_str()
-            .ok_or(())?
-            .parse::<usize>()
-            .map(Some)
-            .map_err(|_| ())
-    })
+    crate::trace::Dev::WasmRoot.value().map(|root| root.parse::<usize>().map_err(|_| ())).transpose()
 }
 
 /// Whether Wasm modules stay selective for good, compiling only their hot roots
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) fn jit_wasm_selective_enabled() -> bool {
-    switches::WASM_JIT_SELECTIVE.enabled()
+    crate::trace::Dev::WasmSelective.on()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4837,7 +4827,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    switches::WASM_JIT_ROOT_ONLY.enabled()
+    crate::trace::Dev::WasmRootOnly.on()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -4845,7 +4835,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    switches::WASM_JIT_ROOT_FIRST.enabled()
+    crate::trace::Dev::WasmRootFirst.on()
 }
 
 #[cfg(test)]
@@ -4919,10 +4909,7 @@ fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static s
     if root.is_none() {
         return Ok("speed");
     }
-    match std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) {
-        Some(level) => parse_jit_root_opt_level(root_only, Some(level.to_str().ok_or(())?)),
-        None => parse_jit_root_opt_level(root_only, None),
-    }
+    parse_jit_root_opt_level(root_only, crate::trace::Dev::WasmRootOptLevel.value())
 }
 
 fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
@@ -6724,9 +6711,9 @@ impl CompiledProgram {
         sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
-    pub(super) fn has_function(&self, function: usize) -> bool {
-        self.functions.get(function).is_some_and(Option::is_some)
-    }
+    pub(super) fn has_function(&self, function: usize) -> bool { self.functions.get(function).is_some_and(Option::is_some) }
+    /// The functions it holds code for.
+    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.functions.len()).filter(|&function| self.has_function(function)) }
 
     pub(super) fn mapped_bytes(&self) -> usize {
         self._code.length
@@ -7496,6 +7483,16 @@ struct JsStepDispatch {
 }
 
 /// The slots a lane body's field reads and its direct callees' bodies depend on, once each.
+/// Makes `code` retire when a fact a lane body's code took changes: a slot's type, or one
+/// of its Stable facts; `false` where a reader table is full.
+pub(super) fn subscribe_lane_dependencies(slots: &[crate::code_dependencies::SlotDependency],
+    stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
+    heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
+    slots.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
+        && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
+        && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+}
+
 fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
     -> Vec<crate::code_dependencies::SlotDependency> {
     let mut slot_dependencies: Vec<_> = fields.values().flatten()
@@ -8072,143 +8069,6 @@ impl<H: Host> Vm<H> {
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
-    }
-
-    /// Specialize `function` for lane activations, admitting a body only where its first
-    /// instruction runs natively: an entry that leaves at once is pure cost.
-    pub(super) fn compile_lane_method(
-        &mut self,
-        program: &ResidualProgram,
-        function: u32,
-        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        captures: &dyn Fn(Value) -> (usize, usize),
-        direct: Vec<Option<DirectCallee>>,
-        loop_header: Option<u32>,
-        generic: &[LaneExit],
-    ) -> Option<LaneMethod> {
-        self.host.before_native_compilation();
-        let result = (|| {
-            let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
-            // The body folds Stable facts under its own invalidation word, which its publication
-            // sets when one changes (`ProgramStore::publish_lane_method`).
-            let invalidation = crate::code_dependencies::Invalidation::default();
-            let method_cache_atoms = self.method_cache_atoms.bits().clone();
-            let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-                invalidation: invalidation.address() }), ..self.vm_facts() };
-            let body = program.function_get(function as usize)?;
-            let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
-            let (unit, region, fields, direct, direct_sites) = loop {
-                // A pure numeric body observes neither closure environment nor identity.
-                // Bind its definition at the edge, as AOT does, so fresh closures share
-                // the same residual while recovery retries the actual caller value.
-                let valid_bindings = std::cell::Cell::new(true);
-                // A call the body left at takes no inlined callee: its call binds what the inlined
-                // frame could not (a receiver its callee's `this` proofs do not hold for).
-                let bindings = |caller, pc: u32| {
-                    if caller == function && generic.contains(&LaneExit::At(pc as usize)) { return Vec::new(); }
-                    let mut bound = targets(caller, pc);
-                    for target in &mut bound {
-                        let numeric = program.function_get(target.function as usize).is_some_and(|body|
-                            body.plain_activation(program) && lane_region::restartable_numeric_function(program, body,
-                                &body.instructions().collect::<Vec<_>>()));
-                        if numeric {
-                            if let Some(callee) = target.identity()
-                                && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
-                                    owner == self.active_program && function == target.function) {
-                                valid_bindings.set(false);
-                            }
-                            target.callee = CalleeBinding::Function;
-                        }
-                    }
-                    // Different closures of the same pure definition are one case.
-                    let mut kept = 0;
-                    for index in 0..bound.len() {
-                        let target = bound[index];
-                        if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
-                    }
-                    bound.truncate(kept);
-                    bound
-                };
-                // A captured store can also be part of a larger native region.
-                // Its standalone frameless kernel must not block transitive inlining.
-                let unit = lane_unit::with_budget(program, function, body, budget, &bindings,
-                    &|callee| program.function_get(callee as usize), facts.function_call.map(|(atom, _)| atom))?;
-                if !valid_bindings.get() { return None; }
-                if !unit.frames.iter().all(|frame| match frame.target.callee {
-                    CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
-                    CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
-                        && program.function_get(frame.target.function as usize).is_some_and(|body|
-                            lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>())),
-                }) {
-                    return None;
-                }
-                let loop_entry = match loop_header {
-                    Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
-                    None => None,
-                };
-                // A previous body's leaves, at their unit PCs: the specialization's feedback.
-                let left_at: Vec<usize> = generic.iter().filter_map(|exit| unit.origins.iter().position(|origin| match *exit {
-                    LaneExit::At(pc) => *origin == lane_unit::Origin::Caller(pc as u32),
-                    LaneExit::Inlined { frame, pc } => *origin == lane_unit::Origin::Inlined { frame, pc },
-                    LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated => false,
-                })).collect();
-                let fields = self.lane_unit_fields(program, &unit, &left_at);
-                let global_reads = self.lane_global_reads(program, function, &unit);
-                // The calls the unit still makes (none it inlines) whose callees have bodies.
-                // Each candidate owns one contiguous stable slice. A rejected candidate
-                // releases it; replanning keeps the original targets available.
-                let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-                    .filter(|(_, instruction)| instruction.op() == Op::Call)
-                    .filter_map(|(pc, _)| match unit.origins[pc] {
-                        lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
-                        lane_unit::Origin::Inlined { .. } => None,
-                    })
-                    .unzip();
-                let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
-                let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
-                    pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
-                let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
-                    .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-                let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-                match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, facts, &left_at,
-                    &direct_sites, &frame_captures, loop_entry, allow_first_entry) {
-                    Ok(region) => break (unit, region, fields, direct, direct_sites),
-                    Err(lane_region::LaneDecline::Rejected(reason))
-                        if reason.exceeds_code_budget() && !unit.frames.is_empty() && budget > 0 => budget /= 2,
-                    Err(_) => return None,
-                }
-            };
-            if region.native == 0 {
-                return None;
-            }
-            let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
-                instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                    && (instruction.imm() as usize) <= pc
-            });
-            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions;
-            let code = CodeMemory::new(&region.code)?;
-            if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
-                dump_native_code(directory, function, &code, clif);
-            }
-            // SAFETY: the general dispatcher emits the shared native-entry ABI.
-            let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
-            #[cfg(test)]
-            LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            #[cfg(test)]
-            LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
-            // A body that names a callee's body retires with it (`DirectCallee::method`).
-            let names_shapes = !fields.is_empty() || !direct.is_empty();
-            let scratch_width = usize::from(unit.registers - unit.caller_registers);
-            let caller_registers = unit.caller_registers;
-            let closed = unit.instructions.iter().enumerate()
-                .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
-            let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
-            let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
-            let slot_dependencies = lane_slot_dependencies(&fields, &direct);
-            Some(LaneMethod { slot_dependencies, stable: region.stable, invalidation, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
-        })();
-        self.host.after_native_compilation();
-        result
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -16406,7 +16266,7 @@ impl<H: Host> Vm<H> {
                 }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
-                    // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
+                    // function named by QUENCH_DEV=wasm-root=N. Root-only mode
                     // keeps its callees in the VM; root-first mode allows a
                     // hot callee to enter the existing bounded tier below.
                     let diagnose = jit_diagnostics_enabled();

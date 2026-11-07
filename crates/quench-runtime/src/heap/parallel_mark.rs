@@ -140,15 +140,10 @@ pub(super) fn parallel_mark_pool() -> Option<&'static ThreadPool> {
         } else {
             PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS
         };
-        let requested = std::env::var("QUENCH_GC_MARK_THREADS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(default_threads)
-            .clamp(1, PARALLEL_MARK_MAX_THREADS);
         let total_threads = if cfg!(test) {
             PARALLEL_MARK_MAX_THREADS
         } else {
-            available.min(requested)
+            available.min(default_threads)
         };
         let worker_threads = total_threads.saturating_sub(1);
         (worker_threads > 0).then(|| {

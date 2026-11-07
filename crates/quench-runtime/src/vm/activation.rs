@@ -166,16 +166,85 @@ impl std::fmt::Debug for Continuation {
     }
 }
 
+/// Where a generator is in its life. Its continuation is kept apart: an async generator
+/// that awaits a yielded value keeps it in the record while executing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GeneratorState {
+    /// Not running and not finished: `next`, `return` and `throw` may resume it.
+    Suspended,
+    /// Running, or (async) busy with a request whose await has not settled: requests queue.
+    Executing,
+    /// Finished: every resumption completes at once.
+    Completed,
+    /// Finished, but (async) awaiting the value of a `return`: requests queue, and the
+    /// generator is completed again once the await settles.
+    AwaitingReturn,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct GeneratorRecord {
     pub(crate) continuation: Option<Continuation>,
     pub(crate) realm: Value,
-    pub(crate) done: bool,
-    pub(crate) running: bool,
+    pub(crate) state: GeneratorState,
     pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
 }
 
 impl GeneratorRecord {
+    /// A generator about to run its body from `continuation`.
+    pub(crate) fn new(continuation: Continuation, realm: Value) -> Self {
+        Self { continuation: Some(continuation), realm, state: GeneratorState::Suspended, requests: VecDeque::new() }
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_executing(&self) -> bool {
+        matches!(self.state, GeneratorState::Executing | GeneratorState::AwaitingReturn)
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_completed(&self) -> bool {
+        self.state == GeneratorState::Completed
+    }
+
+    /// The continuation a resumption runs, taken: a suspended generator executes from it,
+    /// while one that has not started and receives an `abrupt` completion closes without
+    /// running.
+    pub(crate) fn take_for_resume(&mut self, abrupt: bool) -> Option<Continuation> {
+        let continuation = self.continuation.take();
+        if self.state == GeneratorState::Suspended
+            && continuation
+                .as_ref()
+                .is_some_and(|continuation| !abrupt || !matches!(continuation.completion, Completion::GeneratorStart))
+        {
+            self.state = GeneratorState::Executing;
+        }
+        continuation
+    }
+
+    /// The end of a run that did not finish the generator: executing becomes suspended, a
+    /// completed generator awaiting a return is completed again, and a completed one stays so.
+    pub(crate) fn stop(&mut self) {
+        match self.state {
+            GeneratorState::Executing => self.state = GeneratorState::Suspended,
+            GeneratorState::AwaitingReturn => self.state = GeneratorState::Completed,
+            GeneratorState::Suspended | GeneratorState::Completed => {}
+        }
+    }
+
+    /// An async `return` starts awaiting its value: the generator is busy until it settles,
+    /// and keeps whether it had already completed.
+    pub(crate) fn await_return(&mut self) {
+        self.state = match self.state {
+            GeneratorState::Completed => GeneratorState::AwaitingReturn,
+            _ => GeneratorState::Executing,
+        };
+    }
+
+    /// The generator finished: it drops its continuation.
+    pub(crate) fn complete(&mut self) {
+        self.state = GeneratorState::Completed;
+        self.continuation = None;
+    }
+
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
         out.push(self.realm);
         if let Some(continuation) = &self.continuation {

@@ -1781,8 +1781,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                 } })),
                 Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
-                    ext: IteratorExt { position_high: 0, next_method: None, helper: None,
-                        helper_running: false, helper_started: false, generator: None },
+                    ext: IteratorExt::default(),
                 })),
                 Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
             };

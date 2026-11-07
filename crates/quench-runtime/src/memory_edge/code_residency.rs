@@ -4,7 +4,6 @@
 
 use std::ffi::{c_char, c_void};
 
-const RESIDENCY_ENV: &str = "QUENCH_CODE_RESIDENCY";
 const FOOTPRINT_MODE: &std::ffi::CStr = c"vm.self_region_footprint";
 static QUERY_MODE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -60,7 +59,7 @@ impl Drop for FootprintQuery {
 
 #[allow(deprecated)] // libc's dyld declaration matches Darwin's public header.
 pub(super) fn report(phase: &str) {
-    if std::env::var_os(RESIDENCY_ENV).is_none() {
+    if !crate::trace::Channel::CodeResidency.on() {
         return;
     }
     let mut size = 0;
