@@ -362,7 +362,7 @@ impl<H: Host> Vm<H> {
             return outcome;
         }
         if self.is_wasm_gc_object(target) {
-            return Ok(false);
+            return Err(self.wasm_gc_opaque_error(p));
         }
         let data = self
             .object_data(target)

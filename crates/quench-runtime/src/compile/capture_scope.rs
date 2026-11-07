@@ -56,27 +56,27 @@ impl CaptureBase {
     }
 }
 
-/// A function's capturable bindings at one position: its base bindings under the lexical
-/// bindings in effect there. The base is shared by every position of the function, so a
-/// closure inside a block of a large function costs the block's bindings, not the
-/// function's.
+/// One lexical scope's bindings over those around it: `Some` binds or rebinds a name, `None`
+/// hides one the scopes around it bind. A scope's layer depends on its own bindings alone, so
+/// every position inside it shares one.
+pub(super) type CaptureLayer = FxHashMap<Atom, Option<u16>>;
+
+/// A function's capturable bindings at one position: its base bindings under the layers of
+/// the lexical scopes in effect there, innermost last. The base and each layer are shared by
+/// every position that sees them, so a closure costs the scopes it is nested in, not the
+/// bindings they hold.
 pub(super) struct CaptureScope {
     base: CaptureBase,
-    /// Lexical bindings over the base: `Some` binds or rebinds a name, `None` hides a base
-    /// binding the lexical scopes shadow without rebinding.
-    overlay: FxHashMap<Atom, Option<u16>>,
+    layers: Vec<Rc<CaptureLayer>>,
 }
 
 impl CaptureScope {
     pub(super) fn new(base: CaptureBase) -> Self {
-        Self {
-            base,
-            overlay: FxHashMap::default(),
-        }
+        Self { base, layers: Vec::new() }
     }
 
     pub(super) fn get(&self, atom: &Atom) -> Option<u16> {
-        match self.overlay.get(atom) {
+        match self.layers.iter().rev().find_map(|layer| layer.get(atom)) {
             Some(slot) => *slot,
             None => self.base.get(*atom),
         }
@@ -86,27 +86,24 @@ impl CaptureScope {
         self.get(atom).is_some()
     }
 
-    pub(super) fn insert(&mut self, atom: Atom, slot: u16) {
-        self.overlay.insert(atom, Some(slot));
+    pub(super) fn push_layer(&mut self, layer: Rc<CaptureLayer>) {
+        self.layers.push(layer);
     }
 
-    pub(super) fn remove(&mut self, atom: &Atom) {
-        if self.contains_key(atom) {
-            self.overlay.insert(*atom, None);
-        }
-    }
-
-    /// Every binding once: the overlay's, then the base's it leaves visible.
+    /// Every binding once: the innermost layer's first, then the base's they leave visible.
     pub(super) fn iter(&self) -> impl Iterator<Item = (Atom, u16)> + '_ {
-        self.overlay
+        let mut seen = rustc_hash::FxHashSet::default();
+        let layered: Vec<_> = self
+            .layers
             .iter()
+            .rev()
+            .flat_map(|layer| layer.iter())
+            .filter(|(atom, _)| seen.insert(**atom))
             .filter_map(|(atom, slot)| slot.map(|slot| (*atom, slot)))
-            .chain(
-                self.base
-                    .entries()
-                    .into_iter()
-                    .filter(|(atom, _)| !self.overlay.contains_key(atom)),
-            )
+            .collect();
+        layered
+            .into_iter()
+            .chain(self.base.entries().into_iter().filter(move |(atom, _)| !seen.contains(atom)))
     }
 
     pub(super) fn keys(&self) -> impl Iterator<Item = Atom> + '_ {

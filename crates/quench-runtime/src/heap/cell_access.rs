@@ -34,6 +34,7 @@ impl Cell {
             | Self::TemporalZonedDateTime { object, .. }
             | Self::TemporalInstant { object, .. }
             | Self::WasmObject { object, .. }
+            | Self::WasmTag { object, .. }
             | Self::WasmTable { object, .. } => Some(object),
             Self::Promise(promise) => Some(&promise.object),
             Self::WasmGlobal { header, .. } => Some(&header.object),
@@ -71,6 +72,7 @@ impl Cell {
             | Self::TemporalZonedDateTime { object, .. }
             | Self::TemporalInstant { object, .. }
             | Self::WasmObject { object, .. }
+            | Self::WasmTag { object, .. }
             | Self::WasmTable { object, .. } => Some(object),
             Self::Promise(promise) => Some(&mut promise.object),
             Self::WasmGlobal { header, .. } => Some(&mut header.object),

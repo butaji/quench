@@ -6730,10 +6730,9 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
-/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
-/// for disassembly at `BASE` (diagnostics only).
-fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+/// With `QUENCH_TRACE=perf-map`, names each function's code (`kind-index`) in `/tmp/perf-PID.map`
+/// and writes the code to `/tmp/quench-jit-PID-BASE.bin` for disassembly at `BASE` (diagnostics).
+fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
     if !crate::trace::Channel::PerfMap.on() {
         return;
     }
@@ -6745,7 +6744,7 @@ fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
         .open(format!("/tmp/perf-{pid}.map"))
     {
         for &(offset, len, index) in spans {
-            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+            let _ = writeln!(map, "{:x} {len:x} {kind}-{index}", base + offset);
         }
     }
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
@@ -6972,6 +6971,7 @@ fn compile_and_publish_entry(
 ) -> Option<(CodeMemory, Entry)> {
     compile_native_function(function, isa, max_code_bytes, |code| {
         let memory = CodeMemory::new(code)?;
+        write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
         // SAFETY: callers lower the function with `native_entry_signature`.
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
         Some((memory, entry))
@@ -7748,14 +7748,14 @@ unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: 
     object.to_bits()
 }
 
-/// A lane body's array literal of `length` holes, as the lane's own
-/// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
-/// `lane_new_object`.
-unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64) -> u64 {
-    // SAFETY: as `lane_new_object`.
+/// A lane body's array literal of `length` holes, or of the `elements` its definitions
+/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
+/// `DELETED` where a collection is due, as `lane_new_object`.
+unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let array = vm.hole_array(length as usize);
+    let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     array.to_bits()
@@ -15720,7 +15720,7 @@ impl<H: Host> Vm<H> {
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
-        write_perf_map(base, &bytes, &spans);
+        write_perf_map("wasm-function", base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
