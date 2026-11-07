@@ -137,7 +137,7 @@ impl<H: Host> Vm<H> {
                             .is_some()
                     })
             else {
-                return Ok(Value::TRUE);
+                return Ok(Value::boolean(vm.string_wrapper_index(target, property_key).is_none()));
             };
             if !vm
                 .property_attributes(target, property_key)
