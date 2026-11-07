@@ -213,10 +213,19 @@ fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction)
     for register in instruction.written_registers() { hints[usize::from(register)] = None; }
 }
 
-/// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
-/// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
+/// The bodies a call site's callee may name statically: a superset of the callees it meets,
+/// which the unit's inlining budgets choose among, each behind its own body guard. A name,
+/// slot or register defined with more names none.
 #[cfg(feature = "aot")]
-pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
+const STATIC_CALL_SITE_TARGETS: usize = 8;
+#[cfg(feature = "aot")]
+pub(crate) type StaticTargets = smallvec::SmallVec<[u32; STATIC_CALL_SITE_TARGETS]>;
+
+/// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
+/// A hint is never a proof: replacement/aliasing is handled by call-edge admission, which
+/// tries each target a site names behind its own body guard.
+#[cfg(feature = "aot")]
+pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<StaticTargets>> {
     #[derive(Clone, Copy)]
     enum Definition { Closure(u32), Name(crate::bytecode::Atom) }
     // Derive a flat constant-index projection once, without allocating lookup
@@ -231,22 +240,26 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
             _ => None,
         }).collect()
     };
-    let mut methods = vec![None::<Option<u32>>; program.atoms.len()];
+    // `None` once more definitions than a site admits have been observed.
+    let mut methods = vec![Some(StaticTargets::new()); program.atoms.len()];
     let mut captured = Vec::new();
     let mut offsets = Vec::with_capacity(program.function_count() + 1);
     let mut parents = Vec::with_capacity(program.function_count());
-    let observe = |slot: &mut Option<Option<u32>>, target| {
-        *slot = Some(match *slot { None => Some(target), Some(Some(old)) if old == target => Some(target), _ => None });
+    let observe = |slot: &mut Option<StaticTargets>, target| {
+        if let Some(targets) = slot && !targets.contains(&target) {
+            if targets.len() == targets.inline_size() { *slot = None } else { targets.push(target) }
+        }
     };
     for id in 0..program.function_count() {
         program.with_record(id, |function| {
             let start = captured.len();
             offsets.push(start);
             parents.push(function.parent);
-            captured.resize(start + usize::from(function.locals), None);
+            captured.resize(start + usize::from(function.locals), Some(StaticTargets::new()));
             let mut definitions = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
-                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
+                // A stored or literal-defined data property holding a closure names its body.
+                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::DefineField)
                     && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
                         observe(&mut methods[instruction.atom_index() as usize], id);
                     }
@@ -279,16 +292,16 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
     }
     offsets.push(captured.len());
     (0..program.function_count()).map(|id| program.with_record(id, |function| {
-        let mut methods_by_register = vec![None; usize::from(function.registers)];
+        let mut methods_by_register = vec![None::<StaticTargets>; usize::from(function.registers)];
         function.instructions().map(|instruction| {
             let target = (instruction.op() == Op::Call).then(||
-                methods_by_register[usize::from(instruction.register_b())]).flatten();
+                methods_by_register[usize::from(instruction.register_b())].clone()).flatten().unwrap_or_default();
             let method = match instruction.op() {
                 Op::GetField => match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).copied().flatten().flatten(),
+                    Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).cloned().flatten(),
                     _ => None,
                 },
-                Op::MakeClosure => Some(instruction.closure_function_index()),
+                Op::MakeClosure => Some(smallvec::smallvec![instruction.closure_function_index()]),
                 Op::LoadCapture => {
                     // The lexical owner and source slot come from the same layout as
                     // capture execution. This identifies a possible body, never the
@@ -296,9 +309,9 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
                     let owner = (0..=instruction.capture_depth()).try_fold(id, |owner, _|
                         parents.get(owner).copied().flatten().map(|parent| parent as usize));
                     owner.and_then(|owner| captured[offsets[owner]..offsets[owner + 1]]
-                        .get(usize::from(instruction.capture_slot())).copied().flatten().flatten())
+                        .get(usize::from(instruction.capture_slot())).cloned().flatten())
                 }
-                Op::Move => methods_by_register[usize::from(instruction.register_b())],
+                Op::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
                 _ => None,
             };
             clear_written_hints(&mut methods_by_register, instruction);
@@ -344,8 +357,12 @@ fn inlinable(instruction: WideInstruction) -> bool {
             None => false,
         },
         Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
-        // A fused `typeof` test (`Lowering::typeof_test`).
-        Op::Unary => plain && crate::bytecode::typeof_test(instruction.unary_operator()).is_some(),
+        // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
+        // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
+        Op::Unary => plain,
+        // Operations native code leaves at, exactly, through the inlined frame's recovery: a
+        // global name's read, a construction and a throw, typically a callee's error path.
+        Op::LoadName | Op::Construct | Op::Throw => instruction.result_flags() == 0,
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
@@ -387,7 +404,7 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Call | Op::Return | Op::LoadThis => true,
+        Op::Call | Op::Return | Op::LoadThis | Op::LoadName | Op::Construct | Op::Throw => true,
         Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
@@ -519,8 +536,8 @@ impl Planner<'_, '_> {
         Some((call, native))
     }
 
-    /// The callees the call at `pc` of `function` inlines: every target its site linked, or
-    /// none, so a callee the switch names never leaves it for a call.
+    /// The callees the call at `pc` of `function` inlines: each target its site linked that
+    /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
     fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> (Vec<InlinedPlan>, bool) {
         if instruction.op() != Op::Call {
@@ -531,20 +548,11 @@ impl Planner<'_, '_> {
         {
             return (Vec::new(), true);
         }
-        let (registers, budget) = (self.registers, self.budget);
         let found = (self.targets)(function, pc);
         let ran = !found.is_empty();
-        let alternatives: Option<Vec<InlinedPlan>> = found
-            .into_iter()
-            .map(|target| self.inline_target(target, instruction, depth))
-            .collect();
-        match alternatives {
-            Some(alternatives) if !alternatives.is_empty() => (alternatives, true),
-            _ => {
-                (self.registers, self.budget) = (registers, budget);
-                (Vec::new(), ran)
-            }
-        }
+        // A target that does not inline gives back what it reserved (`inline_target`).
+        let alternatives = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
+        (alternatives, ran)
     }
 
     fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
@@ -695,6 +703,11 @@ impl Emitter {
                     WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
                 }
                 Op::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+                // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
+                // the lowering leaves at each, and recovery runs the callee's own instruction.
+                Op::LoadName | Op::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+                Op::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
+                    register(instruction.c()), instruction.imm()),
                 Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                     let flags = instruction.result_flags();
                     WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
@@ -780,22 +793,25 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn method_hints_follow_definition_records_and_reject_conflicting_bodies() {
+    fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
+        // Each case names how many bodies the call site is hinted with: every distinct
+        // definition of the name, each guarded at the call, up to `STATIC_CALL_SITE_TARGETS`.
         for (definition, expected) in [
-            ("class Thing { probe(){return 1;} }", true),
-            ("class Thing { static probe(){return 1;} }", true),
-            ("let mask=4;class Thing { probe(){return (this.bits&mask)!==0||this.bits===2;} }", true),
+            ("class Thing { probe(){return 1;} }", 1),
+            ("class Thing { static probe(){return 1;} }", 1),
+            ("let mask=4;class Thing { probe(){return (this.bits&mask)!==0||this.bits===2;} }", 1),
             // Computed keys travel through ToPropertyKey and environment
             // homes; this literal-register proof deliberately declines them.
-            ("class Thing { ['probe'](){return 1;} }", false),
-            ("function make(mask){return class Thing { probe(){return mask|0;} };}", true),
-            ("class Thing { probe(){return 1;} probe(){return 2;} }", false),
-            ("class First { probe(){return 1;} } class Second { probe(){return 2;} }", false),
-            ("class Thing { probe(){return 1;} } Thing.prototype.probe=function replacement(){return 2;};", false),
-            ("class Thing { get probe(){return function(){return 1;};} }", false),
-            ("class Thing { set probe(value){} }", false),
-            ("class Thing { get probe(){return 1;} set probe(value){} }", false),
-            ("class Thing { [unknownName](){return 1;} }", false),
+            ("class Thing { ['probe'](){return 1;} }", 0),
+            ("function make(mask){return class Thing { probe(){return mask|0;} };}", 1),
+            ("class Thing { probe(){return 1;} probe(){return 2;} }", 2),
+            ("class First { probe(){return 1;} } class Second { probe(){return 2;} }", 2),
+            ("class Thing { probe(){return 1;} } Thing.prototype.probe=function replacement(){return 2;};", 2),
+            (&(0..=STATIC_CALL_SITE_TARGETS).map(|n| format!("class C{n} {{ probe(){{return {n};}} }}")).collect::<String>(), 0),
+            ("class Thing { get probe(){return function(){return 1;};} }", 0),
+            ("class Thing { set probe(value){} }", 0),
+            ("class Thing { get probe(){return 1;} set probe(value){} }", 0),
+            ("class Thing { [unknownName](){return 1;} }", 0),
         ] {
             let source = format!("{definition} function caller(receiver){{let result=receiver.probe();return result;}}");
             for typescript in [false, true] {
@@ -803,7 +819,7 @@ mod tests {
                     else { crate::Engine::specialize(&source, "method-hints.cjs") };
                 let program = match admitted {
                     Ok(program) => program,
-                    Err(errors) if typescript && !expected => {
+                    Err(errors) if typescript && expected != 1 => {
                         // OXC rejects duplicate TypeScript implementations;
                         // JavaScript's accepted duplicate still exercises the
                         // conflicting-definition path below.
@@ -816,14 +832,14 @@ mod tests {
                 let caller = program.functions.iter().position(|body|
                     body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "caller")).unwrap();
                 let targets = static_call_targets(&program);
-                assert_eq!(targets[caller].iter().filter(|target| target.is_some()).count(), usize::from(expected),
+                assert_eq!(targets[caller].iter().map(|site| site.len()).sum::<usize>(), expected,
                     "{definition}\n{}", program.disassemble());
-                if expected {
-                    let target = targets[caller].iter().copied().flatten().next().unwrap();
+                if expected == 1 {
+                    let target = targets[caller].iter().flatten().copied().next().unwrap();
                     assert!(program.function(target as usize).instructions().any(|instruction| instruction.op() == Op::Return
                         || instruction.returns_from_frame()));
                     let unit = unit(&program, caller as u32, program.function(caller), &|function, pc|
-                        targets[function as usize].get(pc as usize).copied().flatten()
+                        targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                         &|id| program.function_get(id as usize)).unwrap();
                     assert_eq!(unit.frames.len(), 1, "method hint must reach the shared guarded inliner: {definition}");
@@ -835,10 +851,11 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn captured_hints_resolve_lexical_depth_and_reject_conflicting_bodies() {
+    fn captured_hints_resolve_lexical_depth_and_bound_conflicting_bodies() {
         for (binding, expected) in [
-            ("let target = function leaf(x) {return x + 1;};", true),
-            ("let target; if (flag) target = function first(x) {return x + 1;}; else target = function second(x) {return x + 2;};", false),
+            ("let target = function leaf(x) {return x + 1;};", &["leaf"][..]),
+            ("let target; if (flag) target = function first(x) {return x + 1;}; else target = function second(x) {return x + 2;};",
+                &["first", "second"][..]),
         ] {
             let source = format!("function outer(flag) {{{binding} function middle() {{function caller(x) {{return target(x);}} return caller;}} return middle();}}");
             let program = crate::Engine::specialize(&source, "capture-depth.js").unwrap();
@@ -847,12 +864,9 @@ mod tests {
             assert!(program.function(caller).instructions().any(|instruction|
                 instruction.op() == Op::LoadCapture && instruction.capture_depth() == 1));
             let targets = static_call_targets(&program);
-            assert_eq!(targets[caller].iter().any(Option::is_some), expected);
-            if expected {
-                let target = targets[caller].iter().copied().flatten().next().unwrap();
-                let name = program.function(target as usize).name.unwrap();
-                assert_eq!(&program.atoms[name as usize], "leaf");
-            }
+            let names: Vec<&str> = targets[caller].iter().flatten()
+                .map(|target| &program.atoms[program.function(*target as usize).name.unwrap() as usize]).collect();
+            assert_eq!(names, expected);
         }
     }
 
@@ -869,7 +883,7 @@ mod tests {
             let targets = static_call_targets(&program);
             let original_terminal = program.function(caller).code.len() - 1;
             let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-                .get(pc as usize).copied().flatten()
+                .get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             if strict {
@@ -903,7 +917,7 @@ mod tests {
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
             let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-                .get(pc as usize).copied().flatten()
+                .get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             if strict {
@@ -930,9 +944,9 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
-            assert!(targets[caller].iter().any(Option::is_some), "the hint must reach admission");
+            assert!(targets[caller].iter().any(|site| !site.is_empty()), "the hint must reach admission");
             let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-                .get(pc as usize).copied().flatten()
+                .get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exact recovery admits {body}");
@@ -955,7 +969,7 @@ mod tests {
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
         let mut unit = unit(&program, caller, body, &|function, pc| if function == caller {
-            targets.get(pc as usize).copied().flatten().into_iter().collect()
+            targets.get(pc as usize).into_iter().flatten().copied().next().into_iter().collect()
         } else { Vec::new() }, &|function| program.function_get(function as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
         let masks = unit.register_masks(&program, caller).expect("covered remapped graph");

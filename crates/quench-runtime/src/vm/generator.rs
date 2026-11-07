@@ -284,6 +284,7 @@ impl<H: Host> Vm<H> {
                 self.frames.len() - 1,
                 Some(function.parameter_end_pc as usize),
                 None,
+                None,
             );
             frame = self.frames.pop().expect("generator parameter frame exists");
             match result {

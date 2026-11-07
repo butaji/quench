@@ -122,6 +122,15 @@ pub(super) struct LaneExit {
     pub(super) raised: Option<JsError>,
 }
 
+/// Where a general loop resumes its entry frame other than at its PC: after a lane run
+/// (`LaneExit`), or with the transition its linked native body already made there
+/// (`Vm::complete_pushed_call`), which the loop consumes as if its own entry had made it.
+pub(super) enum GeneralResume {
+    Lane(LaneExit),
+    #[cfg(feature = "native-execution")]
+    Native(super::compiled::JsNativeStep),
+}
+
 /// The general loop's executing program: its id and the residual keeping it alive (`None`
 /// for the loop's entry program).
 pub(super) struct ExecutingProgram {
@@ -1430,7 +1439,18 @@ impl<H: Host> Vm<H> {
         frame: usize,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        self.run_frame_general_until::<false>(p, frame, None, initial_error)
+        self.run_frame_general_until::<false>(p, frame, None, initial_error, None)
+    }
+
+    /// Runs frame `frame` on from the transition its linked native body made at its entry.
+    #[cfg(feature = "native-execution")]
+    pub(super) fn run_frame_general_after(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        entered: super::compiled::JsNativeStep,
+    ) -> Result<FrameOutcome, JsError> {
+        self.run_frame_general_until::<false>(p, frame, None, None, Some(GeneralResume::Native(entered)))
     }
 
     /// Runs the general loop. `STOPS` monomorphizes the parameter-initialization variant, the
@@ -1441,6 +1461,7 @@ impl<H: Host> Vm<H> {
         frame: usize,
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
+        resume: Option<GeneralResume>,
     ) -> Result<FrameOutcome, JsError> {
         debug_assert!(STOPS || stop_pc.is_none());
         let frame_program = self.frames[frame].program;
@@ -1452,11 +1473,11 @@ impl<H: Host> Vm<H> {
         let mut pending_calls = self.pending_call_stacks.pop().unwrap_or_default();
         let outcome = if STOPS {
             self.run_general_loop::<true>(
-                p, frame, stop_pc, initial_error, allow_inline_calls, &mut pending_calls, None,
+                p, frame, stop_pc, initial_error, allow_inline_calls, &mut pending_calls, resume,
             )
         } else {
             self.run_general_loop_without_stop(
-                p, frame, initial_error, allow_inline_calls, &mut pending_calls, None,
+                p, frame, initial_error, allow_inline_calls, &mut pending_calls, resume,
             )
         };
         pending_calls.clear();
@@ -1479,7 +1500,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<FrameOutcome, JsError> {
         let previous_global = self.realm.globals;
         let caller_registers = self.active_registers;
-        let outcome = self.run_general_loop_without_stop(entry_program, frame, None, true, pending_calls, Some(exit));
+        let outcome = self.run_general_loop_without_stop(entry_program, frame, None, true, pending_calls, Some(GeneralResume::Lane(exit)));
         self.active_registers = caller_registers;
         self.switch_realm_global(previous_global);
         outcome
@@ -1591,15 +1612,15 @@ impl<H: Host> Vm<H> {
         initial_error: Option<JsError>,
         allow_inline_calls: bool,
         pending_calls: &mut Vec<PendingGeneralCall>,
-        exit: Option<LaneExit>,
+        resume: Option<GeneralResume>,
     ) -> Result<FrameOutcome, JsError> {
         self.run_general_loop::<false>(
-            entry_program, frame, None, initial_error, allow_inline_calls, pending_calls, exit,
+            entry_program, frame, None, initial_error, allow_inline_calls, pending_calls, resume,
         )
     }
 
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
-    /// program and realm around it; from a lane `exit`, it resumes where that lane left.
+    /// program and realm around it; from a `resume`, it continues where that left.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     fn run_general_loop<const STOPS: bool>(
@@ -1610,11 +1631,18 @@ impl<H: Host> Vm<H> {
         initial_error: Option<JsError>,
         allow_inline_calls: bool,
         pending_calls: &mut Vec<PendingGeneralCall>,
-        exit: Option<LaneExit>,
+        resume: Option<GeneralResume>,
     ) -> Result<FrameOutcome, JsError> {
         let p = entry_program;
-        let (mut executing_program, mut current_program, raised) = match exit {
-            Some(LaneExit { executing, raised }) => (executing.id, executing.retained, Some(raised)),
+        #[cfg(feature = "native-execution")]
+        let mut entered = None;
+        let (mut executing_program, mut current_program, raised) = match resume {
+            Some(GeneralResume::Lane(LaneExit { executing, raised })) => (executing.id, executing.retained, Some(raised)),
+            #[cfg(feature = "native-execution")]
+            Some(GeneralResume::Native(step)) => {
+                entered = Some(step);
+                (self.frames[frame].program, None, None)
+            }
             None => (self.frames[frame].program, None, None),
         };
         // The residual being executed: the entry program, or the one `current_program`
@@ -1725,7 +1753,7 @@ impl<H: Host> Vm<H> {
             let mut native_step = None;
             let resumed = std::mem::take(&mut resumes_lane_exit);
             #[cfg(feature = "native-execution")]
-            if let Some(step) = self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls) {
+            if let Some(step) = entered.take().or_else(|| self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls)) {
                 pc = step.next_pc;
                 native_step = Some(step);
             }
