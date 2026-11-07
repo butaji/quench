@@ -791,31 +791,6 @@ impl<H: Host> Vm<H> {
         Some(found.map(|(_, attributes)| attributes))
     }
 
-    /// `object_for_in_key_is_enumerable` of a string key along a chain whose own lookups run
-    /// no guest code (`plain_own_attributes`): the nearest own property's enumerability, or
-    /// false past the chain's end. `None` leaves the walk, a Proxy's or primitive's
-    /// included, to the general path.
-    pub(super) fn plain_for_in_key_is_enumerable(
-        &mut self,
-        p: &ResidualProgram,
-        source: Value,
-        key: Value,
-    ) -> Option<Value> {
-        if self.for_in_own_key_listed(source, key) {
-            return Some(Value::TRUE);
-        }
-        let mut current = source;
-        loop {
-            if let Some(attributes) = self.plain_own_attributes(p, current, key)? {
-                return Some(if attributes.enumerable { Value::TRUE } else { Value::FALSE });
-            }
-            current = self.object_data(current)?.proto();
-            if current.is_null() {
-                return Some(Value::FALSE);
-            }
-        }
-    }
-
     /// Whether `key` is an own enumerable property of `target`; `None` when it
     /// is not an own property. Proxies answer through their traps.
     pub(super) fn own_property_enumerable(
