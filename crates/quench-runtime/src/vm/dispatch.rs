@@ -508,6 +508,22 @@ impl<H: Host> Vm<H> {
         (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
     }
 
+    /// The activation a call-shaped instruction's exact step pushes for `callee`: argument window,
+    /// receiver and completion; a construction also arms its target (`Op::Construct` below).
+    pub(super) fn exact_call_activation(&mut self, f: usize, i: WideInstruction, callee: Value, this: Value)
+        -> (crate::bytecode::RegisterWindow, Value, CallCompletion) {
+        match i.op() {
+            Op::Construct => {
+                let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else { unreachable!() };
+                self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
+                (window, this, CallCompletion::Constructor(this))
+            }
+            // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
+            Op::GetField => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
+            _ => (i.call_window(), self.read(f, i.register_c()), CallCompletion::Value),
+        }
+    }
+
     #[quench_macros::operation_semantics(resolve_step_operation)]
     #[inline(always)]
     pub(super) fn step(
@@ -1713,11 +1729,8 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(CallSource::Construct);
                 // A construction whose result is returned is pushed too; its caller returns
                 // the constructed value (see `PendingGeneralCall::returns`).
-                if allow_inline_calls
-                    && !i.is_super_construct()
-                    && let crate::bytecode::ConstructArguments::Registers(window) =
-                        i.construct_arguments()
-                {
+                if allow_inline_calls && !i.is_super_construct()
+                    && let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() {
                     let callee = self.read(f, i.register_b());
                     if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
@@ -1728,32 +1741,19 @@ impl<H: Host> Vm<H> {
                         // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
                         // restores the caller's.
                         let caller_program = self.active_program;
-                        let callee_residual = if program == caller_program {
-                            None
-                        } else {
-                            self.programs.get(program)
-                        };
+                        let callee_residual = if program == caller_program { None } else { self.programs.get(program) };
                         if callee_residual.is_some() {
                             self.set_active_program(program);
                         }
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                        let pushed = self.push_general_user_frame(
-                            callee_residual.as_deref().unwrap_or(p),
-                            id,
-                            env,
-                            this,
-                            unsafe { &*arguments },
-                            CallContext::user_function(id, callee),
-                        );
+                        let pushed = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env,
+                            this, unsafe { &*arguments }, CallContext::user_function(id, callee));
                         self.construct_target = None;
                         if pushed.is_err() && callee_residual.is_some() {
                             self.set_active_program(caller_program);
                         }
-                        return Ok(StepResult::PushFrame {
-                            destination: i.result_register(),
-                            call_guard: pushed?,
-                            completion: CallCompletion::Constructor(this),
-                        });
+                        return Ok(StepResult::PushFrame { destination: i.result_register(), call_guard: pushed?,
+                            completion: CallCompletion::Constructor(this) });
                     }
                 }
                 let args = match i.construct_arguments() {

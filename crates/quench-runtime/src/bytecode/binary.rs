@@ -1,3 +1,4 @@
+mod first_call_scopes;
 use super::{
     AtomTable, BindingSite, Constant, DerivedFact, DispatchClass, FactTables, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
@@ -392,7 +393,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
-    write_closure_reads(&mut out, program.closure_reads.as_deref());
+    write_closure_reads(&mut out, program.closure_reads.as_deref()); first_call_scopes::write(&mut out, &program.first_call_scopes);
     let order = match out.atoms {
         AtomEncoding::Program => {
             header.strings(&program.atoms);
@@ -726,7 +727,7 @@ fn decode_program(
         }
         Ok(Superinstruction::new(code))
     })?;
-    let closure_reads = read_closure_reads(&mut input)?;
+    let (closure_reads, first_call_scopes) = (read_closure_reads(&mut input)?, first_call_scopes::read(&mut input)?);
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
@@ -752,7 +753,7 @@ fn decode_program(
         validated: Default::default(),
         undefined_constant: Default::default(),
         load_encoding: Default::default(),
-        closure_reads,
+        closure_reads, first_call_scopes,
     };
     Ok(program)
 }
@@ -761,9 +762,7 @@ fn decode_program(
 /// whether it is an arrow, its reads (none for its whole chain) and its by-name slots.
 fn write_closure_reads(out: &mut BinaryWriter, reads: Option<&super::ClosureReads>) {
     out.u8(u8::from(reads.is_some()));
-    let Some(reads) = reads else {
-        return;
-    };
+    let Some(reads) = reads else { return };
     out.u32(reads.functions.len() as u32);
     for function in reads.functions.iter() {
         out.option_u32(function.parent);

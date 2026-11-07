@@ -996,7 +996,7 @@ impl Engine {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
-            closure_reads: None,
+            closure_reads: None, first_call_scopes: Default::default(),
         };
         program
             .validate()

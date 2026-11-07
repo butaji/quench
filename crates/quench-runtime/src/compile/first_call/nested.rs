@@ -12,14 +12,14 @@ use std::rc::Rc;
 pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
 
 /// One scope level a stub's function closes over: its bindings by name and slot.
-pub(super) type ScopeLevel = Rc<[(Box<str>, u16)]>;
+pub(crate) type ScopeLevel = Rc<[(Box<str>, u16)]>;
 
 /// What a nested stub's chunk compiles its function against: the scopes it closes over,
 /// innermost first, and the strictness it inherits.
 #[derive(Debug)]
 pub(crate) struct FirstCallScopes {
-    levels: Box<[ScopeLevel]>,
-    strict: bool,
+    pub(crate) levels: Box<[ScopeLevel]>,
+    pub(crate) strict: bool,
 }
 
 /// The free names of `program`, a lazily parsed function alone (`BodyFacts::check`): the

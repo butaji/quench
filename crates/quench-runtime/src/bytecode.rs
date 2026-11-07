@@ -2724,9 +2724,7 @@ impl Function {
                 && load.result_flags() == 0
                 && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
         };
-        let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else {
-            return None;
-        };
+        let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else { return None };
         let forwards_parameters = usize::from(window.count) == count
             && loads.iter().enumerate().all(|(index, load)| {
                 load.op() == Op::LoadLocalPlain
@@ -3859,9 +3857,10 @@ pub struct ResidualProgram {
     /// The index of the `undefined` constant, which every compiled program holds and an
     /// unlowered record's lowering reads, derived on first use.
     pub(crate) undefined_constant: std::cell::OnceCell<u32>,
-    /// What each function's closures read of the environments they close over, when the
-    /// compiler derived it; without it a closure keeps its whole scope chain.
+    /// What each function's closures read of the environments they close over, when derived; else a closure keeps its whole chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
+    /// The scopes each nested first-call stub's chunk compiles against, by stub id; encoded too.
+    pub(crate) first_call_scopes: Box<[(u32, std::rc::Rc<crate::compile::first_call::FirstCallScopes>)]>,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -4148,7 +4147,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 135;
+    pub const FORMAT_VERSION: u8 = 136;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

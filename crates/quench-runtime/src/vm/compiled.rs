@@ -2546,16 +2546,7 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     let body = program.function(vm.frames[caller].function as usize);
     let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
     let callee = if instruction.op() == Op::GetField { entry.callee } else { vm.read(caller, instruction.register_b()) };
-    let (window, receiver, completion) = match instruction.op() {
-        Op::Construct => {
-            let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { unreachable!() };
-            vm.construct_target = Some(super::ConstructionTarget { callee, new_target: callee });
-            (window, entry.this, super::CallCompletion::Constructor(entry.this))
-        }
-        // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-        Op::GetField => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
-        _ => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
-    };
+    let (window, receiver, completion) = vm.exact_call_activation(caller, instruction, callee, entry.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
     vm.frames[caller].pc = entry.call_pc as usize + 1;

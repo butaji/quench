@@ -118,7 +118,8 @@ impl Engine {
         // character before its place, so the function itself starts where it did.
         let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
         let (snippet, start) = if anonymous && span.start > 0 { (std::borrow::Cow::Owned(format!("({snippet})")), span.start - 1) } else { (std::borrow::Cow::Borrowed(snippet), span.start) };
-        let outer = program.replay.as_deref().and_then(|replay| replay.first_calls.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| &replay.first_calls[at].1)).map(|scopes| (span.start, scopes));
+        let scopes = &program.first_call_scopes;
+        let outer = scopes.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &scopes[at].1));
         let window = ChunkWindow { source, start, outer, line_starts, utf16_excess };
         Self::specialize_script_shaped(&snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }

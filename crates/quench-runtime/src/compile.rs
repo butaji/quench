@@ -65,7 +65,7 @@ pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
-mod first_call;
+pub(crate) mod first_call;
 mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
@@ -3517,7 +3517,6 @@ impl<'a> Compiler<'a> {
                         NameSharedSites::Replay(sites) => (*sites).clone(),
                     },
                     functions: replays,
-                    first_calls: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
                     #[cfg(feature = "verify-replay")]
                     released: released
                         .iter()
@@ -3529,7 +3528,7 @@ impl<'a> Compiler<'a> {
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
-            closure_reads,
+            closure_reads, first_call_scopes: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
             load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]
