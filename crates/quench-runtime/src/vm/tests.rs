@@ -2144,7 +2144,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     });
     let map_key = vm.object();
     if let Some(Cell::WeakMap { entries, .. }) = vm.heap.get_mut(map) {
-        entries.insert(map_key, owner);
+        entries.insert((map_key, owner));
     }
     let map_root = vm.heap.root(map);
     let key_root = vm.heap.root(map_key);

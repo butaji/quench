@@ -277,11 +277,7 @@ impl<H: Host> Vm<H> {
             self.temporal_instant_input(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let right =
             self.temporal_instant_input(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let order = match left.cmp(&right) {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        };
+        let order = f64::from(left.cmp(&right) as i8);
         Ok(Value::number(order))
     }
 

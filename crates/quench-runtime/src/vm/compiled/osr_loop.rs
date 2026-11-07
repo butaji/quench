@@ -4271,11 +4271,7 @@ impl Typed {
     /// The load's tag/kind proof has completed. Tagged loads establish no
     /// refinement; checked unboxing establishes the corresponding Number set.
     fn checked_load(value: ir::Value, representation: Representation) -> Self {
-        Self { value, representation, ty: match representation {
-            Representation::Int32 => Type::INT32,
-            Representation::Float64 => Type::NUMBER,
-            Representation::Tagged => Type::ANY,
-        } }
+        Self { value, representation, ty: representation.checked_type() }
     }
 }
 
@@ -4296,7 +4292,7 @@ enum NodeProof {
 
 struct Lowering<'a, 'b> {
     /// The shared native body: the builder, each register's views, which hold each web's value
-    /// in its representation (`view_type`), and the interrupt check.
+    /// in its representation (`Representation::view`), and the interrupt check.
     body: super::Body<'b>,
     region: &'a LoopRegion,
     observation: &'a Observation<'a>,
@@ -4560,15 +4556,6 @@ impl Handoff {
 
 fn flags() -> ir::MemFlagsData {
     ir::MemFlagsData::trusted()
-}
-
-/// The register view that holds a value in `representation` (`super::Body`).
-fn view_type(representation: Representation) -> crate::WasmType {
-    match representation {
-        Representation::Int32 => crate::WasmType::I32,
-        Representation::Float64 => crate::WasmType::F64,
-        Representation::Tagged => crate::WasmType::I64,
-    }
 }
 
 impl<'a, 'b> Lowering<'a, 'b> {
@@ -5318,7 +5305,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(pass);
             }
             if representation == Representation::Tagged {
-                self.body.write(register, view_type(representation), bits);
+                self.body.write(register, representation.view(), bits);
                 continue;
             }
             let otherwise = self.not_entered(Some(Widening::Register(register)));
@@ -5331,7 +5318,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let otherwise = self.not_entered(Some(Widening::Bounded(register)));
                 self.pass_unless(beyond, otherwise);
             }
-            self.body.write(register, view_type(representation), value);
+            self.body.write(register, representation.view(), value);
         }
         let header = self.target_block(None, self.region.header)?;
         self.body.builder.ins().jump(header, &[]);
@@ -5518,7 +5505,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// preheader stored it (`Parking`).
     fn parked_value(&mut self, index: usize, register: Register, web: Definition) -> Typed {
         let representation = self.values[web].expect("verified SSA definition").representation;
-        let ty = super::scalar_ir(view_type(representation));
+        let ty = super::scalar_ir(representation.view());
         let slot = self.parking.slot.expect("a parking slot");
         let offset = self.parking.offset(index, register);
         Typed { value: self.body.builder.ins().stack_load(self.pointer, ty, slot, offset), representation,
@@ -5547,7 +5534,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         };
         for (register, web) in self.parking.parked[index].clone() {
             let value = self.parked_value(index, register, web);
-            self.body.write(register, view_type(value.representation), value.value);
+            self.body.write(register, value.representation.view(), value.value);
         }
     }
 
@@ -5786,19 +5773,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         // The helper writes only on a cache hit. The result word is temporary until this
         // region leaves, where `finish` overwrites it with the continuation outcome.
         let bits = self.body.builder.ins().load(types::I64, flags(), result, 0);
-        let representation = self.field_facts[index].representation;
-        let value = match representation {
-            Representation::Tagged => bits,
-            Representation::Int32 => {
-                let otherwise = self.widen_block(pc, Widening::Field(index as u16));
-                self.unbox(bits, representation, otherwise)
-            }
-            Representation::Float64 => {
-                let otherwise = self.exit_block(pc);
-                self.unbox(bits, representation, otherwise)
-            }
-        };
-        Some(Typed { value, representation, ty: self.field_facts[index].ty })
+        Some(self.field_value(pc, index, bits))
     }
 
     /// Establish an object's header proof once for this SSA value and chain.
@@ -5878,6 +5853,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.chains.insert(join, chain);
             bits
         };
+        Some(self.field_value(pc, index, bits))
+    }
+
+    /// A dynamic field's loaded word in the representation its field facts chose: an Int32
+    /// field that holds something else widens the field; a Float64 one leaves.
+    fn field_value(&mut self, pc: u32, index: usize, bits: ir::Value) -> Typed {
         let representation = self.field_facts[index].representation;
         let value = match representation {
             Representation::Tagged => bits,
@@ -5890,7 +5871,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.unbox(bits, representation, otherwise)
             }
         };
-        Some(Typed { value, representation, ty: self.field_facts[index].ty })
+        Typed { value, representation, ty: self.field_facts[index].ty }
     }
 
     /// The value of the web rooted at `web`, which its register's view holds where the web
@@ -5898,7 +5879,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn web(&mut self, web: Definition) -> Typed {
         let fact = self.values[web].expect("verified SSA definition");
         let register = self.webs.register(self.region, web);
-        Typed { value: self.body.read(register, view_type(fact.representation)),
+        Typed { value: self.body.read(register, fact.representation.view()),
             representation: fact.representation, ty: fact.ty }
     }
 
@@ -5993,7 +5974,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             (Representation::Tagged, Representation::Int32 | Representation::Float64) => self.boxed(value),
             _ => value.value,
         };
-        self.body.write(register, view_type(representation), value);
+        self.body.write(register, representation.view(), value);
     }
 
     /// Continues at `target`: its block within the region, else the lane resumes there. A

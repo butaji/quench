@@ -3,6 +3,13 @@ use super::*;
 mod atoms;
 pub(super) use atoms::{AtomBits, MethodCacheAtoms};
 
+/// Entries of a call site's inline method cache, most recent first; a site that sees more
+/// moves to a megamorphic set.
+pub(super) const METHOD_CACHE_WAYS: usize = 2;
+/// The shape a method lookup on a receiver without object data compares: it matches no
+/// recorded entry, the empty entry included.
+const NON_OBJECT_RECEIVER_SHAPE: u32 = u32::MAX - 1;
+
 impl<H: Host> Vm<H> {
     pub(super) fn invalidate_method_caches(&mut self) {
         self.clear_method_caches(1);
@@ -11,7 +18,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn clear_method_caches(&mut self, _reason: usize) {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches(_reason);
-        self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
+        self.method_caches.fill([EMPTY_METHOD_CACHE; _]);
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
     }
@@ -196,12 +203,7 @@ impl<H: Host> Vm<H> {
         {
             if let Some(entry) = set.entries[..usize::from(set.len)]
                 .iter_mut()
-                .find(|entry| {
-                    entry.shape == cache.shape
-                        && entry.atom == cache.atom
-                        && entry.proto == cache.proto
-                        && entry.callee == cache.callee
-                })
+                .find(|entry| entry.records_same(&cache))
             {
                 *entry = cache;
             } else if usize::from(set.len) < METHOD_MEGAMORPHIC_LIMIT {
@@ -211,12 +213,7 @@ impl<H: Host> Vm<H> {
             return;
         }
         let entries = &mut self.method_caches[site];
-        if entries.iter().any(|entry| {
-            entry.shape == cache.shape
-                && entry.atom == cache.atom
-                && entry.proto == cache.proto
-                && entry.callee == cache.callee
-        }) || entries[1].target.is_none()
+        if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none()
         {
             entries[1] = entries[0];
             entries[0] = cache;
@@ -224,11 +221,11 @@ impl<H: Host> Vm<H> {
         }
         let mut set = MethodCacheSet {
             site,
-            len: 3,
+            len: (METHOD_CACHE_WAYS + 1) as u8,
             entries: [EMPTY_METHOD_CACHE; METHOD_MEGAMORPHIC_LIMIT],
         };
-        set.entries[..2].copy_from_slice(entries);
-        set.entries[2] = cache;
+        set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
+        set.entries[METHOD_CACHE_WAYS] = cache;
         self.megamorphic_methods.push(set);
     }
 }
@@ -396,18 +393,14 @@ impl<H: Host> Vm<H> {
         let (shape, proto) = self
             .object_data(this)
             .map(|object| (object.shape(), object.proto()))
-            .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
+            .unwrap_or((NON_OBJECT_RECEIVER_SHAPE, Value::UNDEFINED));
 
         let specialized = self.specialized && p.specialized;
         let mut candidate = if specialized {
             self.method_caches[cache_site]
                 .iter()
                 .enumerate()
-                .find(|(_, entry)| {
-                    entry.shape == shape
-                        && entry.atom == metadata.atom
-                        && (entry.proto == proto || entry.proto == this)
-                })
+                .find(|(_, entry)| entry.serves(shape, metadata.atom, proto, this))
                 .map(|(tier, entry)| (*entry, tier))
         } else {
             None
@@ -420,14 +413,11 @@ impl<H: Host> Vm<H> {
                 .and_then(|set| {
                     set.entries[..usize::from(set.len)]
                         .iter()
-                        .find(|entry| {
-                            entry.shape == shape
-                                && entry.atom == metadata.atom
-                                && (entry.proto == proto || entry.proto == this)
-                        })
+                        .find(|entry| entry.serves(shape, metadata.atom, proto, this))
                         .copied()
                 })
-                .map(|entry| (entry, 2));
+                // The megamorphic set is the tier after the inline ways.
+                .map(|entry| (entry, METHOD_CACHE_WAYS));
         }
 
         let cached_call = candidate.and_then(|(entry, tier)| {
@@ -482,5 +472,19 @@ impl<H: Host> Vm<H> {
             );
         }
         self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
+    }
+}
+
+impl MethodCache {
+    /// Whether this entry records the same lookup and callee as `other`.
+    fn records_same(&self, other: &Self) -> bool {
+        self.shape == other.shape && self.atom == other.atom && self.proto == other.proto && self.callee == other.callee
+    }
+
+    /// Whether this entry answers a lookup of `atom` on a receiver of `shape` whose prototype
+    /// is `proto` (or that is itself the recorded prototype).
+    #[inline(always)]
+    fn serves(&self, shape: u32, atom: Atom, proto: Value, this: Value) -> bool {
+        self.shape == shape && self.atom == atom && (self.proto == proto || self.proto == this)
     }
 }

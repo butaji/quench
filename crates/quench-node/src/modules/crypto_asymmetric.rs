@@ -437,18 +437,7 @@ impl OwnedKey {
             .filter(|algorithm| algorithm.is_pqc())
         {
             if format == RawFormat::Public {
-                let expected_len = match descriptor.name() {
-                    "ML-DSA-44" => Some(1312),
-                    "ML-DSA-65" => Some(1952),
-                    "ML-DSA-87" => Some(2592),
-                    "ML-KEM-512" => Some(800),
-                    "ML-KEM-768" => Some(1184),
-                    "ML-KEM-1024" => Some(1568),
-                    name if name.contains("128") => Some(32),
-                    name if name.contains("192") => Some(48),
-                    name if name.contains("256") => Some(64),
-                    _ => None,
-                };
+                let expected_len = descriptor.raw_public_len;
                 if expected_len.is_some_and(|expected| data.len() != expected) {
                     return Err(KeyError::InvalidRawKey);
                 }
@@ -1118,18 +1107,7 @@ fn import_akp_jwk(kind: KeyKind, jwk: &Jwk) -> Result<OwnedKey, KeyError> {
         .get("pub")
         .map(Vec::as_slice)
         .ok_or(KeyError::InvalidJwk)?;
-    let expected_public_len = match descriptor.name() {
-        "ML-DSA-44" => Some(1312),
-        "ML-DSA-65" => Some(1952),
-        "ML-DSA-87" => Some(2592),
-        "ML-KEM-512" => Some(800),
-        "ML-KEM-768" => Some(1184),
-        "ML-KEM-1024" => Some(1568),
-        name if name.contains("128") => Some(32),
-        name if name.contains("192") => Some(48),
-        name if name.contains("256") => Some(64),
-        _ => None,
-    };
+    let expected_public_len = descriptor.raw_public_len;
     if expected_public_len.is_some_and(|len| public.len() != len) {
         return Err(KeyError::InvalidJwk);
     }

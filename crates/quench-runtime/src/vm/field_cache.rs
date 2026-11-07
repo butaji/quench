@@ -106,3 +106,22 @@ enum ReceiverKind {
     Ordinary,
     Exotic,
 }
+
+/// What the inline field caches know about one read.
+pub(super) enum FieldCacheProbe {
+    Hit(Value),
+    /// An ordinary object the caches do not cover yet.
+    OrdinaryMiss,
+    /// A receiver or program outside the field caches.
+    Ineligible,
+}
+
+impl FieldCacheProbe {
+    /// The value a hit found.
+    pub(super) fn hit(self) -> Option<Value> {
+        match self {
+            Self::Hit(value) => Some(value),
+            Self::OrdinaryMiss | Self::Ineligible => None,
+        }
+    }
+}

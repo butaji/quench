@@ -1,4 +1,3 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_METHODS};
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
@@ -240,7 +239,7 @@ impl<H: Host> Vm<H> {
             (self.realm.globals, Native::Uint8Array),
             self.uint8_array_proto,
         );
-        for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
+        for &crate::heap::TypedArrayRow { kind, native, name, .. } in &crate::heap::TYPED_ARRAYS {
             if kind != TypedArrayKind::Uint8 {
                 self.install_typed_array_kind(program, kind, native, name)?;
             }
@@ -912,10 +911,7 @@ impl<H: Host> Vm<H> {
         kind: TypedArrayKind,
         length: usize,
     ) -> Result<Value, JsError> {
-        let name = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find_map(|(candidate, _, name)| (*candidate == kind).then_some(*name))
-            .unwrap_or("Uint8Array");
+        let name = kind.name();
         self.construct_typed_array_native(p, &[Value::number(length as f64)], kind, name)
     }
 
@@ -951,10 +947,7 @@ impl<H: Host> Vm<H> {
         let Some(kind) = self.typed_array_kind(this) else {
             return Value::UNDEFINED;
         };
-        let name = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find_map(|(candidate, _, name)| (*candidate == kind).then_some(*name))
-            .unwrap_or("Uint8Array");
+        let name = kind.name();
         self.heap.alloc_string(name.into())
     }
 

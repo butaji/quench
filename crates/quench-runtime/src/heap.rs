@@ -45,7 +45,7 @@ pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
-pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, number_key_hash};
+pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
@@ -695,7 +695,7 @@ pub(crate) struct GcProfile {
     #[cfg(feature = "profile-aggregate")]
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
     #[cfg(feature = "profile-aggregate")]
-    pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
+    pub allocated_size_buckets: [[u64; crate::profile::SIZE_BUCKETS]; CellKind::COUNT],
     #[cfg(feature = "profile-aggregate")]
     pub roots: u64,
     #[cfg(feature = "profile-aggregate")]
@@ -748,7 +748,7 @@ impl Default for GcProfile {
             #[cfg(feature = "profile-aggregate")]
             allocated_payload_bytes: [0; CellKind::COUNT],
             #[cfg(feature = "profile-aggregate")]
-            allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            allocated_size_buckets: [[0; crate::profile::SIZE_BUCKETS]; CellKind::COUNT],
             #[cfg(feature = "profile-aggregate")]
             roots: 0,
             #[cfg(feature = "profile-aggregate")]
@@ -1267,7 +1267,7 @@ impl Heap {
                 .entry(cell.profile_variant_name())
                 .or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+            self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
@@ -1605,7 +1605,7 @@ impl Heap {
             self.gc_profile.allocated_kinds[kind] += 1;
             *self.allocated_variants.entry("string").or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+            self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
         self.charge_materialized_text();
         let payload = string.flat_unit_bytes();
@@ -4574,7 +4574,7 @@ impl Heap {
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-                Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+                Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
                 Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::Environment { slots, scope, .. } => {
                     let with_objects = scope.with_objects();
@@ -4585,19 +4585,6 @@ impl Heap {
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
-    }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
-    pub(super) fn size_bucket(bytes: usize) -> usize {
-        match bytes {
-            0 => 0,
-            1..=7 => 1,
-            8..=15 => 2,
-            16..=31 => 3,
-            32..=63 => 4,
-            64..=127 => 5,
-            128..=255 => 6,
-            _ => 7,
-        }
     }
 }
 #[cfg(test)]
