@@ -14,7 +14,7 @@ const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile production|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -88,9 +88,9 @@ impl Options {
                 }
             }
         }
-        let profile = profile.unwrap_or_else(|| "production".to_owned());
-        if !matches!(profile.as_str(), "production" | "iteration") {
-            return Err("compile profile must be production or iteration".into());
+        let profile = profile.unwrap_or_else(|| "release".to_owned());
+        if !matches!(profile.as_str(), "release" | "iteration") {
+            return Err("compile profile must be release or iteration".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,

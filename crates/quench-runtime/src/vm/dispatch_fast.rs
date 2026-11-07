@@ -12189,9 +12189,7 @@ impl<H: Host> Vm<H> {
             } else if cross {
                 CallEntry::Activates
             } else {
-                // Leaf-ness is the view's, fixed at its first resolution with its returns:
-                // whether the tier may claim it changes later, and a leaf call of a view whose
-                // returns were not specialized returns into the wrong activation.
+                // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
                 shape.leaf.map_or(shape.entry, CallEntry::leaf)
             },
             capture,
