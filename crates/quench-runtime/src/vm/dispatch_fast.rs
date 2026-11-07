@@ -2336,7 +2336,7 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
     /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
-    /// newest last, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
+    /// in the order first seen, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
@@ -2547,21 +2547,15 @@ impl LaneStack {
         self.activation_limit.set(limit);
     }
 
-    /// Records `target` as a callee of the call record whose link is `link`, newest last.
+    /// Records `target` as a callee of the call record whose link is `link`, in the order
+    /// first seen. The link names the latest callee, so a callee already recorded changes
+    /// nothing: a polymorphic site's steady state only reads its record.
     fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
-        if site.last() != Some(&target) {
-            // A record holds each callee once, so the callee in hand moves to the newest end
-            // from where it was, or evicts the oldest.
-            match site.iter().position(|recorded| *recorded == target) {
-                Some(older) => {
-                    site.remove(older);
-                }
-                None if site.len() == CALL_SITE_TARGETS => {
-                    site.remove(0);
-                }
-                None => {}
+        if !site.contains(&target) {
+            if site.len() == CALL_SITE_TARGETS {
+                site.remove(0);
             }
             site.push(target);
         }
@@ -13896,19 +13890,18 @@ script_handler! {
         // SAFETY: the call's window is registers of the running function, which the
         // activation or native call copies before anything can move them.
         let window = unsafe { lane_call_window(r, i) };
-        let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
+        let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
         };
         // The function a call through `call` calls is the site's callee for a body that
         // inlines it (`lane_unit::Planner::through_call`).
-        if matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
+        if through_call
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
             vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function });
         }
-        if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
-            let kind = *kind;
+        if let Some(kind @ FunctionKind::Native(_)) = kind {
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
                 return exit(ip);
             }
@@ -13924,7 +13917,7 @@ script_handler! {
 
 /// `lane_function_call` of a bound function with bound arguments, which lead the values the
 /// call passes (ECMA-262 10.4.1.1): the forwarded call with the values copied out
-/// (`Vm::forwarded_list_call`), a user function's activation or frame call
+/// (`Vm::forwarded_call`), a user function's activation or frame call
 /// (`FrameCallArguments::List`), else the general path.
 #[inline(never)]
 fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
@@ -13932,10 +13925,10 @@ fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     // SAFETY: as in `lane_function_call`; the values are copied before anything runs.
     let window = unsafe { lane_call_window(r, i) };
     let copied = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(window);
-    let Some((callee, receiver, args)) = vm.forwarded_list_call(r.get(i.b), r.get(i.c), copied) else {
+    let Some(super::function::Forwarded { callee, receiver, args, kind, .. }) = vm.forwarded_call(r.get(i.b), r.get(i.c), copied) else {
         return Resumed::Exit(exit(ip));
     };
-    if !matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+    if !matches!(kind, Some(FunctionKind::User(..))) {
         return Resumed::Exit(exit(ip));
     }
     let Some(target) = lane_passed_target(cx, callee, args.len()) else {
@@ -14256,13 +14249,13 @@ fn lane_list_activation<H: Host>(
         } else {
             smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
         };
-        let Some((target, receiver, args)) = vm.forwarded_list_call(callee, receiver, elements) else {
+        let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding declined".into());
             return None;
         };
         let args = args.as_slice();
-        if !matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+        if !matches!(kind, Some(FunctionKind::User(..))) {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding to a native".into());
             return None;
@@ -16610,7 +16603,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
     let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
     let history = vm.lane_stack.call_sites.borrow();
-    // The callees the site resolved or memoized, newest last (`LaneStack::note_site_callee`).
+    // The callees the site resolved or memoized, in the order first seen (`LaneStack::note_site_callee`).
     let recorded = history.get(&std::ptr::from_ref(&record.call_link).addr());
     // A collection since the site linked retires its entry; the callee's own entry of this
     // generation, where a call resolved it again, is the same target. A linked entry another
@@ -24025,8 +24018,8 @@ mod call_site_history_tests {
     use super::super::compiled::{CallTarget, CalleeBinding};
 
     #[test]
-    fn a_call_sites_history_keeps_each_callee_once_newest_last() {
-        // A callee met again moves to the newest end; a further one evicts the oldest
+    fn a_call_sites_history_keeps_each_callee_once_in_first_seen_order() {
+        // A callee met again leaves the record as it is; a further one evicts the oldest
         // (`LaneStack::note_site_callee`).
         let stack = LaneStack::default();
         let link = std::cell::Cell::new(NO_CALL_LINK);
@@ -24037,11 +24030,11 @@ mod call_site_history_tests {
         for k in [1, 2, 3, 2, 2] {
             stack.note_site_callee(&link, target(k));
         }
-        assert_eq!(history(), [1, 3, 2]);
+        assert_eq!(history(), [1, 2, 3]);
         for k in [4, 1, 5] {
             stack.note_site_callee(&link, target(k));
         }
-        assert_eq!(history(), [2, 4, 1, 5]);
+        assert_eq!(history(), [2, 3, 4, 5]);
     }
 }
 
