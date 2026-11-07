@@ -159,13 +159,16 @@ impl<H: Host> Vm<H> {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
+        let helpers = LaneHelpers::Process(LaneHelper::addresses::<H>());
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
         let method_cache_atoms = self.method_cache_atoms.bits().clone();
+        let active = self.active_program;
+        let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
+            .map_or(&[][..], |_| self.programs.constants(active));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address() }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &left_at, &direct_sites, &frame_captures, loop_entry, allow_first_entry)?;
         if lowered.region.native == 0 { return None; }

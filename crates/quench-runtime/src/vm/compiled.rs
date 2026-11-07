@@ -63,6 +63,8 @@ mod lane_region;
 mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
+#[path = "compiled/lane_allocations.rs"] mod lane_allocations;
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -2484,6 +2486,7 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
@@ -2625,7 +2628,7 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
     Numeric,
-    Process([usize; LaneHelper::COUNT]),
+    Process(&'static [*const (); LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -2714,6 +2717,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
     pub(super) invalidation: usize,
+    /// The program's constants as the VM made and roots them (`Vm::active_constant`).
+    pub(super) constants: &'a [Value],
 }
 
 impl OnlineFacts<'_> {
@@ -7738,31 +7743,6 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     1
 }
 
-/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
-/// `DELETED` where a collection is due, which the body leaves for. The allocation may move
-/// the property arena, whose base and length the dispatch reads again.
-unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
-    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let object = vm.object();
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    object.to_bits()
-}
-
-/// A lane body's array literal of `length` holes, or of the `elements` its definitions
-/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
-/// `DELETED` where a collection is due, as `lane_new_object`.
-unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
-    // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    array.to_bits()
-}
 
 /// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
 #[repr(C)]

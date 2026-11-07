@@ -784,7 +784,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             }
             // A fact this edge does not prove and cannot guard leaves at the target, exactly:
             // the edge loses native code, never the body (AGENTS.md, check once).
-            if !state.values[index].value.ty.is_subtype(ty) {
+            if !self.proves(state, register, ty, target) {
                 let exit = self.guard_exit(state, target as u32);
                 self.builder.ins().jump(exit, &[]);
                 let unreached = self.builder.create_block();
@@ -875,7 +875,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         match operand.kind()? {
             OperandKind::Register => Some(self.tagged(state, operand.register_index()?)),
             OperandKind::Constant => {
-                let value = self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)?;
+                let (value, _) = self.constant_value(usize::from(operand.payload()))?;
                 Some(self.ins().iconst(types::I64, value.to_bits() as i64))
             }
             OperandKind::Field | OperandKind::Local => None,
@@ -1246,7 +1246,7 @@ pub(super) fn lower_body(
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     // A call-free loop enters at its header (its lowering asks a native back-edge); one that calls, where it inlines.
-    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry || !unit.instructions.iter().any(|instruction| matches!(instruction.op(), Op::Call | Op::CallArray | Op::Construct))).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
+    let osr = loop_entry.filter(|header| !unit.frames.is_empty() || allow_first_entry || !literals::loop_calls(unit, *header)).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
         vm, generic, direct, frame_captures, None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense));
     let first_entry = osr.is_none();
     let region = osr.or_else(|| allow_first_entry.then(|| lower(program, function_id, unit, helpers, fields,
@@ -1429,7 +1429,8 @@ pub(super) fn lower(
     }
     let mut initial = vec![Type::ANY; count];
     if numeric { initial[..usize::from(function.params)].fill(Type::NUMBER); }
-    for instruction in &instructions {
+    let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
+    for (_, instruction) in instructions.iter().enumerate().filter(|(pc, _)| !heap.contains(*pc)) {
         let (operands, required) = match instruction.op() {
             Op::JumpBinaryFalse if nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
             Op::JumpBinaryFalse => {
@@ -2470,9 +2471,7 @@ impl Lowering<'_, '_> {
                 None => Some(true),
             },
             Op::LoadConst if plain => {
-                let value = self.program.constants.get(instruction.constant_index()).and_then(super::facts::immediate);
-                value.map(|value| {
-                    let ty = Type::immediate(value);
+                self.constant_value(instruction.constant_index()).map(|(value, ty)| {
                     let (representation, native) = if let Some(int) = value.as_int() {
                         (Representation::Int32, self.ins().iconst(types::I32, i64::from(int)))
                     } else if let Some(number) = value.as_number() {
@@ -2562,10 +2561,10 @@ impl Lowering<'_, '_> {
                 })
             }
             Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
-                .iter().all(|register| *register < self.unit.registers) => Some(self.set_index(state, pc32, instruction)),
+                .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
-                self.binary(state, pc, instruction)
+                self.operator(state, pc, instruction)
             }
             Op::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
                 && instruction.register_b() < self.unit.registers => {
@@ -3998,7 +3997,7 @@ impl Lowering<'_, '_> {
     /// lane's helper (`lane_index_set`), which may also add the element and so retires the
     /// views, and leaves at the store when that misses too. Every operand's tagged view is
     /// made before the paths split, so the join sees only values both paths dominate.
-    fn set_index(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
+    pub(super) fn set_index(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
         let exit = self.guard_exit(state, pc);
         let number = state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER);
         if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| number && array.writable) {
@@ -5360,7 +5359,7 @@ mod tests {
             assert_eq!(captures.len(), if polymorphic { 0 } else { 2 }, "{source}\n{}", program.disassemble());
             if polymorphic { continue; }
             let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let addresses = (*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize);
+            let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
                 &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
                 Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
@@ -5495,7 +5494,7 @@ mod tests {
             && super::super::super::operations::NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())
                 == Some(super::super::super::operations::NumberArithmetic::Divide)).unwrap().operand_c().register_index().unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
+        let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
         let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(),
             &[], None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense).expect("inductive native loop");
         let fault_poll = region.fault_poll;
@@ -5706,7 +5705,7 @@ mod tests {
             "boolean-join.js").unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -5753,7 +5752,7 @@ mod tests {
         }).unwrap();
         assert_ne!(header, 0);
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
+        let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
         let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None,
             &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -5782,7 +5781,7 @@ mod tests {
             "function words(x){x=x|0;return x|0;}", "unboxed-word-input.js").unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
@@ -5840,7 +5839,7 @@ mod tests {
         let function = program.function(1);
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
+        let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
         let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -5877,7 +5876,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
-            let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+            let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
                 &fields, &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
                 Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
@@ -5905,7 +5904,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeMap::new(),
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5935,7 +5934,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeMap::new(),
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5961,7 +5960,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;

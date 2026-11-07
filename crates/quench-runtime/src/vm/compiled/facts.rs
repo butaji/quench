@@ -143,13 +143,12 @@ fn register(operand: Operand) -> Option<Register> {
 pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
         Some(OperandKind::Register) => register_type(operand.payload()),
-        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
-            .map_or(Type::ANY, Type::immediate),
+        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).map_or(Type::ANY, constant_type),
         _ => Type::ANY,
     }
 }
 
-fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
+pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
     for register in operands.into_iter().filter_map(register) {
         if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
             set(types, register, Type::NUMBER);
@@ -191,8 +190,7 @@ fn transfer(
     let op = instruction.op();
     match op {
         Op::LoadConst => {
-            let ty = constants.get(instruction.constant_index()).and_then(immediate)
-                .map_or(Type::ANY, Type::immediate);
+            let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
@@ -207,45 +205,7 @@ fn transfer(
             set(types, instruction.result_register(), Type::INT32);
             Flow::Next
         }
-        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => {
-            let operator = instruction.binary_operator();
-            match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
-                Some(bitwise) => {
-                    // ToInt32 of any Number runs natively; anything else leaves.
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    let right = constant_number(constants, instruction.operand_c());
-                    let result = if bitwise.result_is_int32(right) { Type::INT32 } else { Type::NUMBER };
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), result);
-                    }
-                }
-                None if super::super::operations::NumberArithmetic::from_js_instruction(op, operator).is_some() => {
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::NUMBER);
-                    }
-                }
-                None if super::super::operations::NumberRelation::from_operator(operator).is_some() => {
-                    // An equality decides operands of any type (`lane_region::relation`) and
-                    // proves nothing of them; every other relation compares Numbers.
-                    if super::super::operations::equality_operator(operator).is_none() {
-                        prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    }
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
-                    }
-                }
-                None => {
-                    for register in written(instruction) {
-                        set(types, register, Type::ANY);
-                    }
-                    if boolean_binary(operator) && !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
-                    }
-                }
-            }
-            if instruction.returns_from_frame() { Flow::Leaves } else { Flow::Next }
-        }
+        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
         Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
@@ -516,7 +476,10 @@ mod tests {
 
 #[path = "facts/immediates.rs"]
 mod immediates;
-pub(in crate::vm) use immediates::{constant_number, immediate, is_int32, is_int32_number};
+pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32, is_int32_number};
+#[path = "facts/binary.rs"]
+mod binary;
+pub(in crate::vm) use binary::heap_primitive_binary;
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"]
