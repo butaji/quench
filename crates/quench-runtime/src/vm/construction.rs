@@ -160,6 +160,7 @@ impl<H: Host> Vm<H> {
                 return value;
             }
             let value = self.heap.alloc_string(self.atom_value(atom));
+            self.heap.record_string_atom(value, atom);
             self.atom_strings.insert(atom, value);
             return value;
         }
@@ -173,6 +174,7 @@ impl<H: Host> Vm<H> {
             return recent[slot].1;
         }
         let value = self.heap.alloc_string(self.atom_value(atom));
+        self.heap.record_string_atom(value, atom);
         self.recent_atom_strings
             .get_or_insert_with(|| {
                 Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])

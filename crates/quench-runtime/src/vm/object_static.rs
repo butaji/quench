@@ -7,12 +7,28 @@ use super::*;
 /// The own keys a for-in last listed from a receiver's shape (`Vm::own_for_in_keys`), with
 /// the receiver, that shape and the collection epoch: while the receiver keeps the shape,
 /// in the same epoch (which no reused handle or compacted shape shares), each listed key is
-/// still an own enumerable property (`Vm::for_in_own_key_listed`).
+/// still an own enumerable property (`Vm::for_in_own_key_listed`). `next` is the index of
+/// the key the loop checks next, as it checks them in listed order.
 pub(super) struct ForInOwnKeys {
     object: Value,
     shape: u32,
     epoch: u64,
     keys: Vec<Value>,
+    next: std::cell::Cell<usize>,
+}
+
+impl ForInOwnKeys {
+    /// Whether `key` is listed: the one after the last key checked, as a loop checking its
+    /// keys in turn asks, without a scan; any other key by a scan.
+    fn lists(&self, key: Value) -> bool {
+        let next = self.next.get();
+        let position = if self.keys.get(next) == Some(&key) {
+            Some(next)
+        } else {
+            self.keys.iter().position(|&listed| listed == key)
+        };
+        position.inspect(|&index| self.next.set(index + 1)).is_some()
+    }
 }
 
 impl<H: Host> Vm<H> {
@@ -480,6 +496,7 @@ impl<H: Host> Vm<H> {
             shape,
             epoch: self.heap.collection_epoch(),
             keys: keys.clone(),
+            next: std::cell::Cell::new(0),
         });
         Some(keys)
     }
@@ -495,7 +512,7 @@ impl<H: Host> Vm<H> {
                 && self
                     .object_data(source)
                     .is_some_and(|data| data.shape() == listed.shape && !data.has_side_descriptors())
-                && listed.keys.contains(&key)
+                && listed.lists(key)
         })
     }
 

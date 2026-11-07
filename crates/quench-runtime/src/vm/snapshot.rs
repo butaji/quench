@@ -664,6 +664,7 @@ impl<H: Host> Vm<H> {
         self.atoms = hashbrown::HashTable::with_capacity(base + appended);
         self.array_index_atoms.clear();
         self.name_atom_memo.clear();
+        self.heap.clear_string_atoms();
         self.private_site_homes.clear();
         self.atom_classes.clear();
         self.intrinsic_natives.clear();
