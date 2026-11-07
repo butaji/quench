@@ -25,8 +25,6 @@ profile-native-ops = ["native-execution", "quench-runtime/profile-native-ops"]
 verify-replay = ["quench-runtime/verify-replay"]
 tier-stress = ["quench-runtime/tier-stress"]
 profile-allocator = ["quench-runtime/profile-allocator"]
-# Reads the memory-first compile-release knobs from the environment (measurement builds only).
-release-tuning = []
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }

@@ -55,7 +55,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn shape_entry_count(&self, shape: u32) -> usize {
         self.shape_lookup_index(shape).live_len()
     }
-    fn shape_lookup_index(&self, shape: u32) -> &ShapeLookupIndex {
+    pub(super) fn shape_lookup_index(&self, shape: u32) -> &ShapeLookupIndex {
         self.shapes[shape as usize].lookup_index.get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
     }
 }
