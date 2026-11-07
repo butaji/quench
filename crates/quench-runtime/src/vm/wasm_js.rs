@@ -50,13 +50,14 @@ pub(crate) struct WasmJsIntrinsics {
     pub(crate) memory: Value,
     pub(crate) table: Value,
     pub(crate) global: Value,
+    pub(crate) tag: Value,
     /// `WebAssembly.JSTag`: the tag whose one `externref` parameter carries a JavaScript
     /// exception through Wasm.
     pub(crate) js_tag: Value,
 }
 
 impl WasmJsIntrinsics {
-    /// Where `constructor`'s new objects find their prototype; a tag cell has no object part.
+    /// Where `constructor`'s new objects find their prototype.
     fn prototype_slot(&mut self, constructor: Native) -> Option<&mut Value> {
         Some(match constructor {
             Native::WasmModule => &mut self.module,
@@ -64,6 +65,7 @@ impl WasmJsIntrinsics {
             Native::WasmMemory => &mut self.memory,
             Native::WasmTable => &mut self.table,
             Native::WasmGlobal => &mut self.global,
+            Native::WasmTag => &mut self.tag,
             _ => return None,
         })
     }
@@ -77,21 +79,15 @@ impl Default for WasmJsIntrinsics {
             memory: Value::NULL,
             table: Value::NULL,
             global: Value::NULL,
+            tag: Value::NULL,
             js_tag: Value::NULL,
         }
     }
 }
 
 impl WasmJsIntrinsics {
-    pub(crate) fn roots(&self) -> [Value; 6] {
-        [
-            self.module,
-            self.instance,
-            self.memory,
-            self.table,
-            self.global,
-            self.js_tag,
-        ]
+    pub(crate) fn roots(&self) -> [Value; 7] {
+        [self.module, self.instance, self.memory, self.table, self.global, self.tag, self.js_tag]
     }
 }
 
@@ -340,7 +336,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(namespace, interface.name, constructor)?;
         }
         self.install_wasm_errors(program, namespace)?;
-        let js_tag = self.heap.alloc(js_tag_cell());
+        let js_tag = self.heap.alloc(js_tag_cell(Box::new(Self::empty_object(self.wasm_js.tag))));
         self.wasm_js.js_tag = js_tag;
         let atom = self.intern_atom("JSTag");
         self.set_property_with_attributes(

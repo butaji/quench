@@ -7,7 +7,7 @@ impl<H: Host> Vm<H> {
         tag: Value,
         payload: Vec<Value>,
     ) -> Result<Value, JsError> {
-        let Some(Cell::WasmTag { declarations, ty }) = self.heap.get(tag) else {
+        let Some(Cell::WasmTag { declarations, ty, .. }) = self.heap.get(tag) else {
             return Err(JsError::validation("invalid Wasm exception tag".into()));
         };
         let shape = declarations
@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
             types.push(ty);
         }
         let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(types, [])]);
-        Ok(self.heap.alloc(Cell::WasmTag { declarations, ty: 0 }))
+        Ok(self.heap.alloc(Cell::WasmTag { object: Box::new(Self::empty_object(self.wasm_js.tag)), declarations, ty: 0 }))
     }
 }
 
@@ -127,10 +127,10 @@ pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
     (declarations, 0)
 }
 
-/// `WebAssembly.JSTag`'s cell (`js_tag_type`).
-pub(crate) fn js_tag_cell() -> Cell {
+/// `WebAssembly.JSTag`'s cell (`js_tag_type`), with its object part.
+pub(crate) fn js_tag_cell(object: Box<crate::heap::Object>) -> Cell {
     let (declarations, ty) = js_tag_type();
-    Cell::WasmTag { declarations, ty }
+    Cell::WasmTag { object, declarations, ty }
 }
 
 #[cfg(test)]
@@ -160,10 +160,7 @@ mod tests {
             [wasmparser::ValType::I64],
             [],
         )]);
-        let tag = vm.heap.alloc(Cell::WasmTag {
-            declarations,
-            ty: 0,
-        });
+        let tag = vm.heap.alloc(Cell::WasmTag { object: Box::new(crate::heap::Object::new(Value::NULL)), declarations, ty: 0 });
         let bits = vm.heap.alloc(Cell::WasmBits64(0x7ffc_1234_5678_9abc));
         let exception = vm.wasm_exception_new(tag, vec![bits]).unwrap();
         let handle = vm.root(exception);

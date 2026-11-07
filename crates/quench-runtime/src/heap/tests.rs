@@ -953,10 +953,7 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
             descriptor: Some(descriptor),
         }),
     });
-    let tag = heap.alloc(Cell::WasmTag {
-        declarations: crate::WasmTypes::default(),
-        ty: 0,
-    });
+    let tag = heap.alloc(Cell::WasmTag { object: Box::new(plain_object()), declarations: crate::WasmTypes::default(), ty: 0 });
     let exception = heap.alloc(Cell::WasmException {
         tag,
         payload: Box::new(vec![owner]),

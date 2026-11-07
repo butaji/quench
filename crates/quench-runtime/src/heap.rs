@@ -4255,11 +4255,11 @@ impl Heap {
             | Cell::TemporalPlainMonthDay { object: value, .. }
             | Cell::TemporalPlainYearMonth { object: value, .. }
             | Cell::TemporalZonedDateTime { object: value, .. }
-            | Cell::TemporalInstant { object: value, .. } => object(value),
+            | Cell::TemporalInstant { object: value, .. }
+            | Cell::WasmTag { object: value, .. } => object(value),
             Cell::BigInt(_)
             | Cell::Symbol(_)
             | Cell::Error(_)
-            | Cell::WasmTag { .. }
             | Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Host(_),
                 ..
