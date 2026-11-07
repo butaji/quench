@@ -3499,6 +3499,7 @@ impl<'a> Compiler<'a> {
                         starts.into_boxed_slice()
                     },
                     specialized: self.mode == SpecializationMode::Enabled,
+                    template_sites: self.template_sites,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
                     name_shared_sites: match &mut self.name_shared_sites {
