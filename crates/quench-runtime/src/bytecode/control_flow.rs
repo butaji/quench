@@ -95,23 +95,28 @@ pub(crate) enum ControlEdge {
     Handler,
 }
 
-impl Function {
-    /// The instructions control can reach from `instruction` at `pc`, normally or through a
-    /// handler covering it. `pc + 1` stands for the function's end after its last instruction.
-    pub(crate) fn for_each_successor(
-        &self,
-        pc: usize,
-        instruction: WideInstruction,
-        mut successor: impl FnMut(usize, ControlEdge),
-    ) {
-        for_each_instruction_successor(pc, instruction, |target| {
-            successor(target, ControlEdge::Normal)
-        });
-        for handler in &self.handlers {
-            if pc as u32 >= handler.start && (pc as u32) < handler.end {
-                handler_successors(handler, &mut successor);
+/// Visits each of the ascending `pcs` with the indices of the handlers covering it, in table
+/// order. One sweep over the handlers in order of their starts, so a function with many try
+/// statements costs its pcs plus its handlers times their nesting, not its whole handler
+/// table at every pc.
+pub(crate) fn for_each_covering_handler(
+    handlers: &[super::Handler],
+    pcs: impl IntoIterator<Item = usize>,
+    mut visit: impl FnMut(usize, &[usize]),
+) {
+    let mut order = (0..handlers.len()).collect::<Vec<_>>();
+    order.sort_by_key(|&index| handlers[index].start);
+    let mut pending = order.into_iter().peekable();
+    let mut active = Vec::<usize>::new();
+    for pc in pcs {
+        let at = pc_index(pc);
+        active.retain(|&index| handlers[index].end > at);
+        while let Some(index) = pending.next_if(|&index| handlers[index].start <= at) {
+            if handlers[index].end > at {
+                active.insert(active.partition_point(|&other| other < index), index);
             }
         }
+        visit(pc, &active);
     }
 }
 
@@ -124,10 +129,9 @@ fn handler_successors(handler: &super::Handler, successor: &mut impl FnMut(usize
     }
 }
 
-/// Every instruction's successors (`Function::for_each_successor`), listed once for a
-/// pass over the whole function. The handler edges come from one sweep over the handlers
-/// in order of their starts, so a function with many try statements costs its code plus
-/// its handlers times their nesting, not its whole handler table at every pc.
+/// Every instruction's successors, normally or through a handler covering it, listed once
+/// for a pass over the whole function (`for_each_covering_handler`). `pc + 1` stands for the
+/// function's end after its last instruction.
 pub(crate) struct Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
     starts: Vec<u32>,
@@ -138,36 +142,29 @@ pub(crate) struct Successors {
 impl Successors {
     pub(crate) fn of(function: &Function, instructions: &[WideInstruction]) -> Self {
         let handlers = &function.handlers;
-        let mut order = (0..handlers.len()).collect::<Vec<_>>();
-        order.sort_by_key(|&index| handlers[index].start);
-        let mut pending = order.into_iter().peekable();
-        // The handlers covering the current pc, in table order as `for_each_successor` lists them.
-        let mut active = Vec::<usize>::new();
         let mut table = Self {
             starts: Vec::with_capacity(instructions.len() + 1),
             targets: Vec::with_capacity(instructions.len()),
             edges: Vec::with_capacity(instructions.len()),
         };
-        for (pc, &instruction) in instructions.iter().enumerate() {
-            let at = pc as u32;
-            active.retain(|&index| handlers[index].end > at);
-            while let Some(index) = pending.next_if(|&index| handlers[index].start <= at) {
-                if handlers[index].end > at {
-                    active.insert(active.partition_point(|&other| other < index), index);
-                }
-            }
+        for_each_covering_handler(handlers, 0..instructions.len(), |pc, covering| {
             table.starts.push(pc_index(table.targets.len()));
             let mut push = |target, edge| {
                 table.targets.push(pc_index(target));
                 table.edges.push(edge);
             };
-            for_each_instruction_successor(pc, instruction, |target| push(target, ControlEdge::Normal));
-            for &index in &active {
+            for_each_instruction_successor(pc, instructions[pc], |target| push(target, ControlEdge::Normal));
+            for &index in covering {
                 handler_successors(&handlers[index], &mut push);
             }
-        }
+        });
         table.starts.push(pc_index(table.targets.len()));
         table
+    }
+
+    /// The successor table of `function`'s code as it stands.
+    pub(crate) fn of_code(function: &Function) -> Self {
+        Self::of(function, &function.instructions().collect::<Vec<_>>())
     }
 
     /// The successors of the instruction at `pc`, with how control reaches each.

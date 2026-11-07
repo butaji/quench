@@ -25,8 +25,9 @@ pub(super) fn forward_move_sources(
     };
     let scope = Scope::of(function);
     let mut changed = Vec::new();
+    let mut rewritten_at = crate::bitset::BitSet::new(function.code.len());
     for pc in 0..function.code.len() {
-        if changed.contains(&pc) {
+        if rewritten_at.contains(pc) {
             continue;
         }
         let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
@@ -34,7 +35,7 @@ pub(super) fn forward_move_sources(
         if let Some((at, rewritten)) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) {
             function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
             function.code[at] = rewritten;
-            changed.extend([pc, at]);
+            [pc, at].into_iter().for_each(|rewritten| { changed.push(rewritten); rewritten_at.insert(rewritten); });
         }
     }
     hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
@@ -43,7 +44,8 @@ pub(super) fn forward_move_sources(
 /// What copy propagation may not cross or rewrite in a function.
 struct Scope {
     protected: crate::bitset::BitSet,
-    handlers: Vec<(usize, usize)>,
+    /// The pcs some handler covers.
+    handled: crate::bitset::BitSet,
     /// Promoted local storage, and the parameters' part of it.
     storage: RegisterSet,
     parameters: RegisterSet,
@@ -57,7 +59,7 @@ impl Scope {
         Self {
             protected: protected_positions(&function.code, &function.wide, &function.handlers,
                 function.parameter_end_pc, &function.binding_sites),
-            handlers: function.handlers.iter().map(|handler| (handler.start as usize, handler.end as usize)).collect(),
+            handled: handled_pcs(function),
             storage: mask(false),
             parameters: mask(true),
         }
@@ -70,8 +72,19 @@ impl Scope {
     }
 
     fn in_handler(&self, pc: usize) -> bool {
-        self.handlers.iter().any(|&(start, end)| start <= pc && pc < end)
+        self.handled.contains(pc)
     }
+}
+
+/// The pcs of `function` some handler covers, from one sweep over the handlers.
+fn handled_pcs(function: &BcFunction) -> crate::bitset::BitSet {
+    let mut handled = crate::bitset::BitSet::new(function.code.len());
+    crate::bytecode::for_each_covering_handler(&function.handlers, 0..function.code.len(), |pc, covering| {
+        if !covering.is_empty() {
+            handled.insert(pc);
+        }
+    });
+    handled
 }
 
 type Masks<'m> = (&'m dyn Fn(Instr) -> RegisterSet, &'m dyn Fn(Instr) -> RegisterSet);
@@ -89,7 +102,7 @@ fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
     let consumer = function.code[at];
     let crossed = at > pc + 1 && register_bit(source) & scope.parameters != 0;
     if crossed || consumer.is_wide()
-        || liveness::live_out(function, &analysis.live, at, consumer.as_wide()) & register_bit(destination) != 0
+        || liveness::live_out(&analysis.successors, &analysis.live, at) & register_bit(destination) != 0
     {
         return None;
     }

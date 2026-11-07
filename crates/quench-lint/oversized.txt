@@ -492,7 +492,7 @@ complexity crates/quench-runtime/src/bytecode/control_flow.rs::is_bounded 12
 complexity crates/quench-runtime/src/bytecode/disassemble.rs::write_index_immediate 12
 complexity crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_value 29
 complexity crates/quench-runtime/src/bytecode/initialization.rs::accesses 12
-complexity crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 20
+complexity crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 19
 complexity crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 125
 complexity crates/quench-runtime/src/bytecode/validate.rs::field_domains_in_bounds 28
 complexity crates/quench-runtime/src/bytecode/validate.rs::immediate_domains_in_bounds 46
@@ -1455,7 +1455,7 @@ file-lines crates/quench-regexp/src/lib.rs 2986
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2525
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4297
+file-lines crates/quench-runtime/src/bytecode.rs 4292
 file-lines crates/quench-runtime/src/bytecode/binary.rs 1780
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1131
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
@@ -1469,10 +1469,10 @@ file-lines crates/quench-runtime/src/compile/ast/statement.rs 851
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2017
 file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 528
-file-lines crates/quench-runtime/src/compile/liveness.rs 714
+file-lines crates/quench-runtime/src/compile/liveness.rs 702
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1052
-file-lines crates/quench-runtime/src/compile/rewrite.rs 1688
+file-lines crates/quench-runtime/src/compile/rewrite.rs 1687
 file-lines crates/quench-runtime/src/heap.rs 4711
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
@@ -2581,7 +2581,7 @@ function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_index_im
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_field 46
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_immediate 54
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_value 114
-function-lines crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 108
+function-lines crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 95
 function-lines crates/quench-runtime/src/bytecode/tests.rs::compact_encoding_names_every_atom_by_its_text 84
 function-lines crates/quench-runtime/src/bytecode/tests.rs::decoder_rejects_invalid_binding_site_metadata 43
 function-lines crates/quench-runtime/src/bytecode/tests.rs::decoder_rejects_runtime_abi_mismatch_before_tables 99
@@ -2689,12 +2689,12 @@ function-lines crates/quench-runtime/src/compile/regexp.rs::validate_unicode_esc
 function-lines crates/quench-runtime/src/compile/regexp.rs::validate_unicode_quantifier_braces 48
 function-lines crates/quench-runtime/src/compile/replay.rs::recompile 223
 function-lines crates/quench-runtime/src/compile/replay.rs::verify 68
-function-lines crates/quench-runtime/src/compile/rewrite.rs::coalesce_distant_producer_moves 106
+function-lines crates/quench-runtime/src/compile/rewrite.rs::coalesce_distant_producer_moves 103
 function-lines crates/quench-runtime/src/compile/rewrite.rs::relocate 42
 function-lines crates/quench-runtime/src/compile/rewrite.rs::relocate_source_positions 60
 function-lines crates/quench-runtime/src/compile/rewrite.rs::remove_dead_moves 46
 function-lines crates/quench-runtime/src/compile/rewrite.rs::remove_nops 59
-function-lines crates/quench-runtime/src/compile/rewrite.rs::rewrite_once 118
+function-lines crates/quench-runtime/src/compile/rewrite.rs::rewrite_once 117
 function-lines crates/quench-runtime/src/compile/rewrite.rs::rewrite_super_window 68
 function-lines crates/quench-runtime/src/compile/rewrite.rs::tests::conditional_local_field_copy_keeps_valid_native_metadata 43
 function-lines crates/quench-runtime/src/compile/rewrite.rs::tests::inverts_a_branch_only_over_an_unreachable_forward_jump 43

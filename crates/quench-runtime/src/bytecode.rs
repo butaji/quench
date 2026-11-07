@@ -146,7 +146,9 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
     name.starts_with(HOME_BINDING_PREFIX)
         || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor};
+pub(crate) use control_flow::{
+    ControlEdge, Successors, branch_table_entries, for_each_covering_handler, for_each_instruction_successor,
+};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -3072,10 +3074,10 @@ impl LexicalBindingKind {
     }
 }
 
-pub(crate) fn private_identity_label(identity: &str) -> Option<String> {
+pub(crate) fn private_identity_label(identity: &str) -> Option<&str> {
     let identity = identity.strip_prefix("\0quench:private:")?;
     let (_, label) = identity.rsplit_once(':')?;
-    (!label.is_empty()).then(|| label.to_owned())
+    (!label.is_empty()).then_some(label)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

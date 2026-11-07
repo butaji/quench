@@ -432,9 +432,6 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn local_slot(&self, atom: Atom) -> Option<u16> {
-        self.locals
-            .iter()
-            .position(|value| *value == atom)
-            .map(|slot| slot as u16)
+        self.local_slots.get(&atom).copied()
     }
 }
