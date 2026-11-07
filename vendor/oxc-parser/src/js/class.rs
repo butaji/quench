@@ -56,7 +56,21 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         Expression::ClassExpression(class)
     }
 
+    /// A class, all of whose parts are strict mode code (`ParserImpl::strict`).
     fn parse_class(
+        &mut self,
+        start: u32,
+        r#type: ClassType,
+        modifiers: &Modifiers,
+        decorators: ArenaVec<'a, Decorator<'a>>,
+    ) -> ArenaBox<'a, Class<'a>> {
+        let strict = std::mem::replace(&mut self.strict, true);
+        let class = self.parse_class_parts(start, r#type, modifiers, decorators);
+        self.strict = strict;
+        class
+    }
+
+    fn parse_class_parts(
         &mut self,
         start: u32,
         r#type: ClassType,

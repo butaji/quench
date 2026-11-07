@@ -6708,9 +6708,9 @@ impl CompiledProgram {
         sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
-    pub(super) fn has_function(&self, function: usize) -> bool {
-        self.functions.get(function).is_some_and(Option::is_some)
-    }
+    pub(super) fn has_function(&self, function: usize) -> bool { self.functions.get(function).is_some_and(Option::is_some) }
+    /// The functions it holds code for.
+    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.functions.len()).filter(|&function| self.has_function(function)) }
 
     pub(super) fn mapped_bytes(&self) -> usize {
         self._code.length
