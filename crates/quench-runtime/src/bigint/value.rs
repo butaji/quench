@@ -1,15 +1,19 @@
 //! The BigInt value a heap cell holds: sign and magnitude with its digits in the cell, as
 //! V8's `BigInt` and JSC's `JSBigInt` keep theirs inline after the header. The cell has
-//! room for `INLINE_DIGITS`, a 256-bit magnitude; a longer magnitude spills to one
-//! allocation of exactly its length.
+//! room for `INLINE_DIGITS`; a longer magnitude spills to one allocation of exactly its
+//! length.
 
 use super::digits::{self, Digit, DIGIT_BITS};
 use super::Error;
 use std::cmp::Ordering;
 use std::ptr::NonNull;
 
-/// Digits held in the cell: what fits beside the length and sign in a cell's payload.
-pub(crate) const INLINE_DIGITS: usize = 4;
+/// Digits held in the cell: what fits beside the length and sign in the largest cell
+/// payload, an array's, so a BigInt never widens a heap slot (`cells_stay_compact`).
+pub(crate) const INLINE_DIGITS: usize =
+    (std::mem::size_of::<crate::heap::ArrayObject>() - HEADER_BYTES) / std::mem::size_of::<Digit>();
+/// The length and sign, padded to a digit's alignment.
+const HEADER_BYTES: usize = std::mem::align_of::<Digit>();
 
 /// The largest magnitude, in bits, an operation may produce: V8's `BigInt::kMaxLengthBits`,
 /// past which operations throw "Maximum BigInt size exceeded".
