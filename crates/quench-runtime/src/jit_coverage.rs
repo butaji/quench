@@ -132,7 +132,7 @@ mod sampler {
 }
 
 /// Where a sample's time went.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Category {
     Jit,
     Interpreter,
