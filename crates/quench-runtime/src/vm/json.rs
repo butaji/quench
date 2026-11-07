@@ -1115,6 +1115,49 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     }
 }
 
+/// The key an object literal takes as its prototype rather than as a property
+/// (`__proto__: value`), which JSON.parse takes as a property.
+const PROTO_KEY: &str = "__proto__";
+
+/// Checks the JSON text of a data script's literal (`compile::data_literal`), keeping no
+/// values: the text is an array or object literal with the value JSON.parse gives it unless
+/// a key is `PROTO_KEY`.
+struct JsonLiteralCheck {
+    proto_key: bool,
+}
+
+impl JsonBuilder for JsonLiteralCheck {
+    type Value = ();
+    type Key = ();
+    type Layout = ();
+    const KEEPS_SOURCE: bool = false;
+    fn literal(&mut self, _value: JsonLiteral) {}
+    fn number(&mut self, _value: f64) {}
+    fn integer(&mut self, _value: i32) {}
+    fn string(&mut self, _units: JsonStringUnits<'_>) {}
+    fn layout(&mut self, _parent: Option<&()>) {}
+    fn expected_key(&mut self, _layout: &mut (), _matches: impl Fn(&[u8]) -> bool) -> Option<((), usize)> {
+        None
+    }
+    fn key(&mut self, _layout: &mut (), units: Units<'_>) {
+        self.proto_key |= units.len() == PROTO_KEY.len() && units.iter().eq(PROTO_KEY.encode_utf16());
+    }
+    fn array(&mut self, _values: std::vec::Drain<'_, ()>) {}
+    fn object(&mut self, _layout: (), _keys: std::vec::Drain<'_, ()>, _values: std::vec::Drain<'_, ()>) {}
+    fn primitive(&mut self, _value: (), _source: Units<'_>) {}
+}
+
+/// The bytes of the JSON array or object text `text` starts with, when the array or object
+/// literal of that text evaluates to the value JSON.parse gives it: no key is `PROTO_KEY`.
+pub(crate) fn json_literal_length(text: &str) -> Option<usize> {
+    if !text.starts_with(['[', '{']) {
+        return None;
+    }
+    let mut check = JsonLiteralCheck { proto_key: false };
+    let (_, length) = JsonParser::new(Utf8Byte::of(text), &mut check).parse_prefix().ok()?;
+    (!check.proto_key).then_some(length)
+}
+
 /// A container whose members a parse is gathering: where its members start on the parse's
 /// stacks, and an object's layout so far.
 enum JsonFrame<L> {
@@ -1144,7 +1187,23 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         }
     }
 
+    /// The JSON text that is all of the units.
     fn parse(mut self) -> Result<B::Value, JsonParseError> {
+        let value = self.value()?;
+        match self.token() {
+            None => Ok(value),
+            Some(_) => Err(self.error(JsonSyntax::NonWhitespaceAfter)),
+        }
+    }
+
+    /// The JSON text the units start with, and the units it spans.
+    fn parse_prefix(mut self) -> Result<(B::Value, usize), JsonParseError> {
+        let value = self.value()?;
+        Ok((value, self.index))
+    }
+
+    /// The JSON value at the current unit, which the parse moves past.
+    fn value(&mut self) -> Result<B::Value, JsonParseError> {
         let mut frames: Vec<JsonFrame<B::Layout>> = Vec::new();
         'value: loop {
             let token = self.token();
@@ -1196,13 +1255,10 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             }
             // Each container the value completes is the value its parent takes next.
             loop {
-                let token = self.token();
                 let Some(frame) = frames.last_mut() else {
-                    return match token {
-                        None => Ok(value),
-                        Some(_) => Err(self.error(JsonSyntax::NonWhitespaceAfter)),
-                    };
+                    return Ok(value);
                 };
+                let token = self.token();
                 self.values.push(value);
                 value = match (frame, token) {
                     (JsonFrame::Array { .. }, Some(JSON_COMMA)) => {
@@ -1599,6 +1655,16 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(holder_root);
         self.heap.release_root(reviver_root);
         result
+    }
+
+    /// The value of the JSON text that `text` starts with, which compilation checked
+    /// (`json_literal_length`): what the array or object literal of that text evaluates to.
+    pub(super) fn json_literal(&mut self, text: &str) -> Result<Value, JsError> {
+        let mut builder = JsonHeapBuilder::new(self);
+        let parsed = JsonParser::new(Utf8Byte::of(text), &mut builder).parse_prefix();
+        builder
+            .finish(parsed.map(|(value, _)| value))
+            .map_err(|_| JsError::validation("a data literal is not the JSON text its compilation checked".into()))
     }
 
     /// The SyntaxError of `error`, at a UTF-16 position of `text`.

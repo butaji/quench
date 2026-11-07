@@ -1324,6 +1324,12 @@ impl<H: Host> Vm<H> {
                     values.truncate(start);
                     object
                 }
+                crate::bytecode::LiteralStep::Json(start) => {
+                    let text = program.data_literal_text(start).ok_or_else(|| {
+                        JsError::validation("data literal is outside the program's source".into())
+                    })?;
+                    self.json_literal(text)?
+                }
             };
             values.push(value);
         }

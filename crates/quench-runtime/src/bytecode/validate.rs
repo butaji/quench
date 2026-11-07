@@ -968,6 +968,7 @@ function.plain_local_slots(&self.superinstructions)
                     Some(site) => (site.atoms.len(), true),
                     None => (0, false),
                 },
+                super::LiteralStep::Json(start) => (0, self.data_literal_text(start).is_some()),
             };
             if !valid || taken > depth {
                 return false;

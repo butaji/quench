@@ -21997,6 +21997,89 @@ print(JSON.stringify(out));
 }
 
 #[test]
+fn data_script_literals_evaluate_as_their_object_and_array_literals() {
+    // A script's first declaration or assignment of a JSON array or object builds its value
+    // from the text (`compile::data_literal`); keys, numbers, strings, line positions, later
+    // statements and the cases it leaves to the full parse (a `__proto__` key, a literal that
+    // is an operand) give what the literal gives in Node.
+    let programs = [
+        r##"/* data */
+var dataA = [{"id":1,"tags":["a","b"],"v":1.5},{"id":2,"tags":[],"v":-0}];
+print(dataA.length + ":" + JSON.stringify(dataA) + ":" + Object.is(dataA[1].v, -0));"##,
+        r##"// generated
+let dataB = {"b":1,"2":2,"a":{"x":[true,false,null]},"b":3}
+;print(Object.keys(dataB).join() + JSON.stringify(dataB));"##,
+        r##"const dataC = {"s":"\u00e9\ud800 \u2028 é","n":1e400,"m":[1.0,2.5e-3]};print([dataC.s.length, dataC.n, dataC.m.join()].join("|"));"##,
+        r##"globalThis.dataD = [1,2,3]; dataD.push(4); print(dataD.join());"##,
+        r##"var dataF = {"__proto__":{"inherited":1},"own":2}; print([Object.keys(dataF).join(), dataF.inherited, Object.getPrototypeOf(dataF) === Object.prototype].join("|"));"##,
+        r##"var dataG = [1,2] + 1; print(dataG);"##,
+        r##"var dataH = [10,20][1]; print(dataH);"##,
+        r##"var dataI = {"a":1}.a; print(dataI);"##,
+        r##"var dataJ = [
+1,
+2
+];
+print(new Error("line").stack.split("\n")[1].trim().replace(/^at .*?(\d+):(\d+)\)?$/, "$1:$2"));"##,
+        r##"let dataK = {"f":1};
+function readK() { return dataK.f + 1; }
+print(readK() + "|" + readK.toString());"##,
+        r##"var dataM = [1,2,3,]; print(dataM.length);"##,
+        r##"var dataO = {"a":1, "b": [1, {"c": "d"}]}  ; print(dataO.b[1].c);"##,
+        r##"var dataP = ["x", "y"]
+["length"]; print(dataP);"##,
+        r##"var dataR = [[], {}, [[]]] ; print(JSON.stringify(dataR));"##,
+        r##"var dataT = [1, 2], dataU = {"z": 26}; print(dataT.join() + dataU.z);"##,
+        r##"var dataV = [{"k":1},{"k":2}]; dataV[0].k = 5; dataV[1].j = 3; print(JSON.stringify(dataV));"##,
+        r##"var dataW = [1, 2]
+print(dataW.join("+"));"##,
+    ];
+    let expected = [
+        r##"2:[{"id":1,"tags":["a","b"],"v":1.5},{"id":2,"tags":[],"v":0}]:true"##,
+        r##"2,b,a{"2":2,"b":3,"a":{"x":[true,false,null]}}"##,
+        r##"6|Infinity|1,0.0025"##,
+        r##"1,2,3,4"##,
+        r##"own|1|false"##,
+        r##"1,21"##,
+        r##"20"##,
+        r##"1"##,
+        r##"5:7"##,
+        r##"2|function readK() { return dataK.f + 1; }"##,
+        r##"3"##,
+        r##"d"##,
+        r##"2"##,
+        r##"[[],{},[[]]]"##,
+        r##"1,226"##,
+        r##"[{"k":5},{"k":2,"j":3}]"##,
+        r##"1+2"##,
+    ];
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    for (index, program) in programs.iter().enumerate() {
+        let name = format!("data_script_literals_{index}.js");
+        vm.execute(&Engine::specialize(program, &name).unwrap()).unwrap();
+    }
+    assert_eq!(output.borrow().as_slice(), expected);
+}
+
+#[test]
+fn data_script_literals_are_built_from_their_source_text() {
+    // The literal a data script declares is one template step reading the source; one whose
+    // object literal semantics differ from JSON.parse (a `__proto__` key), or that is not the
+    // whole value, keeps its syntax tree.
+    let steps = |source: &str| Engine::specialize(source, "data_steps.js").unwrap().literal_templates;
+    let json_step = |source: &str| {
+        steps(source)
+            .iter()
+            .any(|template| matches!(template.as_ref(), [crate::bytecode::LiteralStep::Json(_)]))
+    };
+    assert!(json_step("/* data */ var d = [{\"a\": [1, 2]}, {\"b\": null}];"));
+    assert!(json_step("module.exports = {\"k\": {\"n\": [true]}}"));
+    assert!(!json_step("var d = {\"__proto__\": {\"a\": 1}, \"b\": [1]};"));
+    assert!(!json_step("var d = [[1], [2]][0];"));
+    assert!(!json_step("var d = f([[1], [2]]);"));
+}
+
+#[test]
 fn lane_closures_of_one_function_keep_their_own_lexical_this() {
     // Arrows made by one function share its derived lane target; each keeps the `this` of
     // the call that made it, and a closure-making method's arrows see that method's receiver.
