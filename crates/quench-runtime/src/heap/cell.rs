@@ -3828,11 +3828,11 @@ pub(crate) enum Cell {
     },
     Map {
         object: Box<Object>,
-        entries: Box<super::CollectionEntries<(Value, Value)>>,
+        entries: super::Entries<(Value, Value)>,
     },
     Set {
         object: Box<Object>,
-        entries: Box<super::CollectionEntries<Value>>,
+        entries: super::Entries<Value>,
     },
     ShadowRealm {
         object: Box<Object>,
