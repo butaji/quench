@@ -1053,6 +1053,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     fn integer(&mut self, value: i32) -> Value {
         Value::integer(value)
     }
+    #[inline(always)]
     fn string(&mut self, units: JsonStringUnits<'_>) -> Value {
         match units {
             JsonStringUnits::Run(Units::Ascii(bytes)) => self.ascii_string(bytes),
@@ -1336,7 +1337,8 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     }
 
     /// A string's code units, from its opening quote, which the caller matched: a run of the
-    /// source when it has no escapes.
+    /// source when it has no escapes. Inline, so the run reaches the builder in registers.
+    #[inline(always)]
     fn string(&mut self) -> Result<JsonStringUnits<'a>, JsonParseError> {
         self.index += 1;
         let units = self.units;
@@ -1348,6 +1350,13 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             self.index = start + length + 1;
             return Ok(T::run(&units[start..start + length]));
         }
+        self.escaped_string()
+    }
+
+    /// `string` of a string with escapes, or of none, from its first unit.
+    #[cold]
+    fn escaped_string(&mut self) -> Result<JsonStringUnits<'a>, JsonParseError> {
+        let units = self.units;
         let mut output = Vec::new();
         loop {
             let run = &units[self.index..];
@@ -1419,12 +1428,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
                     return Err(self.error(JsonSyntax::Unexpected));
                 }
             }
-            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => {
-                while let Some(digit) = self.digit_value() {
-                    mantissa = mantissa.wrapping_mul(10).wrapping_add(digit);
-                    self.index += 1;
-                }
-            }
+            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => mantissa = self.accumulate_digits(mantissa),
             _ => return Err(self.error(JsonSyntax::NoNumberAfterMinus)),
         }
         let exponent_mark = |unit: Option<u16>| unit.is_some_and(|unit| unit == b'e' as u16 || unit == b'E' as u16);
@@ -1443,12 +1447,11 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             if self.digit_value().is_none() {
                 return Err(self.error(JsonSyntax::UnterminatedFraction));
             }
-            while let Some(digit) = self.digit_value() {
-                mantissa = mantissa.wrapping_mul(10).wrapping_add(digit);
-                digits += 1;
-                scale -= 1;
-                self.index += 1;
-            }
+            let fraction_start = self.index;
+            mantissa = self.accumulate_digits(mantissa);
+            let fraction_digits = self.index - fraction_start;
+            digits += fraction_digits;
+            scale -= fraction_digits as i32;
         }
         if exponent_mark(self.peek()) {
             self.index += 1;
@@ -1489,6 +1492,23 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         };
         let text = std::str::from_utf8(bytes).expect("a number literal is ASCII");
         Ok(JsonNumber::Float(text.parse::<f64>().expect("the grammar admits only decimal literals")))
+    }
+
+    /// `mantissa` followed by the decimal digits from the current unit, which the parse moves
+    /// past; it wraps past `JSON_MANTISSA_DIGITS`, where its callers no longer read it.
+    #[inline(always)]
+    fn accumulate_digits(&mut self, mut mantissa: u64) -> u64 {
+        let units = self.units;
+        let mut at = self.index;
+        while let Some(unit) = units.get(at)
+            && let digit = unit.unit().wrapping_sub(JSON_DIGIT_START)
+            && digit <= JSON_DIGIT_END - JSON_DIGIT_START
+        {
+            mantissa = mantissa.wrapping_mul(10).wrapping_add(u64::from(digit));
+            at += 1;
+        }
+        self.index = at;
+        mantissa
     }
 
     /// The value of the current unit when it is a decimal digit.
