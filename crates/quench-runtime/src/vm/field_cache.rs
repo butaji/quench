@@ -106,3 +106,13 @@ enum ReceiverKind {
     Ordinary,
     Exotic,
 }
+
+/// What the inline field caches know about one read.
+pub(super) enum FieldCacheProbe {
+    Hit(Value),
+    /// An ordinary object the caches do not cover yet.
+    OrdinaryMiss,
+    /// A receiver or program outside the field caches.
+    Ineligible,
+}
+

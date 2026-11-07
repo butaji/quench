@@ -141,14 +141,6 @@ impl PromotionAge {
     pub(crate) const fn ages(self) -> bool {
         matches!(self, Self::Second)
     }
-
-    /// The age of `minors` survivals, if one bit can count it.
-    #[cfg(feature = "gc-tuning")]
-    fn from_minors(minors: usize) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|age| usize::from(age.minors()) == minors)
-    }
 }
 
 /// Memory-first promotes on the first survived minor collection: the second was neutral on its
@@ -419,57 +411,12 @@ impl GenerationalPacing {
         let cap = self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap);
         since_full >= cap.checked_shl(cap_backoff).unwrap_or(usize::MAX)
     }
-
-    /// Diagnostic builds may override each knob from the environment to measure a policy
-    /// table; production reads only the constants.
-    #[cfg(feature = "gc-tuning")]
-    pub(super) fn from_environment(self) -> Self {
-        fn read(name: &str, default: usize) -> usize {
-            std::env::var(name)
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(default)
-        }
-        fn ratio(name: &str, default: Ratio) -> Ratio {
-            Ratio::new(
-                read(&format!("{name}_NUM"), default.numerator),
-                read(&format!("{name}_DEN"), default.denominator).max(1),
-            )
-        }
-        Self {
-            young: ratio("QUENCH_GC_YOUNG", self.young),
-            minimum_young: read("QUENCH_GC_MIN_YOUNG", self.minimum_young),
-            maximum_young: read("QUENCH_GC_MAX_YOUNG", self.maximum_young),
-            surviving_young_from: read("QUENCH_GC_SURVIVING_YOUNG_FROM", self.surviving_young_from as usize) as u32,
-            surviving_young_factor: read("QUENCH_GC_SURVIVING_YOUNG_FACTOR", self.surviving_young_factor),
-            steady_live_growth: ratio("QUENCH_GC_STEADY_LIVE_GROWTH", self.steady_live_growth),
-            old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
-            minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
-            allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
-            minimum_allocation_cap: read("QUENCH_GC_MIN_ALLOCATION_CAP", self.minimum_allocation_cap),
-            productive_full: ratio("QUENCH_GC_PRODUCTIVE_FULL", self.productive_full),
-            maximum_cap_backoff: read("QUENCH_GC_MAX_CAP_BACKOFF", self.maximum_cap_backoff as usize) as u32,
-            survival_limit: read("QUENCH_GC_SURVIVAL_LIMIT", self.survival_limit as usize) as u32,
-            full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
-            probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
-            weight_growth: ratio("QUENCH_GC_WEIGHT_GROWTH", self.weight_growth),
-            minimum_external_budget: read("QUENCH_GC_MIN_EXTERNAL", self.minimum_external_budget),
-            promotion_age: PromotionAge::from_minors(read(
-                "QUENCH_GC_PROMOTION_AGE",
-                usize::from(self.promotion_age.minors()),
-            ))
-            .unwrap_or(self.promotion_age),
-            promoted_garbage_aging: ratio("QUENCH_GC_PROMOTED_GARBAGE_AGING", self.promoted_garbage_aging),
-            aging_interval: read("QUENCH_GC_AGING_INTERVAL", self.aging_interval as usize) as u32,
-            ages_from_start: read("QUENCH_GC_AGES_FROM_START", usize::from(self.ages_from_start)) != 0,
-        }
-    }
 }
 
 /// How a runtime trades memory for speed (TOD-167): one choice per runtime, made at startup
 /// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
 /// host returns pages at collection boundaries (`Host::at_collection_boundary`),
-/// whether and how the loop tier compiles (`PolicyTiers::loop_opt_level`), whether the
+/// whether and how the loop tier compiles (`PolicyTiers::loop_tier`), whether the
 /// JavaScript function tiers compile (`PolicyTiers::js_function_tiers`), and how much IR a Wasm module's
 /// compile workers hold at once (`WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -519,17 +466,8 @@ impl MemoryPolicy {
         }
     }
 
-    #[cfg(not(feature = "gc-tuning"))]
     pub(super) fn pacing(self) -> GenerationalPacing {
         self.table()
-    }
-
-    /// Diagnostic builds read the environment's overrides over the policy's table, once.
-    #[cfg(feature = "gc-tuning")]
-    pub(super) fn pacing(self) -> GenerationalPacing {
-        static TUNED: [std::sync::OnceLock<GenerationalPacing>; MemoryPolicy::ALL.len()] =
-            [const { std::sync::OnceLock::new() }; MemoryPolicy::ALL.len()];
-        *TUNED[self as usize].get_or_init(|| self.table().from_environment())
     }
 }
 

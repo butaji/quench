@@ -1480,10 +1480,10 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let collection = if map {
                     let prototype = self.intrinsic_builtin_prototype(Native::Map);
-                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
+                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Default::default() })
                 } else {
                     let prototype = self.intrinsic_builtin_prototype(Native::Set);
-                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
+                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Default::default() })
                 };
                 let root = self.wire_add_object(deserializer, id, collection);
                 let end = if map { tag::END_JS_MAP } else { tag::END_JS_SET };
@@ -1893,20 +1893,7 @@ impl<H: Host> Vm<H> {
                 if self.array_buffer_resizable(*buffer) {
                     return "Object";
                 }
-                match kind {
-                    TypedArrayKind::Int8 => "Int8Array",
-                    TypedArrayKind::Uint8 => "Uint8Array",
-                    TypedArrayKind::Uint8Clamped => "Uint8ClampedArray",
-                    TypedArrayKind::Int16 => "Int16Array",
-                    TypedArrayKind::Uint16 => "Uint16Array",
-                    TypedArrayKind::Int32 => "Int32Array",
-                    TypedArrayKind::Uint32 => "Uint32Array",
-                    TypedArrayKind::Float16 => "Float16Array",
-                    TypedArrayKind::Float32 => "Float32Array",
-                    TypedArrayKind::Float64 => "Float64Array",
-                    TypedArrayKind::BigInt64 => "BigInt64Array",
-                    TypedArrayKind::BigUint64 => "BigUint64Array",
-                }
+                kind.name()
             }
             Some(Cell::DataView { .. }) => "DataView",
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",

@@ -33,7 +33,7 @@ fn bootstrap_worker_residualizes_initialization_without_running_the_application(
 }
 
 #[test]
-#[ignore = "explicit production SDK qualification of native bootstrap fresh inputs and configuration fallback"]
+#[ignore = "explicit release SDK qualification of native bootstrap fresh inputs and configuration fallback"]
 fn native_bootstrap_keeps_process_inputs_fresh_after_source_removal() {
     use std::{fs, process::{Command, Stdio}, time::{SystemTime, UNIX_EPOCH}};
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,7 +96,7 @@ console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid:
         let report = directory.join(format!("native-{extension}.json"));
         let output = Command::new(env!("CARGO_BIN_EXE_quench-node"))
             .args(["compile"]).arg(&entry).arg("-o").arg(&binary)
-            .args(["--profile", "production", "--sdk-report"]).arg(&sdk).arg("--report").arg(&report).output().unwrap();
+            .args(["--profile", "release", "--sdk-report"]).arg(&sdk).arg("--report").arg(&report).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
         assert_eq!(report["bootstrap"]["status"], "prepared");
@@ -576,9 +576,9 @@ fn compile_command_preserves_typed_field_regions() {
 }
 
 #[test]
-#[ignore = "explicit default production framework compile/link qualification"]
-fn production_compile_command_builds_source_independent_framework_js_and_ts() {
-    qualify_compile_command_frameworks("production", None);
+#[ignore = "explicit default release framework compile/link qualification"]
+fn release_compile_command_builds_source_independent_framework_js_and_ts() {
+    qualify_compile_command_frameworks("release", None);
 }
 
 fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
@@ -608,7 +608,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
         let compiled = compiler.output().unwrap();
         assert!(compiled.status.success(), "compile {fixture}: {}", String::from_utf8_lossy(&compiled.stderr));
         let run = |command: &mut Command| {
-            let result = command.env_clear().env("NODE_ENV", "production")
+            let result = command.env_clear().env("NODE_ENV", "release")
                 .env("QUENCH_BENCH_ROUNDS", "20").env("QUENCH_BENCH_WARMUPS", "5")
                 .current_dir(&directory).output().unwrap();
             assert!(result.status.success(), "{fixture}: {}", String::from_utf8_lossy(&result.stderr));
@@ -637,10 +637,10 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
 }
 
 #[test]
-#[ignore = "explicit default production compile/link qualification"]
-fn production_compile_preserves_typescript_values_arguments_and_exit_lifecycle() {
+#[ignore = "explicit default release compile/link qualification"]
+fn release_compile_preserves_typescript_values_arguments_and_exit_lifecycle() {
     use std::{fs, process::Command};
-    let directory = std::env::temp_dir().join(format!("quench-cli-production-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("quench-cli-release-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("sound.cts");
     fs::write(&entry, r#"
@@ -665,10 +665,10 @@ process.exitCode = 7;
     assert_eq!(native.stdout, oracle.stdout);
     assert_eq!(native.stderr, oracle.stderr);
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
-    assert_eq!(report["requested_support_profile"], "production");
+    assert_eq!(report["requested_support_profile"], "release");
     assert_eq!(report["support_artifacts"]["rust_lto"], true);
     assert_eq!(report["payload_minimal"], false);
-    eprintln!("production compile: sound TS values, argv and exit lifecycle matched Node; executable={}", executable.display());
+    eprintln!("release compile: sound TS values, argv and exit lifecycle matched Node; executable={}", executable.display());
 }
 
 #[test]
@@ -700,7 +700,7 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         link_images(&inputs, &executable);
         let run = |command: &mut Command| {
             let output = command.env_clear()
-                .env("NODE_ENV", "production").env("QUENCH_BENCH_ROUNDS", "20").env("QUENCH_BENCH_WARMUPS", "5")
+                .env("NODE_ENV", "release").env("QUENCH_BENCH_ROUNDS", "20").env("QUENCH_BENCH_WARMUPS", "5")
                 .current_dir(&directory).output().unwrap();
             assert!(output.status.success(), "{fixture}: stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
             let mut json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1020,9 +1020,9 @@ fn compile_command_preserves_runtime_loaded_node_api() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "explicit production native dynamic-interface and Node-API runtime-loading qualification"]
-fn production_compile_command_preserves_runtime_loaded_node_api() {
-    qualify_runtime_loaded_node_api("production", None);
+#[ignore = "explicit release native dynamic-interface and Node-API runtime-loading qualification"]
+fn release_compile_command_preserves_runtime_loaded_node_api() {
+    qualify_runtime_loaded_node_api("release", None);
 }
 
 #[cfg(unix)]
@@ -1220,9 +1220,9 @@ fn compile_command_preserves_literal_import_graphs() {
 }
 
 #[test]
-#[ignore = "explicit production closed literal-import graph compile/link/native qualification"]
-fn production_compile_command_preserves_literal_import_graphs() {
-    qualify_literal_import_graphs("production", None);
+#[ignore = "explicit release closed literal-import graph compile/link/native qualification"]
+fn release_compile_command_preserves_literal_import_graphs() {
+    qualify_literal_import_graphs("release", None);
 }
 
 fn qualify_literal_import_graphs(profile: &str, support: Option<String>) {
@@ -1315,9 +1315,9 @@ fn compile_command_preserves_captured_references() {
 }
 
 #[test]
-#[ignore = "explicit production specification qualification for captured assignment references"]
-fn production_compile_command_preserves_captured_references() {
-    qualify_captured_references("production", None);
+#[ignore = "explicit release specification qualification for captured assignment references"]
+fn release_compile_command_preserves_captured_references() {
+    qualify_captured_references("release", None);
 }
 
 fn qualify_captured_references(profile: &str, support: Option<String>) {
@@ -1409,9 +1409,9 @@ fn compile_command_preserves_literal_function_constructors() {
 }
 
 #[test]
-#[ignore = "explicit production source-deleted native Function constructor qualification"]
-fn production_compile_command_preserves_literal_function_constructors() {
-    qualify_literal_function_constructors("production", None);
+#[ignore = "explicit release source-deleted native Function constructor qualification"]
+fn release_compile_command_preserves_literal_function_constructors() {
+    qualify_literal_function_constructors("release", None);
 }
 
 fn qualify_literal_function_constructors(profile: &str, support: Option<String>) {
@@ -1983,8 +1983,8 @@ async function main() {
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
 "#;
-    for profile in ["iteration", "production"] {
-        let variable = if profile == "production" { "QUENCH_NATIVE_PRODUCTION_BUILD_REPORT" } else { "QUENCH_NATIVE_BUILD_REPORT" };
+    for profile in ["iteration", "release"] {
+        let variable = if profile == "release" { "QUENCH_NATIVE_RELEASE_BUILD_REPORT" } else { "QUENCH_NATIVE_BUILD_REPORT" };
         let sdk = std::env::var_os(variable).expect("immutable execution-only SDK report");
         for extension in ["cjs", "cts"] {
             let sources = directory.join(format!("{profile}-{extension}-sources"));
@@ -1998,7 +1998,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
             fs::write(&entry, source.replace("__DECLARATION__", if typed { ": number" } else { "" })
                 .replace("__ASSERTION__", if typed { "as unknown as number" } else { "" })).unwrap();
             let mut oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()));
-            let expected = oracle.arg(&entry).env_clear().env("NODE_ENV", "production").current_dir(&directory).output().unwrap();
+            let expected = oracle.arg(&entry).env_clear().env("NODE_ENV", "release").current_dir(&directory).output().unwrap();
             assert!(expected.status.success(), "Node {profile}/{extension}: {}", String::from_utf8_lossy(&expected.stderr));
             assert!(expected.stderr.is_empty(), "{}", String::from_utf8_lossy(&expected.stderr));
             let expected_value: serde_json::Value = serde_json::from_slice(&expected.stdout).unwrap();
@@ -2013,7 +2013,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
                 .output().unwrap();
             assert!(compiled.status.success(), "compile {profile}/{extension}: {}", String::from_utf8_lossy(&compiled.stderr));
             fs::remove_dir_all(&sources).unwrap();
-            let actual = Command::new(&binary).env_clear().env("NODE_ENV", "production")
+            let actual = Command::new(&binary).env_clear().env("NODE_ENV", "release")
                 .current_dir(&directory).output().unwrap();
             assert_eq!(actual.status.code(), expected.status.code(), "{profile}/{extension}: {}", String::from_utf8_lossy(&actual.stderr));
             assert_eq!(actual.stderr, expected.stderr, "{profile}/{extension}");

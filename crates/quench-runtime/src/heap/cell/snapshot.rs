@@ -605,8 +605,8 @@ impl Cell {
             Self::WeakMap { object, entries } => {
                 writer.u8(tag::WEAK_MAP);
                 write_object(writer, object)?;
-                writer.len(entries.ordered.len());
-                for (key, value) in &entries.ordered {
+                writer.len(entries.len());
+                for (key, value) in entries.iter() {
                     writer.value(*key);
                     writer.value(*value);
                 }
@@ -614,7 +614,7 @@ impl Cell {
             Self::WeakSet { object, entries } => {
                 writer.u8(tag::WEAK_SET);
                 write_object(writer, object)?;
-                writer.values(entries);
+                writer.values(&entries.to_vec());
             }
             Self::WeakRef { object, target } => {
                 writer.u8(tag::WEAK_REF);
@@ -782,14 +782,14 @@ impl Cell {
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
                 let live = reader.len()?;
                 let iterators = reader.values()?;
-                Self::Map { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
             }
             tag::SET => {
                 let object = boxed_object(reader)?;
                 let slots = reader.values()?;
                 let live = reader.len()?;
                 let iterators = reader.values()?;
-                Self::Set { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
             }
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
@@ -799,10 +799,9 @@ impl Cell {
             tag::WEAK_MAP => {
                 let object = boxed_object(reader)?;
                 let ordered = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let indices = ordered.iter().enumerate().map(|(index, (key, _))| (*key, index)).collect();
-                Self::WeakMap { object, entries: Box::new(WeakMapEntries { ordered, indices }) }
+                Self::WeakMap { object, entries: Box::new(WeakMapEntries::from_entries(ordered)) }
             }
-            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(reader.values()?) },
+            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(WeakSetEntries::from_entries(reader.values()?)) },
             tag::WEAK_REF => Self::WeakRef {
                 object: boxed_object(reader)?,
                 target: reader.option_value()?.map(|value| WeakHandle { value }),

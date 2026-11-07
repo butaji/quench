@@ -189,16 +189,7 @@ impl<H: Host> Vm<H> {
         options: Option<Value>,
     ) -> Result<DecodeOptions, JsError> {
         let options = options.unwrap_or(Value::UNDEFINED);
-        let alphabet = self.base64_option(p, options, "alphabet")?;
-        let alphabet = if alphabet.is_undefined() {
-            BASE64
-        } else {
-            match self.base64_option_string(p, alphabet)?.as_str() {
-                "base64" => BASE64,
-                "base64url" => BASE64_URL,
-                _ => return Err(self.type_error(p, "Invalid Uint8Array alphabet option".into())),
-            }
-        };
+        let alphabet = self.base64_alphabet(p, options)?;
         let handling = self.base64_option(p, options, "lastChunkHandling")?;
         let last_chunk = if handling.is_undefined() {
             LastChunk::Loose
@@ -225,18 +216,22 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         options: Value,
     ) -> Result<(&'static [u8; 64], bool), JsError> {
-        let alphabet = self.base64_option(p, options, "alphabet")?;
-        let alphabet = if alphabet.is_undefined() {
-            BASE64
-        } else {
-            match self.base64_option_string(p, alphabet)?.as_str() {
-                "base64" => BASE64,
-                "base64url" => BASE64_URL,
-                _ => return Err(self.type_error(p, "Invalid Uint8Array alphabet option".into())),
-            }
-        };
+        let alphabet = self.base64_alphabet(p, options)?;
         let omit = self.base64_option(p, options, "omitPadding")?;
         Ok((alphabet, self.truthy(omit)))
+    }
+
+    /// The `alphabet` option both directions share.
+    fn base64_alphabet(&mut self, p: &ResidualProgram, options: Value) -> Result<&'static [u8; 64], JsError> {
+        let alphabet = self.base64_option(p, options, "alphabet")?;
+        if alphabet.is_undefined() {
+            return Ok(BASE64);
+        }
+        match self.base64_option_string(p, alphabet)?.as_str() {
+            "base64" => Ok(BASE64),
+            "base64url" => Ok(BASE64_URL),
+            _ => Err(self.type_error(p, "Invalid Uint8Array alphabet option".into())),
+        }
     }
 
     fn base64_option_string(

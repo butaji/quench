@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
                 Ok(SetRelationResult::Set) => {
                     let set = self.heap.alloc(Cell::Set {
                         object: Box::new(Self::empty_object(self.set_proto)),
-                        entries: Box::new(values.into()),
+                        entries: values.into(),
                     });
                     Ok(set)
                 }

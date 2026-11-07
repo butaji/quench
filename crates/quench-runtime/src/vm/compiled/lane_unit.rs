@@ -457,15 +457,16 @@ impl Plan {
     /// The unit PCs the function takes where `root` keeps its own instructions; an inlined
     /// callee's completions add their moves and jumps.
     fn length(&self, root: bool) -> u32 {
-        self.code
-            .iter()
-            .zip(&self.calls)
-            .map(|(instruction, calls)| match calls.as_slice() {
-                [] if root => 1,
-                [] => completion_length(*instruction),
-                alternatives => call_length(alternatives),
-            })
-            .sum()
+        self.lengths(root).sum()
+    }
+
+    /// The unit PCs each instruction takes, in order.
+    fn lengths(&self, root: bool) -> impl Iterator<Item = u32> + '_ {
+        self.code.iter().zip(&self.calls).map(move |(instruction, calls)| match calls.as_slice() {
+            [] if root => 1,
+            [] => completion_length(*instruction),
+            alternatives => call_length(alternatives),
+        })
     }
 }
 
@@ -609,13 +610,9 @@ impl Emitter {
         let root = frame.is_none();
         let mut flat = Vec::with_capacity(plan.code.len() + 1);
         let mut at = self.unit.instructions.len() as u32;
-        for (instruction, calls) in plan.code.iter().zip(&plan.calls) {
+        for length in plan.lengths(root) {
             flat.push(at);
-            at += match calls.as_slice() {
-                [] if root => 1,
-                [] => completion_length(*instruction),
-                alternatives => call_length(alternatives),
-            };
+            at += length;
         }
         flat.push(at);
         let target_of = |target: u32| flat.get(target as usize).copied();

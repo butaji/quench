@@ -1113,7 +1113,7 @@ impl Engine {
         .then(|| data_literal::locate(&normalized))
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
-        let allocator = lazy_bodies::arena(parsed_text);
+        let (allocator, chunk) = lazy_bodies::sized_arena(parsed_text);
         let mut facts = lazy_bodies::BodyFacts::default();
         #[cfg(feature = "aot")]
         { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
@@ -1121,6 +1121,7 @@ impl Engine {
         // SAFETY: `check` lives through the parse, which alone calls it.
         let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
         let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check);
+        lazy_bodies::release_free_pages(&allocator, chunk);
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1149,9 +1150,7 @@ impl Engine {
         if !lazy {
             lazy_bodies::verify(name, &normalized, &parsed.program);
         }
-        if parsed.stack_exhausted {
-            return Err(vec![Diagnostic::stack_exhausted(name)]);
-        }
+        if parsed.stack_exhausted { return Err(vec![Diagnostic::stack_exhausted(name)]); }
         if !parsed.diagnostics.is_empty() {
             return Err(parsed
                 .diagnostics
@@ -2763,8 +2762,8 @@ impl<'a> Compiler<'a> {
             self.source_type,
         );
         let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| lazy_bodies::arena(&text));
-        allocator.reset();
         let id = self.compile_parsed_again(&allocator, &text, offset, function, context);
+        lazy_bodies::release_after(&mut allocator);
         self.lazy_arenas.push(allocator);
         id
     }
@@ -4412,12 +4411,12 @@ impl<'a> Compiler<'a> {
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
-    ) -> Vec<bool> {
+    ) -> crate::bitset::BitSet {
         let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                    if plain_slots.contains(instruction.local_slot()) =>
                 {
                     instruction.set_op(if instruction.op() == Op::LoadLocal {
                         Op::LoadLocalPlain
@@ -4431,7 +4430,7 @@ impl<'a> Compiler<'a> {
         for instruction in &mut function.wide {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                    if plain_slots.contains(instruction.local_slot()) =>
                 {
                     instruction.set_op(if instruction.op() == Op::LoadLocal {
                         Op::LoadLocalPlain

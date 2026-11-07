@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
             callee,
             target.1,
         );
-        self.profile.call_source(0);
+        self.profile.call_source(CallSource::Dynamic);
         let window = i.call_window();
         // CallArray's input is an already materialized argument array. Copy its
         // indexed values before pushing the frame, just as `Vm::step` does. The
@@ -236,20 +236,20 @@ impl<H: Host> Vm<H> {
     fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
         let Some(heap_index) = callee.heap_index() else {
             #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::call_eligibility(2);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NonHeapCallee);
             return None;
         };
         let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let cached = self.call_targets[index];
         if cached.callee == callee {
             #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::call_eligibility(0);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveCacheHit);
             return Some(cached);
         }
         let target = self.resolve_in_loop_call_target(p, callee, index);
         #[cfg(feature = "profile-lane-exits")]
         if target.is_some() {
-            super::lane_exits::call_eligibility(1);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveResolution);
         } else {
             self.record_call_eligibility_miss(p, callee);
         }
@@ -259,15 +259,15 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-lane-exits")]
     fn record_call_eligibility_miss(&self, p: &ResidualProgram, callee: Value) {
         let Some(record) = self.heap.function(callee) else {
-            super::lane_exits::call_eligibility(3);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
         let FunctionKind::User(program, function) = &record.kind else {
-            super::lane_exits::call_eligibility(3);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
         if record.realm != self.realm.globals {
-            super::lane_exits::call_eligibility(3);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         }
         let Some(owner) = (if *program == self.active_program {
@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.programs.residual(*program)
         }) else {
-            super::lane_exits::call_eligibility(4);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::MissingProgramOrFunction);
             return;
         };
         let unsupported = owner.function_get(*function as usize).is_none_or(|body| {
@@ -286,10 +286,10 @@ impl<H: Host> Vm<H> {
             || owner.kind == crate::bytecode::ProgramKind::Wasm
             || unsupported
         {
-            super::lane_exits::call_eligibility(5);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::UnsupportedCallPlan);
         } else {
             // Keep this bucket conservative if a new resolver rejection is added.
-            super::lane_exits::call_eligibility(4);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::MissingProgramOrFunction);
         }
     }
 
@@ -426,7 +426,7 @@ impl<H: Host> Vm<H> {
             },
         };
         let resolved = self.in_loop_call_target(p, target)?;
-        self.profile.call_source(0);
+        self.profile.call_source(CallSource::Dynamic);
         self.profile.call_target(1, arguments.len());
         self.push_in_loop_call(p, f, pc, resolved, target, this, arguments, i.result_register())
     }
@@ -1058,7 +1058,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
                 let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
@@ -1385,26 +1385,20 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc_is_resume = true;
                 self.maybe_collect(p);
             }
-            Op::JumpFalse => {
+            Op::JumpFalse | Op::JumpTrue => {
                 let value = self.read(f, i.register_a());
                 let truthy = self.truthy(value);
                 #[cfg(feature = "profile-aggregate")]
                 self.profile
                     .branch_value(value.profile_kind() as usize, truthy);
-                if !truthy {
+                if truthy == (i.op() == Op::JumpTrue) {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::JumpTrue => {
-                let value = self.read(f, i.register_a());
-                let truthy = self.truthy(value);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .branch_value(value.profile_kind() as usize, truthy);
-                if truthy {
-                    *pc = i.jump_target() as usize;
-                }
-            }
+            Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
+                Some(key) => self.write(f, i.result_register(), key),
+                None => *pc = i.jump_target() as usize,
+            },
             Op::JumpBinaryFalse => {
                 let operator = i.binary_operator_field();
                 let left_operand = i.operand_b();
@@ -1424,7 +1418,7 @@ impl<H: Host> Vm<H> {
                 {
                     return result;
                 }
-                self.profile.call_source(0);
+                self.profile.call_source(CallSource::Dynamic);
                 let window = i.call_window();
                 // A spread argument array is read before any call state changes, since
                 // reading it can fail; register windows are copied only on the paths that
@@ -1507,7 +1501,7 @@ impl<H: Host> Vm<H> {
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
                     result?;
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::TailCall);
                 }
                 if terminal
@@ -1538,7 +1532,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::TailCall);
                 }
                 let discarded_wasm_frame =
@@ -1592,7 +1586,7 @@ impl<H: Host> Vm<H> {
                 self.direct_eval = previous_direct_eval;
                 self.parameter_eval = previous_parameter_eval;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
@@ -1602,7 +1596,7 @@ impl<H: Host> Vm<H> {
                     && p.kind == crate::bytecode::ProgramKind::Wasm
                     && !i.returns_from_frame()
                 {
-                    self.profile.call_source(1);
+                    self.profile.call_source(CallSource::Known);
                     if let Some(result) =
                         self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
                     {
@@ -1624,7 +1618,7 @@ impl<H: Host> Vm<H> {
                         completion: CallCompletion::Value,
                     });
                 }
-                self.profile.call_source(1);
+                self.profile.call_source(CallSource::Known);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
                 let argument_start = usize::from(window.base);
@@ -1668,7 +1662,7 @@ impl<H: Host> Vm<H> {
                         args,
                         CallContext::Internal,
                     )?;
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::TailCall);
                 }
                 let value = self.call_user_maybe_async(
@@ -1680,25 +1674,25 @@ impl<H: Host> Vm<H> {
                     CallContext::Internal,
                 )?;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
             }
             Op::CallMethod => {
-                self.profile.call_source(2);
+                self.profile.call_source(CallSource::Method);
                 let this = self.read(f, i.register_b());
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = true;
                 let value = self.call_method_site_safe(p, f, i.method_site_index(), this)?;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(1);
+                    self.profile.terminal_call(TerminalCall::Method);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
             }
             Op::CallThisMethod => {
-                self.profile.call_source(3);
+                self.profile.call_source(CallSource::ThisMethod);
                 let method_site = i.method_site_index();
                 let path = p.method_sites[method_site].receiver_path;
                 let this = if let Some((atom, cache)) = path {
@@ -1710,13 +1704,13 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc_is_resume = true;
                 let value = self.call_method_site_safe(p, f, method_site, this)?;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(2);
+                    self.profile.terminal_call(TerminalCall::ThisMethod);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
             }
             Op::Construct => {
-                self.profile.call_source(4);
+                self.profile.call_source(CallSource::Construct);
                 // A construction whose result is returned is pushed too; its caller returns
                 // the constructed value (see `PendingGeneralCall::returns`).
                 if allow_inline_calls
@@ -1913,7 +1907,7 @@ pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode
 }
 
 impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator`, `IteratorClose` or `AppendArray` of its operand values
+    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The
     /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
@@ -1927,6 +1921,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
             Op::GetIterator => self.get_iterator(p, operand).map(Some),
+            Op::ForInStart => self.for_in_start(p, operand).map(Some),
             Op::IteratorClose => self.iterator_close(p, operand).map(Some),
             Op::AppendArray => {
                 let array = a.expect("AppendArray names its array");

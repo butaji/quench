@@ -234,7 +234,7 @@ mod tests {
     const PROGRAM_EXIT_STATUS: i64 = 42;
 
     fn signature() -> ir::Signature {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.returns.push(AbiParam::new(types::I32));
         signature
@@ -270,7 +270,7 @@ mod tests {
             builder.ins().iconst(types::I32, PROGRAM_EXIT_STATUS)
         };
         builder.ins().return_(&[result]);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         builder.finalize(isa.frontend_config());
         NativeFunction::Definition {
             name: name.into(),
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn object_links_and_loads_relocated_program_data() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut main = ir::Function::with_name_signature(
             ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, 0),
             signature(),

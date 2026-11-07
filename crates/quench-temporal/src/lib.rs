@@ -20,7 +20,7 @@ pub mod units {
 pub use duration::parse_duration;
 pub use duration_total::{relative_duration_nanoseconds, total_duration};
 pub use offset::{
-    offset_minutes, offset_seconds, valid_date_time_offset, valid_string_offset,
+    offset_minutes, offset_seconds, offset_sign, valid_date_time_offset, valid_string_offset,
     valid_timezone_offset,
 };
 pub use rounding::round_temporal_nanoseconds;

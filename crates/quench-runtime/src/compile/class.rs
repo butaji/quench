@@ -24,7 +24,7 @@ impl FunctionCompiler<'_, '_> {
         let first_class_slot = self.locals.len();
         let scopes = self.active_lexical_slots();
         let clone_plan = self.push_environment_clone(Vec::new(), scopes);
-        self.class_environment_clones.insert(clone_plan);
+        self.clone_plans.class.insert(clone_plan);
         self.emit(Op::CloneEnv, 0, 0, 0, clone_plan as u32);
         let class_binding = class.id.as_ref().map(|identifier| {
             let source = self.owner.atom(identifier.name.as_str());
@@ -192,7 +192,7 @@ impl FunctionCompiler<'_, '_> {
                 ));
             }
         }
-        self.environment_clones[clone_plan] = (first_class_slot..self.locals.len())
+        self.clone_plans.slots[clone_plan] = (first_class_slot..self.locals.len())
             .map(|slot| slot as u16)
             .collect();
         let scopes = self.capture_scopes();

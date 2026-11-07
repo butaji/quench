@@ -168,12 +168,13 @@ impl JsEntryFacts {
         !self.candidate && !self.general
     }
 
-    pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
+    pub(super) fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
         let has_calls = function.instructions().any(|instruction|
             instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
+        let candidate = function_candidate(function, program) && (!priced || has_calls || super::compiled::pays_native_entry(function));
         let shape = super::compiled::js_general_dispatch_shape(function);
         Self {
-            candidate: function_candidate(function, program),
+            candidate,
             has_calls,
             general: shape.is_some(),
             general_acyclic: shape == Some(true),

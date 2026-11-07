@@ -3,7 +3,7 @@
 
 use super::errors;
 use super::state::{self, bits, change, writable as w};
-use super::{arg, call_method, define_accessor, get, intrinsics, is_nullish, put, Context, Outcome, Slot};
+use super::{arg, call_method, define_accessor, get, intrinsic, is_nullish, put, Context, Outcome, Slot};
 use quench_runtime::{RootId, RootedError};
 
 /// `true`, `false`, or Node's `null` for "not that kind of stream".
@@ -114,7 +114,7 @@ pub(crate) fn is_iterable(c: &mut Context<'_>, object: RootId, asynchronous: Opt
     if is_nullish(c, object) {
         return Ok(false);
     }
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let protocol = |c: &mut Context<'_>, slot: Slot| -> Result<bool, RootedError> {
         let value = c.get_property_rooted(object, intrinsics.slot(slot))?;
         c.is_callable_rooted(value)
@@ -137,7 +137,7 @@ pub(crate) fn is_destroyed(c: &mut Context<'_>, stream: RootId) -> Result<Tri, R
         return Ok(None);
     }
     let state = primary_state(c, stream)?;
-    let key = intrinsics(c)?.slot(Slot::IsDestroyed);
+    let key = intrinsic(c, |i| i.slot(Slot::IsDestroyed))?;
     let marked = c.get_property_rooted(stream, key)?;
     let state_destroyed = optional(c, state, "destroyed")?;
     Ok(Some(super::truthy_member(c, stream, "destroyed")? || c.truthy_rooted(marked)? || c.truthy_rooted(state_destroyed)?))
@@ -227,7 +227,7 @@ fn marked(c: &mut Context<'_>, stream: RootId, slot: Slot) -> Result<Option<Root
     if !c.truthy_rooted(stream)? {
         return Ok(None);
     }
-    let key = intrinsics(c)?.slot(slot);
+    let key = intrinsic(c, |i| i.slot(slot))?;
     let value = c.get_property_rooted(stream, key)?;
     Ok((!is_nullish(c, value)).then_some(value))
 }
@@ -406,7 +406,7 @@ pub(crate) fn is_disturbed(c: &mut Context<'_>, stream: RootId) -> Result<bool, 
     if !c.truthy_rooted(stream)? {
         return Ok(false);
     }
-    let key = intrinsics(c)?.slot(Slot::IsDisturbed);
+    let key = intrinsic(c, |i| i.slot(Slot::IsDisturbed))?;
     let marked = c.get_property_rooted(stream, key)?;
     if !is_nullish(c, marked) {
         return c.truthy_rooted(marked);
@@ -418,7 +418,7 @@ pub(crate) fn is_errored(c: &mut Context<'_>, stream: RootId) -> Result<bool, Ro
     if !c.truthy_rooted(stream)? {
         return Ok(false);
     }
-    let key = intrinsics(c)?.slot(Slot::IsErrored);
+    let key = intrinsic(c, |i| i.slot(Slot::IsErrored))?;
     let marked = c.get_property_rooted(stream, key)?;
     if !is_nullish(c, marked) {
         return c.truthy_rooted(marked);
@@ -608,7 +608,7 @@ pub(crate) fn predicate(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outc
 pub(crate) fn define_utils_exports(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let names: Vec<&str> = PREDICATES.iter().map(|(name, _)| *name).collect();
     define_predicates(c, module, &names)?;
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     for (name, slot) in [
         ("kOnConstructed", Slot::OnConstructed),
         ("kIsDestroyed", Slot::IsDestroyed),
@@ -686,7 +686,7 @@ fn add_abort_signal_unchecked(c: &mut Context<'_>, signal: RootId, stream: RootI
         c.call_rooted(on_abort, undefined, &[])?;
     } else {
         let disposable = add_abort_listener(c, signal, on_abort)?;
-        let key = intrinsics(c)?.slot(Slot::Dispose);
+        let key = intrinsic(c, |i| i.slot(Slot::Dispose))?;
         let dispose = c.get_property_rooted(disposable, key)?;
         super::eos::eos(c, stream, undefined, dispose)?;
     }

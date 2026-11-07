@@ -7,6 +7,7 @@ use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
+mod lane_publication;
 mod snapshot;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
@@ -978,61 +979,6 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
-    /// Publishes a compiled body with the dependencies its code took: its slots' types, and
-    /// its Stable facts (prototype values by holder shape, unnamed method atoms in
-    /// `method_atoms`), each of whose change retires it and sets its invalidation word.
-    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod, heap: &mut crate::heap::Heap,
-        method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<super::compiled::PublishedLaneMethod>>
-    {
-        let calls = !method.inlined.is_empty() || !method.direct.is_empty();
-        let invalidation = method.invalidation.clone();
-        let published = Rc::new(super::compiled::PublishedLaneMethod::with_invalidation(method, invalidation));
-        let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
-        let method = published.lease().expect("new publication");
-        if !super::compiled::subscribe_lane_dependencies(&method.slot_dependencies, &method.stable, &code, heap, method_atoms) {
-            published.retire();
-            return None;
-        }
-        if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
-        Some(published)
-    }
-
-    /// Retires each published body whose code names a callee that died: an inlined one, or a
-    /// direct one, whose body's own retirement retires its direct callers in turn.
-    ///
-    /// # Safety
-    /// Collection has stopped native execution before guest locators can be reused.
-    pub(super) unsafe fn retire_dead_native_calls(&self, live: impl Fn(Value) -> bool) {
-        let mut bindings = self.native_call_bindings.borrow_mut();
-        loop {
-            let before = bindings.len();
-            bindings.retain(|weak| {
-                let Some(code) = weak.upgrade() else { return false; };
-                let Some(method) = code.lease() else { return false; };
-                // Function bindings depend on the owned program definition,
-                // not a particular closure locator. Realm/reset retirement
-                // still uses this inventory for both binding kinds.
-                let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || !callee.method.is_published());
-                if dead {
-                    code.retire();
-                }
-                !dead
-            });
-            if bindings.len() == before { break; }
-        }
-    }
-
-    /// # Safety
-    /// Realm/heap transition excludes execution using the old realm's guest locators.
-    pub(super) unsafe fn retire_native_calls(&self) {
-        for weak in self.native_call_bindings.borrow_mut().drain(..) {
-            if let Some(code) = weak.upgrade() {
-                code.retire();
-            }
-        }
-    }
-
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
@@ -1042,7 +988,7 @@ impl ProgramStore {
             entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body);
+            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(STRESS || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
             let facts = if self.js_entry_specializations_enabled { facts } else {
                 // Select the requested test tier without depending on which
@@ -2454,12 +2400,12 @@ impl ProgramStore {
         self.record_js_jit_counter_entry(id, function, Some(numeric), parameter_count);
     }
 
+    #[inline]
     pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) {
-        let parameter_count = self
-            .entry(id)
-            .and_then(|entry| entry.residual.function_get(function as usize))
-            .map_or(0, |function| function.params);
-        self.record_js_jit_counter_entry(id, function, None, parameter_count);
+        if self.js_jit_diagnostics.is_some() {
+            let params = self.entry(id).and_then(|entry| entry.residual.function_get(function as usize)).map_or(0, |body| body.params);
+            self.record_js_jit_counter_entry(id, function, None, params);
+        }
     }
 
     fn record_js_jit_counter_entry(
@@ -2535,22 +2481,7 @@ impl ProgramStore {
                             | crate::bytecode::Op::JumpBinaryFalse => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
                                 if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
-                                    match instruction.binary_operator_field() {
-                                        x if x
-                                            == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
-                                        {
-                                            guard_census.2 = guard_census.2.saturating_add(1);
-                                        }
-                                        x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
-                                        {
-                                            guard_census.3 = guard_census.3.saturating_add(1);
-                                        }
-                                        _ => {}
-                                    }
+                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                                 }
                             }
                             crate::bytecode::Op::Unary
@@ -2560,21 +2491,7 @@ impl ProgramStore {
                                 guard_census.1 = guard_census.1.saturating_add(1);
                             }
                             crate::bytecode::Op::Binary => {
-                                match instruction.binary_operator() {
-                                    x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                        || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
-                                    {
-                                        guard_census.2 = guard_census.2.saturating_add(1);
-                                    }
-                                    x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
-                                    {
-                                        guard_census.3 = guard_census.3.saturating_add(1);
-                                    }
-                                    _ => {}
-                                }
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator())
                             }
                             _ => {}
                         }
@@ -3751,22 +3668,6 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
     let minimum = TIERS.js_function.promotion_looks
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
-    #[cfg(feature = "gc-tuning")]
-    {
-        // Measurement builds may require more entries before the specialized tier compiles
-        // (`QUENCH_JS_JIT_PROMOTION_SCALE`), to test an admission threshold against a fixture
-        // whose compiled artifacts are never entered.
-        static SCALE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        let scale = *SCALE.get_or_init(|| {
-            std::env::var("QUENCH_JS_JIT_PROMOTION_SCALE")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1)
-        });
-        let minimum = u32::from(minimum).saturating_mul(scale).min(u32::from(u8::MAX));
-        return Some(u32::from(numeric) >= minimum);
-    }
-    #[cfg(not(feature = "gc-tuning"))]
     Some(numeric >= minimum)
 }
 
@@ -4109,3 +4010,22 @@ mod jit_code_cache_tests {
 pub(super) struct JsEntryFactsTable(
     std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
 );
+
+/// Counts a comparison in the guard census: strict (in)equality in its third column, an
+/// order (`<`, `<=`, `>`, `>=`) in its fourth.
+fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
+    use oxc_ast::ast::BinaryOperator;
+    const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
+    const ORDER: [BinaryOperator; 4] = [
+        BinaryOperator::LessThan,
+        BinaryOperator::LessEqualThan,
+        BinaryOperator::GreaterThan,
+        BinaryOperator::GreaterEqualThan,
+    ];
+    let named = |operators: &[BinaryOperator]| operators.iter().any(|&named| named as u32 == operator);
+    if named(&STRICT) {
+        census.2 = census.2.saturating_add(1);
+    } else if named(&ORDER) {
+        census.3 = census.3.saturating_add(1);
+    }
+}

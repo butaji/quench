@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
+pub(super) use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
 
 #[cfg(all(test, feature = "aot"))]
@@ -177,15 +178,6 @@ mod shape_trace {
     }
 }
 
-/// What the inline field caches know about one read.
-pub(super) enum FieldCacheProbe {
-    Hit(Value),
-    /// An ordinary object the caches do not cover yet.
-    OrdinaryMiss,
-    /// A receiver or program outside the field caches.
-    Ineligible,
-}
-
 impl<H: Host> Vm<H> {
     /// Name-derived property classes, computed from the atom text once per atom.
     #[inline(always)]
@@ -244,11 +236,14 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
-        if self.shape_is_dictionary(shape) {
-            let index = self.shapes[shape as usize]
-                .lookup_index
-                .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
+        // A shape's lookup index, once it has one, is the home of its key -> slot facts; the
+        // memo stands in only for index-less shapes, so a wide object's keys never evict them.
+        let entry = &self.shapes[shape as usize];
+        if let Some(index) = entry.lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
+        }
+        if entry.dictionary_trigger.is_some() {
+            return self.shape_lookup_index(shape).slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
             return slot.map(|slot| slot as usize);
@@ -448,15 +443,8 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
-            .iter()
             .map(|(key, _)| *key)
             .collect()
-    }
-    pub(super) fn shape_entries(&self, shape: u32) -> &[(PropertyKey, u32)] {
-        &self.shapes[shape as usize]
-            .lookup_index
-            .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
-            .entries
     }
     /// Moves `parent`'s lookup index to `child`, a cached transition of it the object took, as
     /// `append_shape` moves it to a new child. Otherwise the index stays with the shape that
@@ -1040,7 +1028,7 @@ impl<H: Host> Vm<H> {
         self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
-        self.promise_species_proof.set(None);
+        self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
@@ -1049,13 +1037,13 @@ impl<H: Host> Vm<H> {
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
-        self.closure_shapes = [None; 2];
+        self.closure_shapes = [None; _];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
-        self.descriptor_shapes = [None; 2];
+        self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layouts.clear();
@@ -1064,16 +1052,15 @@ impl<H: Host> Vm<H> {
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
     fn note_field_cache_write(&mut self, site: usize) {
-        let limit = self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE;
         if let Some(sites) = &mut self.field_cache_writes {
-            if sites.len() < limit {
+            if sites.len() < self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE {
                 sites.push(site as u32);
             } else {
                 self.field_cache_writes = None;
             }
         }
     }
-    fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
+    pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
             PropertyKey::String(atom) | PropertyKey::Private(atom) => {
                 self.invalidate_method_caches_for_atom(atom);
@@ -1629,7 +1616,7 @@ impl<H: Host> Vm<H> {
         let mut loads = Vec::new();
         let mut index = self.inherited_field_indices.get(self.field_cache_index(site));
         while index != NO_INHERITED_FIELD {
-            let cache = *self.heap.dependencies().inherited(index);
+            let cache = self.heap.dependencies().inherited(index);
             index = cache.next;
             if !cache.proved || cache.receiver == NO_FIELD_RECEIVER {
                 continue;
@@ -2131,7 +2118,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The value inherited entry `index` answers for `object` while its proof holds: its
-    /// constant while the prototype value epoch it was read under holds, else the proved
+    /// constant while the holder's values hold (`constant_watch`), else the proved
     /// holder's slot, which becomes the constant.
     #[inline(always)]
     fn proved_inherited_entry_value(&mut self, index: u32, object: Value) -> Option<Value> {
@@ -2148,21 +2135,18 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let depth = u16::from(cache.depth);
-        let epoch = self.prototype_value_epoch();
-        let value = if cache.constant_epoch == epoch {
-            cache.constant
-        } else {
-            let value = match cache.answer {
-                InheritedFieldAnswer::Slot(slot) => {
-                    let holder = self.heap.object_record(cache.proved_holder)?;
-                    // SAFETY: the proof keeps the holder and its recorded shape.
-                    unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?
-                }
-                InheritedFieldAnswer::Absent => Value::UNDEFINED,
-            };
-            let cache = self.heap.dependencies_mut().inherited_mut(index);
-            (cache.constant, cache.constant_epoch) = (value, epoch);
-            value
+        let value = match cache.answer {
+            InheritedFieldAnswer::Absent => Value::UNDEFINED,
+            InheritedFieldAnswer::Slot(_) if cache.constant_watch.as_ref().is_some_and(|watch| watch.is_published()) => cache.constant,
+            InheritedFieldAnswer::Slot(slot) => {
+                let holder = self.heap.object_record(cache.proved_holder)?;
+                // SAFETY: the proof keeps the holder and its recorded shape.
+                let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
+                let watch = crate::heap::watch_prototype_values(holder.exact_shape());
+                let cache = self.heap.dependencies_mut().inherited_mut(index);
+                (cache.constant, cache.constant_watch) = (value, watch);
+                value
+            }
         };
         self.profile.field_cache_hit(0, depth);
         Some(value)
@@ -2218,33 +2202,32 @@ impl<H: Host> Vm<H> {
         (hint.atom == atom
             && hint.receiver == receiver.exact_shape()
             && hint.prototype == receiver.proto_link()
-            && hint.epoch == self.prototype_value_epoch())
+            && hint.watch.is_published())
         .then_some(hint.value)
     }
 
     /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
-    /// (`hold_string_hint`): the realm's `String.prototype` still, under the epoch the hint
+    /// (`hold_string_hint`): the realm's `String.prototype` still, under the hint's watch
     /// was read in.
     #[inline(always)]
     pub(super) fn string_hint_hit(&self, index: u16, atom: Atom) -> Option<Value> {
         let hint = self.holder_hints.get(usize::from(index))?;
         (hint.atom == atom
             && hint.holder == self.string_proto
-            && hint.epoch == self.prototype_value_epoch())
+            && hint.watch.is_published())
         .then_some(hint.value)
     }
 
-    /// The object part of a direct object, array or function, whose own shape and prototype
-    /// link a prototype-held hint tests (`holder_hint_hit`).
+    /// The object part of a direct object, array, function or ordinary builtin, whose own
+    /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() {
             return Some(self.heap.object_record_by_id(record_id));
         }
-        if let Some(array) = self.heap.record_array(object) {
-            return Some(array);
-        }
-        object.direct_function_index().and_then(|_| self.heap.function(object)).map(|function| &function.object)
+        if let Some(array) = self.heap.record_array(object) { return Some(array); }
+        let function = object.direct_function_index().and_then(|_| self.heap.function(object));
+        function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`
@@ -2265,17 +2248,11 @@ impl<H: Host> Vm<H> {
     /// Makes `value`, which `prototype` answered for a read of `atom` from a receiver of
     /// exact shape `receiver`, a record's hint: in place of `owned`, the hint the record
     /// holds, else as a new one; its index, `None` once the indices reach `limit`. The
-    /// prototype is marked first, so a change to it advances the epoch the hint holds under.
+    /// prototype is marked first, so a change to its values retires the hint's watch.
     fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, receiver: u32, prototype: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_prototype(prototype);
-        let hint = super::HolderHint {
-            receiver,
-            atom,
-            prototype: crate::heap::ProtoLink::of(prototype),
-            holder: prototype,
-            value,
-            epoch: self.prototype_value_epoch(),
-        };
+        let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
+        let hint = super::HolderHint { receiver, atom, prototype: crate::heap::ProtoLink::of(prototype), holder: prototype, value, watch };
         if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.len()) {
             self.holder_hints[usize::from(index)] = hint;
             return Some(index);
@@ -3215,7 +3192,7 @@ impl<H: Host> Vm<H> {
             self.heap.dependencies_mut().inherited_mut(previous).next = NO_INHERITED_FIELD;
             index
         } else {
-            self.heap.dependencies_mut().push_inherited(cache)
+            self.heap.dependencies_mut().push_inherited(cache.clone())
         };
         cache.next = head;
         *self.heap.dependencies_mut().inherited_mut(slot) = cache;
@@ -3319,7 +3296,7 @@ impl<H: Host> Vm<H> {
         let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
         cache.proved_holder = proof.holder;
-        cache.constant_epoch = crate::heap::NO_CONSTANT_EPOCH;
+        cache.constant_watch = None;
         dependencies.prove_inherited(proof.index, &subjects);
     }
 
@@ -3374,7 +3351,7 @@ impl<H: Host> Vm<H> {
             proved_prototype: crate::heap::ProtoLink::NULL,
             proved_holder: Value::UNDEFINED,
             constant: Value::UNDEFINED,
-            constant_epoch: crate::heap::NO_CONSTANT_EPOCH,
+            constant_watch: None,
             next: NO_INHERITED_FIELD,
         };
         // Shapes alone prove a name absent only for a receiver whose shape holds every own
@@ -3799,23 +3776,18 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
-        let (slot, exists) = {
+        let (slot, old) = {
             let data = self
                 .object_data(object)
                 .ok_or_else(|| JsError("property write on non-object".into()))?;
             let slot = self.property_shape_slot(data.shape(), key);
-            let exists = slot.is_some_and(|slot| self.heap.property_get(data, slot).is_some());
-            (slot, exists)
+            let old = slot.and_then(|slot| self.heap.property_get(data, slot));
+            (slot, old)
         };
-        self.check_property_key_write(object, key, exists)?;
-        let invalidates_method = slot.is_some_and(|slot| self.callable_write(object, slot, value));
-        if let Some(slot) = slot {
-            self.heap.property_set(object, slot, value);
-        } else {
-            return self.create_shape_property(object, key, value);
-        }
-        if invalidates_method {
-            self.invalidate_method_caches_for_key(key);
+        self.check_property_key_write(object, key, old.is_some())?;
+        match slot {
+            Some(slot) => self.write_shape_slot(object, key, slot, old, value),
+            None => return self.create_shape_property(object, key, value),
         }
         Ok(())
     }
@@ -4811,7 +4783,7 @@ impl<H: Host> Vm<H> {
         shape: u32,
         transition: ShapeTransition,
     ) -> u32 {
-        let key = transition.cache_key();
+        let key = self.transition_cache_key(shape, transition);
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();
             let next = if last != NO_LAST_CHILD
@@ -4922,7 +4894,7 @@ impl<H: Host> Vm<H> {
         // than hold properties: its storage is then mostly holes, and add-and-delete churn
         // (an object used as a map) would otherwise grow its shape chain without bound.
         let storage_len = self.shapes[next_id as usize].storage_len();
-        let vacated = storage_len - self.shape_entries(next_id).len();
+        let vacated = storage_len - self.shape_entry_count(next_id);
         let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none()
             && vacated > storage_len - vacated
         {

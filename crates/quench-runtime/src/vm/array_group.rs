@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
         let grouped = self.heap.alloc(if to_map {
             Cell::Map {
                 object: Box::new(Self::empty_object(self.map_proto)),
-                entries: Box::default(),
+                entries: Default::default(),
             }
         } else {
             Cell::Object(Self::empty_object(self.object_proto))

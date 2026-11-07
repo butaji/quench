@@ -618,7 +618,7 @@ impl ResidualProgram {
             // Wasm locals are frame slots by construction: no environment
             // capture, TDZ, or name binding can observe them.
             let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
-                vec![true; usize::from(function.locals)]
+                crate::bitset::BitSet::from_fn(usize::from(function.locals), |_| true)
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
@@ -753,10 +753,7 @@ function.plain_local_slots(&self.superinstructions)
                 if matches!(
                     instruction.op(),
                     super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
-                ) && !plain_local_slots
-                    .get(instruction.local_slot())
-                    .copied()
-                    .unwrap_or(false)
+                ) && !plain_local_slots.contains(instruction.local_slot())
                 {
                     return Err(format!(
                         "function {index} has an unproven plain-local operation"
@@ -810,10 +807,7 @@ function.plain_local_slots(&self.superinstructions)
                 if instruction.op() == super::Op::Binary
                     && instruction.numeric_local_target().is_some_and(|slot| {
                         function.dispatch != super::DispatchClass::Numeric
-                            && !plain_local_slots
-                                .get(usize::from(slot))
-                                .copied()
-                                .unwrap_or(false)
+                            && !plain_local_slots.contains(usize::from(slot))
                     })
                 {
                     return Err(format!(

@@ -291,7 +291,6 @@ impl<H: Host> Vm<H> {
             temporal_plain_month_day_proto: _,
             temporal_plain_year_month_proto: _,
             natives,
-            atom_strings,
             frames,
             native_stack_frames,
             native_root_lists: _,
@@ -364,22 +363,19 @@ impl<H: Host> Vm<H> {
             symbol_registry,
             well_known_symbols,
             string_concats: _,
-            string_atoms: _,
-            recent_atom_strings: _,
             bound_parts_layout: _,
-            call_targets: _,
+            call_targets: _, frameless: _,
             field_caches: _,
             inherited_field_indices: _,
             accessor_field_indices: _,
             accessor_fields: _,
             field_add_indices: _,
-            field_add_sets: _,
+            field_add_sets: _, json_parse_cache: _,
             keyed_adds: _,
             megamorphic_field_indices: _,
             field_cache_writes: _,
             megamorphic_fields: _,
             holder_hints: _,
-            prototype_value_epoch: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
@@ -492,7 +488,7 @@ impl<H: Host> Vm<H> {
         }
         builtin_prototypes!(write_prototypes);
         natives.snap(&mut writer)?;
-        atom_strings.snap(&mut writer)?;
+        self.heap.kept_atom_strings().collect::<Vec<_>>().snap(&mut writer)?;
         startup_intrinsics.write_snapshot(&mut writer)?;
         writer.bool(*with_scope_entered);
         programs.write_snapshot(&mut writer)?;
@@ -582,7 +578,7 @@ impl<H: Host> Vm<H> {
         }
         builtin_prototypes!(read_prototypes);
         self.natives = Snap::unsnap(&mut reader)?;
-        self.atom_strings = Snap::unsnap(&mut reader)?;
+        Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
         #[cfg(feature = "profile-memory")]

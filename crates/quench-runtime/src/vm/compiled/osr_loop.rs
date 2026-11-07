@@ -238,7 +238,7 @@ impl LoopRegion {
     fn tagged_definition(&self, offset: u32) -> bool {
         self.lifetime_roles.as_ref().map_or_else(
             || self.instructions[offset as usize].defined_register()
-                .is_some_and(|register| self.tagged.contains(&register)),
+                .is_some_and(|register| self.tagged.contains(&register) || self.dynamic_arrays.contains(&register)),
             |roles| roles.tagged_definitions.contains(&offset),
         )
     }
@@ -1870,6 +1870,10 @@ fn admit_region(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
+    // A region that leaves at its header runs no native code: entering it only costs.
+    if let Some(first) = instructions.first().filter(|first| exits_before_effects(first.op())) {
+        return Err(RegionAnalysisFailure { reason: RegionRejection::UnsupportedInstruction(first.op()), pc: header });
+    }
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects,
     ) {
@@ -2100,8 +2104,8 @@ fn admit_register_roles(
         .collect();
     // An indexed register the region defines, other than one holding a field's value at
     // every read (`paths`), holds no entry array: each access reads the array it holds then
-    // (`LoopRegion::dynamic_arrays`). Its every definition reads an element or field or
-    // moves one, whose value stays tagged; any other is refused.
+    // (`LoopRegion::dynamic_arrays`). Its every definition reads an element, field, capture or
+    // environment local, or moves one, whose value stays tagged; any other but an exit's is refused.
     let mut dynamic_arrays = std::collections::BTreeSet::new();
     for register in instructions
         .iter()
@@ -2112,13 +2116,13 @@ fn admit_register_roles(
         let mut definitions = instructions
             .iter()
             .enumerate()
-            .filter(|(_, instruction)| instruction.defined_register() == Some(register))
+            .filter(|(_, instruction)| native_definition(**instruction) == Some(register))
             .peekable();
         if definitions.peek().is_none() {
             continue;
         }
         if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move))
+            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move | Op::LoadCapture | Op::LoadEnvLocal))
         {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
@@ -2580,15 +2584,12 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        // The ordinary lane owns these VM/effectful operations. Admit their surrounding
-        // region but leave at the exact PC so it can perform binding lookup, call resolution,
-        // activation, allocation, GC, and throws with the complete interpreter state
-        // materialized.
+        // The interpreter runs every other instruction at its exact PC, with the whole state
+        // written back (binding lookup, calls, allocation, GC, throws).
         op if exits_before_effects(op) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        Op::Return => {}
-        Op::Jump => {}
+        Op::Return | Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
@@ -2808,33 +2809,27 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 
 /// The value register an instruction defines, numeric or tagged.
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
-    matches!(
-        instruction.op(),
-        Op::LoadConst
-            | Op::Move
-            | Op::LoadCapture
-            | Op::Binary
-            | Op::NumericAdd
-            | Op::NumericMultiply
-            | Op::IncDec
-            | Op::Unary
-            | Op::ToNumeric
-            | Op::GetIndex
-            | Op::GetField
-            | Op::LoadEnvLocal
-    )
+    use Op::*;
+    matches!(instruction.op(), LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply | IncDec
+        | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal)
     .then(|| instruction.result_register())
 }
 
-/// These instructions resume in the VM before their effects; native control never
-/// reaches their bytecode fallthrough. Keep analysis and emission on that same boundary.
-fn exits_before_effects(op: Op) -> bool {
-    matches!(
-        op,
-        Op::RequireIteratorResult | Op::LoadName | Op::LoadNameCall
-            | Op::LoadNameTypeof | Op::Call | Op::CallArray
-    )
+/// The instructions this tier lowers to native code (`admit`, `Lowering::instruction`).
+/// Every other one leaves at its exact PC before its effects and the interpreter runs its own
+/// definition, so the tier covers every opcode; analysis and emission keep that boundary.
+fn lowered_natively(op: Op) -> bool {
+    use Op::*;
+    admitted_store(op) || matches!(op, LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply
+        | ToNumeric | IncDec | Unary | RequireObjectCoercible | GetIndex | GetField | SetIndex | LoadEnvLocal
+        | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
 }
+
+fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
+/// The register a native run defines at an instruction: an exit's definition is the VM's.
+fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at.op())) }
+
+
 
 /// The region PCs control continues at from the instruction at `pc`, and the PCs outside it
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
@@ -4265,11 +4260,7 @@ impl Typed {
     /// The load's tag/kind proof has completed. Tagged loads establish no
     /// refinement; checked unboxing establishes the corresponding Number set.
     fn checked_load(value: ir::Value, representation: Representation) -> Self {
-        Self { value, representation, ty: match representation {
-            Representation::Int32 => Type::INT32,
-            Representation::Float64 => Type::NUMBER,
-            Representation::Tagged => Type::ANY,
-        } }
+        Self { value, representation, ty: representation.checked_type() }
     }
 }
 
@@ -4290,7 +4281,7 @@ enum NodeProof {
 
 struct Lowering<'a, 'b> {
     /// The shared native body: the builder, each register's views, which hold each web's value
-    /// in its representation (`view_type`), and the interrupt check.
+    /// in its representation (`Representation::view`), and the interrupt check.
     body: super::Body<'b>,
     region: &'a LoopRegion,
     observation: &'a Observation<'a>,
@@ -4554,15 +4545,6 @@ impl Handoff {
 
 fn flags() -> ir::MemFlagsData {
     ir::MemFlagsData::trusted()
-}
-
-/// The register view that holds a value in `representation` (`super::Body`).
-fn view_type(representation: Representation) -> crate::WasmType {
-    match representation {
-        Representation::Int32 => crate::WasmType::I32,
-        Representation::Float64 => crate::WasmType::F64,
-        Representation::Tagged => crate::WasmType::I64,
-    }
 }
 
 impl<'a, 'b> Lowering<'a, 'b> {
@@ -5312,7 +5294,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(pass);
             }
             if representation == Representation::Tagged {
-                self.body.write(register, view_type(representation), bits);
+                self.body.write(register, representation.view(), bits);
                 continue;
             }
             let otherwise = self.not_entered(Some(Widening::Register(register)));
@@ -5325,7 +5307,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let otherwise = self.not_entered(Some(Widening::Bounded(register)));
                 self.pass_unless(beyond, otherwise);
             }
-            self.body.write(register, view_type(representation), value);
+            self.body.write(register, representation.view(), value);
         }
         let header = self.target_block(None, self.region.header)?;
         self.body.builder.ins().jump(header, &[]);
@@ -5512,7 +5494,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// preheader stored it (`Parking`).
     fn parked_value(&mut self, index: usize, register: Register, web: Definition) -> Typed {
         let representation = self.values[web].expect("verified SSA definition").representation;
-        let ty = super::scalar_ir(view_type(representation));
+        let ty = super::scalar_ir(representation.view());
         let slot = self.parking.slot.expect("a parking slot");
         let offset = self.parking.offset(index, register);
         Typed { value: self.body.builder.ins().stack_load(self.pointer, ty, slot, offset), representation,
@@ -5541,7 +5523,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         };
         for (register, web) in self.parking.parked[index].clone() {
             let value = self.parked_value(index, register, web);
-            self.body.write(register, view_type(value.representation), value.value);
+            self.body.write(register, value.representation.view(), value.value);
         }
     }
 
@@ -5780,19 +5762,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         // The helper writes only on a cache hit. The result word is temporary until this
         // region leaves, where `finish` overwrites it with the continuation outcome.
         let bits = self.body.builder.ins().load(types::I64, flags(), result, 0);
-        let representation = self.field_facts[index].representation;
-        let value = match representation {
-            Representation::Tagged => bits,
-            Representation::Int32 => {
-                let otherwise = self.widen_block(pc, Widening::Field(index as u16));
-                self.unbox(bits, representation, otherwise)
-            }
-            Representation::Float64 => {
-                let otherwise = self.exit_block(pc);
-                self.unbox(bits, representation, otherwise)
-            }
-        };
-        Some(Typed { value, representation, ty: self.field_facts[index].ty })
+        Some(self.field_value(pc, index, bits))
     }
 
     /// Establish an object's header proof once for this SSA value and chain.
@@ -5872,6 +5842,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.chains.insert(join, chain);
             bits
         };
+        Some(self.field_value(pc, index, bits))
+    }
+
+    /// A dynamic field's loaded word in the representation its field facts chose: an Int32
+    /// field that holds something else widens the field; a Float64 one leaves.
+    fn field_value(&mut self, pc: u32, index: usize, bits: ir::Value) -> Typed {
         let representation = self.field_facts[index].representation;
         let value = match representation {
             Representation::Tagged => bits,
@@ -5884,7 +5860,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.unbox(bits, representation, otherwise)
             }
         };
-        Some(Typed { value, representation, ty: self.field_facts[index].ty })
+        Typed { value, representation, ty: self.field_facts[index].ty }
     }
 
     /// The value of the web rooted at `web`, which its register's view holds where the web
@@ -5892,7 +5868,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn web(&mut self, web: Definition) -> Typed {
         let fact = self.values[web].expect("verified SSA definition");
         let register = self.webs.register(self.region, web);
-        Typed { value: self.body.read(register, view_type(fact.representation)),
+        Typed { value: self.body.read(register, fact.representation.view()),
             representation: fact.representation, ty: fact.ty }
     }
 
@@ -5987,7 +5963,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             (Representation::Tagged, Representation::Int32 | Representation::Float64) => self.boxed(value),
             _ => value.value,
         };
-        self.body.write(register, view_type(representation), value);
+        self.body.write(register, representation.view(), value);
     }
 
     /// Continues at `target`: its block within the region, else the lane resumes there. A
@@ -7131,6 +7107,10 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 }
 
 #[cfg(test)]
+#[path = "osr_loop/coverage_tests.rs"]
+mod coverage_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn array_entry_descriptor_boundaries_preserve_layout_and_rejection() {
@@ -7217,7 +7197,7 @@ mod tests {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
                 native_field_loads: &loads, widened: &widened,
             };
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             let (native, _) = lower_verified(verify_region(&region, &observation).unwrap(),
                 &observation, &*isa, None, false).unwrap();
             let shape_loads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -7322,7 +7302,7 @@ mod tests {
             register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let verified = verify_region(&region, &observation).unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
         let mut verified = verify_region(&region, &observation).unwrap();
@@ -7355,7 +7335,7 @@ mod tests {
         };
         let verified = verify_region(&region, &observation).unwrap();
         assert_eq!(verified.obligations[1], DefinitionObligation::NumberLoad);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
     }
 
@@ -7381,7 +7361,7 @@ mod tests {
         let comparison = verified.webs.defined(&region, 0);
         assert_eq!(verified.values[comparison].unwrap().ty, Type::language(crate::ValueType::Boolean));
         assert_eq!(verified.obligations[1], DefinitionObligation::None);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
 
         // Same tagged machine representation, incompatible semantic type:
@@ -7412,7 +7392,7 @@ mod tests {
             let verified = verify_region(&region, &observation).unwrap();
             let result = verified.webs.defined(&region, 1);
             assert_eq!(verified.values[result].unwrap().ty, Type::TYPEOF_INDEX);
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
         }
     }

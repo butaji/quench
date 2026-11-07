@@ -61,6 +61,17 @@ macro_rules! number_relations {
                     $(Self::$relation => stage.$stage_method(left, right)),+
                 }
             }
+
+            /// A relational operator's answer for totally ordered operands; `None` for equality.
+            pub(super) fn of_ordering(self, ordering: std::cmp::Ordering) -> Option<bool> {
+                Some(match self {
+                    Self::LessThan => ordering.is_lt(),
+                    Self::LessEqual => ordering.is_le(),
+                    Self::GreaterThan => ordering.is_gt(),
+                    Self::GreaterEqual => ordering.is_ge(),
+                    Self::Equal | Self::NotEqual => return None,
+                })
+            }
         }
     };
 }
@@ -2165,13 +2176,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
         let ordering = left.units().cmp(&right.units());
-        Some(match NumberRelation::from_operator(op)? {
-            NumberRelation::LessThan => ordering.is_lt(),
-            NumberRelation::LessEqual => ordering.is_le(),
-            NumberRelation::GreaterThan => ordering.is_gt(),
-            NumberRelation::GreaterEqual => ordering.is_ge(),
-            NumberRelation::Equal | NumberRelation::NotEqual => return None,
-        })
+        NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
@@ -2182,13 +2187,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let ordering = left.cmp(right);
-        Some(match NumberRelation::from_operator(op)? {
-            NumberRelation::LessThan => ordering.is_lt(),
-            NumberRelation::LessEqual => ordering.is_le(),
-            NumberRelation::GreaterThan => ordering.is_gt(),
-            NumberRelation::GreaterEqual => ordering.is_ge(),
-            NumberRelation::Equal | NumberRelation::NotEqual => return None,
-        })
+        NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
     #[cold]
@@ -2252,12 +2251,12 @@ impl<H: Host> Vm<H> {
             return Ok(Self::integrity_bool(result));
         }
         let answer = match op {
-            0 => self.equal(p, left, right)?,
-            1 => !self.equal(p, left, right)?,
-            2 => self.strict_equal(left, right),
-            3 => !self.strict_equal(left, right),
-            20 => self.has_property(p, right, left)?,
-            21 => self.instanceof(p, left, right)?,
+            op if op == BinaryOperator::Equality as u32 => self.equal(p, left, right)?,
+            op if op == BinaryOperator::Inequality as u32 => !self.equal(p, left, right)?,
+            op if op == BinaryOperator::StrictEquality as u32 => self.strict_equal(left, right),
+            op if op == BinaryOperator::StrictInequality as u32 => !self.strict_equal(left, right),
+            op if op == BinaryOperator::In as u32 => self.has_property(p, right, left)?,
+            op if op == BinaryOperator::Instanceof as u32 => self.instanceof(p, left, right)?,
             _ => return Ok(Value::number(self.numeric(p, op, left, right)?)),
         };
         Ok(if answer { Value::TRUE } else { Value::FALSE })

@@ -17,6 +17,22 @@ pub(super) const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
 ];
 
 impl<H: Host> Vm<H> {
+    /// The month a property bag names through `month`, `monthCode` or both, which must agree.
+    pub(super) fn temporal_month(
+        &mut self,
+        p: &ResidualProgram,
+        month: Option<i32>,
+        month_code: Option<i32>,
+    ) -> Result<i32, JsError> {
+        match (month, month_code) {
+            (Some(month), Some(code)) if month != code => {
+                Err(self.range_error(p, "month and monthCode must agree".into()))
+            }
+            (Some(month), _) | (None, Some(month)) => Ok(month),
+            (None, None) => Err(self.type_error(p, "Missing month".into())),
+        }
+    }
+
     pub(super) fn temporal_plain_date_arithmetic(
         &mut self,
         p: &ResidualProgram,

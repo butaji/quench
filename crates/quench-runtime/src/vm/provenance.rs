@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         name.is_some() && !reconfigured
-            && self.shape_entries(object.shape()).get(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
+            && self.shape_entries(object.shape()).nth(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| *candidate == key)
             && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
     }
@@ -382,12 +382,7 @@ impl<H: Host> Vm<H> {
             FunctionKind::User(program, id) => {
                 let program = self.programs.get(program)?;
                 let function = program.functions.get(id as usize)?.header();
-                match (function.is_async, function.is_generator) {
-                    (true, true) => Native::AsyncGeneratorFunction,
-                    (false, true) => Native::GeneratorFunction,
-                    (true, false) => Native::AsyncFunction,
-                    (false, false) => Native::Function,
-                }
+                Native::function_constructor(function.is_async, function.is_generator)
             }
             FunctionKind::Native(Native::FunctionBoundCall) => return None,
             FunctionKind::Native(_) => Native::Function,

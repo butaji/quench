@@ -111,7 +111,7 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     // this root in the legacy space so those paths remain covered.
     let root = heap.alloc(Cell::Set {
         object: Box::new(plain_object()),
-        entries: Box::new(children.clone().into()),
+        entries: children.clone().into(),
     });
 
     heap.collect([root]);
@@ -173,10 +173,10 @@ fn parallel_full_mark_follows_records_and_ephemerons_like_the_serial_mark() {
         // A value that is itself a key, whose own value waits for it in a later round.
         let nested_value = heap.alloc(Cell::Error("nested".into()));
         let mut entries = WeakMapEntries::default();
-        entries.insert(object_key, object_value);
-        entries.insert(array_key, array_value);
-        entries.insert(lost_key, lost_value);
-        entries.insert(object_value, nested_value);
+        entries.insert((object_key, object_value));
+        entries.insert((array_key, array_value));
+        entries.insert((lost_key, lost_value));
+        entries.insert((object_value, nested_value));
         let map = heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(entries),
@@ -251,7 +251,7 @@ fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
     let old_key = heap.alloc(Cell::Object(plain_object()));
     let old_value = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
-    entries.insert(old_key, old_value);
+    entries.insert((old_key, old_value));
     let map = heap.alloc(Cell::WeakMap {
         object: Box::new(plain_object()),
         entries: Box::new(entries),
@@ -265,7 +265,7 @@ fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::Object(plain_object()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
     let referent = heap.alloc(Cell::Object(plain_object()));
     let target = heap.weak_handle(referent).unwrap();
@@ -515,7 +515,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::Error("value".into()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
     let map_root = heap.root(weak_map);
     let key_root = heap.root(key);
@@ -542,7 +542,7 @@ fn weak_map_array_keys_follow_direct_record_liveness() {
     let value = heap.alloc(Cell::Error("value".into()));
     assert!(key.direct_array_index().is_some());
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
 
     let map_root = heap.root(weak_map);
@@ -577,7 +577,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
     assert_ne!(map, key);
 
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
     heap.collect([map, key]);
     assert!(heap.is_live(map));
@@ -1040,7 +1040,7 @@ fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
-    entries.insert(key, value);
+    entries.insert((key, value));
     let map = heap.alloc(Cell::WeakMap {
         object: Box::new(plain_object()),
         entries: Box::new(entries),
@@ -1057,8 +1057,8 @@ fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
     let left = heap.alloc(Cell::Object(plain_object()));
     let right = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
-    entries.insert(left, right);
-    entries.insert(right, left);
+    entries.insert((left, right));
+    entries.insert((right, left));
     let map = heap.alloc(Cell::WeakMap {
         object: Box::new(plain_object()),
         entries: Box::new(entries),
@@ -1080,13 +1080,13 @@ fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
         let inner_key = heap.alloc(Cell::Object(plain_object()));
         let value = heap.alloc(Cell::Object(plain_object()));
         let mut inner_entries = WeakMapEntries::default();
-        inner_entries.insert(inner_key, value);
+        inner_entries.insert((inner_key, value));
         let inner = heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(inner_entries),
         });
         let mut outer_entries = WeakMapEntries::default();
-        outer_entries.insert(outer_key, inner);
+        outer_entries.insert((outer_key, inner));
         let outer = heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(outer_entries),
@@ -1117,7 +1117,7 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
     for _ in 0..3 {
         let value = heap.alloc(Cell::Object(plain_object()));
         let mut entries = WeakMapEntries::default();
-        entries.insert(key, value);
+        entries.insert((key, value));
         maps.push(heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(entries),
@@ -1301,7 +1301,7 @@ fn promoted_cells_remember_their_young_children() {
         |heap| {
             heap.alloc(Cell::Set {
                 object: Box::new(plain_object()),
-                entries: Box::new(Vec::<Value>::new().into()),
+                entries: Vec::<Value>::new().into(),
             })
         },
         |heap| heap.alloc(Cell::Error("young child".into())),
@@ -1378,7 +1378,7 @@ fn weak_entries_of_aged_keys_and_targets_are_pruned_when_they_die() {
         }
         let [key, value, referent] = [(); 3].map(|()| heap.alloc(Cell::Object(plain_object())));
         if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-            entries.insert(key, value);
+            entries.insert((key, value));
         }
         let target = heap.weak_handle(referent).unwrap();
         if let Some(Cell::WeakRef { target: slot, .. }) = heap.get_mut(weak_ref) {
@@ -1407,7 +1407,7 @@ fn ephemeron_values_of_young_rooted_keys_survive_until_promoted() {
         }
         let [key, value] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
         if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-            entries.insert(key, value);
+            entries.insert((key, value));
         }
         for _ in 0..=PromotionAge::Second.minors() {
             collect_minor(&mut heap, [map, key]);
