@@ -146,6 +146,9 @@ pub fn release_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
+    if !file_pages_weigh() {
+        return;
+    }
     let segments = loaded_segments(ReleasedSegment::Clean);
     for &(start, end) in segments.iter().chain(unwritten_relro_pages()) {
         // SAFETY: each range is a private file mapping that is never written, so discarding
@@ -615,10 +618,20 @@ const STATM_BYTES: usize = 128;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const STATM_RESIDENT_SHARED_FIELD: usize = 2;
 
+/// The field of `STATM_PATH` that counts all resident pages.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const STATM_RESIDENT_FIELD: usize = 1;
+
 /// The bytes of resident file-backed pages (`STATM_PATH`), read through one descriptor kept
 /// open: a budget check runs at first calls, hundreds to thousands in a run.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn resident_file_bytes() -> Option<usize> {
+    resident_statm_bytes(STATM_RESIDENT_SHARED_FIELD)
+}
+
+/// The bytes of `STATM_PATH`'s page count at `field`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn resident_statm_bytes(field: usize) -> Option<usize> {
     use std::os::unix::fs::FileExt;
     static STATM: std::sync::OnceLock<Option<std::fs::File>> = std::sync::OnceLock::new();
     let file = STATM.get_or_init(|| std::fs::File::open(STATM_PATH).ok()).as_ref()?;
@@ -627,10 +640,29 @@ fn resident_file_bytes() -> Option<usize> {
     let pages = std::str::from_utf8(&text[..length])
         .ok()?
         .split_ascii_whitespace()
-        .nth(STATM_RESIDENT_SHARED_FIELD)?
+        .nth(field)?
         .parse::<usize>()
         .ok()?;
     pages.checked_mul(page_size())
+}
+
+/// Resident file pages below this share (`1 / divisor`) of the resident set are not worth
+/// releasing: a release saves at most their bytes and costs the refaults of the code the run
+/// touches again. A run whose heap is a few megabytes keeps code at a large share (V8-v7, file
+/// pages about 1.3-2 MB of 3-5 MB) and keeps releasing; a run whose heap dwarfs its code
+/// (JetStream's tests, 20-160 MB) no longer refaults its working code tens of times per
+/// iteration (web-ssr: about 80 releases and 21K refaults per iteration).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const FILE_PAGES_RELEASE_SHARE_DIVISOR: usize = 4;
+
+/// Whether the resident file pages are a large enough share of the resident set to release
+/// (`FILE_PAGES_RELEASE_SHARE_DIVISOR`); `true` when either count cannot be read.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn file_pages_weigh() -> bool {
+    match (resident_file_bytes(), resident_statm_bytes(STATM_RESIDENT_FIELD)) {
+        (Some(file), Some(resident)) => file * FILE_PAGES_RELEASE_SHARE_DIVISOR >= resident,
+        _ => true,
+    }
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
