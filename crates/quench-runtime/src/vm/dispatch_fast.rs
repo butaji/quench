@@ -13921,6 +13921,8 @@ mod named_keys;
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod native_calls;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
+mod wasm_gc;
+use wasm_gc::wasm_gc_handler;
 
 /// Whether liveness proves the result register of the running function's call record `i`
 /// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
@@ -19483,8 +19485,8 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     })
 }
 
-/// The handlers of the jumps (`other_handler`): their direction decides whether they run a
-/// safepoint.
+/// The handlers of the jumps (`other_handler`), whose direction decides whether they run a
+/// safepoint, then of the Wasm GC steps (`wasm_gc_handler`).
 const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
@@ -19494,7 +19496,7 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> O
         Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
         Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
-        _ => None,
+        _ => wasm_gc_handler::<H>(op),
     }
 }
 
@@ -19527,9 +19529,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
-        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => {
-            Some(lane_binary::<H>)
-        }
+        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
