@@ -6,10 +6,10 @@ use super::{exits_before_effects, Op, WideInstruction};
 /// error is the first exit that blocks it.
 pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32) -> Result<(), usize> {
     let last = instructions.len() - 1;
-    let (mut seen, mut pending, mut blocked) = (vec![false; instructions.len()], vec![0], usize::MAX);
+    let (mut seen, mut pending, mut blocked) = (crate::bitset::BitSet::new(instructions.len()), vec![0], usize::MAX);
     while let Some(offset) = pending.pop() {
         let op = instructions[offset].op();
-        if std::mem::replace(&mut seen[offset], true) {
+        if !seen.insert(offset) {
             continue;
         }
         if exits_before_effects(op) && !matches!(op, Op::Call | Op::CallArray) {
