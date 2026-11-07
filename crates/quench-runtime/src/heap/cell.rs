@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod modes;
 mod prototype_values;
 mod snapshot;
+mod typed_array_kind;
+pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 
@@ -740,22 +742,6 @@ pub(crate) struct WasmHostMemcpyTarget {
     pub(crate) view_environment: Value,
     pub(crate) view_slot: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypedArrayKind {
-    Uint8,
-    Uint8Clamped,
-    Uint16,
-    Uint32,
-    Int8,
-    Int16,
-    Int32,
-    BigInt64,
-    BigUint64,
-    Float16,
-    Float32,
-    Float64,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ArrayFromAsyncAwait {
     IteratorStep,
@@ -807,29 +793,17 @@ impl AwaitState {
         }
     }
 }
-impl TypedArrayKind {
-    pub(crate) const fn is_bigint(self) -> bool {
-        matches!(self, Self::BigInt64 | Self::BigUint64)
-    }
-
-    pub(crate) const fn width(self) -> usize {
-        match self {
-            Self::Uint8 => 1,
-            Self::Uint8Clamped => 1,
-            Self::Uint16 => 2,
-            Self::Uint32 => 4,
-            Self::Int8 => 1,
-            Self::Int16 => 2,
-            Self::Int32 => 4,
-            Self::BigInt64 => 8,
-            Self::BigUint64 => 8,
-            Self::Float16 => 2,
-            Self::Float32 => 4,
-            Self::Float64 => 8,
+impl Native {
+    /// The constructor intrinsic (`Function`, `AsyncFunction`, ...) of a function of this kind.
+    pub(crate) fn function_constructor(is_async: bool, is_generator: bool) -> Self {
+        match (is_async, is_generator) {
+            (true, true) => Self::AsyncGeneratorFunction,
+            (false, true) => Self::GeneratorFunction,
+            (true, false) => Self::AsyncFunction,
+            (false, false) => Self::Function,
         }
     }
-}
-impl Native {
+
     /// The `get [Symbol.species]` accessors, each of which returns its receiver.
     pub(crate) fn is_intrinsic_species_getter(self) -> bool {
         matches!(

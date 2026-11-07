@@ -70,15 +70,18 @@ pub(crate) enum Buffer {
     Resource,
 }
 
+/// Each buffer's entry type and the method that clears it, in [`Buffer`] order.
+const BUFFERS: [(&str, &str); Buffer::ALL.len()] = [
+    ("mark", "performance.clearMarks"),
+    ("measure", "performance.clearMeasures"),
+    ("resource", "performance.clearResourceTimings"),
+];
+
 impl Buffer {
     const ALL: [Self; 3] = [Self::Mark, Self::Measure, Self::Resource];
 
     fn entry_type(self) -> &'static str {
-        match self {
-            Self::Mark => "mark",
-            Self::Measure => "measure",
-            Self::Resource => "resource",
-        }
+        BUFFERS[self as usize].0
     }
 
     fn of(entry_type: &str) -> Option<Self> {
@@ -95,11 +98,7 @@ impl Buffer {
 
     /// The method that clears it, which the buffer warning names.
     fn clearer(self) -> &'static str {
-        match self {
-            Self::Mark => "performance.clearMarks",
-            Self::Measure => "performance.clearMeasures",
-            Self::Resource => "performance.clearResourceTimings",
-        }
+        BUFFERS[self as usize].1
     }
 }
 

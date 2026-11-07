@@ -1,4 +1,3 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
 /// The shapes an ordinary closure's own properties step through as `Vm::closure_in_realm`
@@ -462,12 +461,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
-            (true, true) => Native::AsyncGeneratorFunction,
-            (false, true) => Native::GeneratorFunction,
-            (true, false) => Native::AsyncFunction,
-            (false, false) => Native::Function,
-        };
+        let intrinsic = Native::function_constructor(function_plan.is_async, function_plan.is_generator);
         let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
         let plan_name = function_plan.name.or(function_plan.inferred_name);
         // Names are the compiled functions' own, so keeping each one's string is bounded by
@@ -1200,9 +1194,7 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
-            let Some(intrinsic) = TYPED_ARRAY_INSTALLS
-                .iter()
-                .find_map(|(_, candidate, name)| (*candidate == native).then_some(*name))
+            let Some(intrinsic) = TypedArrayKind::of_constructor(native).map(TypedArrayKind::name)
                 .or_else(|| match native {
                     Native::Object => Some("Object"),
                     Native::Function => Some("Function"),
@@ -1303,10 +1295,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        if let Some(&(kind, _, name)) = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find(|(_, candidate, _)| *candidate == native)
-        {
+        if let Some(kind) = TypedArrayKind::of_constructor(native) {
+            let name = kind.name();
             return self.construct_typed_array_with_new_target(
                 p,
                 args,

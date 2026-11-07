@@ -2070,26 +2070,8 @@ impl<H: Host> Vm<H> {
             crate::module_identity::normalize(std::path::Path::new(&module.name)),
             locals.clone(),
         );
-        match self.resolve_static_module_links(
-            p,
-            module,
-            locals,
-            plan.reexports.clone(),
-            &mut active,
-        )? {
-            StaticModuleGraph::Linked {
-                exports,
-                incomplete: false,
-                ..
-            } => self.module_namespace_from_static(exports).map(Some),
-            StaticModuleGraph::Linked {
-                incomplete: true, ..
-            }
-            | StaticModuleGraph::LinkError => self
-                .syntax_error_result(p, "module export could not be resolved unambiguously")
-                .map(Some),
-            StaticModuleGraph::Unsupported => Ok(None),
-        }
+        let graph = self.resolve_static_module_links(p, module, locals, plan.reexports.clone(), &mut active)?;
+        self.static_graph_namespace(p, graph)
     }
 
     fn root_module_local_exports(
@@ -3198,7 +3180,18 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
         active: &mut ActiveModuleExports,
     ) -> Result<Option<Value>, JsError> {
-        match self.resolve_static_module_graph(p, module.clone(), active)? {
+        let graph = self.resolve_static_module_graph(p, module.clone(), active)?;
+        self.static_graph_namespace(p, graph)
+    }
+
+    /// The namespace object of a statically linked module graph: `None` when the graph is
+    /// beyond static linking, a SyntaxError when an export is missing or ambiguous.
+    fn static_graph_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        graph: StaticModuleGraph,
+    ) -> Result<Option<Value>, JsError> {
+        match graph {
             StaticModuleGraph::Linked {
                 exports,
                 incomplete: false,

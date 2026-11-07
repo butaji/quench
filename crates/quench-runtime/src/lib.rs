@@ -61,7 +61,7 @@ pub use wasm::{
     WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
     WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
-    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
+    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
 };
 
 pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};

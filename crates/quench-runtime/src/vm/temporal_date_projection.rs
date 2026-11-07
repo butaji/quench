@@ -413,11 +413,7 @@ impl<H: Host> Vm<H> {
             ) => (ly, lm, ld).cmp(&(ry, rm, rd)),
             _ => unreachable!("calendar comparison operands are not branded"),
         };
-        Ok(Value::number(match ordering {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        }))
+        Ok(Value::number(f64::from(ordering as i8)))
     }
 
     fn temporal_plain_month_day_native(
@@ -1317,14 +1313,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
             })
             .transpose()?;
-        let month = match (month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "month and monthCode must agree".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
-        };
+        let month = self.temporal_month(p, month, month_code)?;
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
         }
@@ -1427,14 +1416,7 @@ impl<H: Host> Vm<H> {
         let month_code = month_code
             .map(|code| self.calendarized_month_code(p, code, &calendar, year, constrain))
             .transpose()?;
-        let month = match (month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "Conflicting month fields".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
-        };
+        let month = self.temporal_month(p, month, month_code)?;
         if month <= 0 {
             return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
         }

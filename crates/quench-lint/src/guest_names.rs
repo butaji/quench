@@ -17,9 +17,6 @@ use crate::shape::Measures;
 /// property key it defines reads the key at run time instead, and is not counted.
 const GUEST_NAME_READS: &[&str] = &["atoms [", "field_name (", "field_is ("];
 
-/// Paths that hold only tests and benchmarks of Quench itself.
-const TEST_PATHS: &[&str] = &["test", "primitive_bench"];
-
 /// Names whose meaning the language defines, which semantics may test for.
 const LANGUAGE_NAMES: &[&str] = &[
     "arguments", "eval", "constructor", "prototype", "__proto__", "length", "name", "value",
@@ -29,8 +26,7 @@ const LANGUAGE_NAMES: &[&str] = &[
 
 /// Records, by `guest-name <subject>`, how often a function tests a guest name.
 pub fn scan(subject: &str, body: &syn::Block, measures: &mut Measures) {
-    let file = subject.split("::").next().unwrap_or(subject);
-    if TEST_PATHS.iter().any(|path| file.contains(path)) {
+    if crate::in_test_path(subject) {
         return;
     }
     let mut tests = Tests(0);

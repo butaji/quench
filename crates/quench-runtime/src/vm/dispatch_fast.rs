@@ -595,6 +595,7 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
+mod lane_stack_growth;
 mod construct_plan;
 use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
 use getters::{lane_getter_read, lane_read_getter};
@@ -17496,17 +17497,9 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     // The callee's own room, which a function of many registers makes larger than a common
     // window: reserving less would send each of its calls at this depth here again.
     let room = room.max(LANE_SCRIPT_WINDOW);
-    let values_full = stack.values.capacity() - stack.values.len() < room;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(room);
     vm.materialize_lane_activations(cx);
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(room));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, room);
     exit(ip)
 }
 
@@ -17630,19 +17623,9 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     let count = usize::from(code.function(usize::from(i.b)).registers);
     let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < window;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(window);
     vm.materialize_lane_activations(cx);
-    // Only a lack of room grows the stack, so its size follows the deepest
-    // window and activation count a lane has actually needed.
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(window));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, window);
     let caller = unsafe { (*cx).frame };
     // SAFETY: `ip` is a record of the active view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;

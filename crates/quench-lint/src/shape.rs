@@ -10,6 +10,8 @@ use std::{collections::BTreeMap, fmt::Write as _};
 use quote::ToTokens;
 use syn::{spanned::Spanned, visit::Visit};
 
+use crate::decision_trees::DecisionTrees;
+
 pub const MAX_FUNCTION_LINES: usize = 40;
 pub const MAX_COMPLEXITY: usize = 10;
 pub const MAX_FILE_LINES: usize = 500;
@@ -18,13 +20,13 @@ pub const MAX_FILE_LINES: usize = 500;
 pub type Measures = BTreeMap<String, usize>;
 
 /// Records every file and function that exceeds a law.
-pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measures) {
+pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measures, trees: &mut DecisionTrees) {
     let lines = source.lines().count();
     if lines > MAX_FILE_LINES {
         measures.insert(format!("file-lines {file}"), lines);
     }
     let hot = crate::hot_path::is_hot(file);
-    let mut functions = Functions { file, scope: Vec::new(), measures, seen: BTreeMap::new(), hot, test: false };
+    let mut functions = Functions { file, scope: Vec::new(), measures, trees, seen: BTreeMap::new(), hot, test: false };
     functions.visit_file(syntax);
 }
 
@@ -33,6 +35,8 @@ struct Functions<'a> {
     /// Enclosing modules, impl types and functions, naming a function within its file.
     scope: Vec<String>,
     measures: &'a mut Measures,
+    /// Case analyses across the repository, to find one decided twice.
+    trees: &'a mut DecisionTrees,
     /// How often each qualified name has occurred, to tell same-named functions apart.
     seen: BTreeMap<String, usize>,
     /// Whether the hot-path cost model applies: a hot module, outside its tests.
@@ -64,6 +68,8 @@ impl Functions<'_> {
         }
         if !self.test {
             crate::guest_names::scan(&subject, body, self.measures);
+            crate::magic::scan(&subject, body, self.measures);
+            self.trees.scan(&subject, body);
         }
         self.visit_block(body);
         self.scope.pop();

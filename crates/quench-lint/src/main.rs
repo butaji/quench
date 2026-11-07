@@ -1,12 +1,16 @@
-//! Fails when the repository says the same thing twice (`duplicates`) or when a function or
-//! file outgrows the manifesto's size laws (`shape`), or when a hot path hashes, scans or
-//! allocates (`hot_path`), or when the engine tests a guest program's own names (`guest_names`).
+//! Fails when the repository says the same thing twice (`duplicates`) or decides the same case
+//! analysis twice (`decision_trees`), when a function or file outgrows the manifesto's size
+//! laws (`shape`), when a hot path hashes, scans or allocates (`hot_path`), when the engine
+//! tests a guest program's own names (`guest_names`), or when a body spells an unnamed
+//! number (`magic`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
 
+mod decision_trees;
 mod duplicates;
 mod guest_names;
 mod hot_path;
+mod magic;
 mod shape;
 
 use std::{
@@ -18,6 +22,15 @@ use std::{
 const DEFAULT_ROOTS: &[&str] = &["crates", "quench-bench/src", "tools"];
 /// Checked-out third-party corpora and build output, not Quench code.
 const SKIPPED_DIRECTORIES: &[&str] = &["target", "testsuite", "node_modules", "jetstream", "js-engine-benchmark"];
+/// Paths that hold only tests and benchmarks of Quench itself.
+const TEST_PATHS: &[&str] = &["test", "primitive_bench"];
+
+/// Whether a function, named by its `file::path` subject, lives in tests or benchmarks.
+pub(crate) fn in_test_path(subject: &str) -> bool {
+    let file = subject.split("::").next().unwrap_or(subject);
+    TEST_PATHS.iter().any(|path| file.contains(path))
+}
+
 const OVERSIZED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/oversized.txt");
 const UPDATE_FLAG: &str = "--update";
 
@@ -35,18 +48,19 @@ fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures), String> {
+fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures, decision_trees::DecisionTrees), String> {
     let mut repeated = duplicates::Duplicates::default();
     let mut oversized = shape::Measures::new();
+    let mut trees = decision_trees::DecisionTrees::default();
     for path in files {
         let file = path.display().to_string();
         let source = fs::read_to_string(path).map_err(|error| format!("{file}: {error}"))?;
         let syntax =
             syn::parse_file(&source).map_err(|error| format!("{file}:{}: {error}", error.span().start().line))?;
         repeated.scan(&file, &syntax);
-        shape::scan(&file, &source, &syntax, &mut oversized);
+        shape::scan(&file, &source, &syntax, &mut oversized, &mut trees);
     }
-    Ok((repeated, oversized))
+    Ok((repeated, oversized, trees))
 }
 
 fn main() -> ExitCode {
@@ -55,7 +69,7 @@ fn main() -> ExitCode {
     let mut files = Vec::new();
     roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
     files.sort();
-    let (repeated, oversized) = match scan(&files) {
+    let (repeated, oversized, trees) = match scan(&files) {
         Ok(found) => found,
         Err(error) => {
             eprintln!("quench-lint: cannot read {error}");
@@ -71,7 +85,7 @@ fn main() -> ExitCode {
     if !update.is_empty() && departures == 0 {
         let _ = fs::write(OVERSIZED, shape::render(&oversized));
     }
-    let violations = repeated.report() + departures;
+    let violations = repeated.report() + trees.report() + departures;
     if violations == 0 {
         return ExitCode::SUCCESS;
     }

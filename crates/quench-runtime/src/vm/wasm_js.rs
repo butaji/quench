@@ -230,16 +230,6 @@ pub(super) const fn wasm_js_native_length(native: Native) -> Option<f64> {
     })
 }
 
-fn kind_name(kind: ExternalKind) -> &'static str {
-    match kind {
-        ExternalKind::Func | ExternalKind::FuncExact => "function",
-        ExternalKind::Table => "table",
-        ExternalKind::Memory => "memory",
-        ExternalKind::Global => "global",
-        ExternalKind::Tag => "tag",
-    }
-}
-
 /// The reference types a `WebAssembly.Table` descriptor names.
 fn descriptor_reference_type(name: &str) -> Option<wasmparser::RefType> {
     Some(match name {
@@ -445,7 +435,7 @@ impl<H: Host> Vm<H> {
                 let mut values = Vec::with_capacity(descriptors.len());
                 for (name, kind) in descriptors {
                     values.push(
-                        self.wasm_descriptor(p, &[("name", &name), ("kind", kind_name(kind))])?,
+                        self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
                     );
                 }
                 Ok(self.new_array(values))
@@ -485,7 +475,7 @@ impl<H: Host> Vm<H> {
                         &[
                             ("module", &module),
                             ("name", &name),
-                            ("kind", kind_name(kind)),
+                            ("kind", crate::WasmExternKind::from(kind).name()),
                         ],
                     )?);
                 }

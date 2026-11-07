@@ -1234,16 +1234,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let registers = input.u16()?;
-        let dispatch = match input.u8()? {
-            0 => DispatchClass::General,
-            1 => DispatchClass::Numeric,
-            _ => return Err("invalid residual dispatch class".into()),
-        };
-        let covered = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid residual register root coverage".into()),
-        };
+        let dispatch = input.dispatch_class()?;
+        let covered = input.flag("register root coverage")?;
         let dead_call_results = input.list(BinaryReader::u32)?;
         if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
             return Err("invalid residual dead call results".into());
@@ -1406,11 +1398,7 @@ fn read_function_header(input: &mut BinaryReader<'_>) -> Result<super::FunctionH
         None
     };
     let length = input.u16()?;
-    let dispatch = match input.u8()? {
-        0 => DispatchClass::General,
-        1 => DispatchClass::Numeric,
-        _ => return Err("invalid residual dispatch class".into()),
-    };
+    let dispatch = input.dispatch_class()?;
     Ok(super::FunctionHeader {
         parent,
         name,
@@ -1531,6 +1519,14 @@ impl<'a> BinaryReader<'a> {
     /// A one-byte boolean, named by `what` in its error.
     fn flag(&mut self, what: &str) -> Result<bool, String> {
         match self.u8()? { 0 => Ok(false), 1 => Ok(true), _ => Err(format!("invalid residual {what} flag")) }
+    }
+    /// A function's dispatch class, written as its discriminant.
+    fn dispatch_class(&mut self) -> Result<DispatchClass, String> {
+        match self.u8()? {
+            byte if byte == DispatchClass::General as u8 => Ok(DispatchClass::General),
+            byte if byte == DispatchClass::Numeric as u8 => Ok(DispatchClass::Numeric),
+            _ => Err("invalid residual dispatch class".into()),
+        }
     }
     fn source_positions(&mut self) -> Result<super::SourcePositions, String> {
         let len = self.u32()? as usize;

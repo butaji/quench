@@ -41,7 +41,7 @@ use crate::heap::{
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
-use crate::profile::Profile;
+use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
 use activation::{CallCompletion, CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
@@ -2248,7 +2248,7 @@ pub(crate) struct Vm<H> {
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
-    method_caches: Vec<[MethodCache; 2]>,
+    method_caches: Vec<[MethodCache; method_cache::METHOD_CACHE_WAYS]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
     #[cfg(feature = "profile-aggregate")]
@@ -2914,7 +2914,7 @@ impl<H: Host> Vm<H> {
             self.field_add_indices.capacity_bytes(),
             self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>(),
             self.field_add_sets.len(),
-            self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
+            self.method_caches.capacity() * size_of::<[MethodCache; method_cache::METHOD_CACHE_WAYS]>(),
             self.megamorphic_methods.len(),
         );
         self.heap
@@ -2953,7 +2953,7 @@ impl<H: Host> Vm<H> {
             + self.megamorphic_field_indices.capacity_bytes()
             + self.field_add_indices.capacity_bytes()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
-            + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
+            + self.method_caches.capacity() * size_of::<[MethodCache; method_cache::METHOD_CACHE_WAYS]>();
         let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
             + self.atom_sequence.appended_record_bytes()
             + (0..self.atom_sequence.appended_len())
@@ -3216,7 +3216,7 @@ impl<H: Host> Vm<H> {
         self.prototype_atom = self.intern_atom("prototype");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
-        self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
+        self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.len()];
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
         self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.len());
@@ -3383,7 +3383,7 @@ impl<H: Host> Vm<H> {
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
         self.accessor_field_indices.extend_empty(fields);
-        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
+        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]);
         self.object_shapes.extend_empty(sites.objects);
     }
 
@@ -3399,7 +3399,7 @@ impl<H: Host> Vm<H> {
             self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
         }
         self.method_caches[layout.method_base..layout.method_base + layout.sites.methods]
-            .fill([EMPTY_METHOD_CACHE; 2]);
+            .fill([EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]);
         for site in layout.object_base..layout.object_base + layout.sites.objects {
             self.object_shapes.set(site, NO_OBJECT_SHAPE);
         }

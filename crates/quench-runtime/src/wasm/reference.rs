@@ -68,6 +68,15 @@ const ABSTRACT_TYPES: &[AbstractHeapType] = &[
     AbstractHeapType::NoExn,
 ];
 
+/// The module type a heap type names, and whether it names that type exactly.
+pub(crate) fn module_type_index(heap: HeapType) -> Option<(u32, bool)> {
+    match heap {
+        HeapType::Concrete(UnpackedIndex::Module(index)) => Some((index, false)),
+        HeapType::Exact(UnpackedIndex::Module(index)) => Some((index, true)),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReferenceTarget(u32);
 impl ReferenceTarget {
@@ -90,11 +99,7 @@ impl ReferenceTarget {
         target.reference_type().map(|_| target)
     }
     pub(crate) fn descriptor_type(self, owner: &super::WasmTypes) -> Option<super::WasmType> {
-        let (index, exact) = match self.reference_type()?.heap_type() {
-            HeapType::Concrete(UnpackedIndex::Module(index)) => (index, false),
-            HeapType::Exact(UnpackedIndex::Module(index)) => (index, true),
-            _ => return None,
-        };
+        let (index, exact) = module_type_index(self.reference_type()?.heap_type())?;
         let super::WasmType::Reference {
             kind: super::WasmReferenceKind::DeclaredGc { index, .. },
             ..

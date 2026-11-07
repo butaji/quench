@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
+pub(super) use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
 
 #[cfg(all(test, feature = "aot"))]
@@ -175,15 +176,6 @@ mod shape_trace {
             eprintln!("  shape {count:>9} {label}");
         }
     }
-}
-
-/// What the inline field caches know about one read.
-pub(super) enum FieldCacheProbe {
-    Hit(Value),
-    /// An ordinary object the caches do not cover yet.
-    OrdinaryMiss,
-    /// A receiver or program outside the field caches.
-    Ineligible,
 }
 
 impl<H: Host> Vm<H> {
@@ -1042,13 +1034,13 @@ impl<H: Host> Vm<H> {
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
-        self.closure_shapes = [None; 2];
+        self.closure_shapes = [None; _];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
-        self.descriptor_shapes = [None; 2];
+        self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layouts.clear();

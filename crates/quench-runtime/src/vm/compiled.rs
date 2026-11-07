@@ -1007,6 +1007,8 @@ pub(super) fn lower_js_numeric_region(
 /// bytecode PC in native code and calls the VM's shared `step` implementation
 /// for each operation. This complete-semantics bridge lets us move pure
 /// denotations into Cranelift without creating a second interpreter.
+/// A numeric find takes the key, the bucket index and the key's hash.
+const NUMERIC_FIND_PARAMETERS: u16 = 3;
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
 /// General-dispatch return statuses encode the terminal bytecode PC without
 /// colliding with the shared entry's small stop, resume, or trap statuses.
@@ -1704,6 +1706,18 @@ enum JsFieldReceiver {
     Value(ir::Value),
 }
 
+impl JsFieldReceiver {
+    /// The receiver as an IR value: loaded from its register, read from the fixed `this`, or
+    /// already computed.
+    fn emit(self, builder: &mut FunctionBuilder<'_>, arguments: ir::Value, payload: ir::Value, fallback: ir::Block) -> ir::Value {
+        match self {
+            Self::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+            Self::FixedThis => emit_js_fixed_this(builder, payload, fallback),
+            Self::Value(value) => value,
+        }
+    }
+}
+
 fn js_field_receiver(base: FieldBase, register_offset: &impl Fn(u16) -> Option<i32>) -> Option<JsFieldReceiver> {
     if base == FieldBase::THIS {
         Some(JsFieldReceiver::FixedThis)
@@ -1843,12 +1857,7 @@ fn emit_js_cached_field_slot(
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
-    let base = match receiver {
-        JsFieldReceiver::Register(offset) =>
-            builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
-        JsFieldReceiver::Value(value) => value,
-    };
+    let base = receiver.emit(builder, arguments, payload, fallback);
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
 
@@ -2048,11 +2057,7 @@ fn emit_js_own_field_get(
     table: NarrowTable,
 ) {
     let fallback = builder.create_block();
-    let mut object = match receiver {
-        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
-        JsFieldReceiver::Value(value) => value,
-    };
+    let mut object = receiver.emit(builder, arguments, payload, fallback);
     for &(atom, site) in sites {
         // An own slot in inline storage holds a packed value, which decodes to the same Value;
         // a read the site's primary row does not answer asks the VM's caches
@@ -2168,11 +2173,7 @@ fn emit_js_own_field_set(
     fallback: ir::Block,
     exact: &JsExactFallback,
 ) {
-    let receiver = match receiver {
-        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
-        JsFieldReceiver::Value(value) => value,
-    };
+    let receiver = receiver.emit(builder, arguments, payload, fallback);
     let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
     let atom = builder.ins().iconst(types::I64, i64::from(atom));
     let site = builder.ins().iconst(types::I64, i64::from(site));
@@ -14677,6 +14678,14 @@ impl<H: Host> Vm<H> {
     /// Run a narrow numeric linked-entry search using guarded VM field and
     /// array probes, plus the already-promoted numeric equality artifact.
     /// Every failure leaves the frame untouched for interpreter execution.
+    /// A numeric find hit counts as a numeric entry of its function.
+    fn record_numeric_find_hit(&mut self, program_id: ProgramId, function_id: u32) {
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs.record_js_jit_entry(program_id, function_id, true, NUMERIC_FIND_PARAMETERS);
+            self.programs.record_js_jit_numeric_find_entry(program_id, function_id);
+        }
+    }
+
     fn js_jit_numeric_find_at_entry(
         &mut self,
         program: &ResidualProgram,
@@ -14684,32 +14693,26 @@ impl<H: Host> Vm<H> {
         candidate: super::js_compiled::JsJitNumericFind,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         const MAX_STEPS: usize = 256;
+        /// Steps between polls of the execution interrupt.
+        const INTERRUPT_POLL_STEPS: usize = 32;
         let (program_id, function_id) = (activation.program, activation.function);
         let receiver = activation.this?;
         let (key_value, index_value, hash_value) = {
-            let arguments = activation.parameters.get(..3)?;
+            let arguments = activation.parameters.get(..usize::from(NUMERIC_FIND_PARAMETERS))?;
             (arguments[0], arguments[1], arguments[2])
         };
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
             return None;
         }
         let key_hash = hash_value.as_number()?;
-        let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
-            super::object::FieldCacheProbe::Hit(value) => value,
-            super::object::FieldCacheProbe::Ineligible => {
-                return None;
-            }
-            super::object::FieldCacheProbe::OrdinaryMiss => {
-                return None;
-            }
-        };
+        let array = self.cached_field_hit(program, receiver, candidate.list_cache).hit()?;
         let mut entry = self.direct_array_index_data(array, index_value)?;
         let mut cached_equals_function = None;
         let mut equal_arguments = [Value::UNDEFINED; 2];
         equal_arguments[0] = key_value;
 
         for step in 0..MAX_STEPS {
-            if step & 31 == 0
+            if step % INTERRUPT_POLL_STEPS == 0
                 && self
                     .execution_interrupt
                     .atomic_flag()
@@ -14718,24 +14721,11 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if !self.truthy(entry) {
-                if self.programs.js_jit_diagnostics_enabled() {
-                    self.programs
-                        .record_js_jit_entry(program_id, function_id, true, 3);
-                    self.programs
-                        .record_js_jit_numeric_find_entry(program_id, function_id);
-                }
+                self.record_numeric_find_hit(program_id, function_id);
                 return Some((candidate.return_pc, candidate.return_register, entry));
             }
             self.heap.object(entry)?;
-            let entry_hash = match self.cached_field_hit(program, entry, candidate.hash_cache) {
-                super::object::FieldCacheProbe::Hit(value) => value.as_number()?,
-                super::object::FieldCacheProbe::Ineligible => {
-                    return None;
-                }
-                super::object::FieldCacheProbe::OrdinaryMiss => {
-                    return None;
-                }
-            };
+            let entry_hash = self.cached_field_hit(program, entry, candidate.hash_cache).hit()?.as_number()?;
             if entry_hash == key_hash {
                 let equals_function = if let Some(equals_function) = cached_equals_function {
                     equals_function
@@ -14753,42 +14743,21 @@ impl<H: Host> Vm<H> {
                     equals_function
                 };
                 cached_equals_function = Some(equals_function);
-                let entry_key = match self.cached_field_hit(program, entry, candidate.key_cache) {
-                    super::object::FieldCacheProbe::Hit(value) => value,
-                    super::object::FieldCacheProbe::Ineligible => {
-                        return None;
-                    }
-                    super::object::FieldCacheProbe::OrdinaryMiss => {
-                        return None;
-                    }
-                };
+                let entry_key = self.cached_field_hit(program, entry, candidate.key_cache).hit()?;
                 entry_key.as_number()?;
                 equal_arguments[1] = entry_key;
                 let equal =
                     self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
                 let equal = equal?;
                 if equal == Value::TRUE {
-                    if self.programs.js_jit_diagnostics_enabled() {
-                        self.programs
-                            .record_js_jit_entry(program_id, function_id, true, 3);
-                        self.programs
-                            .record_js_jit_numeric_find_entry(program_id, function_id);
-                    }
+                    self.record_numeric_find_hit(program_id, function_id);
                     return Some((candidate.return_pc, candidate.return_register, entry));
                 }
                 if equal != Value::FALSE {
                     return None;
                 }
             }
-            entry = match self.cached_field_hit(program, entry, candidate.next_cache) {
-                super::object::FieldCacheProbe::Hit(value) => value,
-                super::object::FieldCacheProbe::Ineligible => {
-                    return None;
-                }
-                super::object::FieldCacheProbe::OrdinaryMiss => {
-                    return None;
-                }
-            };
+            entry = self.cached_field_hit(program, entry, candidate.next_cache).hit()?;
         }
         None
     }
