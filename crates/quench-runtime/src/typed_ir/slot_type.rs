@@ -25,7 +25,16 @@ impl SlotType {
         Self::DirectObjectOrUndefined, Self::DirectObjectOrNullish, Self::Tagged,
     ];
 
-    pub(crate) fn of(value: Value) -> Self { Self::from_type(Type::immediate(value)) }
+    /// `from_type(Type::immediate(value))`, read straight off the value: writes call it.
+    #[inline(always)]
+    pub(crate) fn of(value: Value) -> Self {
+        if value.as_int().is_some() { Self::Int32 }
+        else if value.as_number().is_some() { Self::Number }
+        else if value.is_null() { Self::Null }
+        else if value.is_undefined() { Self::Undefined }
+        else if value.direct_object_index().is_some() { Self::DirectObject }
+        else { Self::Tagged }
+    }
 
     pub(crate) fn from_type(ty: Type) -> Self {
         let ty = ty.without_object_shape();
@@ -62,7 +71,19 @@ impl SlotType {
         }
     }
 
-    pub(crate) fn join(self, other: Self) -> Self { Self::from_type(self.ty().join(other.ty())) }
+    /// The join of `ty()`s, as a union of value classes (`CLASSES`): numbers mix with
+    /// nothing else.
+    #[inline(always)]
+    pub(crate) fn join(self, other: Self) -> Self {
+        if self == other { return self; }
+        let classes = CLASSES[self as usize] | CLASSES[other as usize];
+        match (classes & NUMBERS, classes >> 2) {
+            (0, rest @ 0..=7) => NON_NUMBERS[usize::from(rest)],
+            (INT32, 0) => Self::Int32,
+            (_, 0) => Self::Number,
+            _ => Self::Tagged,
+        }
+    }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -74,6 +95,17 @@ impl SlotType {
         }
     }
 }
+
+/// Each type's value classes, by discriminant: int32 and other numbers (the low two bits),
+/// then null, undefined, direct objects and any other value.
+const INT32: u8 = 1;
+const NUMBERS: u8 = 3;
+const CLASSES: [u8; 11] = [0, INT32, NUMBERS, 4, 8, 4 | 8, 16, 16 | 4, 16 | 8, 16 | 4 | 8, 32];
+/// The type of a union of null (1), undefined (2) and direct objects (4), indexed by it.
+const NON_NUMBERS: [SlotType; 8] = [
+    SlotType::None, SlotType::Null, SlotType::Undefined, SlotType::Nullish, SlotType::DirectObject,
+    SlotType::DirectObjectOrNull, SlotType::DirectObjectOrUndefined, SlotType::DirectObjectOrNullish,
+];
 
 const _: () = assert!(std::mem::size_of::<SlotType>() == std::mem::size_of::<u8>());
 
@@ -88,6 +120,7 @@ mod tests {
             assert_eq!(SlotType::from_type(left.ty()), left);
             for &right in SlotType::ALL {
                 let joined = left.join(right);
+                assert_eq!(joined, SlotType::from_type(left.ty().join(right.ty())));
                 assert_eq!(joined, right.join(left));
                 assert!(left.ty().is_subtype(joined.ty()) && right.ty().is_subtype(joined.ty()));
                 for &third in SlotType::ALL {
@@ -100,6 +133,10 @@ mod tests {
         assert_eq!(SlotType::Int32.join(SlotType::DirectObject), SlotType::Tagged);
         for value in [Value::direct_array(1), Value::direct_function(1), Value::heap(1), Value::DELETED] {
             assert_eq!(SlotType::of(value), SlotType::Tagged);
+        }
+        for value in [Value::integer(3), Value::number(0.5), Value::NULL, Value::UNDEFINED, Value::TRUE,
+            Value::direct_array(1), Value::heap(1), Value::DELETED] {
+            assert_eq!(SlotType::of(value), SlotType::from_type(Type::immediate(value)));
         }
     }
 }

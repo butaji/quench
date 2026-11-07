@@ -71,6 +71,9 @@ mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
+#[path = "compiled/direct_call.rs"]
+mod direct_call;
+use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
 pub(super) use osr_loop::{
@@ -9802,6 +9805,7 @@ impl CompiledJsFunction {
                 NativeNumberResult::Float64 => Value::number(f64::from_bits(result)),
             }));
         }
+        if let Some(result) = self.call_leaf(arguments) { return Some(result); }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
             interrupt: interrupt.atomic_flag(),
@@ -15788,6 +15792,7 @@ impl<H: Host> Vm<H> {
             compiled: Rc::downgrade(compiled),
             return_pc,
             return_register: terminal.register_a(),
+            leaf: LeafCall::of(compiled),
         })
     }
 
@@ -15800,6 +15805,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         parameters: &[Value],
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        if let Some(entered) = entry.run_leaf(parameters) { return entered; }
         let compiled = entry.compiled.upgrade()?;
         let result = direct_call(&compiled, parameters, &self.execution_interrupt)?;
         let value = match result {
@@ -16943,46 +16949,6 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 
-fn direct_call(
-    compiled: &CompiledJsFunction,
-    arguments: &[Value],
-    interrupt: &crate::ExecutionInterrupt,
-) -> Option<CompiledJsCallResult> {
-    let int32_identity = compiled.is_int32_identity();
-    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for (index, argument) in arguments.iter().take(compiled.params()).enumerate() {
-        // An integer Value is an int32 Number by representation; any other Number is
-        // checked where the body's guards require one.
-        let value = match argument.as_int() {
-            Some(integer) => f64::from(integer),
-            None => {
-                let value = argument.as_number()?;
-                let int32 = compiled.requires_signed_int32_arguments() || (int32_identity && index == 0);
-                if int32 && !super::js_compiled::is_i32_number(value) {
-                    return None;
-                }
-                value
-            }
-        };
-        numeric_arguments.push(value);
-    }
-    // Only a body that polls reads the poll page.
-    let poll_page = (compiled.native_entry_mode() == NativeEntryMode::Resumable)
-        .then(|| native_poll_page(interrupt))
-        .flatten();
-    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
-        CompiledJsResult::Number(value) => Some(CompiledJsCallResult::Value(value)),
-        CompiledJsResult::Int32Identity { value, .. } => Some(CompiledJsCallResult::Value(Value::number(value))),
-        CompiledJsResult::Boolean(value) => {
-            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
-        }
-        CompiledJsResult::StringReturnPc(return_pc) => {
-            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
-        }
-        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
-    }
-}
-
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
 /// artifact, held weakly so that the tier retiring it ends the direct run,
 /// and the `Return` its result completes. The artifact owns the input signature.
@@ -16990,6 +16956,8 @@ pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
     return_pc: usize,
     return_register: crate::bytecode::Register,
+    /// The artifact's plain leaf call, copied out so a run reads no artifact field.
+    leaf: Option<LeafCall>,
 }
 
 impl DirectTierEntry {
