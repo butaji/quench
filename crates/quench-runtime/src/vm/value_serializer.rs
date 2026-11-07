@@ -737,7 +737,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::BigInt(value)) => {
                 put_tag(&output, tag::BIGINT);
-                put_bigint_contents(&output, value);
+                put_bigint_contents(&output, &value.to_num());
                 Ok(())
             }
             Some(Cell::TypedArray { buffer, .. } | Cell::DataView { buffer, .. }) => {
@@ -911,7 +911,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(inner) {
                 Some(Cell::BigInt(value)) => {
                     put_tag(output, tag::BIGINT_OBJECT);
-                    put_bigint_contents(output, value);
+                    put_bigint_contents(output, &value.to_num());
                 }
                 _ if let Some(text) = self.heap.string(inner) => {
                     put_tag(output, tag::STRING_OBJECT);

@@ -402,7 +402,7 @@ impl<H: Host> Vm<H> {
                     value
                 };
                 let number = match self.heap.get(primitive) {
-                    Some(Cell::BigInt(value)) => crate::bigint::to_f64(value),
+                    Some(Cell::BigInt(value)) => value.to_f64(),
                     _ => self.to_number(p, primitive)?,
                 };
                 Value::number(number)

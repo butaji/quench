@@ -2157,7 +2157,8 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(
                 p,
                 if self.is_bigint(left) && self.is_bigint(right) {
-                    "BigInt operation is not supported"
+                    // `>>>` is the one numeric operator BigInt lacks.
+                    "BigInts have no unsigned right shift, use >> instead"
                 } else {
                     MIXED_BIGINT_TYPES
                 }
@@ -2165,14 +2166,14 @@ impl<H: Host> Vm<H> {
             ));
         };
         match result {
-            Ok(value) => Ok(self.heap.alloc(Cell::bigint(value))),
+            Ok(value) => Ok(self.heap.alloc_bigint(value)),
             Err(crate::bigint::Error::DivisionByZero) => {
                 Err(self.range_error(p, "Division by zero".into()))
             }
             Err(crate::bigint::Error::NegativeExponent) => {
                 Err(self.range_error(p, "Exponent must be positive".into()))
             }
-            Err(crate::bigint::Error::ExponentTooLarge) => {
+            Err(crate::bigint::Error::TooLarge) => {
                 Err(self.range_error(p, "Maximum BigInt size exceeded".into()))
             }
         }
@@ -2189,41 +2190,26 @@ impl<H: Host> Vm<H> {
         op: u32,
         left: Value,
         right: Value,
-    ) -> Option<Result<num_bigint::BigInt, crate::bigint::Error>> {
+    ) -> Option<Result<crate::bigint::JsBigInt, crate::bigint::Error>> {
         const EXPONENTIAL: u32 = BinaryOperator::Exponential as u32;
+        use crate::bigint::Bitwise;
         let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
             (self.heap.get(left), self.heap.get(right))
         else {
             return None;
         };
-        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
-        let nonzero_divisor = || {
-            if right.sign() == num_bigint::Sign::NoSign {
-                Err(crate::bigint::Error::DivisionByZero)
-            } else {
-                Ok(right)
-            }
-        };
         Some(match op {
-            ADDITION => Ok(left + right),
-            SUBTRACTION => Ok(left - right),
-            MULTIPLICATION => Ok(left * right),
-            DIVISION => nonzero_divisor().map(|right| left / right),
-            REMAINDER => nonzero_divisor().map(|right| left % right),
-            EXPONENTIAL => {
-                if right.sign() == num_bigint::Sign::Minus {
-                    Err(crate::bigint::Error::NegativeExponent)
-                } else {
-                    u32::try_from(right.magnitude())
-                        .map(|exponent| left.pow(exponent))
-                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
-                }
-            }
-            SHIFT_LEFT => crate::bigint::shift(left, right, true),
-            SHIFT_RIGHT => crate::bigint::shift(left, right, false),
-            BITWISE_OR => Ok(left | right),
-            BITWISE_XOR => Ok(left ^ right),
-            BITWISE_AND => Ok(left & right),
+            ADDITION => Ok(left.add(right)),
+            SUBTRACTION => Ok(left.sub(right)),
+            MULTIPLICATION => left.mul(right),
+            DIVISION => left.div_rem(right, true),
+            REMAINDER => left.div_rem(right, false),
+            EXPONENTIAL => left.pow(right),
+            SHIFT_LEFT => left.shift(right, true),
+            SHIFT_RIGHT => left.shift(right, false),
+            BITWISE_OR => Ok(left.bitwise(right, Bitwise::Or)),
+            BITWISE_XOR => Ok(left.bitwise(right, Bitwise::Xor)),
+            BITWISE_AND => Ok(left.bitwise(right, Bitwise::And)),
             _ => return None,
         })
     }
@@ -2232,7 +2218,7 @@ impl<H: Host> Vm<H> {
     /// allocated, or `None`.
     pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
-        Some(self.heap.alloc(Cell::bigint(value)))
+        Some(self.heap.alloc_bigint(value))
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
@@ -2391,9 +2377,9 @@ impl<H: Host> Vm<H> {
         let Some(Cell::BigInt(integer)) = self.heap.get(input) else {
             return None;
         };
-        let integer: &num_bigint::BigInt = integer;
-        let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
-        Some(self.heap.alloc(Cell::bigint(next)))
+        let one = crate::bigint::JsBigInt::from(1_u8);
+        let next = if decrement { integer.sub(&one) } else { integer.add(&one) };
+        Some(self.heap.alloc_bigint(next))
     }
 
     /// Shared numeric update after ToNumeric, used by bytecode and native hosts.

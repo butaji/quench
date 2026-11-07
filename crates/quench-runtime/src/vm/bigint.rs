@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(10.0);
         let radix = if radix.is_nan() { 10.0 } else { radix.trunc() };
         if !(2.0..=36.0).contains(&radix) {
-            return Err(self.range_error(p, "invalid BigInt radix".into()));
+            return Err(self.range_error(p, "toString() radix argument must be between 2 and 36".into()));
         }
         Ok(self
             .heap

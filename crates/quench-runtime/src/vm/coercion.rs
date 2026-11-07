@@ -120,7 +120,7 @@ impl<H: Host> Vm<H> {
             value
         };
         match self.heap.get(primitive) {
-            Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
+            Some(Cell::BigInt(value)) => Ok(value.to_num()),
             _ if let Some(value) = self.heap.string(primitive)  => {
                 let Some(value) = crate::bigint::parse_string(value.host_string()) else {
                     let message = self.bigint_conversion_message(primitive);
@@ -214,12 +214,12 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, BIGINT_TO_NUMBER.into()));
             }
             if op == UNARY_NEGATION {
-                let negated = -value.as_ref();
-                return Ok(self.heap.alloc(Cell::bigint(negated)));
+                let negated = value.negate();
+                return Ok(self.heap.alloc_bigint(negated));
             }
             if op == BITWISE_NOT {
-                let complement = !value.as_ref();
-                return Ok(self.heap.alloc(Cell::bigint(complement)));
+                let complement = value.not();
+                return Ok(self.heap.alloc_bigint(complement));
             }
         }
         Ok(match op {
@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
         match self.heap.get(v) {
             _ if let Some(text) = self.heap.string(v)  => !text.units().is_empty(),
-            Some(Cell::BigInt(value)) => value.sign() != num_bigint::Sign::NoSign,
+            Some(Cell::BigInt(value)) => !value.is_zero(),
             _ => !self.is_html_dda(v),
         }
     }

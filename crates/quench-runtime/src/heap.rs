@@ -1328,6 +1328,18 @@ impl Heap {
         self.alloc_in_slot(cell, track_young)
     }
 
+    /// `alloc(Cell::BigInt(value))` without the dispatch on the cell's kind: a BigInt has no
+    /// prototype, payload or external bytes, so its weight is one allocation.
+    #[inline(always)]
+    pub(crate) fn alloc_bigint(&mut self, value: crate::bigint::JsBigInt) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::BigInt(value));
+        }
+        self.allocated += 1;
+        self.total_allocations += 1;
+        self.alloc_in_slot(Cell::BigInt(value), self.tracks_young_cells())
+    }
+
     /// `alloc(Cell::Environment { .. })` without the dispatch on the cell's kind, with the
     /// address of the environment's slot storage, which stays put while it lives. An
     /// environment's weight is one allocation: it has no prototype, payload or external bytes.
@@ -2878,11 +2890,6 @@ impl Heap {
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
-                *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
-                *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
-                if let Cell::Promise(promise) = &cell {
-                    abandoned_contexts.abandon(&promise.record);
-                }
                 #[cfg(feature = "profile-memory")]
                 {
                     let object_slots = cell
@@ -2890,11 +2897,23 @@ impl Heap {
                         .map(|object| properties.len(object.properties()));
                     memory_profile.freed(Value::heap(index as u32), &cell, object_slots);
                 }
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties());
-                }
-                if let Some(arrays) = sparse_arrays {
-                    arrays.remove(&Value::heap(index as u32));
+                // A BigInt, the cell most often freed where BigInt arithmetic runs, owns
+                // nothing the heap accounts: no payload or external bytes, no properties.
+                if !matches!(cell, Cell::BigInt(_)) {
+                    *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                    *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
+                    if let Cell::Promise(promise) = &cell {
+                        abandoned_contexts.abandon(&promise.record);
+                    }
+                    if let Some(object) = cell.object() {
+                        properties.release(object.properties());
+                    }
+                    // Only an array has sparse elements, as the parallel sweep finds.
+                    if let Some(arrays) = sparse_arrays
+                        && matches!(cell, Cell::Array { .. })
+                    {
+                        arrays.remove(&Value::heap(index as u32));
+                    }
                 }
                 let slab = index / SLOTS_PER_SLAB;
                 let slab_free = &mut free_by_slab[slab];
@@ -4537,7 +4556,7 @@ impl Heap {
                     slots.len() * size_of::<EnvironmentSlot>()
                         + std::mem::size_of_val(with_objects)
                 }
-                Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+                Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
