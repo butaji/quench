@@ -12095,7 +12095,6 @@ impl<H: Host> Vm<H> {
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
-        // Only a function the JS tier never claims (`LaneView::claim_for_tier`) runs as a leaf.
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
@@ -12126,7 +12125,10 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    .filter(|_| !tier_may_claim)
+                    // The tier's claim changes after this first resolution, and a leaf runs
+                    // the records the tier would claim, so only a VM whose JS tier never runs
+                    // calls a view as a leaf.
+                    .filter(|_| !self.js_tier_runs())
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }
