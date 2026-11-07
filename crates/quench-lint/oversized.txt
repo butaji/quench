@@ -1318,7 +1318,7 @@ file-lines crates/quench-node/src/modules/shared_event_loop.rs 517
 file-lines crates/quench-node/src/modules/source_map_shared_vm.rs 608
 file-lines crates/quench-node/src/modules/stream_binding.rs 685
 file-lines crates/quench-node/src/modules/stream_shared_vm/eos.rs 505
-file-lines crates/quench-node/src/modules/stream_shared_vm/mod.rs 781
+file-lines crates/quench-node/src/modules/stream_shared_vm/mod.rs 780
 file-lines crates/quench-node/src/modules/stream_shared_vm/pipeline.rs 788
 file-lines crates/quench-node/src/modules/stream_shared_vm/readable.rs 1473
 file-lines crates/quench-node/src/modules/stream_shared_vm/state.rs 590
@@ -1422,7 +1422,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1972
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23620
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23618
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1450,7 +1450,7 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 5058
+file-lines crates/quench-runtime/src/vm/object.rs 5057
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 990
 file-lines crates/quench-runtime/src/vm/object_get.rs 1518
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
@@ -3007,7 +3007,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::call_prepar
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_callback 151
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 97
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 243
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 255
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 253
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 129
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 1141
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::direct_callers_subscribe_to_callee_slot_dependencies 58
@@ -3274,7 +3274,6 @@ function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_zip_ke
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_zip_padding 72
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::plain_array_iterator_next 44
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::step_present_array_value 42
-function-lines crates/quench-runtime/src/vm/jit_backend.rs::target_isa_for 43
 function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::arm 50
 function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::convert 49
 function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::tests::complementary_selects_preserve_arbitrary_bytes_and_integer_boundaries 45
