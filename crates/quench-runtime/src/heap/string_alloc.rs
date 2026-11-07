@@ -40,7 +40,7 @@ impl Heap {
             self.gc_profile.allocated_kinds[kind] += 1;
             *self.allocated_variants.entry("string").or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+            self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
         self.charge_materialized_text();
         let payload = string.flat_unit_bytes();

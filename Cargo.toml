@@ -57,53 +57,38 @@ split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 256
 
+# The one shipping profile. Fat LTO beat thin LTO on the x86_64 scoreboard host
+# (JetStream 3, 2 interleaved rounds, 2026-11-07: thin -3.7% no-JIT, -1.0% JIT, RSS +1-2%),
+# and target-cpu=x86-64-v3 measured within noise (-0.4% no-JIT, +1.8% JIT), so the binary
+# stays baseline x86-64 (Linear TOD-1467). The symbol table stays: a trained link order
+# names symbols (crates/quench-node/build.rs), and tools/check-lane-tail-calls.sh reads
+# them. It is not loaded at run time.
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-strip = "symbols"
+strip = "debuginfo"
 panic = "abort"
 
 # Fast optimized execution for iterative conformance work, without whole-
 # program LTO invalidating the incremental build graph after each runtime edit.
-# The final release profile remains the production/performance authority.
-# This is the edit/measure loop: on the M4 host a quench-node edit rebuilds in
-# ~2 s against ~2 m 35 s for `production`, which stays non-incremental because
-# it is the qualified artifact.
+# The release profile remains the performance authority. This is the edit/measure
+# loop: on the M4 host a quench-node edit rebuilds in ~2 s, while `release` stays
+# non-incremental because it is the qualified artifact.
 [profile.iteration]
 inherits = "release"
 # Share dependency artifacts between iterative binaries and Rust API tests,
-# which require unwinding. Production/release retain abort-on-panic.
+# which require unwinding. Release retains abort-on-panic.
 panic = "unwind"
 opt-level = 1
 lto = false
 codegen-units = 256
 incremental = true
 
-[profile.production]
-inherits = "release"
-# Keep qualification builds independent of user-level profile overrides. On
-# the M4 qualification host, thin LTO won the matched local-loop cycle runs
-# and the one-round V8-v7 Score screen. Fat LTO used fewer instructions and
-# less RSS but more cycles. This is an M4 policy choice, not a universal claim.
-opt-level = 3
-debug = 0
-debug-assertions = false
-overflow-checks = false
-incremental = false
-# The symbol table stays: a trained link order names symbols, whose crate
-# hashes follow the profile (crates/quench-wasm-test/build.rs). It is not
-# loaded at run time.
-strip = "debuginfo"
-panic = "abort"
-lto = "thin"
-codegen-units = 1
-rpath = false
-
 # Optimized A/B loop for JIT and runtime experiments: full optimization without
 # LTO, incremental, and line tables so callgrind/perf can name the cost. JIT-emitted
 # code is independent of host LTO; relative deltas measured here pick candidates,
-# and only a final candidate is rebuilt and measured under `production`.
+# and only a final candidate is rebuilt and measured under `release`.
 [profile.experiment]
 inherits = "release"
 opt-level = 3
@@ -116,7 +101,7 @@ strip = "none"
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
 [profile.native-support]
-inherits = "production"
+inherits = "release"
 lto = false
 
 # Optimized measurements with full address-to-source attribution. DWARF makes

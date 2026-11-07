@@ -382,12 +382,7 @@ impl<H: Host> Vm<H> {
             FunctionKind::User(program, id) => {
                 let program = self.programs.get(program)?;
                 let function = program.functions.get(id as usize)?.header();
-                match (function.is_async, function.is_generator) {
-                    (true, true) => Native::AsyncGeneratorFunction,
-                    (false, true) => Native::GeneratorFunction,
-                    (true, false) => Native::AsyncFunction,
-                    (false, false) => Native::Function,
-                }
+                Native::function_constructor(function.is_async, function.is_generator)
             }
             FunctionKind::Native(Native::FunctionBoundCall) => return None,
             FunctionKind::Native(_) => Native::Function,

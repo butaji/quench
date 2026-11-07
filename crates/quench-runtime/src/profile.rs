@@ -15,6 +15,12 @@ mod regional;
 #[cfg(feature = "profile-aggregate")]
 mod root_maps;
 mod virtual_opcode;
+mod call_kinds;
+pub(crate) use call_kinds::{CallSource, TerminalCall};
+#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
+mod size_histogram;
+#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
+pub(crate) use size_histogram::{SIZE_BUCKETS, size_bucket};
 
 #[cfg(feature = "profile-aggregate")]
 const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as usize + 1;
@@ -90,7 +96,7 @@ pub(crate) struct Profile {
     pub string_concats: [u64; 2],
     pub concat_operand_shapes: [[u64; 3]; 2],
     pub concat_result_shapes: [u64; 2],
-    pub concat_size_buckets: [u64; 8],
+    pub concat_size_buckets: [u64; SIZE_BUCKETS],
     pub max_concat_bytes: u64,
     pub concat_cache_hits: u64,
     pub concat_cache_misses: u64,
@@ -113,10 +119,10 @@ pub(crate) struct Profile {
     pub binary_value_paths: [[[[u64; BinaryValuePath::COUNT]; crate::value::ProfileKind::COUNT];
         crate::value::ProfileKind::COUNT]; BINARY_OPERATOR_COUNT],
     pub method_argc: [u64; 9],
-    pub call_sources: [u64; 5],
+    pub call_sources: [u64; CallSource::COUNT],
     pub call_targets: [u64; 3],
     pub call_target_argc: [[u64; 9]; 3],
-    pub terminal_calls: [u64; 3],
+    pub terminal_calls: [u64; TerminalCall::COUNT],
     pub index_gets: [u64; 8],
     pub index_sets: [u64; 8],
     pub index_dispatches: [u64; 4],
@@ -467,17 +473,7 @@ impl Profile {
     #[cfg(feature = "profile-aggregate")]
     #[inline(always)]
     pub fn string_concat_size(&mut self, bytes: usize) {
-        let bucket = match bytes {
-            0 => 0,
-            1..=7 => 1,
-            8..=15 => 2,
-            16..=31 => 3,
-            32..=63 => 4,
-            64..=127 => 5,
-            128..=255 => 6,
-            _ => 7,
-        };
-        self.concat_size_buckets[bucket] += 1;
+        self.concat_size_buckets[size_bucket(bytes)] += 1;
         self.max_concat_bytes = self.max_concat_bytes.max(bytes as u64);
     }
 
@@ -591,10 +587,10 @@ impl Profile {
     }
 
     #[inline(always)]
-    pub fn call_source(&mut self, source: usize) {
+    pub fn call_source(&mut self, source: CallSource) {
         #[cfg(feature = "profile-aggregate")]
         {
-            self.call_sources[source] += 1;
+            self.call_sources[source as usize] += 1;
         }
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = source;
@@ -612,10 +608,10 @@ impl Profile {
     }
 
     #[inline(always)]
-    pub fn terminal_call(&mut self, kind: usize) {
+    pub fn terminal_call(&mut self, kind: TerminalCall) {
         #[cfg(feature = "profile-aggregate")]
         {
-            self.terminal_calls[kind] += 1;
+            self.terminal_calls[kind as usize] += 1;
         }
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = kind;

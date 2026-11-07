@@ -88,6 +88,8 @@ mod general_call;
 mod general_capture;
 #[path = "compiled/general_names.rs"]
 mod general_names;
+#[path = "compiled/general_elements.rs"]
+mod general_elements;
 #[path = "compiled/frameless.rs"]
 mod frameless;
 pub(super) use frameless::Frameless;
@@ -446,7 +448,7 @@ fn js_numeric_control_flow(function: &Function) -> Option<numeric_flow::Bits> {
     let length = function.code.len();
     if length == 0 { return None; }
     let mut reachable = numeric_flow::Bits::new(length);
-    reachable.insert(0)?;
+    reachable.checked_insert(0)?;
     let mut has_branch = false;
     let mut has_local_state = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
@@ -465,7 +467,7 @@ fn js_numeric_control_flow(function: &Function) -> Option<numeric_flow::Bits> {
             JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore);
         let mut valid = true;
         crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
-            if successor <= pc || reachable.insert(successor).is_none() { valid = false; }
+            if successor <= pc || reachable.checked_insert(successor).is_none() { valid = false; }
         });
         if !valid { return None; }
     }
@@ -673,7 +675,7 @@ pub(super) fn lower_js_numeric_region(
             .ins()
             .load(types::F64, MemFlagsData::trusted(), arguments, offset);
         body.write(index as u16, crate::WasmType::F64, value);
-        registers.insert(index)?;
+        registers.checked_insert(index)?;
     }
     let mut incoming = numeric_flow::Incoming::new(function.code.len(), &registers)?;
     body.builder.ins().jump(blocks[0]?, &[]);
@@ -833,7 +835,7 @@ pub(super) fn lower_js_numeric_region(
                 *locals.get_mut(instruction.local_slot())? = Some(value);
                 if let Some(register) = instruction.optional_register_b() {
                     body.write(register, crate::WasmType::F64, value);
-                    registers.insert(usize::from(register))?;
+                    registers.checked_insert(usize::from(register))?;
                 }
                 None
             }
@@ -983,7 +985,7 @@ pub(super) fn lower_js_numeric_region(
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
             body.write(destination as u16, crate::WasmType::F64, value);
-            registers.insert(destination)?;
+            registers.checked_insert(destination)?;
         }
         if !terminal {
             if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough {
@@ -1007,6 +1009,8 @@ pub(super) fn lower_js_numeric_region(
 /// bytecode PC in native code and calls the VM's shared `step` implementation
 /// for each operation. This complete-semantics bridge lets us move pure
 /// denotations into Cranelift without creating a second interpreter.
+/// A numeric find takes the key, the bucket index and the key's hash.
+const NUMERIC_FIND_PARAMETERS: u16 = 3;
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
 /// General-dispatch return statuses encode the terminal bytecode PC without
 /// colliding with the shared entry's small stop, resume, or trap statuses.
@@ -1672,24 +1676,11 @@ fn emit_js_dense_array_get(
     emit_js_guard(builder, is_integer, fallback);
     let index = builder.ins().ireduce(types::I32, key);
     let value = emit_dense_element_read(builder, payload, base, index, fallback);
-    builder.ins().store(
-        MemFlagsData::trusted(),
-        value,
-        arguments,
-        destination_offset,
-    );
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
     builder.switch_to_block(fallback);
-    emit_js_step_fallback(
-        builder,
-        context,
-        callout,
-        callout_signature,
-        result_pointer,
-        stopped_block,
-        continue_block,
-        pc,
-    );
+    general_elements::emit_absent(builder, payload, (base, key), (arguments, destination_offset, next));
+    emit_js_step_fallback(builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
 }
 
 /// Read a cached arena slot. Own fields require plain receiver storage; reads may instead
@@ -1702,6 +1693,18 @@ enum JsFieldReceiver {
     Register(i32),
     FixedThis,
     Value(ir::Value),
+}
+
+impl JsFieldReceiver {
+    /// The receiver as an IR value: loaded from its register, read from the fixed `this`, or
+    /// already computed.
+    fn emit(self, builder: &mut FunctionBuilder<'_>, arguments: ir::Value, payload: ir::Value, fallback: ir::Block) -> ir::Value {
+        match self {
+            Self::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+            Self::FixedThis => emit_js_fixed_this(builder, payload, fallback),
+            Self::Value(value) => value,
+        }
+    }
 }
 
 fn js_field_receiver(base: FieldBase, register_offset: &impl Fn(u16) -> Option<i32>) -> Option<JsFieldReceiver> {
@@ -1843,12 +1846,7 @@ fn emit_js_cached_field_slot(
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
-    let base = match receiver {
-        JsFieldReceiver::Register(offset) =>
-            builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
-        JsFieldReceiver::Value(value) => value,
-    };
+    let base = receiver.emit(builder, arguments, payload, fallback);
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
 
@@ -2048,11 +2046,7 @@ fn emit_js_own_field_get(
     table: NarrowTable,
 ) {
     let fallback = builder.create_block();
-    let mut object = match receiver {
-        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
-        JsFieldReceiver::Value(value) => value,
-    };
+    let mut object = receiver.emit(builder, arguments, payload, fallback);
     for &(atom, site) in sites {
         // An own slot in inline storage holds a packed value, which decodes to the same Value;
         // a read the site's primary row does not answer asks the VM's caches
@@ -2168,11 +2162,7 @@ fn emit_js_own_field_set(
     fallback: ir::Block,
     exact: &JsExactFallback,
 ) {
-    let receiver = match receiver {
-        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
-        JsFieldReceiver::Value(value) => value,
-    };
+    let receiver = receiver.emit(builder, arguments, payload, fallback);
     let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
     let atom = builder.ins().iconst(types::I64, i64::from(atom));
     let site = builder.ins().iconst(types::I64, i64::from(site));
@@ -2718,7 +2708,7 @@ pub(super) struct OnlineFacts<'a> {
 impl OnlineFacts<'_> {
     /// Whether a method cache names `atom` now.
     pub(super) fn names(&self, atom: Atom) -> bool {
-        self.method_cache_atoms.contains(atom)
+        self.method_cache_atoms.contains(atom as usize)
     }
 }
 
@@ -3286,14 +3276,10 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        if let Some(next) = next && general_capture::lower_capture(&mut builder, (instruction, next), &register_offset, (arguments, payload),
+        if let Some(next) = next && let Some(native) = general_call::lower_shortcut(&mut builder, (program, function),
+            (pc, instruction, next), &register_offset, (arguments, payload),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
-            general_dispatch_native_pcs[pc] = 1;
-            continue;
-        }
-        if let Some(next) = next && general_call::lower_call(&mut builder, program, function, (pc, instruction, next), &register_offset,
-            (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
-            // A call stays in a fallback island's batch: native code only resumes past it.
+            general_dispatch_native_pcs[pc] = u8::from(native);
             continue;
         }
         // A direct array's `length` is its record's; any other receiver reads the field as
@@ -6960,18 +6946,6 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
-    #[cfg(feature = "gc-tuning")]
-    {
-        // Measurement builds may turn the function tiers off under any policy
-        // (`QUENCH_JS_JIT_TIERS=0`), to separate their `--jit` peak from the loop tier's.
-        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let enabled = *ENABLED.get_or_init(|| {
-            std::env::var("QUENCH_JS_JIT_TIERS").map_or(true, |value| value != "0")
-        });
-        if !enabled {
-            return false;
-        }
-    }
     tier_policy::by_policy(policy).js_function_tiers
 }
 
@@ -6983,10 +6957,6 @@ pub(super) fn compile_osr_region(
     policy: crate::MemoryPolicy,
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
-    #[cfg(feature = "gc-tuning")]
-    if loop_tier_region_budget_spent() {
-        return None;
-    }
     let isa = super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
@@ -7020,7 +6990,6 @@ pub(super) fn compile_osr_region(
 }
 
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
-#[cfg(feature = "gc-tuning")]
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
@@ -7037,24 +7006,6 @@ fn process_peak_rss_kib() -> i64 {
     {
         usage.ru_maxrss
     }
-}
-
-/// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
-/// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
-/// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`PolicyTiers::loop_tier`).
-#[cfg(feature = "gc-tuning")]
-fn loop_tier_region_budget_spent() -> bool {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COMPILED: AtomicUsize = AtomicUsize::new(0);
-    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    let limit = *LIMIT.get_or_init(|| {
-        std::env::var("QUENCH_LOOP_TIER_MAX_REGIONS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(usize::MAX)
-    });
-    COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
 /// The directory the `jit-dump` trace channel names: each loop region
@@ -7417,6 +7368,9 @@ struct JsStepDispatch {
     capture_stores: usize,
     /// A global name's cached read (`general_names`).
     global_get: usize,
+    /// The element steps past a present dense element (`general_elements`).
+    element_get: usize,
+    element_set: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
@@ -8281,7 +8235,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0,
-                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -8432,7 +8386,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8473,6 +8427,8 @@ impl JsStepDispatch {
         self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
+        (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
+            general_elements::general_element_set::<H> as *const () as usize);
         let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));
         self.allocated = heap.wrapping_add(crate::heap::Heap::ALLOCATED_OFFSET) as usize;
         self.collect_at = heap.wrapping_add(crate::heap::Heap::COLLECT_AT_OFFSET) as usize;
@@ -14053,12 +14009,7 @@ impl<H: Host> Vm<H> {
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return self.programs.js_jit_diagnostics_enabled();
         }
-        // A loop-free candidate shorter than a native entry's overhead
-        // (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper as the frameless activation itself.
-        let pays_in_lane = |body: &crate::bytecode::Function| {
-            body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
-        };
-        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_in_lane);
+        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
@@ -14677,6 +14628,14 @@ impl<H: Host> Vm<H> {
     /// Run a narrow numeric linked-entry search using guarded VM field and
     /// array probes, plus the already-promoted numeric equality artifact.
     /// Every failure leaves the frame untouched for interpreter execution.
+    /// A numeric find hit counts as a numeric entry of its function.
+    fn record_numeric_find_hit(&mut self, program_id: ProgramId, function_id: u32) {
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs.record_js_jit_entry(program_id, function_id, true, NUMERIC_FIND_PARAMETERS);
+            self.programs.record_js_jit_numeric_find_entry(program_id, function_id);
+        }
+    }
+
     fn js_jit_numeric_find_at_entry(
         &mut self,
         program: &ResidualProgram,
@@ -14684,32 +14643,26 @@ impl<H: Host> Vm<H> {
         candidate: super::js_compiled::JsJitNumericFind,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         const MAX_STEPS: usize = 256;
+        /// Steps between polls of the execution interrupt.
+        const INTERRUPT_POLL_STEPS: usize = 32;
         let (program_id, function_id) = (activation.program, activation.function);
         let receiver = activation.this?;
         let (key_value, index_value, hash_value) = {
-            let arguments = activation.parameters.get(..3)?;
+            let arguments = activation.parameters.get(..usize::from(NUMERIC_FIND_PARAMETERS))?;
             (arguments[0], arguments[1], arguments[2])
         };
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
             return None;
         }
         let key_hash = hash_value.as_number()?;
-        let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
-            super::object::FieldCacheProbe::Hit(value) => value,
-            super::object::FieldCacheProbe::Ineligible => {
-                return None;
-            }
-            super::object::FieldCacheProbe::OrdinaryMiss => {
-                return None;
-            }
-        };
+        let array = self.cached_field_hit(program, receiver, candidate.list_cache).hit()?;
         let mut entry = self.direct_array_index_data(array, index_value)?;
         let mut cached_equals_function = None;
         let mut equal_arguments = [Value::UNDEFINED; 2];
         equal_arguments[0] = key_value;
 
         for step in 0..MAX_STEPS {
-            if step & 31 == 0
+            if step % INTERRUPT_POLL_STEPS == 0
                 && self
                     .execution_interrupt
                     .atomic_flag()
@@ -14718,24 +14671,11 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if !self.truthy(entry) {
-                if self.programs.js_jit_diagnostics_enabled() {
-                    self.programs
-                        .record_js_jit_entry(program_id, function_id, true, 3);
-                    self.programs
-                        .record_js_jit_numeric_find_entry(program_id, function_id);
-                }
+                self.record_numeric_find_hit(program_id, function_id);
                 return Some((candidate.return_pc, candidate.return_register, entry));
             }
             self.heap.object(entry)?;
-            let entry_hash = match self.cached_field_hit(program, entry, candidate.hash_cache) {
-                super::object::FieldCacheProbe::Hit(value) => value.as_number()?,
-                super::object::FieldCacheProbe::Ineligible => {
-                    return None;
-                }
-                super::object::FieldCacheProbe::OrdinaryMiss => {
-                    return None;
-                }
-            };
+            let entry_hash = self.cached_field_hit(program, entry, candidate.hash_cache).hit()?.as_number()?;
             if entry_hash == key_hash {
                 let equals_function = if let Some(equals_function) = cached_equals_function {
                     equals_function
@@ -14753,42 +14693,21 @@ impl<H: Host> Vm<H> {
                     equals_function
                 };
                 cached_equals_function = Some(equals_function);
-                let entry_key = match self.cached_field_hit(program, entry, candidate.key_cache) {
-                    super::object::FieldCacheProbe::Hit(value) => value,
-                    super::object::FieldCacheProbe::Ineligible => {
-                        return None;
-                    }
-                    super::object::FieldCacheProbe::OrdinaryMiss => {
-                        return None;
-                    }
-                };
+                let entry_key = self.cached_field_hit(program, entry, candidate.key_cache).hit()?;
                 entry_key.as_number()?;
                 equal_arguments[1] = entry_key;
                 let equal =
                     self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
                 let equal = equal?;
                 if equal == Value::TRUE {
-                    if self.programs.js_jit_diagnostics_enabled() {
-                        self.programs
-                            .record_js_jit_entry(program_id, function_id, true, 3);
-                        self.programs
-                            .record_js_jit_numeric_find_entry(program_id, function_id);
-                    }
+                    self.record_numeric_find_hit(program_id, function_id);
                     return Some((candidate.return_pc, candidate.return_register, entry));
                 }
                 if equal != Value::FALSE {
                     return None;
                 }
             }
-            entry = match self.cached_field_hit(program, entry, candidate.next_cache) {
-                super::object::FieldCacheProbe::Hit(value) => value,
-                super::object::FieldCacheProbe::Ineligible => {
-                    return None;
-                }
-                super::object::FieldCacheProbe::OrdinaryMiss => {
-                    return None;
-                }
-            };
+            entry = self.cached_field_hit(program, entry, candidate.next_cache).hit()?;
         }
         None
     }
@@ -15202,11 +15121,9 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
-                #[cfg(feature = "gc-tuning")]
                 let peak_before = crate::trace::Channel::JitPeak.on()
                     .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
-                #[cfg(feature = "gc-tuning")]
                 if let Some(before) = peak_before {
                     let after = process_peak_rss_kib();
                     eprintln!(
@@ -16633,6 +16550,11 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+/// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
+/// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
+pub(super) fn pays_native_entry(body: &crate::bytecode::Function) -> bool {
+    body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
+}
 
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
 /// artifact, held weakly so that the tier retiring it ends the direct run,

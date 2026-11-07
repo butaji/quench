@@ -595,6 +595,9 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
+mod lane_stack_growth;
+mod loop_fields;
+use loop_fields::lane_loop_field_stores;
 mod construct_plan;
 use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
 use getters::{lane_getter_read, lane_read_getter};
@@ -8141,7 +8144,7 @@ script_handler! {
             || site.declines.get() >= TIERS.loops.max_declines
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
         {
-            lane_loop_retire::<H>(cx, ip, site);
+            lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         let region = match site.region.get() {
@@ -8701,8 +8704,8 @@ fn lane_loop_run<H: Host>(
     }
     match outcome {
         LoopOutcome::NotEntered(widening) => {
-            if let Some(widening) = widening {
-                tier.widened.insert(widening);
+            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
+            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
                 publication.retire();
             }
             LoopContinuation::Jump
@@ -8741,8 +8744,6 @@ fn lane_loop_entry<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
-    // SAFETY: the running program outlives this lane's OSR entry setup.
-    let code = unsafe { &*(*cx).code };
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         for slot in &region.captures {
@@ -8830,29 +8831,7 @@ fn lane_loop_entry<H: Host>(
             entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len())?;
         }
     }
-    // A raw field slot stays valid for this native run because OSR regions make no calls or
-    // allocations, and the receiver is unchanged and rooted in its register. Every miss exits before the
-    // store through the interpreter's exact SetField PC.
-    // SAFETY: the runtime cache probe proves a primary own-data slot. `osr_loop::admit_region`
-    // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
-    // stores remain Numbers; a store-only field may also receive a rooted entry value.
-    for field in &region.field_store_sites {
-        let object = match field.receiver {
-            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
-            super::compiled::FieldReceiver::Register(register) => r.get(register),
-            super::compiled::FieldReceiver::Field(_) => return None,
-        };
-        let writes = region.field_store_type(field);
-        let pointer = unsafe {
-            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, writes)
-        }?;
-        // Numeric cells cannot create heap edges. Reference-capable stores log their
-        // owner once at admission; nothing collects before the run ends.
-        if !writes.is_subtype(crate::typed_ir::Type::NUMBER) {
-            vm.heap.object_store_mut(object, object)?;
-        }
-        entry.push_field_store(pointer);
-    }
+    lane_loop_field_stores(cx, r, region, entry)?;
     if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap.native_property_values();
@@ -11957,11 +11936,7 @@ impl<H: Host> Vm<H> {
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
-    fn resolve_script_call_target(
-        &mut self,
-        code: &ResidualProgram,
-        callee: Value,
-    ) -> Option<ScriptCallTarget> {
+    fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         #[cfg(feature = "profile-lane-exits")]
@@ -12095,7 +12070,6 @@ impl<H: Host> Vm<H> {
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
-        // Only a function the JS tier never claims (`LaneView::claim_for_tier`) runs as a leaf.
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
@@ -12126,6 +12100,7 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
+                    // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
                     .filter(|_| !tier_may_claim)
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
@@ -12193,9 +12168,7 @@ impl<H: Host> Vm<H> {
             } else if cross {
                 CallEntry::Activates
             } else {
-                // Leaf-ness is the view's, fixed at its first resolution with its returns:
-                // whether the tier may claim it changes later, and a leaf call of a view whose
-                // returns were not specialized returns into the wrong activation.
+                // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
                 shape.leaf.map_or(shape.entry, CallEntry::leaf)
             },
             capture,
@@ -17498,17 +17471,9 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     // The callee's own room, which a function of many registers makes larger than a common
     // window: reserving less would send each of its calls at this depth here again.
     let room = room.max(LANE_SCRIPT_WINDOW);
-    let values_full = stack.values.capacity() - stack.values.len() < room;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(room);
     vm.materialize_lane_activations(cx);
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(room));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, room);
     exit(ip)
 }
 
@@ -17632,19 +17597,9 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     let count = usize::from(code.function(usize::from(i.b)).registers);
     let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < window;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(window);
     vm.materialize_lane_activations(cx);
-    // Only a lack of room grows the stack, so its size follows the deepest
-    // window and activation count a lane has actually needed.
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(window));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, window);
     let caller = unsafe { (*cx).frame };
     // SAFETY: `ip` is a record of the active view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
@@ -20216,10 +20171,10 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && kind == crate::bytecode::ProgramKind::Wasm {
-                // A Wasm run makes no frameless script call (`LaneContext::script_calls`), so
-                // its import calls take the general path, and the JavaScript call handler,
-                // which reads the context a JavaScript view carries, never runs in Wasm.
+            } else if wasm && matches!(op, Op::Call | Op::StoreCapture) {
+                // Their handlers read the context a JavaScript view carries where a Wasm view
+                // carries its memory; Wasm makes no frameless script call (`script_calls`), and
+                // stores a capture only for the rare `data.drop` and `elem.drop`.
                 None
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)]

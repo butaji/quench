@@ -95,7 +95,7 @@ fn slots_read_by_name<'f>(function: &'f Function, atoms: &'f CompilerAtoms<'_>) 
         .enumerate()
         .filter(|(_, atom)| {
             atoms.get(**atom as usize).is_some_and(|name| {
-                crate::bytecode::local_name_read_by_name(name, function.environment_atoms.contains(*atom))
+                crate::bytecode::local_name_read_by_name(name, || function.environment_atoms.contains(*atom))
             })
         })
         .filter_map(|(slot, _)| u16::try_from(slot).ok())

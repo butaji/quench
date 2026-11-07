@@ -988,7 +988,7 @@ impl ProgramStore {
             entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body);
+            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(STRESS || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
             let facts = if self.js_entry_specializations_enabled { facts } else {
                 // Select the requested test tier without depending on which
@@ -2487,22 +2487,7 @@ impl ProgramStore {
                             | crate::bytecode::Op::JumpBinaryFalse => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
                                 if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
-                                    match instruction.binary_operator_field() {
-                                        x if x
-                                            == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
-                                        {
-                                            guard_census.2 = guard_census.2.saturating_add(1);
-                                        }
-                                        x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
-                                        {
-                                            guard_census.3 = guard_census.3.saturating_add(1);
-                                        }
-                                        _ => {}
-                                    }
+                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                                 }
                             }
                             crate::bytecode::Op::Unary
@@ -2512,21 +2497,7 @@ impl ProgramStore {
                                 guard_census.1 = guard_census.1.saturating_add(1);
                             }
                             crate::bytecode::Op::Binary => {
-                                match instruction.binary_operator() {
-                                    x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                        || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
-                                    {
-                                        guard_census.2 = guard_census.2.saturating_add(1);
-                                    }
-                                    x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
-                                    {
-                                        guard_census.3 = guard_census.3.saturating_add(1);
-                                    }
-                                    _ => {}
-                                }
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator())
                             }
                             _ => {}
                         }
@@ -3784,22 +3755,6 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
     let minimum = TIERS.js_function.promotion_looks
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
-    #[cfg(feature = "gc-tuning")]
-    {
-        // Measurement builds may require more entries before the specialized tier compiles
-        // (`QUENCH_JS_JIT_PROMOTION_SCALE`), to test an admission threshold against a fixture
-        // whose compiled artifacts are never entered.
-        static SCALE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        let scale = *SCALE.get_or_init(|| {
-            std::env::var("QUENCH_JS_JIT_PROMOTION_SCALE")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1)
-        });
-        let minimum = u32::from(minimum).saturating_mul(scale).min(u32::from(u8::MAX));
-        return Some(u32::from(numeric) >= minimum);
-    }
-    #[cfg(not(feature = "gc-tuning"))]
     Some(numeric >= minimum)
 }
 
@@ -4142,3 +4097,22 @@ mod jit_code_cache_tests {
 pub(super) struct JsEntryFactsTable(
     std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
 );
+
+/// Counts a comparison in the guard census: strict (in)equality in its third column, an
+/// order (`<`, `<=`, `>`, `>=`) in its fourth.
+fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
+    use oxc_ast::ast::BinaryOperator;
+    const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
+    const ORDER: [BinaryOperator; 4] = [
+        BinaryOperator::LessThan,
+        BinaryOperator::LessEqualThan,
+        BinaryOperator::GreaterThan,
+        BinaryOperator::GreaterEqualThan,
+    ];
+    let named = |operators: &[BinaryOperator]| operators.iter().any(|&named| named as u32 == operator);
+    if named(&STRICT) {
+        census.2 = census.2.saturating_add(1);
+    } else if named(&ORDER) {
+        census.3 = census.3.saturating_add(1);
+    }
+}

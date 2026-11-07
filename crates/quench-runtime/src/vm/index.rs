@@ -183,25 +183,11 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         if object.is_null() || object.is_undefined() {
-            let property = self.detail_string(key);
-            return Err(self.nullish_assignment_error(p, object, &property));
+            let property = self.detail_string(key); return Err(self.nullish_assignment_error(p, object, &property));
         }
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
-            // Descriptors, accessors and frozen state are the only things that make replacing a
-            // present dense element differ from a plain store, and a plain array has none.
-            if let Some(data) = self.heap.array(object)
-                && !data.has_indexed_descriptors()
-                && !data.is_frozen()
-                && data
-                    .elements()
-                    .get(index)
-                    .is_some_and(|value| !value.is_deleted())
-            {
-                self.replace_dense_element(object, index, value);
-                return Ok(());
-            }
-            if self.append_dense_element(object, index, value) {
+            if self.store_plain_element(object, index, value) {
                 return Ok(());
             }
             // A typed array's integer-indexed [[Set]] is TypedArraySetElement: its indices
@@ -620,6 +606,20 @@ impl<H: Host> Vm<H> {
         }
         let key = self.heap.string(key)?;
         super::object_static::array_index(key.host_string())
+    }
+
+    /// The stores of index `index` needing no [[Set]] step past a plain array's own elements:
+    /// replacing a present one, appending at the dense length, or filling a hole no prototype
+    /// claims (`set_index_mode`, `general_elements`); `false` before any effect.
+    pub(super) fn store_plain_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(data) = self.heap.array(object) else { return false };
+        if data.has_indexed_descriptors() || data.is_frozen() { return false; }
+        match data.elements().get(index) {
+            Some(present) if !present.is_deleted() => { self.replace_dense_element(object, index, value); true }
+            Some(_) => !data.is_arguments_object() && self.inherited_index_unclaimed(object, index)
+                && self.set_array_element(object, index, value),
+            None => self.append_dense_element(object, index, value),
+        }
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {

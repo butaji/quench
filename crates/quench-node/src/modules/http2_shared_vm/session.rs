@@ -141,7 +141,7 @@ const SOCKET_MANIPULATION: [&str; 9] =
 
 /// Install the session classes.
 pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let emitter = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Emitter);
+    let emitter = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Emitter))?;
     let session = constructor(c, Member::Construct, "Http2Session")?;
     crate::modules::stream_shared_vm::inherit(c, session, emitter)?;
     let prototype = get(c, session, "prototype")?;
@@ -582,7 +582,7 @@ pub(super) fn stream_objects(c: &mut Context<'_>, session: RootId) -> Result<(Ve
 
 /// `new Http2Session(type, options, socket)`.
 fn initialize(c: &mut Context<'_>, this: RootId, session_type: SessionType, options: RootId, socket: RootId) -> Result<(), RootedError> {
-    let emitter = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Emitter);
+    let emitter = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Emitter))?;
     c.call_rooted(emitter, this, &[])?;
     let bound = get_slot(c, socket, Slot::BoundSession)?;
     if !is_undefined(c, bound) {

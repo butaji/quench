@@ -1,7 +1,7 @@
 //! `internal/streams/legacy`: the `Stream` base class and its old-style `pipe`.
 
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, intrinsics, listener_count, on,
+    arg, call_method, captures, closure, define_methods, emit, get, intrinsic, listener_count, on,
     put, put_bool, remove_listener, Class, Context, Key, Outcome,
 };
 use quench_runtime::{RootId, RootedError};
@@ -9,7 +9,7 @@ use quench_runtime::{RootId, RootedError};
 /// `Stream(opts)`: `EventEmitter.call(this, opts)`.
 pub(crate) fn constructor(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let options = arg(c, args, 0);
-    let emitter = intrinsics(c)?.class(Class::Emitter);
+    let emitter = intrinsic(c, |i| i.class(Class::Emitter))?;
     c.call_rooted(emitter, this, &[options])?;
     Ok(c.undefined())
 }
