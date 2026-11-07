@@ -61,6 +61,8 @@ mod stable_fact_tests;
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+#[path = "compiled/lane_sites.rs"]
+mod lane_sites;
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -606,7 +608,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -2861,7 +2863,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
             lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-                &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
+                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
                     let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
@@ -7924,28 +7926,6 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 }
 
 impl<H: Host> Vm<H> {
-    /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
-    /// (`dispatch_fast::lane_load_name_first`): in a function whose unresolved names are
-    /// global and resolve statically, a name no internal binding owns.
-    fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeSet<usize> {
-        let global = |function: u32| program.function_get(function as usize)
-            .is_some_and(|body| body.names_resolve_statically(program))
-            && self.programs.unresolved_names_are_global(self.active_program, function);
-        unit.instructions.iter().enumerate()
-            .filter(|(_, instruction)| matches!(instruction.op(), Op::LoadName | Op::LoadNameCall))
-            .filter(|(pc, instruction)| {
-                let atom = instruction.atom_index();
-                let function = match unit.origins[*pc] {
-                    lane_unit::Origin::Caller(_) => function,
-                    lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
-                };
-                global(function) && (!self.atom_class(atom).contains(super::object::AtomClass::INTERNAL)
-                    || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
-            })
-            .map(|(pc, _)| pc)
-            .collect()
-    }
-
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
     /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
     /// global object's cached data property; none for a binding in its TDZ or a miss.

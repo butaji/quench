@@ -49,7 +49,7 @@ Single homes (add to these; never a second copy):
 - `crates/quench-runtime/src/staged.rs`: object-layout and narrow-value reads, written once
   over the `Stage` trait. `Concrete` runs them in the interpreter, `Emit` generates them as
   Cranelift IR. Tests check that layout decodes outside this file only go down.
-- `vm/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
+- `vm/compiled/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
   compiles.
 - `vm/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
 - Opcode meaning: only the interpreters (`vm/dispatch.rs`, `vm/dispatch_wasm.rs`) write it by
@@ -57,7 +57,9 @@ Single homes (add to these; never a second copy):
   AOT. `src/staged/hand_semantics.txt` lists the hand-written opcode arms left in tiers, and it
   may only shrink.
 - `code_dependencies.rs`: stable facts (binding time `Stable`) fold only under a code
-  dependency. Retirement sets the body's invalidation word; there are no global epochs.
+  dependency, compiled code's and the interpreter's caches alike (prototype values, method
+  atoms, a lane body's read sites). Retirement sets the body's invalidation word; there is no
+  prototype value epoch.
 
 ## Lisp mindset manifesto
 
