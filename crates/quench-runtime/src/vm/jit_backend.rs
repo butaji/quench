@@ -27,18 +27,44 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 #[cfg(any(feature = "jit", feature = "aot"))]
 const VERIFY_IR: bool = cfg!(debug_assertions);
 
-/// Publication determines relocation policy, not language semantics or lowering.
+/// Publication determines relocation policy and code-generation effort, not language
+/// semantics or lowering.
 #[cfg(any(feature = "jit", feature = "aot"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum CodePublication {
     #[cfg(feature = "jit")]
     ExecutableMemory,
+    /// Executable memory for a lane body (`compiled::lane_compile`), whose registers are
+    /// allocated in one pass. Lane bodies are the largest units and compile on the code
+    /// generator thread while the interpreter runs them: JetStream 3 `--jit`, 25 tests, 6
+    /// interleaved rounds (2026-11-07) measured +3.8% geomean (richards +16%, Air +11%,
+    /// delta-blue +10%; earley-boyer -7%). Single-pass for every JIT unit measured -0.7%
+    /// (navier-stokes -22%, stanford-crypto-aes -17%): small hot loops keep backtracking.
+    #[cfg(feature = "jit")]
+    LaneBody,
     #[cfg(feature = "aot")]
     RelocatableObject,
     /// Copy-and-patch stencils: executable memory whose continuations are
     /// tail calls, which Cranelift emits only with frame pointers.
     #[cfg(all(feature = "aot", feature = "jit"))]
     Stencil,
+}
+
+#[cfg(any(feature = "jit", feature = "aot"))]
+impl CodePublication {
+    /// The Cranelift settings a publication fixes.
+    fn settings(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            #[cfg(feature = "jit")]
+            Self::ExecutableMemory => &[("is_pic", "false")],
+            #[cfg(feature = "jit")]
+            Self::LaneBody => &[("is_pic", "false"), ("regalloc_algorithm", "single_pass")],
+            #[cfg(feature = "aot")]
+            Self::RelocatableObject => &[("is_pic", "true")],
+            #[cfg(all(feature = "aot", feature = "jit"))]
+            Self::Stencil => &[("is_pic", "false"), ("preserve_frame_pointers", "true")],
+        }
+    }
 }
 
 /// The Cranelift opt level of JavaScript JIT code. Measured on JetStream 3 `--jit` (2 interleaved
@@ -52,6 +78,14 @@ const JS_JIT_OPT_LEVEL: &str = "speed";
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
     target_isa_at(JS_JIT_OPT_LEVEL)
+}
+
+/// The ISA of lane bodies: JavaScript JIT code whose register allocation runs in one pass.
+pub(super) fn lane_body_isa() -> Option<Arc<TargetIsa>> {
+    #[cfg(feature = "jit")]
+    { target_isa_for(JS_JIT_OPT_LEVEL, CodePublication::LaneBody) }
+    #[cfg(not(feature = "jit"))]
+    { None }
 }
 
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
@@ -78,22 +112,8 @@ pub(super) fn target_isa_for(
 
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
-    flags
-        .set(
-            "is_pic",
-            match publication {
-                #[cfg(feature = "jit")]
-                CodePublication::ExecutableMemory => "false",
-                #[cfg(feature = "aot")]
-                CodePublication::RelocatableObject => "true",
-                #[cfg(all(feature = "aot", feature = "jit"))]
-                CodePublication::Stencil => "false",
-            },
-        )
-        .ok()?;
-    #[cfg(all(feature = "aot", feature = "jit"))]
-    if publication == CodePublication::Stencil {
-        flags.set("preserve_frame_pointers", "true").ok()?;
+    for (name, value) in publication.settings() {
+        flags.set(name, value).ok()?;
     }
     flags
         .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })

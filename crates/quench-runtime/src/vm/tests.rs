@@ -2144,7 +2144,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     });
     let map_key = vm.object();
     if let Some(Cell::WeakMap { entries, .. }) = vm.heap.get_mut(map) {
-        entries.insert(map_key, owner);
+        entries.insert((map_key, owner));
     }
     let map_root = vm.heap.root(map);
     let key_root = vm.heap.root(map_key);
@@ -15038,10 +15038,10 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn shared_osr_leaves_at_a_captured_environment_store_for_the_interpreter() {
+fn shared_osr_gives_a_loop_storing_a_captured_binding_each_iteration_to_the_lane_body() {
     // A nested closure retains the mutable binding, so the loop reads and updates it through
-    // the environment. Guarded reads run natively; the store leaves at its exact PC and the
-    // interpreter runs it, instead of rejecting the loop.
+    // the environment. The store leaves to the interpreter on every iteration, so no region
+    // is worth entering: the loop runs in the function's lane body.
     let source = r#"
       function run() {
         let total = 0;
@@ -15067,8 +15067,8 @@ fn shared_osr_leaves_at_a_captured_environment_store_for_the_interpreter() {
     let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view").osr_diagnostics();
     let [site] = osr.sites.as_slice() else { panic!("one source loop, one OSR site: {osr:?}") };
-    assert!(site.admitted, "StoreEnvLocal leaves to the interpreter, not rejects: {site:?}");
-    assert!(site.native_region_runs > 0 && site.exits > 0, "the reads run natively, the store leaves: {site:?}");
+    assert!(!site.admitted && site.native_region_runs == 0, "every iteration leaves at the store: {site:?}");
+    assert_eq!(site.analysis_rejection, Some(super::compiled::RegionRejection::UnsupportedInstruction(crate::bytecode::Op::StoreEnvLocal)));
 }
 
 #[test]
@@ -16712,8 +16712,7 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
             }
             return allocated.index;
           }
-          globalThis.scale = 1;
-          function run(callback) {
+          function run(callback, scale) {
             let index = 0;
             let total = 0;
             while (index < 100) {
@@ -16727,7 +16726,7 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
           let total = 0;
           for (let invocation = 0; invocation < 50; invocation++) {
             try {
-              total += run(callback);
+              total += run(callback, 1);
             } catch (error) {
               if (error === sentinel) caught++;
               else throw error;

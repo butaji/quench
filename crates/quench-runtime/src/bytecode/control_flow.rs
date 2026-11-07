@@ -41,20 +41,20 @@ pub(crate) fn for_each_instruction_successor(
 
 pub(super) fn is_bounded(function: &Function) -> bool {
     let code = &function.code;
-    let mut reachable = vec![false; code.len()];
+    let mut reachable = crate::bitset::BitSet::new(code.len());
     let mut work = vec![0usize];
     work.extend(function.handlers.iter().flat_map(|handler| {
         std::iter::once(handler.target as usize)
             .chain(handler.return_target.map(|target| target as usize))
     }));
     while let Some(pc) = work.pop() {
-        if pc >= code.len() || reachable[pc] {
+        if pc >= code.len() || reachable.contains(pc) {
             if pc >= code.len() {
                 return false;
             }
             continue;
         }
-        reachable[pc] = true;
+        reachable.insert(pc);
         let Some(instruction) = instruction_at(function, code[pc]) else {
             return false;
         };
@@ -109,11 +109,84 @@ impl Function {
         });
         for handler in &self.handlers {
             if pc as u32 >= handler.start && (pc as u32) < handler.end {
-                successor(handler.target as usize, ControlEdge::Handler);
-                if let Some(target) = handler.return_target {
-                    successor(target as usize, ControlEdge::Handler);
-                }
+                handler_successors(handler, &mut successor);
             }
         }
     }
+}
+
+/// The successors a handler covering an instruction adds: its target, and the return
+/// target a `finally` resumes.
+fn handler_successors(handler: &super::Handler, successor: &mut impl FnMut(usize, ControlEdge)) {
+    successor(handler.target as usize, ControlEdge::Handler);
+    if let Some(target) = handler.return_target {
+        successor(target as usize, ControlEdge::Handler);
+    }
+}
+
+/// Every instruction's successors (`Function::for_each_successor`), listed once for a
+/// pass over the whole function. The handler edges come from one sweep over the handlers
+/// in order of their starts, so a function with many try statements costs its code plus
+/// its handlers times their nesting, not its whole handler table at every pc.
+pub(crate) struct Successors {
+    /// Where each pc's successors begin in `targets`, with one entry past the last pc.
+    starts: Vec<u32>,
+    targets: Vec<u32>,
+    edges: Vec<ControlEdge>,
+}
+
+impl Successors {
+    pub(crate) fn of(function: &Function, instructions: &[WideInstruction]) -> Self {
+        let handlers = &function.handlers;
+        let mut order = (0..handlers.len()).collect::<Vec<_>>();
+        order.sort_by_key(|&index| handlers[index].start);
+        let mut pending = order.into_iter().peekable();
+        // The handlers covering the current pc, in table order as `for_each_successor` lists them.
+        let mut active = Vec::<usize>::new();
+        let mut table = Self {
+            starts: Vec::with_capacity(instructions.len() + 1),
+            targets: Vec::with_capacity(instructions.len()),
+            edges: Vec::with_capacity(instructions.len()),
+        };
+        for (pc, &instruction) in instructions.iter().enumerate() {
+            let at = pc as u32;
+            active.retain(|&index| handlers[index].end > at);
+            while let Some(index) = pending.next_if(|&index| handlers[index].start <= at) {
+                if handlers[index].end > at {
+                    active.insert(active.partition_point(|&other| other < index), index);
+                }
+            }
+            table.starts.push(pc_index(table.targets.len()));
+            let mut push = |target, edge| {
+                table.targets.push(pc_index(target));
+                table.edges.push(edge);
+            };
+            for_each_instruction_successor(pc, instruction, |target| push(target, ControlEdge::Normal));
+            for &index in &active {
+                handler_successors(&handlers[index], &mut push);
+            }
+        }
+        table.starts.push(pc_index(table.targets.len()));
+        table
+    }
+
+    /// The successors of the instruction at `pc`, with how control reaches each.
+    pub(crate) fn at(&self, pc: usize) -> impl Iterator<Item = (usize, ControlEdge)> + '_ {
+        let range = self.starts[pc] as usize..self.starts[pc + 1] as usize;
+        self.targets[range.clone()].iter().map(|&target| target as usize).zip(self.edges[range].iter().copied())
+    }
+
+    /// Where each pc's successors begin in `targets`, with one entry past the last pc.
+    pub(crate) fn starts(&self) -> &[u32] {
+        &self.starts
+    }
+
+    /// Every pc's successor targets, in pc order.
+    pub(crate) fn targets(&self) -> &[u32] {
+        &self.targets
+    }
+}
+
+fn pc_index(pc: usize) -> u32 {
+    u32::try_from(pc).expect("a function's pcs fit u32")
 }

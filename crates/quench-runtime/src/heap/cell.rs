@@ -7,13 +7,15 @@ use crate::value_vec::{
 };
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
-use rustc_hash::FxHashMap;
+use super::{WeakMapEntries, WeakSetEntries};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod modes;
 mod prototype_values;
 mod snapshot;
+mod typed_array_kind;
+pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 
@@ -36,12 +38,6 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
     prototype_values::reset();
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WeakMapEntries {
-    ordered: Vec<(Value, Value)>,
-    indices: FxHashMap<Value, usize>,
 }
 
 #[cfg(test)]
@@ -108,54 +104,6 @@ mod cell_layout_tests {
     }
 }
 
-impl WeakMapEntries {
-    pub(crate) fn get(&self, key: Value) -> Option<Value> {
-        self.indices
-            .get(&key)
-            .and_then(|index| self.ordered.get(*index))
-            .map(|(_, value)| *value)
-    }
-
-    pub(crate) fn insert(&mut self, key: Value, value: Value) {
-        if let Some(index) = self.indices.get(&key).copied() {
-            self.ordered[index].1 = value;
-        } else {
-            self.indices.insert(key, self.ordered.len());
-            self.ordered.push((key, value));
-        }
-    }
-
-    pub(crate) fn remove(&mut self, key: Value) -> bool {
-        let Some(index) = self.indices.remove(&key) else {
-            return false;
-        };
-        self.ordered.swap_remove(index);
-        if let Some((moved_key, _)) = self.ordered.get(index) {
-            self.indices.insert(*moved_key, index);
-        }
-        true
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &(Value, Value)> {
-        self.ordered.iter()
-    }
-
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&(Value, Value)) -> bool) {
-        self.ordered.retain(|entry| keep(entry));
-        self.indices.clear();
-        self.indices.extend(
-            self.ordered
-                .iter()
-                .enumerate()
-                .map(|(index, (key, _))| (*key, index)),
-        );
-    }
-
-    pub(crate) fn allocated_bytes(&self) -> usize {
-        self.ordered.capacity() * std::mem::size_of::<(Value, Value)>()
-            + self.indices.capacity() * std::mem::size_of::<(Value, usize)>()
-    }
-}
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u16)]
@@ -677,7 +625,7 @@ pub(crate) enum Native {
     WasmInstance, WasmInstanceExportsGetter,
     WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
     WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
-    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf,
+    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf, WasmTag,
     WasmCompileError, WasmLinkError, WasmRuntimeError,
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
     WasmExportedFunction,
@@ -740,22 +688,6 @@ pub(crate) struct WasmHostMemcpyTarget {
     pub(crate) view_environment: Value,
     pub(crate) view_slot: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypedArrayKind {
-    Uint8,
-    Uint8Clamped,
-    Uint16,
-    Uint32,
-    Int8,
-    Int16,
-    Int32,
-    BigInt64,
-    BigUint64,
-    Float16,
-    Float32,
-    Float64,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ArrayFromAsyncAwait {
     IteratorStep,
@@ -807,29 +739,17 @@ impl AwaitState {
         }
     }
 }
-impl TypedArrayKind {
-    pub(crate) const fn is_bigint(self) -> bool {
-        matches!(self, Self::BigInt64 | Self::BigUint64)
-    }
-
-    pub(crate) const fn width(self) -> usize {
-        match self {
-            Self::Uint8 => 1,
-            Self::Uint8Clamped => 1,
-            Self::Uint16 => 2,
-            Self::Uint32 => 4,
-            Self::Int8 => 1,
-            Self::Int16 => 2,
-            Self::Int32 => 4,
-            Self::BigInt64 => 8,
-            Self::BigUint64 => 8,
-            Self::Float16 => 2,
-            Self::Float32 => 4,
-            Self::Float64 => 8,
+impl Native {
+    /// The constructor intrinsic (`Function`, `AsyncFunction`, ...) of a function of this kind.
+    pub(crate) fn function_constructor(is_async: bool, is_generator: bool) -> Self {
+        match (is_async, is_generator) {
+            (true, true) => Self::AsyncGeneratorFunction,
+            (false, true) => Self::GeneratorFunction,
+            (true, false) => Self::AsyncFunction,
+            (false, false) => Self::Function,
         }
     }
-}
-impl Native {
+
     /// The `get [Symbol.species]` accessors, each of which returns its receiver.
     pub(crate) fn is_intrinsic_species_getter(self) -> bool {
         matches!(
@@ -3844,9 +3764,7 @@ pub(crate) enum Cell {
     },
     WeakSet {
         object: Box<Object>,
-        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
-        #[allow(clippy::box_collection)]
-        entries: Box<Vec<Value>>,
+        entries: Box<WeakSetEntries>,
     },
     WeakRef {
         object: Box<Object>,

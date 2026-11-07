@@ -1,4 +1,3 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
 /// The shapes an ordinary closure's own properties step through as `Vm::closure_in_realm`
@@ -151,32 +150,16 @@ impl<H: Host> Vm<H> {
         self.atom_string_kept(atom, keep)
     }
 
-    /// `atom`'s string, kept for the next request when `keep` holds. Program atoms are kept
-    /// always; a dynamic atom is kept only where its kind bounds how many there can be, as a
-    /// function's name is.
+    /// `atom`'s string: the one the heap records as spelling it (`Heap::atom_string`), or a
+    /// new one registered there. A kept string is a root; program atoms are kept always, a
+    /// dynamic atom only where its kind bounds how many there can be, as a function's name
+    /// is. Any other atom's string lives as long as something else holds it.
     fn atom_string_kept(&mut self, atom: Atom, keep: bool) -> Value {
-        if keep {
-            if let Some(&value) = self.atom_strings.get(&atom) {
-                return value;
-            }
-            let value = self.heap.alloc_string(self.atom_value(atom));
-            self.atom_strings.insert(atom, value);
+        if let Some(value) = self.heap.atom_string(atom, keep) {
             return value;
-        }
-        if let Some(&value) = self.atom_strings.get(&atom) {
-            return value;
-        }
-        let slot = atom as usize & (super::ATOM_STRING_CACHE_SIZE - 1);
-        if let Some(recent) = &self.recent_atom_strings
-            && recent[slot].0 == atom
-        {
-            return recent[slot].1;
         }
         let value = self.heap.alloc_string(self.atom_value(atom));
-        self.recent_atom_strings
-            .get_or_insert_with(|| {
-                Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
-            })[slot] = (atom, value);
+        self.heap.register_string_atom(value, atom, keep);
         value
     }
 
@@ -321,7 +304,7 @@ impl<H: Host> Vm<H> {
                         | Native::WasmInstance
                         | Native::WasmMemory
                         | Native::WasmTable
-                        | Native::WasmGlobal
+                        | Native::WasmGlobal | Native::WasmTag
                         | Native::WasmCompileError
                         | Native::WasmLinkError
                         | Native::WasmRuntimeError
@@ -462,12 +445,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
-            (true, true) => Native::AsyncGeneratorFunction,
-            (false, true) => Native::GeneratorFunction,
-            (true, false) => Native::AsyncFunction,
-            (false, false) => Native::Function,
-        };
+        let intrinsic = Native::function_constructor(function_plan.is_async, function_plan.is_generator);
         let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
         let plan_name = function_plan.name.or(function_plan.inferred_name);
         // Names are the compiled functions' own, so keeping each one's string is bounded by
@@ -1200,9 +1178,7 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
-            let Some(intrinsic) = TYPED_ARRAY_INSTALLS
-                .iter()
-                .find_map(|(_, candidate, name)| (*candidate == native).then_some(*name))
+            let Some(intrinsic) = TypedArrayKind::of_constructor(native).map(TypedArrayKind::name)
                 .or_else(|| match native {
                     Native::Object => Some("Object"),
                     Native::Function => Some("Function"),
@@ -1303,10 +1279,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        if let Some(&(kind, _, name)) = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find(|(_, candidate, _)| *candidate == native)
-        {
+        if let Some(kind) = TypedArrayKind::of_constructor(native) {
+            let name = kind.name();
             return self.construct_typed_array_with_new_target(
                 p,
                 args,

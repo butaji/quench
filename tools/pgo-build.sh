@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Profile-guided production build of quench-node.
+# Profile-guided release build of quench-node.
 #
-# usage: tools/pgo-build.sh [--static] [PROFILE]   (default: production)
+# usage: tools/pgo-build.sh [--static] [PROFILE]   (default: release)
 #
 # --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
 # model), the input of the BOLT layout step in the Linear command reference: both the instrumented and the
@@ -29,7 +29,7 @@ if [[ "${1:-}" == "--static" ]]; then
     static=true
     shift
 fi
-profile="${1:-production}"
+profile="${1:-release}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 instrumented_dir="$target_dir/pgo-instrumented"
 data_dir="$target_dir/pgo-data"
@@ -50,7 +50,7 @@ curriculum_repeats=20
 # other work shared the host.
 curriculum_budget_ms=6000
 # Optional representative React SSR samples can be added to the general profile with
-# QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so production builds stay independent
+# QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so release builds stay independent
 # of npm fixture installation; the npm performance workflow can opt in when measuring React.
 react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
 # Neither the curriculum nor the Node fixtures serve HTTP for long, so the server path a web

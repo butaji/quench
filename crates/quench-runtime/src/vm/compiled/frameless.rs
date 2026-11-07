@@ -11,7 +11,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
     JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
 };
-use crate::bytecode::{ControlFlowLayout, WideInstruction};
+use crate::bytecode::WideInstruction;
 use crate::value::ValueLayout;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
@@ -60,20 +60,14 @@ struct CallEntry {
     this: u64,
 }
 
-#[derive(Clone, Copy)]
-struct FunctionUse {
-    /// The body has no back edge, so no safepoint or poll stops it inside native code.
-    loop_free: bool,
-    materializations: u32,
-}
-
 /// The per-VM storage of frameless calls. The windows are never scanned: no collection runs
 /// while one is live, since every exit from native code makes their frames first.
 pub(crate) struct Frameless {
     windows: Box<[Value]>,
     shadow: Box<[ShadowRecord]>,
     cache: Box<[CallEntry]>,
-    functions: rustc_hash::FxHashMap<(u32, u32), FunctionUse>,
+    /// The leaves of each function's frameless activations (`MATERIALIZATION_LIMIT`).
+    materializations: rustc_hash::FxHashMap<(u32, u32), u32>,
 }
 
 impl Default for Frameless {
@@ -83,7 +77,7 @@ impl Default for Frameless {
             windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
             shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
             cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
-            functions: rustc_hash::FxHashMap::default(),
+            materializations: rustc_hash::FxHashMap::default(),
         }
     }
 }
@@ -300,7 +294,7 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
 /// Admits `callee` for frameless calls from the payload's program and caches it: its
 /// entry's address, or 0 where its calls keep frames. Admitted are plain user functions of
 /// the running program (`CallPlan::in_loop`) whose whole state is their registers
-/// (`CallPlan::registers_only`), whose body has no loop and a linked native entry, and whose
+/// (`CallPlan::registers_only`), whose body has a linked native entry, and whose
 /// activations have not kept leaving.
 ///
 /// # Safety
@@ -318,13 +312,9 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
     let body = program.function_get(function as usize)?;
     let plan = body.call_plan(program);
     if !plan.in_loop || !plan.registers_only || body.rest { return None; }
-    let usage = *vm.frameless.functions.entry((owner.raw(), function)).or_insert_with(|| FunctionUse {
-        loop_free: body.instructions().enumerate().all(|(pc, instruction)|
-            !matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
-                || instruction.jump_target() as usize > pc),
-        materializations: 0,
-    });
-    if !usage.loop_free || usage.materializations >= MATERIALIZATION_LIMIT { return None; }
+    if vm.frameless.materializations.get(&(owner.raw(), function)).is_some_and(|leaves| *leaves >= MATERIALIZATION_LIMIT) {
+        return None;
+    }
     let code = native_entry(vm, owner, function)?;
     let capture = vm.target_capture(program, owner, env);
     // SAFETY: a live environment's dense slots stay in place through this collection epoch.
@@ -368,10 +358,10 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, dispatch: &JsStepDispatch, pc: u32,
     let continues = live.iter().skip(1).map(|record| record.call_pc).chain([pc]);
     let records: Vec<_> = live.iter().zip(continues)
         .map(|(record, at)| (record.function, record.call_pc, at, record.window)).collect();
-    if let Some(&(function, ..)) = records.last()
-        && let Some(usage) = vm.frameless.functions.get_mut(&(dispatch.program_id.raw(), function)) {
-        usage.materializations += 1;
-        if usage.materializations == MATERIALIZATION_LIMIT {
+    if let Some(&(function, ..)) = records.last() {
+        let leaves = vm.frameless.materializations.entry((dispatch.program_id.raw(), function)).or_default();
+        *leaves += 1;
+        if *leaves == MATERIALIZATION_LIMIT {
             // Calls of it keep frames from now on: no cached admission names it.
             vm.frameless.clear();
         }
