@@ -998,7 +998,9 @@ fn loop_arrays(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> Vec<L
                 Op::SetIndex => (Some(instruction.register_b()), true),
                 _ => continue,
             };
-            let Some(register) = base.filter(|register| *register < unit.caller_registers && !written.contains(register)) else { continue };
+            // The loop's sole entering edge proves the view of any base its body does not
+            // redefine, an inlined frame's argument as well as the caller's own register.
+            let Some(register) = base.filter(|register| !written.contains(register)) else { continue };
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.register == register) {
                 Some(array) => array.writable |= stores,
                 None => arrays.push(LoopArray { header, back, register, writable: stores }),

@@ -2774,26 +2774,11 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return Vec::new(); }
     // Both binding-time divisions plan the full call graph. Static bindings use
-    // actual function admission and the same exact suspended-frame recovery. A unit
-    // no region admits is replanned under half the inlining budget, as the lane tier
-    // replans one its code budget rejects, down to the body without inlined callees.
-    let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
-    loop {
-        let Some(unit) = lane_unit::with_budget(program, function_id, function, budget, &|caller, pc|
-            targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
-                .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
-            &|id| program.function_get(id as usize), None) else { return Vec::new(); };
-        let regions = lower_static_typed_unit(program, function_id, &unit, isa, helper_symbol);
-        if !regions.is_empty() || unit.frames.is_empty() || budget == 0 { return regions; }
-        budget /= 2;
-    }
-}
-
-/// The static typed regions of one planned unit of `function_id`.
-#[cfg(feature = "aot")]
-fn lower_static_typed_unit(program: &ResidualProgram, function_id: u32, unit: &lane_unit::Unit,
-    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
-{
+    // actual function admission and the same exact suspended-frame recovery.
+    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc|
+        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
+            .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
+        &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
@@ -2819,7 +2804,7 @@ fn lower_static_typed_unit(program: &ResidualProgram, function_id: u32, unit: &l
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
-            lane_region::lower(program, function_id, unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
+            lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
                 &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
