@@ -813,9 +813,9 @@ complexity crates/quench-runtime/src/vm/equality.rs::Vm<H>::equal 32
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::call_site_method_name 17
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::call_site_native 26
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::create_realm_global 13
-complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::error_capture_stack_trace 18
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::function_native 15
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::thrown_value_for 20
+complexity crates/quench-runtime/src/vm/error/stack_capture.rs::Vm<H>::captured_stack_data 16
 complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::direct_eval_private_names 12
 complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 18
 complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_native_in_realm 11
@@ -1373,7 +1373,7 @@ file-lines crates/quench-regexp/src/lib.rs 3475
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2526
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4617
+file-lines crates/quench-runtime/src/bytecode.rs 4398
 file-lines crates/quench-runtime/src/bytecode/binary.rs 1804
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
@@ -1440,7 +1440,7 @@ file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1975
 file-lines crates/quench-runtime/src/vm/environment.rs 2760
-file-lines crates/quench-runtime/src/vm/error.rs 2794
+file-lines crates/quench-runtime/src/vm/error.rs 2709
 file-lines crates/quench-runtime/src/vm/eval.rs 1369
 file-lines crates/quench-runtime/src/vm/gc.rs 1323
 file-lines crates/quench-runtime/src/vm/generator.rs 1845
@@ -3149,7 +3149,6 @@ function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::call_site_native 89
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::construct_aggregate_error 72
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::construct_error_with_prototype 74
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::create_realm_global 484
-function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::error_capture_stack_trace 122
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::error_stack_getter 83
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::error_to_string 44
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::format_call_site 57
@@ -3161,6 +3160,7 @@ function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::install_host_global
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::install_realm_default_bindings 70
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::source_call_site_record 57
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::thrown_value_for 49
+function-lines crates/quench-runtime/src/vm/error/stack_capture.rs::Vm<H>::captured_stack_data 98
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::capture_binding_environment 52
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::direct_eval_private_names 41
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 101
