@@ -62,10 +62,8 @@ pub(crate) fn lower_regions(
     let constants: Vec<_> = program
         .constants
         .iter()
-        .map(|value| match value {
-            crate::bytecode::Constant::Number(number) => Value::number(*number),
-            _ => Value::UNDEFINED,
-        })
+        .map(|constant| super::facts::immediate(constant).filter(|value| value.as_number().is_some())
+            .unwrap_or(Value::UNDEFINED))
         .collect();
     let mut leaders = std::collections::BTreeSet::new();
     for instruction in &decoded {

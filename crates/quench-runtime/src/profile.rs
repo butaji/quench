@@ -266,12 +266,12 @@ impl Profile {
 
     #[cfg(feature = "profile-aggregate")]
     pub fn report_dispatch_census_if_enabled(&self, program: u32) -> bool {
-        let Some(census) = std::env::var_os("QUENCH_OPCODE_CENSUS") else {
+        if !crate::trace::Channel::Census.on() {
             return false;
-        };
+        }
         // `all` sums the dispatches of every program, whose code a benchmark harness loads
         // apart from the main program.
-        if census == "all" {
+        if crate::trace::Channel::Census.value() == Some("all") {
             let mut counts = vec![0u64; crate::bytecode::Op::COUNT];
             for program in &self.dispatched_opcodes {
                 for (count, dispatched) in counts.iter_mut().zip(program) {
@@ -879,7 +879,7 @@ impl Profile {
         regional::report_functions(self, program_id, program);
         #[cfg(feature = "profile-trace")]
         {
-            let path = std::env::var_os("QUENCH_TRACE").unwrap_or_else(|| "Quench.trace".into());
+            let path = crate::trace::Channel::ProfileTrace.value().unwrap_or("Quench.trace");
             let mut data = b"P1TR\x01\0\0\0".to_vec();
             data.extend_from_slice(&self.trace);
             if let Err(error) = std::fs::write(path, data) {

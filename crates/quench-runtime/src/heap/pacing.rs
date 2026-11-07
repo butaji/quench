@@ -510,8 +510,8 @@ impl GenerationalPacing {
 /// How a runtime trades memory for speed (TOD-167): one choice per runtime, made at startup
 /// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
 /// host returns pages at collection boundaries (`Host::at_collection_boundary`),
-/// whether and how the loop tier compiles (`LOOP_TIER_OPT_LEVELS`), whether the
-/// JavaScript function tiers compile (`JS_FUNCTION_TIERS`), and how much IR a Wasm module's
+/// whether and how the loop tier compiles (`PolicyTiers::loop_opt_level`), whether the
+/// JavaScript function tiers compile (`PolicyTiers::js_function_tiers`), and how much IR a Wasm module's
 /// compile workers hold at once (`WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MemoryPolicy {
@@ -771,7 +771,7 @@ const THROUGHPUT_MAXIMUM_YOUNG: usize = 1 << 20;
 /// full one (`THROUGHPUT_MAXIMUM_YOUNG`'s rows).
 const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
 /// Smoothed young survival past which throughput collects fully (`Regime::FullOnly`): three
-/// quarters. npm module loading keeps about 52% of each young generation (QUENCH_GC_TRACE,
+/// quarters. npm module loading keeps about 52% of each young generation (`QUENCH_TRACE=gc`,
 /// typescript-eslint: 531/1024), and at half the heap went FullOnly and fully re-marked the
 /// growing module graph four times (live weight 159K -> 248K -> 383K -> 603K). At three
 /// quarters it stays generational there (v2-npm, Throughput, no JIT, warm snapshot, 4-vCPU
@@ -783,7 +783,7 @@ const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
 const THROUGHPUT_SURVIVAL_LIMIT: u32 = SURVIVAL_SCALE * 3 / 4;
 /// Smoothed young survival from which a steady heap's young budget widens, under either
 /// policy (`GenerationalPacing::surviving_young_from`): a quarter. V8-v7 survival
-/// (QUENCH_GC_TRACE, per 1024): RayTrace 1, Crypto 5, DeltaBlue 20, RegExp 116,
+/// (`QUENCH_TRACE=gc`, per 1024): RayTrace 1, Crypto 5, DeltaBlue 20, RegExp 116,
 /// EarleyBoyer 322; Splay's 950 collects fully (`THROUGHPUT_SURVIVAL_LIMIT`). A larger young
 /// budget for every heap cost RayTrace x0.89 of Score (its young generations are all garbage
 /// and a larger one only leaves the caches), where EarleyBoyer, whose minor collections each
