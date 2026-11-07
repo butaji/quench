@@ -417,6 +417,10 @@ impl JsonSyntax {
     }
 }
 
+/// V8's message for JSON.rawJSON text that is not one whole primitive
+/// (`MessageTemplate::kInvalidRawJsonValue`).
+const JSON_INVALID_RAW_TEXT: &str = "Invalid value for JSON.rawJSON";
+
 /// Units V8 quotes on each side of an unexpected token (`JsonParser::kMaxContextCharacters`).
 const JSON_ERROR_CONTEXT_UNITS: usize = 10;
 /// Sources shorter than this are quoted whole (`kMinOriginalSourceLengthForContext`).
@@ -851,9 +855,8 @@ struct JsonHeapBuilder<'v, H: Host> {
     ascii_keys: rustc_hash::FxHashMap<Box<[u8]>, Atom>,
     /// The string value made of each ASCII run of the text the parse met, with the run's
     /// bytes in `string_bytes`: a string has no identity, so a run the text repeats takes
-    /// the value made once, as V8 internalizes a JSON text's repeated strings. The bytes are
-    /// copied together so that comparing a run reads them from cache rather than from the
-    /// run's first place in the text.
+    /// the value made once, as V8 internalizes a JSON text's repeated strings. The table
+    /// holds copies of the distinct runs, so the builder borrows nothing of the text.
     strings: hashbrown::HashTable<(Range<u32>, Value)>,
     string_bytes: Vec<u8>,
 }
@@ -1623,29 +1626,29 @@ impl<H: Host> Vm<H> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let wide = text.units().wide();
         let units: &[u16] = &wide;
-        if units
-            .first()
-            .is_some_and(|unit| is_json_whitespace(*unit))
-            || units
-                .last()
-                .is_some_and(|unit| is_json_whitespace(*unit))
-        {
-            return self.syntax_error_result(p, "Invalid raw JSON text");
-        }
-        let parsed = match JsonParser::new(units, &mut JsonTreeBuilder).parse() {
-            Ok(parsed) => parsed,
+        // One primitive that is the whole text, with no whitespace around it, reported as
+        // V8's `JsonParser::ParseRawJson` reports anything else.
+        let Some(&first) = units.first() else {
+            return self.syntax_error_result(p, JSON_INVALID_RAW_TEXT);
+        };
+        let primitive = matches!(
+            first,
+            JSON_QUOTE | JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END | JSON_NULL_INITIAL | JSON_TRUE_INITIAL | JSON_FALSE_INITIAL
+        );
+        let checked = if primitive {
+            JsonParser::new(units, &mut JsonTreeBuilder).parse_prefix().map(|(_, length)| length)
+        } else {
+            Err(JsonParseError {
+                syntax: JsonSyntax::Unexpected,
+                position: 0,
+            })
+        };
+        match checked {
+            Ok(length) if length == units.len() => {}
+            Ok(_) => return self.syntax_error_result(p, JSON_INVALID_RAW_TEXT),
             Err(error) => {
                 return self.syntax_error_result(p, &json_syntax_message(units, error.syntax, error.position));
             }
-        };
-        if !matches!(
-            match &parsed {
-                JsonValue::Source(value, _) => value.as_ref(),
-                value => value,
-            },
-            JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_)
-        ) {
-            return self.syntax_error_result(p, "rawJSON text must be a JSON primitive");
         }
         let object = self.json_object();
         let object_root = self.heap.root(object);

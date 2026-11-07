@@ -21919,6 +21919,24 @@ print(JSON.stringify(out));
 }
 
 #[test]
+fn json_raw_json_admits_one_whole_primitive_as_node_does() {
+    // JSON.rawJSON takes one primitive spanning the whole text, with no whitespace around it,
+    // and reports anything else with Node's messages.
+    let source = r##"
+const out = [];
+for (const text of ['1', '"a"', 'null', '[1]', '1x', '', ' 1', 'tru', '"\\x"', '-']) {
+  try { const r = JSON.rawJSON(text); out.push(JSON.stringify({ r }) + ':' + JSON.isRawJSON(r)); } catch (e) { out.push(e.constructor.name + ': ' + e.message); }
+}
+out.push(JSON.stringify([JSON.rawJSON('12345678901234567890'), JSON.rawJSON('1e400')]));
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_raw_json_admits_one_whole_primitive_as_node_does.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["{\"r\":1}:true","{\"r\":\"a\"}:true","{\"r\":null}:true","SyntaxError: Unexpected token '[', \"[1]\" is not valid JSON","SyntaxError: Invalid value for JSON.rawJSON","SyntaxError: Invalid value for JSON.rawJSON","SyntaxError: Unexpected token ' ', \" 1\" is not valid JSON","SyntaxError: Unexpected end of JSON input","SyntaxError: Bad escaped character in JSON at position 2 (line 1 column 3)","SyntaxError: No number after minus sign in JSON at position 1 (line 1 column 2)","[12345678901234567890,1e400]"]"##]);
+}
+
+#[test]
 fn json_parse_revivers_see_holders_deletions_and_source_text() {
     // A reviver walks in V8's order with its holder as `this`; it may delete or add members,
     // reads each primitive's source text, and stores `__proto__` and repeated keys as data.
