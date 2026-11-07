@@ -111,6 +111,12 @@ impl FunctionCompiler<'_, '_> {
     }
 }
 
+/// The property a static computed key names (`FunctionCompiler::static_property_key`).
+pub(super) enum StaticKey {
+    Index(i32),
+    Name(std::rc::Rc<str>),
+}
+
 #[cfg(test)]
 mod tests {
     use crate::bytecode::Op;
@@ -159,10 +165,4 @@ mod tests {
             assert_eq!(answer(source), expected, "{source}");
         }
     }
-}
-
-/// The property a static computed key names (`FunctionCompiler::static_property_key`).
-pub(super) enum StaticKey {
-    Index(i32),
-    Name(std::rc::Rc<str>),
 }
