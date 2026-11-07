@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         name.is_some() && !reconfigured
-            && self.shape_entries(object.shape()).get(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
+            && self.shape_entries(object.shape()).nth(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| *candidate == key)
             && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
     }
