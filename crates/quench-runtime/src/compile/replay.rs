@@ -551,6 +551,9 @@ pub(crate) struct ProgramReplay {
     /// as the load compiled it.
     pub(super) lazy_bodies: Box<[u32]>,
     pub(super) specialized: bool,
+    /// How many tagged template sites the program has: each evaluation of a program with
+    /// any owns distinct template objects, so a global eval of it is never cached.
+    pub(super) template_sites: u32,
     pub(super) atoms: ProgramAtomIndex,
     /// Where the load left the tables once each function was compiled.
     pub(super) exits: Box<[TableCursors]>,
@@ -569,6 +572,11 @@ impl ProgramReplay {
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()
+    }
+
+    /// Whether the program has a tagged template.
+    pub(crate) fn has_tagged_template(&self) -> bool {
+        self.template_sites != 0
     }
 }
 

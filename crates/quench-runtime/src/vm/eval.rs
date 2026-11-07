@@ -371,7 +371,12 @@ impl<H: Host> Vm<H> {
         })?;
         let cache_source = cache_source.filter(|_| {
             residual.functions.first().is_some_and(|root| !root.strict)
-                && !crate::Engine::eval_has_tagged_template(source)
+                // The compilation counted its tagged templates; only a program it kept no
+                // replay of parses its source again to find them.
+                && !residual.replay.as_ref().map_or_else(
+                    || crate::Engine::eval_has_tagged_template(source),
+                    |replay| replay.has_tagged_template(),
+                )
         });
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
