@@ -530,7 +530,6 @@ complexity crates/quench-runtime/src/compile/ast/object.rs::FunctionCompiler<'_,
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::statement_at_current_position 46
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::switch_statement 11
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 14
-complexity crates/quench-runtime/src/compile/binding_time.rs::expression 13
 complexity crates/quench-runtime/src/compile/capture_layout.rs::activation_is_private 11
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::emit_instance_fields 18
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::lower_class 90
@@ -1382,7 +1381,7 @@ file-lines crates/quench-runtime/src/compile.rs 4474
 file-lines crates/quench-runtime/src/compile/ast.rs 1310
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
-file-lines crates/quench-runtime/src/compile/ast/expression.rs 987
+file-lines crates/quench-runtime/src/compile/ast/expression.rs 980
 file-lines crates/quench-runtime/src/compile/ast/statement.rs 857
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2031
@@ -1469,7 +1468,7 @@ file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
 file-lines crates/quench-runtime/src/vm/object_static.rs 990
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
-file-lines crates/quench-runtime/src/vm/operations.rs 2735
+file-lines crates/quench-runtime/src/vm/operations.rs 2682
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
 file-lines crates/quench-runtime/src/vm/primitives.rs 728
 file-lines crates/quench-runtime/src/vm/program_store.rs 4243
