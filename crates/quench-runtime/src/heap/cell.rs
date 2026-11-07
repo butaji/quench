@@ -2715,7 +2715,7 @@ impl Object {
     }
     #[inline(always)]
     fn element_facts(&self) -> ElementFacts {
-        self.extras().map_or(ElementFacts::default(), |extras| extras.element_facts)
+        self.extras().map_or(ElementFacts(0), |extras| extras.element_facts)
     }
     fn mark_element_fact(&mut self, bit: u8) {
         self.extras_mut().element_facts.0 |= bit;
