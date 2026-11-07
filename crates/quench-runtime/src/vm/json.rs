@@ -63,6 +63,38 @@ fn same_ascii(a: &[u8], b: &[u8]) -> bool {
     word(a, length - WORD_BYTES) == word(b, length - WORD_BYTES)
 }
 
+/// The length of the run of `units` no byte ends (`ends_string_run`), from whole 16-byte
+/// blocks: `Ok` when a block holds its end, else `Err` of the bytes the blocks covered.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_run_blocks(units: &[u8]) -> Result<usize, usize> {
+    use std::arch::x86_64::{
+        __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8, _mm_or_si128, _mm_set1_epi8,
+    };
+    const BLOCK_BYTES: usize = size_of::<__m128i>();
+    let mut offset = 0;
+    // SAFETY: SSE2 is part of the x86_64 baseline, and each load reads a whole block of
+    // `units`.
+    unsafe {
+        let quote = _mm_set1_epi8(JSON_QUOTE as i8);
+        let escape = _mm_set1_epi8(JSON_ESCAPE as i8);
+        let last_control = _mm_set1_epi8(LAST_CONTROL_CHARACTER as i8);
+        while offset + BLOCK_BYTES <= units.len() {
+            let block = _mm_loadu_si128(units.as_ptr().add(offset).cast());
+            // A byte is a control byte exactly when its unsigned minimum with the last one is
+            // itself.
+            let control = _mm_cmpeq_epi8(_mm_min_epu8(block, last_control), block);
+            let ends = _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(block, quote), _mm_cmpeq_epi8(block, escape)), control);
+            let mask = _mm_movemask_epi8(ends) as u32;
+            if mask != 0 {
+                return Ok(offset + mask.trailing_zeros() as usize);
+            }
+            offset += BLOCK_BYTES;
+        }
+    }
+    Err(offset)
+}
+
 /// Whether `unit` is one of `JSON_WHITESPACE`.
 #[inline(always)]
 fn is_json_whitespace(unit: u16) -> bool {
@@ -537,12 +569,19 @@ impl JsonUnit for u8 {
     fn ends_string_run(self) -> bool {
         STRING_RUN_ENDS[usize::from(self)]
     }
-    /// A word of bytes at a time (`json_escape_bytes`, the bytes that end a run), then the
-    /// rest one by one.
+    /// Sixteen bytes at a time where SSE2 is the baseline (`sse2_run_blocks`), then a word
+    /// at a time (`json_escape_bytes`, the bytes that end a run), then the rest one by one.
     #[inline(always)]
     fn string_run_length(units: &[u8]) -> Option<usize> {
-        let (words, remainder) = units.as_chunks::<WORD_BYTES>();
-        let mut offset = 0;
+        #[cfg(target_arch = "x86_64")]
+        let offset = match sse2_run_blocks(units) {
+            Ok(length) => return Some(length),
+            Err(scanned) => scanned,
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let offset = 0;
+        let (words, remainder) = units[offset..].as_chunks::<WORD_BYTES>();
+        let mut offset = offset;
         for word in words {
             let word = u64::from_le_bytes(*word);
             let ends = json_escape_bytes(word);
@@ -1224,14 +1263,19 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
                         JsonFrame::Object { layout, .. } => Some(layout),
                         JsonFrame::Array { .. } => None,
                     });
-                    let mut layout = self.builder.layout(parent);
+                    let layout = self.builder.layout(parent);
                     let (values, keys) = (self.values.len(), self.keys.len());
                     if self.token() == Some(JSON_OBJECT_END) {
                         self.index += 1;
                         self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
                     } else {
-                        self.member_key(&mut layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
+                        // The frame holds the layout its keys advance in place: a copy made
+                        // right after their stores would read them back through memory.
                         frames.push(JsonFrame::Object { values, keys, layout });
+                        let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
+                            unreachable!("the frame is an object's")
+                        };
+                        self.member_key(layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
                         continue 'value;
                     }
                 }
@@ -2627,11 +2671,11 @@ mod tests {
 
     #[test]
     fn byte_string_runs_end_where_each_byte_scan_ends() {
-        // Every byte value at every position of a word and past it, after every prefix byte
-        // class, as the per-unit definition finds it.
+        // Every byte value at every position of two 16-byte blocks, a word and past them,
+        // after every prefix byte class, as the per-unit definition finds it.
         let fill = [b'a', 0x7f, 0x80, 0xff, b' ', b'!'];
         for &prefix in &fill {
-            for length in 0..(2 * WORD_BYTES + 3) {
+            for length in 0..(4 * WORD_BYTES + 3) {
                 for position in 0..=length {
                     for ending in 0..=u8::MAX {
                         let mut units = vec![prefix; length];
