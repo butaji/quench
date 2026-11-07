@@ -333,7 +333,7 @@ impl<H: Host> Vm<H> {
         for (tag, imported) in module.tags.iter().zip(tags) {
             values.push(imported.unwrap_or_else(|| {
                 self.heap.alloc(Cell::WasmTag {
-                    declarations: module.signatures.declarations.clone(),
+                    declarations: Box::new(module.signatures.declarations.clone()),
                     ty: tag.ty,
                 })
             }));
