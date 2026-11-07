@@ -2081,6 +2081,11 @@ fn emit_js_guarded_return(
     builder.switch_to_block(returns);
     builder.seal_block(returns);
     builder.ins().store(MemFlagsData::trusted(), value, result_pointer, 0);
+    emit_js_return_status(builder, pc);
+}
+
+/// Complete the frame from general dispatch: the value is already in the completion record.
+fn emit_js_return_status(builder: &mut RegionCore<'_>, pc: usize) {
     let status = builder.ins().iconst(
         types::I32,
         i64::from(JS_GENERAL_RETURN_STATUS_BASE)
@@ -2769,11 +2774,25 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return Vec::new(); }
     // Both binding-time divisions plan the full call graph. Static bindings use
-    // actual function admission and the same exact suspended-frame recovery.
-    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc|
-        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
-            .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
-        &|id| program.function_get(id as usize)) else { return Vec::new(); };
+    // actual function admission and the same exact suspended-frame recovery. A unit
+    // no region admits is replanned under half the inlining budget, as the lane tier
+    // replans one its code budget rejects, down to the body without inlined callees.
+    let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
+    loop {
+        let Some(unit) = lane_unit::with_budget(program, function_id, function, budget, &|caller, pc|
+            targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
+                .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
+            &|id| program.function_get(id as usize), None) else { return Vec::new(); };
+        let regions = lower_static_typed_unit(program, function_id, &unit, isa, helper_symbol);
+        if !regions.is_empty() || unit.frames.is_empty() || budget == 0 { return regions; }
+        budget /= 2;
+    }
+}
+
+/// The static typed regions of one planned unit of `function_id`.
+fn lower_static_typed_unit(program: &ResidualProgram, function_id: u32, unit: &lane_unit::Unit,
+    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
+{
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
@@ -2799,7 +2818,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
-            lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
+            lane_region::lower(program, function_id, unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
                 &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
@@ -3112,12 +3131,7 @@ pub(super) fn lower_js_general_dispatch(
             builder
                 .ins()
                 .store(MemFlagsData::trusted(), value, result_pointer, 0);
-            let status = builder.ins().iconst(
-                types::I32,
-                i64::from(JS_GENERAL_RETURN_STATUS_BASE)
-                    + i64::try_from(pc).expect("bounded general-dispatch PC"),
-            );
-            builder.ins().return_(&[status]);
+            emit_js_return_status(&mut builder, pc);
             builder.switch_to_block(fallback);
             emit_js_step_fallback(
                 &mut builder,
@@ -3945,31 +3959,44 @@ pub(super) fn lower_js_general_dispatch(
                 )
             })
             .flatten();
-        // A returning result's flags are the return bit alone (`result_target`).
-        let result_flags_plain = instruction.result_flags() == 0
-            || (instruction.returns_from_frame() && result_target.is_some());
+        // A returning result's flags are the return bit alone; its value completes the frame.
+        let arithmetic_returns = numeric_binary && instruction.returns_from_frame();
         let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
-            && result_flags_plain
+            && (instruction.result_flags() == 0
+                || (arithmetic_returns && instruction.result_flags() == RETURN_REGISTER))
             && !instruction.writes_current_this()
-            && result_target.and_then(register_offset).is_some()
+            && (arithmetic_returns || result_target.and_then(register_offset).is_some())
+            && (arithmetic_returns || result_next.is_some())
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
-        if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
-            (numeric_result, result_next, arithmetic, operands)
+        if let (true, Some(arithmetic), Some((left_operand, right_operand))) =
+            (numeric_result, arithmetic, operands)
         {
             let fallback = builder.create_block();
-            let destination = result_target
-                .and_then(register_offset)
-                .expect("prevalidated JS numeric destination");
+            let registers = arguments;
+            // A returning result proves no interrupt is pending before any effect, then
+            // lands in the completion record; a plain one lands in its register.
+            let (arguments, destination, next) = if arithmetic_returns {
+                let compute = builder.create_block();
+                let interrupted = emit_js_interrupt_requested(&mut builder);
+                builder.ins().brif(interrupted, fallback, &[], compute, &[]);
+                builder.switch_to_block(compute);
+                (result_pointer, 0, builder.create_block())
+            } else {
+                let destination = result_target
+                    .and_then(register_offset)
+                    .expect("prevalidated JS numeric destination");
+                (arguments, destination, result_next.expect("prevalidated JS numeric continuation"))
+            };
             let left_bits = read_js_tagged_operand(
                 &mut builder,
                 program,
                 left_operand,
-                arguments,
+                registers,
                 &register_offset,
             )
             .expect("prevalidated JS numeric operand");
@@ -3977,7 +4004,7 @@ pub(super) fn lower_js_general_dispatch(
                 &mut builder,
                 program,
                 right_operand,
-                arguments,
+                registers,
                 &register_offset,
             )
             .expect("prevalidated JS numeric operand");
@@ -4011,6 +4038,10 @@ pub(super) fn lower_js_general_dispatch(
                 destination,
             );
             builder.ins().jump(next, &[]);
+            if arithmetic_returns {
+                builder.switch_to_block(next);
+                emit_js_return_status(&mut builder, pc);
+            }
             builder.switch_to_block(fallback);
             emit_js_step_fallback(
                 &mut builder,
@@ -4033,7 +4064,7 @@ pub(super) fn lower_js_general_dispatch(
         let bitwise_result = numeric_binary
             && bitwise.is_some()
             && instruction.numeric_local_target().is_none()
-            && result_flags_plain
+            && instruction.result_flags() == 0
             && !instruction.writes_current_this()
             && result_target.and_then(register_offset).is_some()
             && operands.is_some_and(|(left, right)| {
