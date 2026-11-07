@@ -10,11 +10,11 @@ vm/call_printer.rs CallMethod 2
 vm/call_printer.rs CallSpread 1
 vm/call_printer.rs Construct 1
 vm/compiled.rs COUNT 1
-vm/compiled.rs Call 6
+vm/compiled.rs Call 5
 vm/compiled.rs CallArray 1
 vm/compiled.rs CallKnown 5
 vm/compiled.rs Construct 1
-vm/compiled.rs GetField 8
+vm/compiled.rs GetField 7
 vm/compiled.rs GetIndex 2
 vm/compiled.rs IncDec 2
 vm/compiled.rs Jump 4

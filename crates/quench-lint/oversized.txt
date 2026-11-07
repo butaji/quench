@@ -1341,9 +1341,9 @@ file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1540
 file-lines crates/quench-runtime/src/compile.rs 4459
 file-lines crates/quench-runtime/src/compile/ast.rs 1306
-file-lines crates/quench-runtime/src/compile/ast/call.rs 709
-file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
-file-lines crates/quench-runtime/src/compile/ast/expression.rs 980
+file-lines crates/quench-runtime/src/compile/ast/call.rs 708
+file-lines crates/quench-runtime/src/compile/ast/destructure.rs 991
+file-lines crates/quench-runtime/src/compile/ast/expression.rs 970
 file-lines crates/quench-runtime/src/compile/ast/statement.rs 854
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2017
@@ -2522,10 +2522,10 @@ function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCom
 function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::binding_iterator_step 57
 function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::end_binding_iterator_protection 49
 function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::load_assignment_reference 72
-function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::prepare_assignment_reference 64
+function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::prepare_assignment_reference 62
 function-lines crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::store_assignment_reference 51
 function-lines crates/quench-runtime/src/compile/ast/disposal.rs::FunctionCompiler<'_,'_>::emit_disposal_scope_exit 44
-function-lines crates/quench-runtime/src/compile/ast/expression.rs::FunctionCompiler<'_,'_>::computed_get 62
+function-lines crates/quench-runtime/src/compile/ast/expression.rs::FunctionCompiler<'_,'_>::computed_get 50
 function-lines crates/quench-runtime/src/compile/ast/expression.rs::FunctionCompiler<'_,'_>::expression_at_current_position 169
 function-lines crates/quench-runtime/src/compile/ast/expression.rs::FunctionCompiler<'_,'_>::static_atom_reference 49
 function-lines crates/quench-runtime/src/compile/ast/expression.rs::FunctionCompiler<'_,'_>::store_atom_with_initialization 88

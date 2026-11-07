@@ -35,6 +35,12 @@ fn folded(value: &Expression<'_>, depth: u32, names: Names<'_>) -> Option<Consta
         }
         Expression::BooleanLiteral(value) => Some(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => Some(Constant::Null),
+        // A template without substitutions is its one cooked text, as a string literal is.
+        Expression::TemplateLiteral(value) if value.expressions.is_empty() => {
+            let [text] = value.quasis.as_slice() else { return None };
+            text.value.cooked.as_ref()?;
+            Some(super::string::template_constant(&text.value))
+        }
         Expression::UnaryExpression(value) => unary_at(value, depth, names),
         Expression::BinaryExpression(value) => binary_at(value, depth.checked_sub(1)?, names),
         value => folded(transparent(value)?, depth, names),
