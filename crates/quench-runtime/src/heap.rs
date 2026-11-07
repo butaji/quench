@@ -37,6 +37,7 @@ mod records;
 mod root;
 mod slots;
 mod snapshot;
+mod string_alloc;
 mod string_atoms;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
@@ -1582,50 +1583,6 @@ impl Heap {
 
     /// `alloc(Cell::Iterator(..))` without boxing the iterator first: an iterator record
     /// while one is free.
-    /// Allocates a string record. Strings have no legacy-slot form, so their space holds as
-    /// many records as the legacy slots do (`STRING_RECORD_CAPACITY`); exhausting it is out
-    /// of memory, as exhausting the slots is.
-    pub(crate) fn alloc_string(&mut self, string: JsString) -> Value {
-        let Some(unit) = string.single_ascii_unit() else {
-            return self.alloc_string_record(string);
-        };
-        let strings = self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; ASCII_UNITS]));
-        let cached = strings[usize::from(unit)];
-        if !cached.is_undefined() {
-            return cached;
-        }
-        let value = self.alloc_string_record(string);
-        if let Some(strings) = &mut self.ascii_unit_strings {
-            strings[usize::from(unit)] = value;
-        }
-        value
-    }
-
-    fn alloc_string_record(&mut self, string: JsString) -> Value {
-        #[cfg(feature = "profile-aggregate")]
-        {
-            let kind = CellKind::String as usize;
-            // Do not materialize ropes in the profiler: production charges the flat payload
-            // only when it already exists. `capacity()` flattens a rope and perturbs the
-            // allocation shape the profile is meant to observe.
-            let bytes = string.flat_unit_bytes();
-            self.gc_profile.allocated_kinds[kind] += 1;
-            *self.allocated_variants.entry("string").or_default() += 1;
-            self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
-        }
-        self.charge_materialized_text();
-        let payload = string.flat_unit_bytes();
-        let weight = 1 + payload / payload_unit();
-        self.payload_bytes = self.payload_bytes.saturating_add(payload);
-        self.allocated += weight;
-        self.total_allocations += 1;
-        match self.string_records.try_insert(string) {
-            Ok(record_id) => Value::direct_string(record_id),
-            Err(_) => panic!("string record space exhausted"),
-        }
-    }
-
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Iterator(Box::new(iterator)));
