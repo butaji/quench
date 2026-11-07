@@ -3356,6 +3356,9 @@ pub(crate) enum LiteralStep {
     Array(u32),
     /// An object of an object site's keys, one value each.
     Object(u32),
+    /// The value of the JSON text at this byte of the program's source: a data script's
+    /// literal (`compile::data_literal`), which the source holds in place of its tree.
+    Json(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4178,6 +4181,14 @@ impl ResidualProgram {
     /// Original compiler text used by diagnostics and Function.prototype.toString.
     pub fn source_text(&self) -> Option<&str> {
         self.source.as_ref().map(|source| source.text.as_ref())
+    }
+
+    /// The source from compiled byte `start` on, where a data script's literal starts
+    /// (`LiteralStep::Json`); `None` when the program keeps no text there.
+    pub(crate) fn data_literal_text(&self, start: u32) -> Option<&str> {
+        let source = self.source.as_ref()?;
+        let text: &str = source.text.as_ref();
+        text.get(start.checked_sub(source.base)? as usize..)
     }
 
     /// Resolve source-derived native error descriptions before publication.

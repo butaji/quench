@@ -48,6 +48,7 @@ pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
 pub const GLOBAL_SCRIPT_GOAL: &str = "global-script";
 pub const GLOBAL_SCRIPT_SOURCE_NAME: &str = "<global-script>";
 mod binding_time;
+mod data_literal;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
@@ -1083,6 +1084,7 @@ impl Engine {
                 expected_shape,
                 lazy,
                 released,
+                DataLiterals::Admitted,
             )
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
@@ -1116,10 +1118,43 @@ impl Engine {
         expected_shape: ParsedProgramShape,
         lazy: bool,
         released: ReleasedRecords,
+        data_literals: DataLiterals,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let mut parsed = lazy_bodies::parse(&allocator, &normalized, source_type, lazy.then_some(0));
+        // A data script's literal is parsed as an empty one (`data_literal`). Replay
+        // verification compares the tree with one parsed from the text, so it keeps it.
+        let located = (data_literals == DataLiterals::Admitted
+            && !source_type.is_typescript()
+            && !cfg!(feature = "verify-replay"))
+        .then(|| data_literal::locate(&normalized))
+        .flatten();
+        let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
+        let allocator = Allocator::with_capacity(parsed_text.len().saturating_mul(6));
+        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0));
+        let data_literal = match &located {
+            Some(literal) if parsed.diagnostics.is_empty()
+                && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
+            Some(_) => {
+                drop(parsed);
+                return Self::specialize_parsing(
+                    source,
+                    name,
+                    mode,
+                    atom_prefix,
+                    source_type,
+                    module_goal,
+                    capture_script_completion,
+                    inherited_strict,
+                    private_name_overrides,
+                    annex_b_forbidden_names,
+                    expected_shape,
+                    lazy,
+                    released,
+                    DataLiterals::Parsed,
+                );
+            }
+            None => None,
+        };
         #[cfg(feature = "verify-replay")]
         if !lazy {
             lazy_bodies::verify(name, &normalized, &parsed.program);
@@ -1344,6 +1379,7 @@ impl Engine {
             None
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
+        compiler.data_literal = data_literal;
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1378,9 +1414,10 @@ impl Engine {
             );
         }
         // The tree is the largest structure of a compilation; the passes that finish the
-        // program do not read it.
+        // program do not read it, nor the text it was parsed from when that was a copy.
         drop(parsed);
         drop(allocator);
+        drop(located);
         let (compiler, module) = emitted?;
         let program = compiler.finish(module)?;
         #[cfg(feature = "aot")]
@@ -1898,6 +1935,9 @@ struct Compiler<'a> {
     object_sites: SiteTable<'a, ObjectSite>,
     regexp_literal_sites: SiteTable<'a, crate::bytecode::RegExpLiteralSite>,
     literal_templates: SiteTable<'a, Box<[crate::bytecode::LiteralStep]>>,
+    /// The source start of a data script's literal, which the tree holds as an empty one
+    /// (`data_literal`).
+    data_literal: Option<u32>,
     superinstructions: SiteTable<'a, Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
@@ -1937,6 +1977,15 @@ struct Compiler<'a> {
     /// The compile-cache records of the functions released during the load, when its
     /// program will be encoded (`ReleasedRecords::Encoded`).
     load_encoding: Option<crate::bytecode::LoadEncoding>,
+}
+
+/// Whether a compilation may parse a data script's literal as an empty one
+/// (`data_literal`), or parses the text as it is, as after a located literal the parse did
+/// not admit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DataLiterals {
+    Admitted,
+    Parsed,
 }
 
 /// What a compilation keeps of each record it releases during its load
@@ -2436,6 +2485,7 @@ impl<'a> Compiler<'a> {
             object_sites: SiteTable::default(),
             regexp_literal_sites: SiteTable::default(),
             literal_templates: SiteTable::default(),
+            data_literal: None,
             superinstructions: SiteTable::default(),
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
