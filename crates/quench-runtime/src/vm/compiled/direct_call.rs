@@ -56,7 +56,7 @@ fn numeric_arguments(arguments: &[Value], numbers: &mut [f64], int32: impl Fn(us
             Some(integer) => f64::from(integer),
             None => {
                 let value = argument.as_number()?;
-                if int32(index) && !super::super::js_compiled::is_i32_number(value) { return None; }
+                if int32(index) && !super::facts::is_int32_number(value) { return None; }
                 value
             }
         };

@@ -8,7 +8,7 @@ use std::{path::PathBuf, process::ExitCode};
 /// as the runtime's later initialization boundaries.
 #[cfg(feature = "profile-memory")]
 pub(crate) fn profile_startup_boundary(phase: &str) {
-    if std::env::var_os("QUENCH_MEMORY").is_some() {
+    if quench_runtime::trace::Channel::Memory.on() {
         quench_runtime::report_allocator_memory(phase);
     }
 }

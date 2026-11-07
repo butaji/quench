@@ -12,7 +12,6 @@
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Constant, ControlFlowLayout, Op, Operand, OperandKind, Register, WideInstruction};
-use crate::value::Value;
 use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
@@ -140,26 +139,8 @@ fn register(operand: Operand) -> Option<Register> {
     (operand.kind()? == OperandKind::Register).then(|| operand.register_index()).flatten()
 }
 
-/// The value a constant denotes where it is an immediate (no heap allocation): numbers,
-/// booleans, `null` and `undefined`.
-pub(super) fn immediate(constant: &Constant) -> Option<Value> {
-    match constant {
-        Constant::Number(number) => Some(Value::number(*number)),
-        Constant::Boolean(value) => Some(Value::boolean(*value)),
-        Constant::Null => Some(Value::NULL),
-        Constant::Undefined => Some(Value::UNDEFINED),
-        _ => None,
-    }
-}
-
-/// A numeric constant is a static semantic value, regardless of machine view.
-pub(super) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
-    (operand.kind() == Some(OperandKind::Constant)).then_some(())?;
-    constants.get(usize::from(operand.payload())).and_then(immediate).and_then(Value::as_number)
-}
-
 /// The semantic type of an operand, independent of its selected machine view.
-pub(super) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
+pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
         Some(OperandKind::Register) => register_type(operand.payload()),
         Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
@@ -174,11 +155,6 @@ fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
             set(types, register, Type::NUMBER);
         }
     }
-}
-
-/// Whether an immediate is an int32 Number in its tagged encoding.
-pub(super) fn is_int32(value: Value) -> bool {
-    Type::immediate(value).is_subtype(Type::INT32)
 }
 
 /// Proves each register operand int32: the instruction leaves where one is not.
@@ -304,9 +280,9 @@ fn transfer(
                 set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
-                ControlFlowLayout::Fallthrough if matches!(op, Op::Nop | Op::LoadThis | Op::LoadCapture
-                    | Op::GetField | Op::GetIndex | Op::SetField | Op::SetFieldStrict
-                    | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex) => Flow::Next,
+                ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op), (true, _)
+                    | (_, Op::Nop | Op::LoadThis | Op::LoadCapture | Op::GetIndex
+                    | Op::SetIndex)) => Flow::Next,
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
@@ -537,3 +513,11 @@ mod tests {
         assert!(facts.types.is_empty());
     }
 }
+
+#[path = "facts/immediates.rs"]
+mod immediates;
+pub(in crate::vm) use immediates::{constant_number, immediate, is_int32, is_int32_number};
+
+#[cfg(test)]
+#[path = "facts/decode_ratchet.rs"]
+mod decode_ratchet;

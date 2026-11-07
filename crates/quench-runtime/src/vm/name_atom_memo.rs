@@ -62,7 +62,7 @@ impl NameAtomMemo {
 
     #[cfg(feature = "profile-memory")]
     pub(super) fn report_queries(&self) {
-        if std::env::var_os("QUENCH_NAME_ATOM_COUNTS").is_some() {
+        if crate::trace::Channel::NameAtoms.on() {
             eprintln!("{{\"kind\":\"quench-name-atom-counts\",\"scope\":\"vm_lifetime\",\"names\":{:?},\"counts\":{:?}}}", QueryOutcome::NAMES, self.query_counts.get());
         }
     }

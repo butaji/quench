@@ -967,7 +967,7 @@ impl ShiftSpans {
 }
 
 /// Recompiles every replayable function of `program` and appends to the file named by
-/// `QUENCH_REPLAY_LOG` one line per function whose record or table entries differ from the
+/// the `replay` trace channel's path one line per function whose record or table entries differ from the
 /// load's, or that does not recompile, and one summary line.
 #[cfg(feature = "verify-replay")]
 pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
@@ -975,7 +975,7 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
     let Some(replay) = program.replay.as_deref() else {
         return;
     };
-    let Some(path) = std::env::var_os("QUENCH_REPLAY_LOG") else {
+    let Some(path) = crate::trace::Channel::Replay.value() else {
         return;
     };
     let mut ids: Vec<u32> = replay.functions.keys().copied().collect();
