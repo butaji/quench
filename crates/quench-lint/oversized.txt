@@ -1715,7 +1715,6 @@ function-lines crates/quench-node/src/aot/graph/loader_bindings.rs::LoaderBindin
 function-lines crates/quench-node/src/aot/graph/loader_bindings.rs::LoaderBindings<'s>::expression 77
 function-lines crates/quench-node/src/aot/graph/loader_bindings.rs::LoaderBindings<'s>::require_call 56
 function-lines crates/quench-node/src/bin/quench-node.rs::limit_thread_cache 58
-function-lines crates/quench-node/src/bin/quench-node.rs::main 47
 function-lines crates/quench-node/src/host/hmr.rs::HmrState::poll 45
 function-lines crates/quench-node/src/host/hmr.rs::accept_plan 50
 function-lines crates/quench-node/src/host/hmr.rs::replace_es_module 66
