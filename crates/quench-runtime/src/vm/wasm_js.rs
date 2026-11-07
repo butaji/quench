@@ -1839,7 +1839,7 @@ impl<H: Host> Vm<H> {
     /// The declarations of the module that defined `table`'s element type.
     fn wasm_table_declarations(&self, table: Value) -> Option<crate::WasmTypes> {
         match self.heap.get(table) {
-            Some(Cell::WasmTable { declarations, .. }) => Some((**declarations).clone()),
+            Some(Cell::WasmTable { declarations, .. }) => Some(declarations.clone()),
             _ => None,
         }
     }

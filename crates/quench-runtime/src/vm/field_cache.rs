@@ -116,12 +116,3 @@ pub(super) enum FieldCacheProbe {
     Ineligible,
 }
 
-impl FieldCacheProbe {
-    /// The value a hit found.
-    pub(super) fn hit(self) -> Option<Value> {
-        match self {
-            Self::Hit(value) => Some(value),
-            Self::OrdinaryMiss | Self::Ineligible => None,
-        }
-    }
-}

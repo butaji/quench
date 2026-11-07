@@ -1064,9 +1064,8 @@ impl LaneView {
     }
 
     /// Starts the function's frameless activations at the tier prologue, which enters the
-    /// JavaScript tier with its `params` parameters and, where it `binds_this`, its receiver
-    /// (`lane_tier_prologue`). The prologue's fields hold those: `imm` the function, `a` its
-    /// parameter count, `b` whether it binds its own `this`.
+    /// JavaScript tier with its `params` parameters (`lane_tier_prologue`). Its fields: `imm`
+    /// the function, `a` its parameter count, `b` whether it binds `this` (`lane_body_entry`).
     fn claim_for_tier(&self, handler: Handler, function: u32, params: u16, binds_this: bool) {
         let prologue = self.prologue.get();
         // SAFETY: the lane runs on the view's thread, and nothing reads the prologue while
@@ -13809,8 +13808,8 @@ unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value]
 }
 
 /// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
-/// `receiver` and `args`: dense `push` and `pop`, `charCodeAt` and collection lookups in
-/// place, else `lane_string_or_native_call`. `None` leaves the call to the general path,
+/// `receiver` and `args`: the in-place cases every tier shares (`Vm::steady_native_value`),
+/// the lane's own, else `lane_string_or_native_call`. `None` leaves the call to the general path,
 /// which raises an error the call stashed in `Vm::lane_raised`. Out of line: its calls take
 /// stack temporaries, which a handler inlining them would hold on its common path.
 #[inline(never)]
@@ -13841,29 +13840,7 @@ fn lane_native_value<H: Host>(
                 return value;
             }
         }
-        Native::ArrayPush => return vm.array_push_dense(receiver, args),
-        Native::ArrayPop => return vm.array_pop_dense(receiver),
-        Native::StringCharCodeAt if !args.is_empty() => {
-            if let Some(value) = string_char_code_at(vm, receiver, args[0]) {
-                return Some(value);
-            }
-        }
-        Native::StringCharAt if !args.is_empty() => {
-            if let Some(value) = string_char_at_ascii(vm, receiver, args[0]) {
-                return Some(value);
-            }
-        }
-        Native::MapGet
-        | Native::MapHas
-        | Native::SetHas
-        | Native::WeakMapGet
-        | Native::WeakMapHas
-        | Native::WeakSetHas => {
-            let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-            if let Some(value) = vm.pure_collection_lookup(native, receiver, key) {
-                return Some(value);
-            }
-        }
+        _ if let Some(value) = vm.steady_native_value(native, receiver, args) => return Some(value),
         Native::MapSet if vm.map_set(receiver, args) => {
             note_allocation(vm);
             return Some(receiver);
@@ -13873,11 +13850,6 @@ fn lane_native_value<H: Host>(
             if let Some(object) = vm.object_create(proto) {
                 note_allocation(vm);
                 return Some(object);
-            }
-        }
-        Native::ArrayIsArray => {
-            if let Some(holds) = vm.steady_is_array(args.first().copied().unwrap_or(Value::UNDEFINED)) {
-                return Some(if holds { Value::TRUE } else { Value::FALSE });
             }
         }
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
@@ -13909,6 +13881,27 @@ mod native_calls;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
+
+impl<H: Host> Vm<H> {
+    /// A native call's value where its common case completes in place, without guest code,
+    /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
+    /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
+    /// own steps begin with the same cases.
+    pub(super) fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        let first = args.first().copied();
+        match native {
+            Native::ArrayPush => self.array_push_dense(receiver, args),
+            Native::ArrayPop => self.array_pop_dense(receiver),
+            Native::StringCharCodeAt => string_char_code_at(self, receiver, first?),
+            Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
+            Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
+            | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
+            Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
+                .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
+            _ => None,
+        }
+    }
+}
 
 /// Whether liveness proves the result register of the running function's call record `i`
 /// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
@@ -15866,14 +15859,14 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (function, params) = (i.imm(), usize::from(i.a));
         // SAFETY: the activation just set the context to its own function's.
-        let (program, base) = unsafe { ((*cx).program, (*cx).base) };
+        let base = unsafe { (*cx).base };
         // SAFETY: the program's views outlive the lane run.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         // SAFETY: the activation's registers hold its parameters from its first.
         let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         let entered = own
-            .and_then(|own| lane_tier_direct(vm, own, program, parameters))
-            .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
+            .and_then(|own| lane_tier_direct(vm, own, parameters))
+            .or_else(|| lane_tier_enter(cx, function, own, parameters));
         if let Some((pc, register, value)) = entered {
             r.set(register, value);
             // SAFETY: the tier returns a PC of the function, whose records are contiguous.
@@ -15944,20 +15937,10 @@ script_handler! {
 fn lane_tier_direct<H: Host>(
     vm: &mut Vm<H>,
     own: &LaneView,
-    program: ProgramId,
     parameters: &[Value],
 ) -> Option<(usize, crate::bytecode::Register, Value)> {
-    // A leaf run reads only the entry and the parameters, and nothing it calls reaches this
-    // cell, so it borrows the entry in place.
-    // SAFETY: no other reference into the cell is live during the leaf run.
-    if let Some(entered) = unsafe { &*own.tier_direct.as_ptr() }.as_ref()
-        .and_then(|direct| direct.run_leaf(parameters))
-    {
-        // A retired artifact's entry is dropped on the next general run.
-        if entered.is_some() { return entered; }
-    }
     let direct = own.tier_direct.take()?;
-    let entered = vm.run_direct_tier_entry(&direct, program, parameters);
+    let entered = vm.run_direct_tier_entry(&direct, parameters);
     if !direct.retired() {
         own.tier_direct.set(Some(direct));
     }
@@ -15973,14 +15956,12 @@ fn lane_tier_direct<H: Host>(
 fn lane_tier_enter<H: Host>(
     cx: *mut LaneContext<H>,
     function: u32,
-    binds_this: bool,
     own: Option<&LaneView>,
     parameters: &[Value],
 ) -> Option<(usize, crate::bytecode::Register, Value)> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
-    let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
-    let receiver = (binds_this && !this.is_deleted()).then_some(this);
+    let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     // A lane body runs on the activation itself, so it takes the function from the
     // frame-entering tier: the activation warms toward it in the lane, and a function whose
     // body declines runs in the lane, as it does without lane bodies.
@@ -15995,7 +15976,7 @@ fn lane_tier_enter<H: Host>(
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
     let may_claim = vm.js_tier_may_claim(code, program, function);
     if may_claim
-        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
+        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters)
     {
         if let Some(own) = own
             && let Some(direct) = vm.direct_tier_entry(code, program, function)
@@ -16384,7 +16365,7 @@ fn lane_body_inlined_activation<H: Host>(
 /// `context` is the running lane's context, whose activation's registers hold the caller's
 /// state; nothing the call runs allocates or collects.
 /// A lane body's read of a capture `packed` names (depth in its high half, slot in its low),
-/// by the lane's own non-effectful lookup (`lane_capture_value`): its value, or
+/// by the lane's own `LoadCapture` lookup (`lane_read_capture_value`): its value, or
 /// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
 pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
     // As `lane_body_call`: static regions recover captures through their semantic operation.
@@ -16395,9 +16376,9 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
         Some(env) => {
             let vm = unsafe { vm(cx) };
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
-            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.plain_capture(unsafe { &*slots }, root, slot).0)
         }
-        None => lane_capture_value(cx, depth, slot),
+        None => lane_read_capture_value::<H, true>(cx, depth, slot).0,
     };
     value
         .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
