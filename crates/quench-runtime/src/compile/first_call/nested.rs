@@ -14,12 +14,15 @@ pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
 /// One scope level a stub's function closes over: its bindings by name and slot.
 pub(crate) type ScopeLevel = Rc<[(Box<str>, u16)]>;
 
+/// A program's nested stubs by id, sorted, each with the scopes its chunk compiles against.
+pub(crate) type FirstCallStubs = Box<[(u32, Rc<FirstCallScopes>)]>;
+
 /// What a nested stub's chunk compiles its function against: the scopes it closes over,
 /// innermost first, and the strictness it inherits.
 #[derive(Debug)]
 pub(crate) struct FirstCallScopes {
-    pub(crate) levels: Box<[ScopeLevel]>,
-    pub(crate) strict: bool,
+    levels: Box<[ScopeLevel]>,
+    strict: bool,
 }
 
 /// The free names of `program`, a lazily parsed function alone (`BodyFacts::check`): the
@@ -74,6 +77,18 @@ impl<'f> FreeNameCheck<'f> {
 }
 
 impl FirstCallScopes {
+    pub(crate) fn new(levels: Box<[ScopeLevel]>, strict: bool) -> Self {
+        Self { levels, strict }
+    }
+
+    pub(crate) fn levels(&self) -> &[ScopeLevel] {
+        &self.levels
+    }
+
+    pub(crate) fn strict(&self) -> bool {
+        self.strict
+    }
+
     /// The chain the chunk's function closes over, its names interned in `atoms`.
     fn chain(&self, atoms: &mut CompilerAtoms<'_>) -> ScopeChain {
         ScopeChain::new(

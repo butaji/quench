@@ -29,11 +29,11 @@ fn function_bodies_compiled_more_than_once_compile_from_their_source() {
 }
 
 fn output(source: &str) -> Vec<String> {
-    let host = TestHost::default();
-    let view = host.clone();
-    let program = Engine::specialize(source, "test.js").unwrap();
-    Runtime::new(host).execute(&program).unwrap();
-    view.lines().clone()
+    crate::test_host::on_worker_stack(|| {
+        let (host, program) = (TestHost::default(), Engine::specialize(source, "test.js").unwrap());
+        Runtime::new(host.clone()).execute(&program).unwrap();
+        host.lines().clone()
+    })
 }
 
 #[test]

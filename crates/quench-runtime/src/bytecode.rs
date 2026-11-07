@@ -2722,7 +2722,9 @@ impl Function {
                 && load.result_flags() == 0
                 && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
         };
-        let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else { return None };
+        let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else {
+            return None;
+        };
         let forwards_parameters = usize::from(window.count) == count
             && loads.iter().enumerate().all(|(index, load)| {
                 load.op() == Op::LoadLocalPlain
@@ -3838,6 +3840,8 @@ pub struct ResidualProgram {
     pub(crate) superinstructions: Vec<Superinstruction>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
+    pub(crate) first_call_scopes: crate::compile::first_call::FirstCallStubs,
     /// The records a decoded program keeps encoded until their functions' first read.
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
@@ -3845,10 +3849,9 @@ pub struct ResidualProgram {
     /// The index of the `undefined` constant, which every compiled program holds and an
     /// unlowered record's lowering reads, derived on first use.
     pub(crate) undefined_constant: std::cell::OnceCell<u32>,
-    /// What each function's closures read of the environments they close over, when derived; else a closure keeps its whole chain.
+    /// What each function's closures read of the environments they close over, when the
+    /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
-    /// The scopes each nested first-call stub's chunk compiles against, by stub id; encoded too.
-    pub(crate) first_call_scopes: Box<[(u32, std::rc::Rc<crate::compile::first_call::FirstCallScopes>)]>,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -4123,18 +4126,6 @@ impl ResidualProgram {
         }
         Some(position)
     }
-
-    pub const FORMAT_VERSION: u8 = 136;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = {
-        const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
-        const FORMAT_VERSION_SHIFT: u32 = 16;
-        const DERIVED_FACT_COUNT_SHIFT: u32 = u8::BITS;
-        assert!(DERIVED_FACT_COUNT <= u8::MAX as u32);
-        assert!(CALL_PLAN_FLAG_COUNT <= u8::MAX as u32);
-        ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
-            | ((DERIVED_FACT_COUNT as u64) << DERIVED_FACT_COUNT_SHIFT)
-            | CALL_PLAN_FLAG_COUNT as u64
-    };
 
     /// Whether the entry uses module semantics, including an import-only bootstrap.
     pub fn is_module(&self) -> bool {
