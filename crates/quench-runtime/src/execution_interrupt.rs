@@ -29,24 +29,32 @@ struct PollPage {
 }
 
 impl PollPage {
+    /// Where the page is asked to start; the kernel may place it elsewhere.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    const HINT: usize = 1 << 29;
+
     #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     fn new() -> Option<Self> {
         // The protection granule is a host property (16 KiB on Apple Silicon).
         let bytes = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
         if bytes == 0 { return None; }
-        // Compiled code reads the page at a 32-bit absolute address on x86-64, so every
-        // interrupt's page, not only the first, is placed in the low 2 GiB.
         #[cfg(target_os = "linux")]
-        let placement = libc::MAP_32BIT;
+        let hint = Self::HINT as *mut libc::c_void;
         #[cfg(target_os = "macos")]
-        let placement = 0;
+        let hint = std::ptr::null_mut();
+        // Code addresses the page by a 32-bit displacement: every VM's must lie low, also once
+        // the hint is taken (`MAP_32BIT`).
+        #[cfg(target_os = "linux")]
+        let low = libc::MAP_32BIT;
+        #[cfg(target_os = "macos")]
+        let low = 0;
         // SAFETY: an anonymous private read-only page; the result is checked.
         let pointer = unsafe {
             libc::mmap(
-                std::ptr::null_mut(),
+                hint,
                 bytes,
                 libc::PROT_READ,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | placement,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | low,
                 -1,
                 0,
             )
