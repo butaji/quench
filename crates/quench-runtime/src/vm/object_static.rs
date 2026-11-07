@@ -382,7 +382,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// for-in keys of an object whose prototype chain holds only objects with
-    /// shape-held keys: no Proxy, array, typed array or module namespace. The
+    /// shape-held keys (`shape_lists_enumerable_keys`). The
     /// keys and their order are those of the generic walk; prototypes after
     /// the last one with an enumerable key are skipped, since they can neither
     /// add a key nor shadow one. `None` sends other chains to the generic walk.
@@ -390,14 +390,8 @@ impl<H: Host> Vm<H> {
         let mut chain = Vec::new();
         let mut current = receiver;
         while !current.is_null() {
-            let plain = !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
-                && self.heap.array(current).is_none()
-                && !matches!(self.heap.get(current), Some(Cell::TypedArray { .. }));
-            let object = self.object_data(current).filter(|_| plain)?;
-            if object.is_module_namespace() {
-                return None;
-            }
-            let prototype = object.proto();
+            let plain = self.shape_lists_enumerable_keys(current);
+            let prototype = self.object_data(current).filter(|_| plain)?.proto();
             let keys = self
                 .own_named_keys(current)
                 .into_iter()

@@ -1177,26 +1177,8 @@ impl<H: Host> Vm<H> {
         { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        // A String wrapper's index properties are its text's (`string_wrapper`).
         if let Some(text) = self.heap.string(value).cloned() {
-            for (index, unit) in text.units().iter().enumerate() {
-                let key = self.intern_atom(&index.to_string());
-                let character = self
-                    .heap
-                    .alloc_string(super::wtf16::JsString::from_units(&[unit]));
-                self.set_property_with_attributes(
-                    object,
-                    key,
-                    character,
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: true,
-                        configurable: false,
-                        accessor: false,
-                        getter: None,
-                        setter: None,
-                    },
-                )?;
-            }
             let length = self.length_atom;
             self.set_property_with_attributes(
                 object,

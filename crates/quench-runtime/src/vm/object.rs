@@ -581,11 +581,7 @@ impl<H: Host> Vm<H> {
         self.profile.dictionary_transition(trigger);
     }
     #[inline(always)]
-    pub(super) fn property_attributes(
-        &self,
-        object: Value,
-        key: PropertyKey,
-    ) -> Option<PropertyAttributes> {
+    pub(super) fn property_attributes(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
         if let Some(data) = self.object_data(object)
             && let Some(slot) = self.property_shape_slot(data.shape(), key)
             && let Some(attributes) = self.slot_attributes(data, slot)
@@ -600,6 +596,7 @@ impl<H: Host> Vm<H> {
                 && self.own_array_length(object).is_some())
             .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
         })
+        .or_else(|| self.string_wrapper_index(object, key).map(|_| super::string_wrapper::STRING_INDEX_ATTRIBUTES))
     }
     /// `object`'s attributes for `key` in the descriptor table, which an object only has
     /// entries in once marked (`Object::has_side_descriptors`); any other value is looked up.
@@ -660,7 +657,8 @@ impl<H: Host> Vm<H> {
                 ..attributes
             });
         }
-        let held = atom.is_some_and(|atom| self.own_property(holder, atom).is_some());
+        let held = self.string_wrapper_length(holder).is_some_and(|length| index < length)
+            || atom.is_some_and(|atom| self.own_property(holder, atom).is_some());
         named.filter(|attributes| held || attributes.accessor)
     }
 
@@ -677,6 +675,7 @@ impl<H: Host> Vm<H> {
         !data.has_indexed_descriptors()
             && !self.shape_has_index_key(data.shape())
             && !self.own_element_present(holder, index)
+            && (data.boxed_primitive().is_none() || self.string_wrapper_length(holder).is_none_or(|length| index >= length))
     }
 
     /// Whether any key of `shape` is an array-index name, memoized on the immutable shape

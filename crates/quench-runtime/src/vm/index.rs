@@ -44,11 +44,11 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    /// A string's own integer-indexed property (String exotic [[GetOwnProperty]]): the
+    /// A string's, or its wrapper's, own integer index (String exotic [[GetOwnProperty]]): the
     /// one-unit string at `index`, or `None` past its end, where lookup continues on the
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
-        let text = self.heap.string(string)?;
+        let text = self.heap.string(string).or_else(|| self.heap.string(self.string_wrapper_primitive(string)?))?;
         let unit = text.units().get(index)?;
         // An ASCII unit's string is shared (`ascii_unit_string`), as `charAt`'s is.
         Some(match self.ascii_unit_string(unit) {

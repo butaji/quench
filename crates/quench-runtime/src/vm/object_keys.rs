@@ -17,6 +17,8 @@ impl<H: Host> Vm<H> {
             )
         } else if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
             ((0..self.typed_array_length(object)?).collect(), false)
+        } else if let Some(length) = self.string_wrapper_length(object) {
+            ((0..length).collect(), false)
         } else {
             return None;
         };
@@ -88,11 +90,12 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
-    /// Whether `object`'s string keys all live in its shape: no Proxy, array, typed array or
-    /// module namespace.
-    fn shape_lists_enumerable_keys(&self, object: Value) -> bool {
+    /// Whether `object`'s string keys all live in its shape: no Proxy, array, typed array,
+    /// String wrapper or module namespace.
+    pub(super) fn shape_lists_enumerable_keys(&self, object: Value) -> bool {
         !matches!(self.heap.get(object), Some(Cell::Proxy { .. } | Cell::TypedArray { .. }))
             && self.heap.array(object).is_none()
+            && self.string_wrapper_primitive(object).is_none()
             && self.object_data(object).is_some_and(|data| !data.is_module_namespace())
     }
 

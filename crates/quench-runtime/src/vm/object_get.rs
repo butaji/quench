@@ -585,7 +585,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.heap.ordinary_object(current) else {
                 return false;
             };
-            if data.is_arguments_object() {
+            if data.is_arguments_object() || self.string_wrapper_primitive(current).is_some() {
                 return false;
             }
             current = data.proto();
@@ -1066,7 +1066,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some(v) = self.own_property(object, atom) {
+            if let Some(v) = self.own_property(object, atom).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
                 return Ok(v);
             }
             if let Some(data) = self.heap.object_record(object) {

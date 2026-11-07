@@ -1,5 +1,6 @@
 mod native_operands;
 mod shape_lookup;
+mod string_wrapper;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
@@ -2606,11 +2607,7 @@ impl<H: Host> Vm<H> {
     /// Publishes a finished script root's global lexical bindings; every other activation
     /// returns without leaving the caller.
     #[inline(always)]
-    pub(super) fn persist_global_lexical_bindings(
-        &mut self,
-        program: &ResidualProgram,
-        frame: &Frame,
-    ) {
+    pub(super) fn persist_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         if program.kind == crate::bytecode::ProgramKind::Script && frame.function == ROOT_FUNCTION_ID {
             self.persist_root_global_lexical_bindings(program, frame);
         }
@@ -3141,9 +3138,7 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear();
-        self.shape_attribute_memo.clear();
-        self.atom_strings.clear();
+        self.enumerable_keys.clear(); self.shape_attribute_memo.clear(); self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -3155,8 +3150,9 @@ impl<H: Host> Vm<H> {
         self.intrinsic_natives.clear();
         self.regexp_subjects.clear();
         self.regexp_matchers.clear();
-        self.atom_classes
-            .resize_with(self.atom_text.len(), Default::default);
+        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
+        // Its atoms are the discarded table's.
+        self.json_parse_cache = Default::default();
         self.dynamic_strings = None;
         self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();
