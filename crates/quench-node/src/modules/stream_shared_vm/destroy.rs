@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::state::{self, bits, change, raw_bits};
 use super::{
-    arg, attempt, call_method, captures, closure, emit, emit_key, get, get_slot, intrinsics, is_nullish,
+    arg, attempt, call_method, captures, closure, emit, emit_key, get, get_slot, intrinsic, is_nullish,
     put, set_capture, tick, utils, Context, Outcome, Slot, Tick,
 };
 use quench_runtime::{RootId, RootedError};
@@ -93,7 +93,7 @@ pub(crate) fn destroy_with(c: &mut Context<'_>, stream: RootId, error: RootId, c
         return run_destroy(c, stream, error, callback);
     }
     let after = closure(c, "streamDestroyAfterConstruct", "", &[error, callback])?;
-    let key = intrinsics(c)?.slot(Slot::Destroy);
+    let key = intrinsic(c, |i| i.slot(Slot::Destroy))?;
     call_method(c, stream, "once", &[key, after])?;
     Ok(())
 }
@@ -267,7 +267,7 @@ pub(crate) fn construct(c: &mut Context<'_>, stream: RootId, callback: RootId) -
     for half in halves.each() {
         change(c, half, 0, state::CONSTRUCTED)?;
     }
-    let key = intrinsics(c)?.slot(Slot::Construct);
+    let key = intrinsic(c, |i| i.slot(Slot::Construct))?;
     call_method(c, stream, "once", &[key, callback])?;
     let count = call_method(c, stream, "listenerCount", &[key])?;
     if c.to_number(count)? > 1.0 {
@@ -324,7 +324,7 @@ pub(crate) fn on_construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> O
         }
         None => false,
     };
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     if destroyed {
         emit_key(c, stream, intrinsics.slot(Slot::Destroy), &[error])?;
     } else if c.truthy_rooted(error)? {
@@ -416,7 +416,7 @@ pub(crate) fn destroyer(c: &mut Context<'_>, stream: RootId, error: RootId) -> R
     }
     let destroyed = get(c, stream, "destroyed")?;
     if !c.truthy_rooted(destroyed)? {
-        let key = intrinsics(c)?.slot(Slot::IsDestroyed);
+        let key = intrinsic(c, |i| i.slot(Slot::IsDestroyed))?;
         let yes = c.boolean(true);
         c.set_property_rooted(stream, key, yes, stream)?;
     }

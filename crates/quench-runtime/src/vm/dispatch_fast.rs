@@ -8701,8 +8701,8 @@ fn lane_loop_run<H: Host>(
     }
     match outcome {
         LoopOutcome::NotEntered(widening) => {
-            if let Some(widening) = widening {
-                tier.widened.insert(widening);
+            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
+            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
                 publication.retire();
             }
             LoopContinuation::Jump
@@ -11957,11 +11957,7 @@ impl<H: Host> Vm<H> {
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
-    fn resolve_script_call_target(
-        &mut self,
-        code: &ResidualProgram,
-        callee: Value,
-    ) -> Option<ScriptCallTarget> {
+    fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         #[cfg(feature = "profile-lane-exits")]
@@ -12095,7 +12091,6 @@ impl<H: Host> Vm<H> {
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
-        // Only a function the JS tier never claims (`LaneView::claim_for_tier`) runs as a leaf.
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
@@ -12126,7 +12121,8 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    .filter(|_| !tier_may_claim)
+                    // A leaf runs records the tier may claim after this first resolution.
+                    .filter(|_| !self.js_tier_runs())
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }
@@ -20216,10 +20212,10 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && kind == crate::bytecode::ProgramKind::Wasm {
-                // A Wasm run makes no frameless script call (`LaneContext::script_calls`), so
-                // its import calls take the general path, and the JavaScript call handler,
-                // which reads the context a JavaScript view carries, never runs in Wasm.
+            } else if wasm && matches!(op, Op::Call | Op::StoreCapture) {
+                // Their handlers read the context a JavaScript view carries where a Wasm view
+                // carries its memory; Wasm makes no frameless script call (`script_calls`), and
+                // stores a capture only for the rare `data.drop` and `elem.drop`.
                 None
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)]

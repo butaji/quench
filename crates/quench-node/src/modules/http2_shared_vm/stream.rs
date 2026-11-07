@@ -108,7 +108,7 @@ members!(Member, "http2Stream", [
 ]);
 
 pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let duplex = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Duplex);
+    let duplex = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Duplex))?;
     let stream = constructor(c, Member::Construct, "Http2Stream")?;
     crate::modules::stream_shared_vm::inherit(c, stream, duplex)?;
     let prototype = get(c, stream, "prototype")?;
@@ -475,7 +475,7 @@ fn initialize(c: &mut Context<'_>, this: RootId, session: RootId, options: RootI
     put_bool(c, options, "allowHalfOpen", true)?;
     put_bool(c, options, "decodeStrings", false)?;
     put_bool(c, options, "autoDestroy", false)?;
-    let duplex = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Duplex);
+    let duplex = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Duplex))?;
     c.call_rooted(duplex, this, &[options])?;
     call_method(c, this, "cork", &[])?;
     put_slot(c, this, Slot::Session, session)?;
