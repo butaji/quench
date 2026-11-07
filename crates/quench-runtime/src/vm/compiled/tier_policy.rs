@@ -114,13 +114,17 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
 
+/// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
+/// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
+pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
+
 /// The thresholds every tier controller compares against: the measured row, or under
-/// `tier-stress` the floor row, which makes every eligible site compile on its first chance.
-pub(in crate::vm) const TIERS: Tiers = if cfg!(feature = "tier-stress") { STRESS } else { MEASURED };
+/// `STRESS` the floor row, which makes every eligible site compile on its first chance.
+pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
-const STRESS: Tiers = Tiers {
+const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
     lane_body: LaneBody { warmup_entries: 2, trial_runs: 2, reoptimize_exits: 2, min_instructions: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },

@@ -374,11 +374,8 @@ impl FunctionCompiler<'_, '_> {
                     .then(|| self.resolve_binding_pattern(&item.id))
                     .flatten();
                 let value = self.initializer_value(init, &item.id);
-                if let Some(reference) = reference {
-                    self.bind_pattern_with_reference(&item.id, value, Some(reference));
-                } else {
-                    self.bind_pattern(&item.id, value);
-                }
+                self.bind_pattern_with_reference(&item.id, value, reference);
+                self.record_static_constant(declaration.kind, &item.id, init);
             } else if declaration.kind == VariableDeclarationKind::Let {
                 // `let x;` initializes the binding to undefined at this point.
                 // Leaving the slot in its hoisted TDZ state makes later

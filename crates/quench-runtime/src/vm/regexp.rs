@@ -1839,16 +1839,12 @@ impl<H: Host> Vm<H> {
                         index: 0,
                         done: false,
                         ext: crate::heap::IteratorExt {
-                            position_high: 0,
-                            next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
                                 input,
                                 global: flags.contains('g'),
                                 unicode: flags.contains('u') || flags.contains('v'),
                             })),
-                            helper_running: false,
-                            helper_started: false,
-                            generator: None,
+                            ..Default::default()
                         },
                     }))
                 })

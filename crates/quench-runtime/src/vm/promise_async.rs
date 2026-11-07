@@ -363,7 +363,7 @@ impl<H: Host> Vm<H> {
             (None, Some(generator)) if resume.yielded => {
                 if !resume.rejected {
                     if let Some(record) = self.generator_record_mut(generator) {
-                        record.running = false;
+                        record.stop();
                     }
                     let result = self.iterator_result(value, false)?;
                     return self.promise_resolve_value(p, resume.promise, result);
@@ -405,7 +405,7 @@ impl<H: Host> Vm<H> {
             && let Some(generator) = resume.generator
             && let Some(record) = self.generator_record_mut(generator)
         {
-            record.running = true;
+            record.state = super::activation::GeneratorState::Executing;
         }
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
@@ -448,7 +448,7 @@ impl<H: Host> Vm<H> {
             | super::FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
                 if let Some(generator) = resume.generator {
-                    self.finish_async_generator(p, generator, resume.promise, value, true)?;
+                    self.finish_async_generator(p, generator, resume.promise, value)?;
                 } else {
                     self.promise_resolve_value(p, resume.promise, value)?;
                 }

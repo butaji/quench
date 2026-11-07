@@ -1,6 +1,7 @@
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
+mod stack_capture;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
 const ERROR_OPTIONS_ARGUMENT: usize = 1;
@@ -662,101 +663,11 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        self.materialize_deferred_lane();
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(target) {
             return Err(self.type_error(program, "invalid_argument".into()));
         }
-        let constructor_opt = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let trim_constructor =
-            constructor_opt != Value::UNDEFINED && self.is_function(constructor_opt);
-        let capture_limit = self.error_stack_trace_limit();
-        let limit = capture_limit.unwrap_or(0);
-        let mut records = Vec::with_capacity(self.frames.len().min(limit));
-        let mut source = None;
-        let mut source_captured = false;
-        let mut native_frames = self.native_stack_frames.iter().rev().peekable();
-        // V8's Error.captureStackTrace only trims through constructorOpt when
-        // that function is present in the current stack. Async continuations
-        // commonly resume after the requested function has left the active
-        // stack (for example assert.rejects); in that case retain the full
-        // stack instead of dropping every frame.
-        let constructor_frame = trim_constructor
-            .then(|| {
-                self.frames
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find_map(|(index, frame)| {
-                        (frame.context.callable() == Some(constructor_opt)).then_some(index)
-                    })
-            })
-            .flatten();
-        let mut constructor_found = !trim_constructor || constructor_frame.is_none();
-        let mut hide_identity = false;
-        for (depth, frame) in self.frames.iter().enumerate().rev() {
-            while records.len() < limit
-                && native_frames
-                    .peek()
-                    .is_some_and(|(native_depth, _)| *native_depth > depth)
-            {
-                let (_, name) = native_frames.next().unwrap();
-                if constructor_found {
-                    records.push(CallSiteRecord {
-                        location: CallSiteLocation::Native,
-                        name: CallSiteName::Static(JsString::from_str(name)),
-                        this_value: Value::UNDEFINED,
-                        hide_identity: true,
-                        is_constructor: false,
-                        eval_origin: None,
-                    });
-                }
-            }
-            if records.len() >= limit {
-                break;
-            }
-            // A Script root has no exposed callee identity, but its compiler
-            // source position is still a visible stack frame. Synthetic helper
-            // activations remain hidden.
-            if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
-                continue;
-            }
-            let Some(residual) = self.programs.get(frame.program) else {
-                continue;
-            };
-            let Some(function) = residual.function_get(frame.function as usize) else {
-                continue;
-            };
-            hide_identity |= function.strict;
-            if !constructor_found {
-                constructor_found = constructor_frame == Some(depth);
-                continue;
-            }
-            if let Some((mut record, module)) = self.source_call_site_record(frame, hide_identity) {
-                if !source_captured {
-                    source_captured = true;
-                    // Share immutable compiler text, not a copied line per Error.
-                    // Captured positions remain valid after its Script is collected.
-                    source.clone_from(&residual.source);
-                }
-                Self::map_call_site_source(&mut self.host, &mut record, module);
-                records.push(record);
-            }
-        }
-
-        if constructor_found {
-            for (_, name) in native_frames.take(limit.saturating_sub(records.len())) {
-                records.push(CallSiteRecord {
-                    location: CallSiteLocation::Native,
-                    name: CallSiteName::Static(JsString::from_str(name)),
-                    this_value: Value::UNDEFINED,
-                    hide_identity: true,
-                    is_constructor: false,
-                    eval_origin: None,
-                });
-            }
-        }
-
+        let data = self.captured_stack_data(args.get(1).copied().unwrap_or(Value::UNDEFINED));
         let target_root = self.heap.root(target);
         let result = (|| {
             let target = self.heap.root_value(target_root).unwrap();
@@ -766,18 +677,21 @@ impl<H: Host> Vm<H> {
                     "Error.captureStackTrace target must be an object".into(),
                 ));
             }
-            self.install_error_stack(
-                program,
-                target,
-                match capture_limit {
-                    Some(_) => StackData::Captured { records, source },
-                    None => StackData::Formatted(Value::UNDEFINED),
-                },
-            )?;
+            self.install_error_stack(program, target, data)?;
             Ok(Value::UNDEFINED)
         })();
         self.heap.release_root(target_root);
         result
+    }
+
+    /// The stack a constructed error whose `stack` accessor is already defined
+    /// (`define_error_stack_property`) captures: its call sites, trimmed through
+    /// `constructor_opt`, without defining the accessor again.
+    fn capture_constructed_error_stack(&mut self, error: Value, constructor_opt: Value) {
+        let data = self.captured_stack_data(constructor_opt);
+        self.object_data_mut(error)
+            .expect("a constructed error is an object")
+            .set_stack_data(data);
     }
 
     fn define_error_stack_property(
@@ -788,7 +702,8 @@ impl<H: Host> Vm<H> {
         let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
         let getter = intrinsics.stack_getter;
         let setter = intrinsics.stack_setter;
-        let key = self.heap.alloc_string("stack".into());
+        let atom = self.intern_atom("stack");
+        let key = self.atom_string(atom);
         self.define_property_or_throw(
             program,
             target,
@@ -2688,7 +2603,7 @@ impl<H: Host> Vm<H> {
             let stack_target = stack_target
                 .and_then(|root| self.heap.root_value(root))
                 .unwrap_or(Value::UNDEFINED);
-            self.error_capture_stack_trace(program, &[object, stack_target])?;
+            self.capture_constructed_error_stack(object, stack_target);
             Ok(self.heap.root_value(root).unwrap())
         })();
         for root in [Some(root), message, options, stack_target]
@@ -2767,7 +2682,7 @@ impl<H: Host> Vm<H> {
             let stack_target = self
                 .error_constructor_stack_target(Native::AggregateError, target)
                 .unwrap_or(Value::UNDEFINED);
-            self.error_capture_stack_trace(program, &[value, stack_target])?;
+            self.capture_constructed_error_stack(value, stack_target);
             let input = self.heap.root_value(input).unwrap();
             errors_list = self.iterable_to_rooted_list(program, input)?;
             let prototype = self.array_prototype_for_realm(self.realm.globals);

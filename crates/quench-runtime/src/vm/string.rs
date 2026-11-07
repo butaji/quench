@@ -555,13 +555,13 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc_string(text))
             }
             Native::StringLocaleCompare => {
-                let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let other = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let collation = self.locale_compare_collation(
                     p,
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
                 )?;
-                Ok(Value::number(collation.compare(&receiver.to_string(), &other)))
+                Ok(Value::number(collation.compare(receiver.host_string(), other.host_string())))
             }
             Native::StringConcat => {
                 let mut text = receiver;
@@ -606,14 +606,7 @@ impl<H: Host> Vm<H> {
             kind: IteratorKind::String,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         }))
     }
 
