@@ -391,11 +391,25 @@ pub(super) enum JsTierState {
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct JsTierEntryDecision {
-    tracked: bool,
-    promoted: bool,
-    compile: bool,
+/// What one entry of a function does past counting it: whether it promotes the function's
+/// tier state (a diagnostic event) and whether it compiles the function now. All four occur:
+/// a pending numeric promotion compiles at a later numeric entry without promoting again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JsEntryStep {
+    Count,
+    Promote,
+    Compile,
+    PromoteAndCompile,
+}
+
+impl JsEntryStep {
+    fn promotes(self) -> bool {
+        matches!(self, Self::Promote | Self::PromoteAndCompile)
+    }
+
+    fn compiles(self) -> bool {
+        matches!(self, Self::Compile | Self::PromoteAndCompile)
+    }
 }
 
 /// One sparse tier-state table per program. Frontend-specific transitions and
@@ -462,83 +476,60 @@ impl JitTierManager {
         general_candidate: bool,
         compiled_functions: usize,
         can_track: bool,
-    ) -> JsTierEntryDecision {
-        let mut decision = JsTierEntryDecision::default();
+    ) -> JsEntryStep {
         if self.is_wasm() {
-            return decision;
+            return JsEntryStep::Count;
         }
-        if self.js(function).is_none() {
+        let full = compiled_functions >= JS_JIT_MAX_FUNCTIONS;
+        let Some(state) = self.js_mut(function) else {
             if !can_track {
-                return decision;
+                return JsEntryStep::Count;
             }
-            decision.tracked = true;
-            let initial = if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-                JsTierState::Unsupported
+            let (initial, step) = if full {
+                (JsTierState::Unsupported, JsEntryStep::Count)
             } else if first_entry_candidate {
-                decision.promoted = true;
-                JsTierState::PromotionPending
+                (JsTierState::PromotionPending, JsEntryStep::PromoteAndCompile)
             } else {
-                JsTierState::Hot {
-                    observations: 1,
-                    numeric: u8::from(numeric),
-                }
+                (JsTierState::Hot { observations: 1, numeric: u8::from(numeric) }, JsEntryStep::Count)
             };
             let inserted = self.js_insert(function, initial);
             debug_assert!(inserted);
-            decision.compile = decision.promoted;
-            return decision;
-        }
-
-        let Some(state) = self.js_mut(function) else {
-            return decision;
+            return step;
         };
-        decision.compile = match state {
-            JsTierState::Hot {
-                observations,
-                numeric: numeric_entries,
-            } => {
+        match state {
+            JsTierState::Hot { observations, numeric: numeric_entries } => {
                 *observations = observations.saturating_add(1);
                 *numeric_entries = numeric_entries.saturating_add(u8::from(numeric));
                 let promotion = numeric_promotion_decision(*numeric_entries, *observations);
-                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-                    *state = JsTierState::Unsupported;
-                    false
-                } else if first_entry_candidate {
-                    decision.promoted = true;
-                    true
+                let (next, step) = if full {
+                    (Some(JsTierState::Unsupported), JsEntryStep::Count)
+                } else if first_entry_candidate || (promotion == Some(true) && numeric) {
+                    (None, JsEntryStep::PromoteAndCompile)
                 } else if promotion == Some(true) {
-                    decision.promoted = true;
-                    if numeric {
-                        true
-                    } else {
-                        *state = JsTierState::PromotionPending;
-                        false
-                    }
+                    (Some(JsTierState::PromotionPending), JsEntryStep::Promote)
                 } else if promotion == Some(false) && general_candidate {
-                    decision.promoted = true;
-                    *state = JsTierState::GeneralPromotionPending { entries: u32::from(*observations) };
-                    false
+                    (Some(JsTierState::GeneralPromotionPending { entries: u32::from(*observations) }), JsEntryStep::Promote)
                 } else {
-                    if promotion == Some(false) && *observations == u8::MAX {
-                        *state = JsTierState::Unsupported;
-                    }
-                    false
+                    let exhausted = promotion == Some(false) && *observations == u8::MAX;
+                    (exhausted.then_some(JsTierState::Unsupported), JsEntryStep::Count)
+                };
+                if let Some(next) = next {
+                    *state = next;
                 }
+                step
             }
-            JsTierState::PromotionPending => {
-                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-                    *state = JsTierState::Unsupported;
-                    false
-                } else {
-                    numeric
-                }
+            JsTierState::PromotionPending if full => {
+                *state = JsTierState::Unsupported;
+                JsEntryStep::Count
             }
-            JsTierState::GeneralPromotionPending { .. } | JsTierState::GeneralCompileDue => false,
-            JsTierState::Rejected { .. }
+            JsTierState::PromotionPending if numeric => JsEntryStep::Compile,
+            JsTierState::PromotionPending
+            | JsTierState::GeneralPromotionPending { .. }
+            | JsTierState::GeneralCompileDue
+            | JsTierState::Rejected { .. }
             | JsTierState::Unsupported
-            | JsTierState::Compiled(_) => false,
-        };
-        decision
+            | JsTierState::Compiled(_) => JsEntryStep::Count,
+        }
     }
 
     /// Advance the Wasm call-hotness state. Both the lane handoff and the
@@ -2122,7 +2113,7 @@ impl ProgramStore {
             return false;
         };
         let already_tracked = entry.jit_tiers.js(function).is_some();
-        let decision = entry.jit_tiers.note_js_entry(
+        let step = entry.jit_tiers.note_js_entry(
             function,
             numeric,
             first_entry_candidate,
@@ -2130,16 +2121,16 @@ impl ProgramStore {
             compiled_functions,
             can_track,
         );
-        if decision.tracked {
+        if !already_tracked && entry.jit_tiers.js(function).is_some() {
             self.js_jit_tracked_functions += 1;
         } else if !can_track && !already_tracked {
             self.js_jit_tracking_exhaustions =
                 self.js_jit_tracking_exhaustions.saturating_add(1);
         }
-        if decision.promoted {
+        if step.promotes() {
             self.record_js_jit_promotion(id, function);
         }
-        decision.compile
+        step.compiles()
     }
 
     /// Whether the general baseline could ever pay through entries for a body of
@@ -4119,7 +4110,7 @@ mod jit_code_cache_tests {
         assert_eq!(wasm_tiers.wasm_values().count(), 1);
         assert_eq!(
             wasm_tiers.note_js_entry(3, true, true, false, 0, true),
-            super::JsTierEntryDecision::default()
+            super::JsEntryStep::Count
         );
     }
 
@@ -4127,14 +4118,7 @@ mod jit_code_cache_tests {
     fn jit_tier_manager_owns_frontend_promotion_transitions() {
         let mut js_tiers = super::JitTierManager::default();
         let first = js_tiers.note_js_entry(1, true, true, false, 0, true);
-        assert_eq!(
-            first,
-            super::JsTierEntryDecision {
-                tracked: true,
-                promoted: true,
-                compile: true,
-            }
-        );
+        assert_eq!(first, super::JsEntryStep::PromoteAndCompile);
         assert!(matches!(
             js_tiers.js(1),
             Some(super::JsTierState::PromotionPending)

@@ -581,8 +581,9 @@ struct TargetBody {
     entry: CallEntry,
     constructs: bool,
     initializes: bool,
-    /// Whether an `Activates` body is a leaf (`leaf_body`), and what its records then read of
-    /// the context.
+    /// Whether an `Activates` body runs as a leaf (`leaf_body`), and what its records then read
+    /// of the context: only where the tier could not claim it at the first resolution, which
+    /// specialized its returns for good.
     leaf: Option<LeafForm>,
 }
 
@@ -12278,12 +12279,9 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    .inspect(|&form| {
-                        if !tier_may_claim {
-                            // SAFETY: the program store keeps a derived view alive with its program.
-                            unsafe { &*view }.specialize_leaf_returns::<H>(form);
-                        }
-                    }),
+                    .filter(|_| !tier_may_claim)
+                    // SAFETY: the program store keeps a derived view alive with its program.
+                    .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }
         });
         if !environment
@@ -12348,10 +12346,10 @@ impl<H: Host> Vm<H> {
             } else if cross {
                 CallEntry::Activates
             } else {
-                match shape.leaf {
-                    Some(form) if !tier_may_claim => CallEntry::leaf(form),
-                    _ => shape.entry,
-                }
+                // Leaf-ness is the view's, fixed at its first resolution with its returns:
+                // whether the tier may claim it changes later, and a leaf call of a view whose
+                // returns were not specialized returns into the wrong activation.
+                shape.leaf.map_or(shape.entry, CallEntry::leaf)
             },
             capture,
             forwarded_method: match (plan.forwards_arguments && shape.constructs)

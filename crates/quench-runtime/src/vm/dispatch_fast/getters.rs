@@ -52,7 +52,10 @@ unsafe fn lane_getter_answer<H: Host>(cx: *mut LaneContext<H>, getter: Value, ob
 
 /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
 /// answers the getter's call (`lane_getter_answer`), else the getter's activation
-/// (`lane_activate_getter`), whose completion is the read's value.
+/// (`lane_activate_getter`), whose completion is the read's value. Only a read that writes its
+/// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
+/// activation, which only the getter's activation does. The answer's read may have made the
+/// activations frames, so the registers are the context's again.
 pub(super) fn lane_read_getter<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -61,7 +64,10 @@ pub(super) fn lane_read_getter<H: Host>(
     getter: Value,
     base: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    if let Some(value) = unsafe { lane_getter_answer(cx, getter, base) } {
+    if i.a & crate::bytecode::RETURN_REGISTER == 0
+        && let Some(value) = unsafe { lane_getter_answer(cx, getter, base) }
+    {
+        let r = unsafe { (*cx).registers };
         r.set(i.a, value);
         return Ok((r, following(ip)));
     }
