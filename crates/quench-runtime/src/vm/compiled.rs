@@ -6735,9 +6735,8 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_TRACE=perf-map` set, names each compiled function's code (`kind-index`) for
-/// `perf` (`/tmp/perf-PID.map`) and writes the published code to `/tmp/quench-jit-PID-BASE.bin`
-/// for disassembly at `BASE` (diagnostics only).
+/// With `QUENCH_TRACE=perf-map`, names each function's code (`kind-index`) in `/tmp/perf-PID.map`
+/// and writes the code to `/tmp/quench-jit-PID-BASE.bin` for disassembly at `BASE` (diagnostics).
 fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
     if !crate::trace::Channel::PerfMap.on() {
         return;
