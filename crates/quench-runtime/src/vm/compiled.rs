@@ -77,6 +77,10 @@ pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
+#[path = "compiled/general_call.rs"]
+mod general_call;
+#[path = "compiled/general_capture.rs"]
+mod general_capture;
 use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
@@ -3251,48 +3255,14 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        // A call of a method read as `push` with one argument or `pop` with none asks the
-        // array builtins' dense shortcut first (`general_native_call`); anything else, or its
-        // miss, is the exact step's call.
-        if instruction.op() == Op::Call
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
-            && !instruction.direct_eval()
-            && !instruction.parameter_eval()
-            && let Some(next) = next
-            && let window = instruction.call_window()
-            && window.count <= 1
-            && let Some(read) = function.code[..pc].iter().rev()
-                .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
-                .find(|earlier| earlier.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister
-                    && earlier.result_register() == instruction.register_b())
-            && read.op() == Op::GetField
-            && let Some(FieldLookup::Atom { atom, .. }) = read.field_lookup()
-            && program.atoms.get(atom as usize).is_some_and(|name| (name == "push" && window.count == 1) || (name == "pop" && window.count == 0))
-            && let Some(callee_offset) = register_offset(instruction.register_b())
-            && let Some(receiver_offset) = register_offset(instruction.register_c())
-            && let Some(destination_offset) = register_offset(instruction.result_register())
-            && let Some(argument_offset) = if window.count == 1 { register_offset(window.base).map(Some) } else { Some(None) }
-        {
-            let exact = JsExactFallback {
-                context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc,
-            };
-            let fallback = builder.create_block();
-            let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, callee_offset);
-            let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, receiver_offset);
-            let argument = match argument_offset {
-                Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-                None => builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64),
-            };
-            let count = builder.ins().iconst(types::I64, i64::from(window.count));
-            let helper = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, native_call));
-            let value = emit_lane_helper_call(&mut builder, payload, helper, &[payload, callee, receiver, argument, count]);
-            let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-            emit_js_guard(&mut builder, hit, fallback);
-            builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
-            builder.ins().jump(next, &[]);
-            exact.emit(&mut builder, fallback);
+        if let Some(next) = next && general_capture::lower_capture(&mut builder, (instruction, next), &register_offset, (arguments, payload),
+            &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if let Some(next) = next && general_call::lower_call(&mut builder, program, function, (pc, instruction, next), &register_offset,
+            (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
+            // A call stays in a fallback island's batch: native code only resumes past it.
             continue;
         }
         // A direct array's `length` is its record's; any other receiver reads the field as
@@ -3618,45 +3588,6 @@ pub(super) fn lower_js_general_dispatch(
                             destination,
                         );
                         builder.ins().jump(next, &[]);
-                        true
-                    } else {
-                        false
-                    }
-                }
-                JsDenotation::CapturedValue
-                    if instruction.capture_depth() == 0
-                        && instruction.result_flags() == 0
-                        && !instruction.returns_from_frame()
-                        && !instruction.writes_current_this()
-                        && instruction.numeric_local_target().is_none() =>
-                {
-                    if let Some(destination) = register_offset(instruction.result_register()) {
-                        use crate::value::ValueLayout;
-                        let fallback = builder.create_block();
-                        let values = emit_js_payload_word(
-                            &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values),
-                        );
-                        let len = emit_js_payload_word(
-                            &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len),
-                        );
-                        let slot = usize::from(instruction.capture_slot());
-                        let in_bounds = builder.ins().icmp_imm_u(
-                            IntCC::UnsignedGreaterThan, len, i64::try_from(slot).expect("capture slot fits i64"),
-                        );
-                        emit_js_guard(&mut builder, in_bounds, fallback);
-                        let offset = i32::try_from(slot * std::mem::size_of::<Value>())
-                            .expect("capture slot offset fits i32");
-                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
-                        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-                        let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
-                        emit_js_guard(&mut builder, ordinary, fallback);
-                        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
-                        builder.ins().jump(next, &[]);
-                        builder.switch_to_block(fallback);
-                        emit_js_step_fallback(
-                            &mut builder, context, callout, callout_signature, result_pointer,
-                            stopped_block, continue_block, pc,
-                        );
                         true
                     } else {
                         false
@@ -7464,9 +7395,13 @@ struct JsStepDispatch {
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step.
     field_get: usize,
-    /// The dense shortcut of an array builtin call (`general_native_call`), which a `push` or
-    /// `pop` call site asks before the exact step.
+    /// The call shortcuts a call site asks before the exact step (`general_call`).
     native_call: usize,
+    user_call: usize,
+    /// The capture slots a capture site without a view asks for (`general_capture`), and
+    /// whether `capture_values` admits a direct write.
+    captures: usize,
+    capture_stores: usize,
     /// The running heap's charged allocation weight and the weight a collection is due at,
     /// by address (`Heap::should_collect`), which a native back edge compares to leave for its
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
@@ -7668,26 +7603,6 @@ unsafe extern "C" fn general_field_get<H: Host>(vm: u64, residual: u64, receiver
 /// `Vm::array_pop_dense`); `Value::DELETED`, having done nothing, for any other callee,
 /// receiver or argument count, which the exact step calls. A push may move the array's
 /// elements, which native code reads anew at every access.
-unsafe extern "C" fn general_native_call<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, receiver: u64,
-    argument: u64, count: u64) -> u64 {
-    // SAFETY: as `lane_field_add`.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    let native = match vm.heap.function(Value::from_bits(callee)).map(|record| &record.kind) {
-        Some(crate::heap::FunctionKind::Native(native)) => *native,
-        _ => return Value::DELETED.to_bits(),
-    };
-    let receiver = Value::from_bits(receiver);
-    let value = match (native, count) {
-        (crate::heap::Native::ArrayPush, 1) => vm.array_push_dense(receiver, &[Value::from_bits(argument)]),
-        (crate::heap::Native::ArrayPop, 0) => vm.array_pop_dense(receiver),
-        _ => None,
-    };
-    let Some(value) = value else { return Value::DELETED.to_bits() };
-    // As `lane_store_miss`: a due collection waits for the next back edge's safepoint.
-    dispatch.refresh_object_bases(vm);
-    value.to_bits()
-}
-
 /// The VM's cached read of the field `read` names (its atom above its cache site): an array's
 /// `length`, a proved inherited entry, else the site's caches; `Value::DELETED` for a miss.
 ///
@@ -8500,7 +8415,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0,
-                native_call: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -8651,7 +8566,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8687,7 +8602,9 @@ impl JsStepDispatch {
         self.field_store = lane_field_set::<H> as *const () as usize;
         self.field_add = lane_store_miss::<H> as *const () as usize;
         self.field_get = general_field_get::<H> as *const () as usize;
-        self.native_call = general_native_call::<H> as *const () as usize;
+        self.native_call = general_call::general_native_call::<H> as *const () as usize;
+        self.user_call = general_call::general_user_call::<H> as *const () as usize;
+        self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
         let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));
         self.allocated = heap.wrapping_add(crate::heap::Heap::ALLOCATED_OFFSET) as usize;
         self.collect_at = heap.wrapping_add(crate::heap::Heap::COLLECT_AT_OFFSET) as usize;
@@ -8720,6 +8637,7 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
+        self.capture_stores = 0;
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
     }
