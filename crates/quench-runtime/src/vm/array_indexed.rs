@@ -14,15 +14,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayIndexOf => self.array_index_of_native(p, this, args),
             Native::ArrayCopyWithin => self.array_copy_within_native(p, this, args),
             Native::ArrayWith => self.array_copy_native(p, native, this, args),
-            Native::ArrayForEach
-            | Native::ArrayMap
-            | Native::ArrayFilter
-            | Native::ArraySome
-            | Native::ArrayEvery
-            | Native::ArrayFind
-            | Native::ArrayFindIndex
-            | Native::ArrayFindLast
-            | Native::ArrayFindLastIndex => self.array_callback_native(p, native, this, args),
+            native if native.is_array_callback() => self.array_callback_native(p, native, this, args),
             Native::ArrayGroup | Native::ArrayGroupToMap => {
                 self.array_group_native(p, native, this, args)
             }
@@ -310,127 +302,101 @@ impl<H: Host> Vm<H> {
         if !self.is_function(callback) {
             return Err(self.type_error(p, "array callback is not callable".into()));
         }
-        // A result ArrayCreate makes is unreachable from guest code until it is returned, so
-        // its elements are stored as its own dense storage (`store_fresh_array_element`): a
-        // map's result over a dense receiver, which bounds its length, or a filter's.
-        let array_create = !typed_array
-            && matches!(native, Native::ArrayMap | Native::ArrayFilter)
-            && self.array_species_is_array_create(this);
-        let dense_receiver = self.heap.array_elements(this).is_some_and(|elements| elements.len() == length);
-        let fresh = array_create && (native == Native::ArrayFilter || dense_receiver);
-        let result = match native {
-            Native::ArrayMap if typed_array => {
-                Some(self.typed_array_species_create_for_writing(p, this, length)?)
+        let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let fresh = if typed_array { None } else { self.fresh_array_iteration(native, this, callback, this_arg, length) };
+        let mut iteration = match fresh {
+            Some(iteration) => iteration,
+            None => {
+                let result = match native {
+                    Native::ArrayMap if typed_array => self.typed_array_species_create_for_writing(p, this, length)?,
+                    Native::ArrayMap => self.array_species_create(p, this, length)?,
+                    Native::ArrayFilter if !typed_array => self.array_species_create(p, this, 0)?,
+                    _ => Value::UNDEFINED,
+                };
+                ArrayIteration::new(native, this, callback, this_arg, result, false, typed_array, length)
             }
-            Native::ArrayMap if fresh => Some(self.hole_array(length)),
-            Native::ArrayMap => Some(self.array_species_create(p, this, length)?),
-            Native::ArrayFilter if typed_array => None,
-            Native::ArrayFilter if fresh => Some(self.hole_array(0)),
-            Native::ArrayFilter => Some(self.array_species_create(p, this, 0)?),
-            _ => None,
         };
-        let result_root = result.map(|result| self.heap.root(result));
+        self.array_iteration_run(p, &mut iteration)
+    }
+
+    /// The iteration of an array callback method whose result, if it makes one, ArrayCreate
+    /// makes, unreachable from guest code until it is returned, so its elements are stored as
+    /// its own dense storage (`store_fresh_array_element`): a map's over a dense receiver,
+    /// which bounds its length, or a filter's. `None` where the species makes the result.
+    #[inline(always)]
+    pub(super) fn fresh_array_iteration(
+        &mut self,
+        native: Native,
+        this: Value,
+        callback: Value,
+        this_arg: Value,
+        length: usize,
+    ) -> Option<ArrayIteration> {
+        let result = match native {
+            Native::ArrayMap | Native::ArrayFilter if !self.array_species_is_array_create(this) => return None,
+            Native::ArrayMap if self.heap.array_elements(this).is_some_and(|elements| elements.len() == length) => {
+                self.hole_array(length)
+            }
+            Native::ArrayMap => return None,
+            Native::ArrayFilter => self.hole_array(0),
+            _ => Value::UNDEFINED,
+        };
+        Some(ArrayIteration::new(native, this, callback, this_arg, result, true, false, length))
+    }
+
+    /// The loop of an array callback method from `iteration`'s next element to its end,
+    /// with a callback prepared for its calls (`Vm::with_prepared_callback`): the native's
+    /// own loop, and the continuation of one a lane began (`ArrayIteration`).
+    pub(super) fn array_iteration_run(
+        &mut self,
+        p: &ResidualProgram,
+        iteration: &mut ArrayIteration,
+    ) -> Result<Value, JsError> {
+        let result_root = (!iteration.result.is_undefined()).then(|| self.heap.root(iteration.result));
         let mut filtered_value_roots = Vec::new();
-        let outcome = (|| {
-            let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            let mut result_length = 0;
-            let reverse = matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex);
-            for offset in 0..length {
-                let index = if reverse { length - offset - 1 } else { offset };
-                let key = Value::number(index as f64);
-                let finds_holes = matches!(
-                    native,
-                    Native::ArrayFind
-                        | Native::ArrayFindIndex
-                        | Native::ArrayFindLast
-                        | Native::ArrayFindLastIndex
-                );
+        let (this, typed_array) = (iteration.receiver, iteration.typed_array);
+        let typed_filter = typed_array && iteration.native == Native::ArrayFilter;
+        let finds_holes = matches!(
+            iteration.native,
+            Native::ArrayFind | Native::ArrayFindIndex | Native::ArrayFindLast | Native::ArrayFindLastIndex
+        );
+        let outcome = self.with_prepared_callback(iteration.callback, iteration.this_arg, |vm, prepared| {
+            while let Some(index) = iteration.advance() {
+                let key = Value::length(index);
                 // A present dense element is an own data property: HasProperty holds and Get
                 // reads it, observing nothing.
-                let value = match self.dense_array_element(this, key) {
+                let value = match vm.dense_array_element(this, key) {
                     Some(value) if !typed_array => value,
                     _ => {
-                        if !typed_array && !finds_holes && !self.has_property(p, this, key)? {
+                        if !typed_array && !finds_holes && !vm.has_property(p, this, key)? {
                             continue;
                         }
-                        self.get_index(p, this, key)?
+                        vm.get_index(p, this, key)?
                     }
                 };
-                let callback_args = [value, Value::number(index as f64), this];
-                let mapped = self.call_value(p, callback, this_arg, &callback_args)?;
-                match native {
-                    Native::ArrayForEach => {}
-                    Native::ArrayMap => {
-                        let target = self
-                            .heap
-                            .root_value(result_root.expect("map result is rooted"))
-                            .unwrap();
-                        if typed_array {
-                            self.typed_array_set(p, target, index, mapped)?;
-                        } else if fresh {
-                            self.store_fresh_array_element(target, index, mapped);
-                        } else {
-                            self.create_data_property_or_throw(p, target, index, mapped)?;
-                        }
+                let mapped = vm.call_prepared(p, prepared, &[value, key, this])?;
+                if typed_filter {
+                    if vm.truthy(mapped) {
+                        filtered_value_roots.push(vm.heap.root(value));
                     }
-                    Native::ArrayFilter if self.truthy(mapped) => {
-                        if typed_array {
-                            filtered_value_roots.push(self.heap.root(value));
-                        } else {
-                            let target = self
-                                .heap
-                                .root_value(result_root.expect("filter result is rooted"))
-                                .unwrap();
-                            if fresh {
-                                self.store_fresh_array_element(target, result_length, value);
-                            } else {
-                                self.create_data_property_or_throw(p, target, result_length, value)?;
-                            }
-                        }
-                        result_length += 1;
-                    }
-                    Native::ArraySome if self.truthy(mapped) => return Ok(Value::TRUE),
-                    Native::ArrayEvery if !self.truthy(mapped) => return Ok(Value::FALSE),
-                    Native::ArrayFind if self.truthy(mapped) => return Ok(value),
-                    Native::ArrayFindIndex if self.truthy(mapped) => {
-                        return Ok(Value::number(index as f64));
-                    }
-                    Native::ArrayFindLast if self.truthy(mapped) => return Ok(value),
-                    Native::ArrayFindLastIndex if self.truthy(mapped) => {
-                        return Ok(Value::number(index as f64));
-                    }
-                    _ => {}
+                    continue;
+                }
+                if let Some(done) = vm.array_iteration_apply(p, iteration, index, value, mapped)? {
+                    return Ok(done);
                 }
             }
-            match native {
-                Native::ArrayForEach => Ok(Value::UNDEFINED),
-                Native::ArrayFilter if typed_array => {
-                    let target =
-                        self.typed_array_species_create_for_writing(p, this, result_length)?;
-                    let target_root = self.heap.root(target);
-                    let result = (|| {
-                        for (index, value_root) in filtered_value_roots.iter().enumerate() {
-                            let value = self.heap.root_value(*value_root).unwrap();
-                            self.typed_array_set(p, target, index, value)?;
-                        }
-                        Ok(self.heap.root_value(target_root).unwrap())
-                    })();
-                    self.heap.release_root(target_root);
-                    result
-                }
-                Native::ArrayMap | Native::ArrayFilter => Ok(self
-                    .heap
-                    .root_value(result_root.expect("callback result is rooted"))
-                    .unwrap()),
-                Native::ArraySome => Ok(Value::FALSE),
-                Native::ArrayEvery => Ok(Value::TRUE),
-                Native::ArrayFind => Ok(Value::UNDEFINED),
-                Native::ArrayFindIndex => Ok(Value::number(-1.0)),
-                Native::ArrayFindLast => Ok(Value::UNDEFINED),
-                Native::ArrayFindLastIndex => Ok(Value::number(-1.0)),
-                _ => unreachable!("non-callback native routed to callback dispatch"),
+            if !typed_filter {
+                return Ok(iteration.completion());
             }
-        })();
+            let target = vm.typed_array_species_create_for_writing(p, this, filtered_value_roots.len())?;
+            let target_root = vm.heap.root(target);
+            let result = filtered_value_roots.iter().enumerate().try_for_each(|(index, value_root)| {
+                let value = vm.heap.root_value(*value_root).unwrap();
+                vm.typed_array_set(p, target, index, value).map(drop)
+            });
+            vm.heap.release_root(target_root);
+            result.map(|()| target)
+        });
         if let Some(root) = result_root {
             self.heap.release_root(root);
         }
@@ -438,6 +404,66 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    /// The step of an array callback method after its callback returned `mapped` for the
+    /// element `value` at `index`: the result's element stored, or the method's value where
+    /// the step ends it (a `some`, `every` or `find*` answer).
+    pub(super) fn array_iteration_apply(
+        &mut self,
+        p: &ResidualProgram,
+        iteration: &mut ArrayIteration,
+        index: usize,
+        value: Value,
+        mapped: Value,
+    ) -> Result<Option<Value>, JsError> {
+        match iteration.native {
+            Native::ArrayMap if iteration.typed_array => {
+                self.typed_array_set(p, iteration.result, index, mapped)?;
+            }
+            Native::ArrayMap if !iteration.fresh => {
+                self.create_data_property_or_throw(p, iteration.result, index, mapped)?;
+            }
+            Native::ArrayFilter if !iteration.fresh => {
+                if self.truthy(mapped) {
+                    self.create_data_property_or_throw(p, iteration.result, iteration.kept, value)?;
+                    iteration.kept += 1;
+                }
+            }
+            _ => return Ok(self.fresh_array_step(iteration, index, value, mapped)),
+        };
+        Ok(None)
+    }
+
+    /// `array_iteration_apply` of an iteration whose result, if it makes one, ArrayCreate
+    /// made (`fresh_array_iteration`): its store and every answer run no guest code and raise
+    /// nothing.
+    #[inline]
+    pub(super) fn fresh_array_step(
+        &mut self,
+        iteration: &mut ArrayIteration,
+        index: usize,
+        value: Value,
+        mapped: Value,
+    ) -> Option<Value> {
+        match iteration.native {
+            Native::ArrayForEach => None,
+            Native::ArrayMap => {
+                self.store_fresh_array_element(iteration.result, index, mapped);
+                None
+            }
+            Native::ArrayFilter => {
+                if self.truthy(mapped) {
+                    self.store_fresh_array_element(iteration.result, iteration.kept, value);
+                    iteration.kept += 1;
+                }
+                None
+            }
+            Native::ArraySome => self.truthy(mapped).then_some(Value::TRUE),
+            Native::ArrayEvery => (!self.truthy(mapped)).then_some(Value::FALSE),
+            Native::ArrayFind | Native::ArrayFindLast => self.truthy(mapped).then_some(value),
+            _ => self.truthy(mapped).then(|| Value::number(index as f64)),
+        }
     }
 
     pub(super) fn array_like_length(
@@ -487,47 +513,156 @@ impl<H: Host> Vm<H> {
         let mut accumulator_root = args.get(1).map(|value| self.heap.root(*value));
         let reverse = matches!(native, Native::ArrayReduceRight);
         let mut indices = 0..length;
-        let outcome = (|| {
+        let outcome = self.with_prepared_callback(callback, Value::UNDEFINED, |vm, prepared| {
             while let Some(index) = if reverse {
                 indices.next_back()
             } else {
                 indices.next()
             } {
-                let key = Value::number(index as f64);
-                let object = self.heap.root_value(object_root).unwrap();
-                if !typed_array && !self.has_property(p, object, key)? {
+                let key = Value::length(index);
+                let object = vm.heap.root_value(object_root).unwrap();
+                if !typed_array && !vm.has_property(p, object, key)? {
                     continue;
                 }
-                let object = self.heap.root_value(object_root).unwrap();
-                let value = self.get_index(p, object, key)?;
+                let object = vm.heap.root_value(object_root).unwrap();
+                let value = vm.get_index(p, object, key)?;
                 match accumulator_root {
-                    None => accumulator_root = Some(self.heap.root(value)),
+                    None => accumulator_root = Some(vm.heap.root(value)),
                     Some(root) => {
-                        let accumulator = self.heap.root_value(root).unwrap();
-                        let object = self.heap.root_value(object_root).unwrap();
-                        let callback = self.heap.root_value(callback_root).unwrap();
-                        let result = self.call_value(
-                            p,
-                            callback,
-                            Value::UNDEFINED,
-                            &[accumulator, value, key, object],
-                        )?;
-                        self.heap.update_root(root, result);
+                        let accumulator = vm.heap.root_value(root).unwrap();
+                        let object = vm.heap.root_value(object_root).unwrap();
+                        let result = vm.call_prepared(p, prepared, &[accumulator, value, key, object])?;
+                        vm.heap.update_root(root, result);
                     }
                 }
             }
             match accumulator_root {
-                Some(root) => Ok(self.heap.root_value(root).unwrap()),
+                Some(root) => Ok(vm.heap.root_value(root).unwrap()),
                 None => {
-                    Err(self.type_error(p, "reduce of empty array with no initial value".into()))
+                    Err(vm.type_error(p, "reduce of empty array with no initial value".into()))
                 }
             }
-        })();
+        });
         if let Some(root) = accumulator_root {
             self.heap.release_root(root);
         }
         self.heap.release_root(callback_root);
         self.heap.release_root(object_root);
         outcome
+    }
+}
+
+/// What an array callback method's loop carries from one element to the next past its
+/// setup (the receiver made an object, its length read once, the callback tested and the
+/// result made): the state V8's `ArrayForEachLoopContinuation` resumes from. The native's own
+/// loop runs it (`Vm::array_iteration_run`); a lane steps it one callback activation at a
+/// time (`lane_call_array_callback`), and a frame of such a callback, once materialized,
+/// finishes it on the general path (`CallCompletion::ArrayStep`).
+#[derive(Clone, Copy)]
+pub(crate) struct ArrayIteration {
+    pub(super) native: Native,
+    pub(super) receiver: Value,
+    pub(super) callback: Value,
+    pub(super) this_arg: Value,
+    /// A map's or filter's result, `undefined` for the methods that make none and for a
+    /// typed filter, which makes its result at the end.
+    pub(super) result: Value,
+    /// Whether ArrayCreate made the result (`Vm::fresh_array_iteration`).
+    pub(super) fresh: bool,
+    pub(super) typed_array: bool,
+    /// The elements visited, from the end for `findLast*`.
+    pub(super) visited: usize,
+    pub(super) length: usize,
+    /// The elements a filter kept.
+    pub(super) kept: usize,
+}
+
+impl ArrayIteration {
+    pub(super) fn new(
+        native: Native,
+        receiver: Value,
+        callback: Value,
+        this_arg: Value,
+        result: Value,
+        fresh: bool,
+        typed_array: bool,
+        length: usize,
+    ) -> Self {
+        Self { native, receiver, callback, this_arg, result, fresh, typed_array, visited: 0, length, kept: 0 }
+    }
+
+    /// The index of the next element, which it counts as visited; `None` past the last.
+    pub(super) fn advance(&mut self) -> Option<usize> {
+        if self.visited == self.length {
+            return None;
+        }
+        self.visited += 1;
+        Some(match self.native {
+            Native::ArrayFindLast | Native::ArrayFindLastIndex => self.length - self.visited,
+            _ => self.visited - 1,
+        })
+    }
+
+    /// The method's value once every element was visited without a step ending it.
+    #[inline(always)]
+    pub(super) fn completion(&self) -> Value {
+        match self.native {
+            Native::ArrayMap | Native::ArrayFilter => self.result,
+            Native::ArraySome => Value::FALSE,
+            Native::ArrayEvery => Value::TRUE,
+            Native::ArrayFindIndex | Native::ArrayFindLastIndex => Value::number(-1.0),
+            _ => Value::UNDEFINED,
+        }
+    }
+}
+
+/// The values an `ArrayStepCall` roots: the receiver, callback, thisArg, result and element.
+const ARRAY_STEP_VALUES: usize = 5;
+
+/// A lane's array iteration whose callback's activation became a frame
+/// (`CallCompletion::ArrayStep`): the loop's state, the element and index that callback was
+/// passed, and roots for the values the iteration reads once its frame returns, which only
+/// the iteration holds.
+pub(crate) struct ArrayStepCall {
+    iteration: ArrayIteration,
+    element: Value,
+    index: usize,
+    roots: [crate::heap::RootId; ARRAY_STEP_VALUES],
+}
+
+impl<H: Host> Vm<H> {
+    /// The `ArrayStepCall` of a lane's iteration whose callback, passed `element` at `index`,
+    /// becomes a frame.
+    pub(super) fn array_step_call(&mut self, iteration: ArrayIteration, element: Value, index: usize) -> ArrayStepCall {
+        let values = [iteration.receiver, iteration.callback, iteration.this_arg, iteration.result, element];
+        ArrayStepCall { iteration, element, index, roots: values.map(|value| self.heap.root(value)) }
+    }
+
+    /// The value of the array callback method whose callback's frame (`ArrayStepCall`)
+    /// returned `mapped`: its step, then the rest of its loop (`Vm::array_iteration_run`).
+    pub(super) fn finish_array_step(
+        &mut self,
+        p: &ResidualProgram,
+        call: ArrayStepCall,
+        mapped: Value,
+    ) -> Result<Value, JsError> {
+        let ArrayStepCall { mut iteration, element, index, roots } = call;
+        let result = match self.fresh_array_step(&mut iteration, index, element, mapped) {
+            Some(value) => Ok(value),
+            None => self.array_iteration_run(p, &mut iteration),
+        };
+        self.release_array_step(roots);
+        result
+    }
+
+    /// Release what an `ArrayStepCall` rooted, as its frame unwinds.
+    pub(super) fn abandon_array_step(&mut self, call: ArrayStepCall) {
+        self.release_array_step(call.roots);
+    }
+
+    fn release_array_step(&mut self, roots: [crate::heap::RootId; ARRAY_STEP_VALUES]) {
+        for root in roots {
+            self.heap.release_root(root);
+        }
     }
 }

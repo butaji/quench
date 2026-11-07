@@ -11,7 +11,9 @@ use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod prototype_values;
 mod snapshot;
+pub(crate) use prototype_values::{prototype_value_epoch, prototype_value_epoch_address, subscribe_prototype_values};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -27,38 +29,11 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
 
-/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and every value read
-/// under the current `PROTOTYPE_VALUE_EPOCH`: a layout change moves what a slot holds.
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and all code that
+/// holds a prototype's value as a constant: a layout change moves what a slot holds.
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
-    advance_prototype_value_epoch();
-}
-
-// Changes whenever what an object used as a prototype offers its inheritors can have
-// changed: its layout (`advance_prototype_layout_epoch`) or the value of any of its slots
-// (`Object::note_prototype_value_write`). Native code that took an inherited value as a
-// constant reads it while this holds the epoch it was compiled under.
-// Guest heaps and their native publications are thread-confined (Rc ownership).
-// A different thread cannot mutate a constant's owner; its prototype writes must
-// not permanently retire this thread's compiled methods. The cell's address is
-// stable for the lifetime of the thread that owns those methods.
-thread_local! {
-    static PROTOTYPE_VALUE_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// The current `PROTOTYPE_VALUE_EPOCH`.
-#[inline(always)]
-pub(crate) fn prototype_value_epoch() -> u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::get)
-}
-
-/// Where native code loads `PROTOTYPE_VALUE_EPOCH` from.
-pub(crate) fn prototype_value_epoch_address() -> *const u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::as_ptr)
-}
-
-fn advance_prototype_value_epoch() {
-    PROTOTYPE_VALUE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+    prototype_values::reset();
 }
 
 #[derive(Clone, Debug, Default)]
@@ -70,19 +45,6 @@ pub(crate) struct WeakMapEntries {
 #[cfg(test)]
 mod cell_layout_tests {
     use super::*;
-
-    #[test]
-    fn prototype_value_epochs_follow_the_native_owner_thread() {
-        let before = prototype_value_epoch();
-        let address = prototype_value_epoch_address();
-        std::thread::spawn(advance_prototype_layout_epoch).join().unwrap();
-        assert_eq!(prototype_value_epoch(), before, "another VM thread owns no local constant");
-        advance_prototype_value_epoch();
-        assert_eq!(prototype_value_epoch(), before.wrapping_add(1));
-        advance_prototype_layout_epoch();
-        assert_eq!(prototype_value_epoch(), before.wrapping_add(2));
-        assert_eq!(prototype_value_epoch_address(), address, "native loads retain one address");
-    }
 
     /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
     /// and its element backing.
@@ -981,6 +943,23 @@ impl Native {
             )
     }
 
+    /// `Array.prototype.forEach` and the other array methods that call a callback per index
+    /// (`Vm::array_callback_native`).
+    pub(crate) fn is_array_callback(self) -> bool {
+        matches!(
+            self,
+            Self::ArrayForEach
+                | Self::ArrayMap
+                | Self::ArrayFilter
+                | Self::ArraySome
+                | Self::ArrayEvery
+                | Self::ArrayFind
+                | Self::ArrayFindIndex
+                | Self::ArrayFindLast
+                | Self::ArrayFindLastIndex
+        )
+    }
+
     /// Whether the native observes the frame stack only by calling guest code, capturing an
     /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
     /// for a host's), so a lane calls it with its activations frameless. Each of these reads
@@ -1122,6 +1101,7 @@ impl Native {
                     | Self::ArrayBuffer
                     | Self::SharedArrayBuffer
                     | Self::RegExp
+                    | Self::Date
                     | Self::Map
                     | Self::Set
                     | Self::WeakMap
@@ -1463,7 +1443,9 @@ impl InlineObjectHeader {
     }
 
     fn of_storage(proto: Value, storage: ValueVec) -> Self {
-        let object = Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        // Its inline values are `undefined`, which the payload word holds, so the object has
+        // no extras and nothing to drop.
+        let object = std::mem::ManuallyDrop::new(Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]));
         Self {
             meta: object.meta,
             auxiliary: object.auxiliary,
@@ -1472,6 +1454,18 @@ impl InlineObjectHeader {
 }
 
 #[repr(C)]
+/// Where an object outside dictionary storage keeps its values (`Object::exact_storage`).
+#[derive(Clone, Copy)]
+pub(crate) enum ExactStorage {
+    /// No extras and no inline storage: an arena run from this start.
+    Plain(usize),
+    /// No extras: the inline slots, narrow, in the payload word.
+    PackedInline,
+    /// Behind extras, as a prototype's or an object with a wide inline value: the inline
+    /// slots there, or an arena run (`Object::properties`).
+    Extended { inline: bool },
+}
+
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -1685,6 +1679,20 @@ const _: () = assert!(
 );
 
 impl ArrayObject {
+    /// A new array of `prototype` with no properties: `new` of `Object::new(prototype)`,
+    /// made with its arena storage at once.
+    #[inline(always)]
+    pub(crate) fn fresh(prototype: Value, elements: super::ArrayElements) -> Self {
+        let mut object = Object {
+            meta: Object::encode_array_proto(prototype) | OBJECT_ARRAY,
+            auxiliary: 0,
+            payload: 0,
+        };
+        object.initialize_properties(ValueVec::new());
+        debug_assert!(object.proto() == prototype);
+        Self { object, elements }
+    }
+
     pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
         let elements = elements.into();
         // Array objects keep named properties in the arena; a fresh object has none inline.
@@ -1710,11 +1718,24 @@ impl ArrayObject {
 
     /// The elements for any change, including their backing's: the running lane's array
     /// storage proofs retire first (`retire_array_storage_proofs`).
+    #[inline(always)]
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
         super::array_proofs::retire_array_storage_proofs();
         &mut self.elements
+    }
+
+    /// Whether a dead array owns anything its drop frees: extras, or an element allocation
+    /// it counts among its backing's owners. Young runs and the empty header need none.
+    pub(crate) fn needs_drop(&self) -> bool {
+        self.object.extras_pointer().is_some() || self.elements.owner_count() != 0
+    }
+
+    /// Copies a young run of elements to an allocation of the array's own
+    /// (`ArrayElements::leave_nursery`): the same values, so no proof or dependent retires.
+    pub(crate) fn leave_nursery(&mut self) {
+        self.elements.leave_nursery();
     }
 
     /// Replaces the present element at `index` in place where this array alone owns its
@@ -1962,7 +1983,26 @@ impl Object {
         )
     }
 
+    /// A direct object, the usual prototype, is tested first: its record id and its range's
+    /// base alone, before the decode of every other reference family.
+    #[inline(always)]
     fn encode_proto(proto: Value) -> u32 {
+        match proto.direct_object_index() {
+            Some(id) => PROTO_OBJECT_RECORD_BASE + id,
+            None => Self::encode_other_proto(proto),
+        }
+    }
+
+    /// `encode_proto` of a direct array, as every realm's `Array.prototype` is.
+    #[inline(always)]
+    fn encode_array_proto(proto: Value) -> u32 {
+        match proto.direct_array_index() {
+            Some(id) => PROTO_ARRAY_RECORD_BASE + id,
+            None => Self::encode_proto(proto),
+        }
+    }
+
+    fn encode_other_proto(proto: Value) -> u32 {
         match proto.heap_reference() {
             Some(HeapReference::LegacySlot(index)) => {
                 assert!(
@@ -2152,6 +2192,23 @@ impl Object {
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
     }
 
+    /// Releases a dead object's storage in `arena` (`ValueArena::release`), and answers
+    /// whether it owns extras, which its drop frees. Inline values hold no arena words;
+    /// without extras the payload word is the storage position alone, upper half zero
+    /// (`plain_storage_start`).
+    #[inline(always)]
+    pub(crate) fn release_storage(&self, arena: &mut ValueArena) -> bool {
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return self.extras_pointer().is_some();
+        }
+        if self.payload >> u32::BITS == 0 {
+            arena.release(ValueVec::from_parts(self.payload as u32, self.auxiliary));
+            return false;
+        }
+        arena.release(self.properties());
+        true
+    }
+
     fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
@@ -2323,7 +2380,7 @@ impl Object {
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
         Some(match self.extras() {
             Some(extras) => extras.inline_properties.0[slot],
-            None => Value::from_narrow((self.payload >> (slot as u32 * u32::BITS)) as u32),
+            None => Value::from_narrow(self.payload_narrow(slot)),
         })
     }
 
@@ -2388,12 +2445,57 @@ impl Object {
         self.set_shape(shape, properties);
     }
 
+    /// The half of the payload word that holds inline `slot`, the first the lower: one
+    /// half-word access, which neither shifts nor touches the other slot.
+    #[inline(always)]
+    fn payload_half(slot: usize) -> usize {
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        if cfg!(target_endian = "little") { slot } else { INLINE_PROPERTY_COUNT - 1 - slot }
+    }
+
+    /// The narrow form at inline `slot` of the payload word, which holds the inline values.
+    #[inline(always)]
+    fn payload_narrow(&self, slot: usize) -> u32 {
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves.
+        unsafe { (&raw const self.payload).cast::<u32>().add(Self::payload_half(slot)).read() }
+    }
+
     /// Stores the narrow form `narrow` at inline `slot` of the payload word, which holds the
     /// inline values.
     #[inline(always)]
     fn store_payload_narrow(&mut self, slot: usize, narrow: u32) {
-        let shift = slot as u32 * u32::BITS;
-        self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves; `&mut self` is exclusive.
+        unsafe { (&raw mut self.payload).cast::<u32>().add(Self::payload_half(slot)).write(narrow) };
+    }
+
+    /// Where the values of an object outside dictionary storage live, decoded from its
+    /// payload word once (`ExactStorage`).
+    #[inline(always)]
+    pub(crate) fn exact_storage(&self) -> ExactStorage {
+        let inline = self.meta & OBJECT_INLINE_STORAGE != 0;
+        match (self.extras_pointer(), inline) {
+            (Some(_), _) => ExactStorage::Extended { inline },
+            (None, true) => ExactStorage::PackedInline,
+            (None, false) => ExactStorage::Plain(self.payload as usize),
+        }
+    }
+
+    /// Stores a value's narrow form `narrow` (`Value::to_narrow`) into inline `slot` of a
+    /// `PackedInline` object (`exact_storage`), that half of the payload word; `false` for a
+    /// value without one, changing nothing.
+    #[inline(always)]
+    pub(crate) fn store_packed_narrow(&mut self, slot: usize, narrow: Option<u32>) -> bool {
+        debug_assert!(matches!(self.exact_storage(), ExactStorage::PackedInline));
+        narrow.map(|narrow| self.store_payload_narrow(slot, narrow)).is_some()
+    }
+
+    /// Stores `value` into inline `slot` of an `Extended` object (`exact_storage`), whose
+    /// extras hold its inline values.
+    #[inline(always)]
+    pub(crate) fn store_extended_inline(&mut self, slot: usize, value: Value) {
+        let extras = self.extras_pointer().expect("an extended object has extras");
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { (*extras).inline_properties.0[slot] = value };
     }
 
     /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
@@ -2509,7 +2611,7 @@ impl Object {
     #[inline(always)]
     pub(crate) fn note_prototype_value_write(&self) {
         if self.was_used_as_prototype() {
-            advance_prototype_value_epoch();
+            prototype_values::retire(self.exact_shape());
         }
     }
 
@@ -2609,14 +2711,19 @@ impl Object {
         self.extras_mut().arguments_object = true;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
-    /// Whether the object's elements are ordinary, as `dense_array_length` needs them: it
-    /// is extensible and not frozen, and holds no indexed or `length` descriptor and no
-    /// arguments mapping. Read from the integrity bits and one extras record.
+    /// Whether the object's elements are ordinary and all dense, as `dense_array_length`
+    /// needs them: it is extensible and not frozen, and holds no indexed or `length`
+    /// descriptor, no arguments mapping and never held sparse elements
+    /// (`mark_sparse_elements`, which every sparse write makes). Read from the integrity bits
+    /// and one extras record.
     #[inline(always)]
     pub(crate) fn holds_ordinary_elements(&self) -> bool {
         self.meta & VALUE_VEC_INTEGRITY_BITS == 0
             && self.extras().is_none_or(|extras| {
-                !extras.indexed_descriptors && !extras.arguments_object && !extras.length_descriptor
+                !extras.indexed_descriptors
+                    && !extras.arguments_object
+                    && !extras.length_descriptor
+                    && !extras.sparse_elements
             })
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
@@ -3088,6 +3195,25 @@ impl EnvironmentSlots {
         let mut slots = unsafe { Self::borrow_storage(storage) }?;
         *slots.dense_plain_mut(slot)? = value;
         Some(())
+    }
+
+    /// `read_storage` and `write_storage` of one slot under one borrow and bounds test: `update`
+    /// maps the slot's ordinary value to the one it stores, or declines and stores nothing.
+    /// The old value and the stored one.
+    /// # Safety
+    /// As `write_storage`.
+    #[inline(always)]
+    pub(crate) unsafe fn update_storage(
+        storage: *const usize,
+        slot: usize,
+        update: impl FnOnce(Value) -> Option<Value>,
+    ) -> Option<(Value, Value)> {
+        // SAFETY: as guaranteed by the caller, for this update only.
+        let mut slots = unsafe { Self::borrow_storage(storage) }?;
+        let place = slots.dense_plain_mut(slot)?;
+        let old = *place;
+        *place = update(old)?;
+        Some((old, *place))
     }
 
     /// Native entry's values/count projection of the same cached storage.
@@ -3800,8 +3926,8 @@ pub(crate) enum Cell {
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
     },
-    /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
-    BigInt(Box<num_bigint::BigInt>),
+    /// Digits inline up to `bigint::INLINE_DIGITS`, within the slot (`cells_stay_compact`).
+    BigInt(crate::bigint::JsBigInt),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     /// `meta` is shared: every evaluation of one literal site takes the site's record
@@ -3870,7 +3996,7 @@ pub(crate) enum Cell {
 
 impl Cell {
     pub(crate) fn bigint(value: num_bigint::BigInt) -> Self {
-        Self::BigInt(Box::new(value))
+        Self::BigInt(crate::bigint::JsBigInt::from(&value))
     }
 
     /// Whether a collection prunes this cell's entries by the liveness of their targets

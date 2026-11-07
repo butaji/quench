@@ -253,6 +253,8 @@ impl NativeJsCompiler {
         let mut program = self.compile_script(&wrapped, name, HostScriptOptions {
             origin: Some(origin), keep_records: true, typescript: false,
         }).map_err(|diagnostics| format!("{diagnostics:?}"))?;
+        // Frozen against the wrapped text the program compiled from, then moved into the body.
+        program.freeze_native_diagnostics();
         if let Some(source) = &mut program.source {
             source.retain_body(SourceText::Shared(body), base);
         }

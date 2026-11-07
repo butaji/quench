@@ -181,8 +181,8 @@ impl NativeSupport {
     pub fn link_audited(
         &self, inputs: &NativeImageInputs, driver: &Path, executable: &Path,
     ) -> Result<NativeLinkAudit, String> {
-        let mut command = Command::new("rustc");
-        command
+        let mut command = Command::new("rustc"); // The rustc that built the rlibs: their checkout's pin.
+        command.current_dir(self.host.parent().ok_or("support library has no parent")?)
             .args([
                 "--edition=2024",
                 "--crate-name=quench_native_image",

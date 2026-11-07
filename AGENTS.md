@@ -45,6 +45,20 @@ Nothing is stored, checked or computed twice, at any level.
    (indices, borrowed slices, packed words), not copies, re-encodings, boxed values or
    per-call conversions; a protocol that needs translating on every crossing is redesigned.
 
+Single homes (add to these; never a second copy):
+- `crates/quench-runtime/src/staged.rs`: object-layout and narrow-value reads, written once
+  over the `Stage` trait. `Concrete` runs them in the interpreter, `Emit` generates them as
+  Cranelift IR. Tests check that layout decodes outside this file only go down.
+- `vm/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
+  compiles.
+- `vm/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
+- Opcode meaning: only the interpreters (`vm/dispatch.rs`, `vm/dispatch_wasm.rs`) write it by
+  hand. Tiers derive it (`staged`, semantic entries), so an interpreter change reaches the JIT and
+  AOT. `src/staged/hand_semantics.txt` lists the hand-written opcode arms left in tiers, and it
+  may only shrink.
+- `code_dependencies.rs`: stable facts (binding time `Stable`) fold only under a code
+  dependency. Retirement sets the body's invalidation word; there are no global epochs.
+
 ## Lisp mindset manifesto
 
 Every line carries domain meaning. Code is a liability; data is leverage.

@@ -1210,7 +1210,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<f64, JsError> {
         if let Some(Cell::BigInt(value)) = self.heap.get(value) {
-            return Ok(crate::bigint::to_f64(value));
+            return Ok(value.to_f64());
         }
         self.to_number(p, value)
     }

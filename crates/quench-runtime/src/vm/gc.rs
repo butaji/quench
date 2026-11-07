@@ -404,7 +404,7 @@ impl<H: Host> Vm<H> {
             self.host.at_collection_boundary(self.memory_policy());
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
+        if crate::trace::Channel::FunctionUse.on() {
             self.report_function_use();
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -798,7 +798,7 @@ impl<H: Host> Vm<H> {
         roots.extend(external_roots);
         self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+        if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
@@ -893,6 +893,11 @@ impl<H: Host> Vm<H> {
         }
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        // A hint names its prototype by record id, which an allocation may give another object
+        // once this one is swept.
+        for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {
+            hint.epoch = crate::heap::NO_CONSTANT_EPOCH;
+        }
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -945,14 +950,11 @@ impl<H: Host> Vm<H> {
         if let Some(strings) = &mut self.recent_atom_strings {
             strings.fill((super::NO_RECENT_ATOM, Value::UNDEFINED));
         }
-        if let Some(strings) = &mut self.ascii_unit_strings {
-            strings.fill(Value::UNDEFINED);
-        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.host.at_collection_boundary(self.memory_policy());
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+        if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
             self.report_memory_snapshot(&phase);
         }
@@ -1023,6 +1025,7 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
+        self.holder_hints.clear();
         self.programs.invalidate_shape_bindings();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
@@ -1030,7 +1033,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.remap_invalidated_method_shapes(&mapping);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             eprintln!(
                 "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_shapes\":{}}}",
                 old_shape_count,
@@ -1105,21 +1108,39 @@ impl<H: Host> Vm<H> {
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
+        // An enclosing queue's entry stays in place below this queue's own.
+        let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
         let result = (|| {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
+                if matches!(job, PendingJob::Call { .. }) {
+                    self.leave_unobserved_jobs();
+                }
                 self.run_pending_job(program, job, home)?;
                 // Static continuations may become ready after a reaction. Import
                 // loading waits for the agent checkpoint after this queue drains.
                 if self.static_module_jobs_pending() {
+                    self.leave_unobserved_jobs();
                     self.switch_realm_global(home);
                     self.advance_static_module_jobs(program)?;
                 }
             }
             Ok(())
         })();
+        self.leave_unobserved_jobs();
+        self.unobserved_jobs_entered = outer;
         self.switch_realm_global(home);
         result
+    }
+
+    /// Leaves the context unobserved Promise jobs of the running queue share, if entered: a
+    /// host job and module advancement run in the queue's own.
+    fn leave_unobserved_jobs(&mut self) {
+        if std::mem::take(&mut self.unobserved_jobs_entered) {
+            for root in self.host.leave_unobserved_job() {
+                self.heap.release_root(root);
+            }
+        }
     }
 
     /// Runs a job already taken off the queue, leaving its realm current: a finished job

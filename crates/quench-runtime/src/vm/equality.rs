@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
             if let Some(Cell::BigInt(bigint)) = self.heap.get(other) {
                 let text = self.heap.string(string).expect("a string operand");
                 return Ok(crate::bigint::parse_string(text.host_string())
-                    .is_some_and(|value| value == **bigint));
+                    .is_some_and(|value| crate::bigint::JsBigInt::from(&value) == *bigint));
             }
             if let Some(number) = other.as_number() {
                 return Ok(self.to_number(p, string)? == number);
@@ -43,11 +43,11 @@ impl<H: Host> Vm<H> {
             (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => return Ok(a == b),
             (Some(Cell::BigInt(bigint)), _) if b.as_number().is_some() => {
                 return Ok(crate::bigint::number_as_bigint(b.as_number().unwrap())
-                    .is_some_and(|number| number == **bigint));
+                    .is_some_and(|number| crate::bigint::JsBigInt::from(&number) == *bigint));
             }
             (_, Some(Cell::BigInt(bigint))) if a.as_number().is_some() => {
                 return Ok(crate::bigint::number_as_bigint(a.as_number().unwrap())
-                    .is_some_and(|number| number == **bigint));
+                    .is_some_and(|number| crate::bigint::JsBigInt::from(&number) == *bigint));
             }
             _ => {}
         }

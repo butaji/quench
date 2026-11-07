@@ -174,7 +174,6 @@ fn encode_alpn_protocols(
         return Ok(None);
     }
     if let Some(bytes) = context.view_bytes_rooted(value) {
-        let bytes = bytes;
         validate_alpn_wire(context, &bytes)?;
         return Ok(Some(bytes));
     }

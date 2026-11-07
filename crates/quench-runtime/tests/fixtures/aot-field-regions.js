@@ -451,4 +451,41 @@ Object.defineProperty(invariantOwner, 'left', {get() { events.push('invariant-ge
 record(() => invariantLoop(invariantOwner, invariantOwner, 2));
 record(() => invariantLoop(invariantOwner, {right: 7}, 2));
 output.push(events.join(','));
+// Element stores: typed views and dense arrays in place, and what must leave for the VM.
+function fill(a, n) { for (let i = 0; i < n; i++) a[i] = i * 37.75 - 300; return a; }
+function put(a, n, v) { for (let i = 0; i < n; i++) a[i] = v + i; return a; }
+function sum(a, n) { let s = 0; for (let i = 0; i < n; i++) s += a[i]; return s; }
+function outside(a, n) {
+  let s = 0;
+  for (let i = -2; i < n + 2; i++) { const v = a[i]; s += v === undefined ? 1000 : v; }
+  return s;
+}
+function recordElements(name, a, n, v) {
+  try {
+    fill(a, n);
+    output.push(name + ' fill ' + Array.prototype.join.call(a) + ' ' + sum(a, n) + ' ' + outside(a, n));
+    put(a, n, v);
+    output.push(name + ' put ' + Array.prototype.join.call(a) + ' ' + sum(a, n));
+  } catch (error) { output.push(name + ' ' + error.name); }
+}
+for (const kind of ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+  'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array']) {
+  recordElements(kind, new globalThis[kind](24), 24, 0.5);
+  recordElements(kind + ' NaN', new globalThis[kind](2), 2, NaN);
+}
+const elementBuffer = new ArrayBuffer(16), words = new Uint32Array(elementBuffer);
+recordElements('alias', new Uint8Array(elementBuffer, 4, 8), 8, 250);
+output.push('words ' + words.join());
+recordElements('dense', [0, 0, 0, 0], 4, 0.5);
+recordElements('dense ints', [0.5, 1.5, 2.5, 3.5], 4, 1);
+recordElements('hole', [1, , 3], 3, 7);
+recordElements('heap value', ['a', 'b'], 2, 's');
+recordElements('frozen', Object.freeze([1, 2]), 2, 9);
+const shared = [1, 2, 3], copy = shared.slice();
+recordElements('shared', copy, 3, 5);
+output.push('original ' + shared.join());
+const elementPrototype = [1, 2], heir = Object.create(elementPrototype);
+recordElements('prototype', elementPrototype, 2, 4);
+output.push('heir ' + heir[0] + ' ' + heir[1]);
+(function (x, y) { recordElements('arguments', arguments, 2, 10); output.push('parameters ' + x + ' ' + y); })(1, 2);
 console.log(JSON.stringify(output));

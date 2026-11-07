@@ -155,8 +155,7 @@ const ITERATOR_HIGH_WATER_MARK: f64 = 1024.0;
 /// `historyIndex` when no history entry is shown.
 const NO_HISTORY_ENTRY: f64 = -1.0;
 
-const LINE_FEED: u16 = b'\n' as u16;
-const CARRIAGE_RETURN: u16 = b'\r' as u16;
+use quench_runtime::units::{CARRIAGE_RETURN, LINE_FEED};
 const TAB: u16 = b'\t' as u16;
 /// The first code point outside the Basic Multilingual Plane: two UTF-16 units.
 const SUPPLEMENTARY_PLANE: u32 = 0x10000;

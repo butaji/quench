@@ -350,7 +350,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::BigInt(old_number)) = self.heap.get(old).cloned() else {
             return Err(self.type_error(p, "Atomics BigInt element is invalid".into()));
         };
-        let old_number = *old_number;
+        let old_number = old_number.to_num();
         let first = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let replacement = if native == Native::AtomicsCompareExchange {
             self.to_bigint(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
@@ -598,7 +598,7 @@ impl<H: Host> Vm<H> {
     fn atomic_is_zero(&self, kind: TypedArrayKind, value: Value) -> bool {
         match kind {
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.sign() == num_bigint::Sign::NoSign)
+                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.is_zero())
             }
             _ => value.as_number() == Some(0.0),
         }

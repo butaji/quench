@@ -116,15 +116,8 @@ impl<H: Host> Vm<H> {
         index: usize,
         rejected: bool,
     ) -> Value {
-        let function = self.native_with_env(Native::PromiseAggregateJob, Value::UNDEFINED);
-        self.realm.promise.aggregate_jobs.insert(
-            function,
-            AggregateJob {
-                aggregate,
-                index,
-                rejected,
-            },
-        );
+        let function = self.native_with_env(Native::PromiseAggregateJob, aggregate);
+        self.realm.promise.aggregate_jobs.insert(function, AggregateJob { index, rejected });
         function
     }
 }

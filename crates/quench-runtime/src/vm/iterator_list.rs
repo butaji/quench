@@ -83,9 +83,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         step: Value,
     ) -> Result<Option<Value>, JsError> {
-        if !self.is_object_like(step) {
-            return Err(self.type_error(p, "iterator next result is not an object".into()));
-        }
+        self.require_iterator_result(p, step)?;
         self.with_call_roots([step], |vm| {
             let done_atom = vm.runtime_atoms.done;
             let done = vm.get_property(p, step, done_atom)?;
@@ -95,5 +93,13 @@ impl<H: Host> Vm<H> {
             let value_atom = vm.runtime_atoms.value;
             vm.get_property(p, step, value_atom).map(Some)
         })
+    }
+
+    /// `step`, an iterator's next result, required to be an object.
+    pub(super) fn require_iterator_result(&mut self, p: &ResidualProgram, step: Value) -> Result<(), JsError> {
+        if self.is_object_like(step) {
+            return Ok(());
+        }
+        Err(self.type_error(p, "iterator next result is not an object".into()))
     }
 }

@@ -918,7 +918,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::BigInt(integer)) => {
-                if Self::detail_bigint_is_too_large(integer) {
+                if Self::detail_bigint_is_too_large(&integer.to_num()) {
                     "<a very large BigInt>".into()
                 } else {
                     integer.to_string()

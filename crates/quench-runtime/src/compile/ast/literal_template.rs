@@ -11,14 +11,21 @@ const MIN_TEMPLATE_CONTAINERS: usize = 2;
 
 impl FunctionCompiler<'_, '_> {
     /// A register holding `value` built from a literal template, when `value` is a nested
-    /// literal of constants. Building one has no observable effect besides creating its
-    /// containers, in the order and with the keys evaluation would.
+    /// literal of constants or a data script's literal (`data_literal`). Building one has no
+    /// observable effect besides creating its containers, in the order and with the keys
+    /// evaluation would.
     pub(super) fn literal_template(&mut self, value: &Expression<'_>) -> Option<Register> {
-        if Self::literal_containers(value)? < MIN_TEMPLATE_CONTAINERS {
-            return None;
-        }
-        let mut steps = Vec::new();
-        self.literal_steps(value, &mut steps);
+        let start = value.span().start;
+        let steps = if self.owner.data_literal == Some(start) {
+            vec![LiteralStep::Json(start)]
+        } else {
+            if Self::literal_containers(value)? < MIN_TEMPLATE_CONTAINERS {
+                return None;
+            }
+            let mut steps = Vec::new();
+            self.literal_steps(value, &mut steps);
+            steps
+        };
         let index = self.owner.literal_templates.len() as u32;
         self.owner.literal_templates.push(steps.into_boxed_slice());
         let dst = self.reg();
@@ -70,10 +77,13 @@ impl FunctionCompiler<'_, '_> {
                 self.owner.object_sites.push(ObjectSite { atoms });
                 steps.push(LiteralStep::Object(site));
             }
-            value => {
-                let constant = binding_time::expression(value).expect("an admitted leaf is a constant");
-                steps.push(LiteralStep::Constant(self.owner.constant(constant)));
-            }
+            value => steps.push(match binding_time::expression(value).expect("an admitted leaf is a constant") {
+                // The bits of an int32 other than -0 survive the round trip, as in `Value::number`.
+                Constant::Number(number) if f64::from(number as i32).to_bits() == number.to_bits() => {
+                    LiteralStep::Int(number as i32)
+                }
+                constant => LiteralStep::Constant(self.owner.constant(constant)),
+            }),
         }
     }
 }

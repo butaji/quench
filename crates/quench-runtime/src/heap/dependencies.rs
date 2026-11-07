@@ -40,10 +40,18 @@ pub(crate) struct InheritedFieldCache {
     /// The receiver's prototype link the proof holds for, compared undecoded.
     pub(crate) proved_prototype: super::ProtoLink,
     pub(crate) proved_holder: Value,
+    /// What `answer` read under the current proof while the prototype value epoch was
+    /// `constant_epoch` (`heap::prototype_value_epoch`), which every change to a prototype's
+    /// layout or slot values advances: a use under that epoch reads it without the holder.
+    /// `NO_CONSTANT_EPOCH` before a read and once a walk proves the chain again.
+    pub(crate) constant: Value,
+    pub(crate) constant_epoch: u64,
     /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
+/// An `InheritedFieldCache::constant_epoch` no epoch reaches: the entry holds no constant.
+pub(crate) const NO_CONSTANT_EPOCH: u64 = u64::MAX;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
@@ -223,6 +231,12 @@ impl Dependencies {
     #[inline(always)]
     pub(crate) fn inherited(&self, entry: u32) -> &InheritedFieldCache {
         &self.table().inherited[entry as usize]
+    }
+
+    /// Inherited field cache entry `entry`, where the cache holds one.
+    #[inline(always)]
+    pub(crate) fn inherited_get(&self, entry: u32) -> Option<&InheritedFieldCache> {
+        self.table().inherited.get(entry as usize)
     }
 
     pub(crate) fn inherited_mut(&mut self, entry: u32) -> &mut InheritedFieldCache {

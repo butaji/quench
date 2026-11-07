@@ -561,14 +561,18 @@ lane_accesses! {
     V128Store64Lane, WasmMemoryStore, MemoryStore::I64Store, I64x2ExtractLane;
 }
 
-/// The Memory32 binding `operator` shares with the body's other direct accesses,
-/// `memory.size` and `memory.fill`, by memory index.
+/// The Memory32 binding `operator` shares with the body's other loads and stores,
+/// `memory.size` and `memory.fill`, by memory index: one register loaded once per call
+/// serves vector and lane accesses as it serves the direct ones.
 pub(super) fn direct_access_memory(
     memories: &[WasmMemory],
     operator: &wasmparser::Operator<'_>,
 ) -> Option<usize> {
-    let index = direct_access(operator)
-        .map(|(_, memarg)| memarg.memory)
+    let index = MemoryLoad::from_wasm(operator)
+        .map(|(_, memarg)| memarg)
+        .or_else(|| MemoryStore::from_wasm(operator).map(|(_, memarg)| memarg))
+        .or_else(|| lane_access(operator).map(|(_, _, memarg, _, _)| memarg))
+        .map(|memarg| memarg.memory)
         .or(match operator {
             wasmparser::Operator::MemorySize { mem } | wasmparser::Operator::MemoryFill { mem } => {
                 Some(*mem)

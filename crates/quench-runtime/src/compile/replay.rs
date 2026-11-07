@@ -546,14 +546,12 @@ pub(crate) struct ProgramReplay {
     pub(super) source_type: oxc_span::SourceType,
     pub(super) root_strict: bool,
     pub(super) module_goal: bool,
-    /// The starts of the function bodies the load compiled from their source parsed again
-    /// (`lazy_bodies`), in order: a replay stands each in, so the code around it compiles
-    /// as the load compiled it.
+    /// The starts of the bodies the load compiled from their source parsed again (`lazy_bodies`),
+    /// in order: a replay stands each in, so the code around it compiles as the load did.
     pub(super) lazy_bodies: Box<[u32]>,
     pub(super) specialized: bool,
-    /// How many tagged template sites the program has: each evaluation of a program with
-    /// any owns distinct template objects, so a global eval of it is never cached.
-    pub(super) template_sites: u32,
+    /// Tagged template sites: a global eval of a program with any (own template objects) is never cached.
+    pub(crate) template_sites: u32,
     pub(super) atoms: ProgramAtomIndex,
     /// Where the load left the tables once each function was compiled.
     pub(super) exits: Box<[TableCursors]>,
@@ -561,8 +559,7 @@ pub(crate) struct ProgramReplay {
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
     /// The cache sites the load shared by name (`Compiler::name_shared_cache_site`).
     pub(super) name_shared_sites: super::NameSharedSiteMap,
-    /// In verifying builds, the records of functions the load released, which their replays
-    /// must equal.
+    /// In verifying builds, the records of released functions, which their replays must equal.
     #[cfg(feature = "verify-replay")]
     pub(super) released: FxHashMap<u32, crate::bytecode::Function>,
     pub(super) views: ReplayViews,
@@ -572,11 +569,6 @@ impl ProgramReplay {
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()
-    }
-
-    /// Whether the program has a tagged template.
-    pub(crate) fn has_tagged_template(&self) -> bool {
-        self.template_sites != 0
     }
 }
 
@@ -813,22 +805,15 @@ pub(crate) fn recompile(
     } else {
         SpecializationMode::Disabled
     };
+    let (line_starts, utf16_excess) = views.layout(text);
     let mut compiler = Compiler::with_layout(
         &program.source_name,
         text,
         mode,
         &atoms,
         FxHashMap::default(),
-        std::borrow::Cow::Borrowed(
-            views
-                .line_starts
-                .get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
-        ),
-        std::borrow::Cow::Borrowed(
-            views
-                .utf16_excess
-                .get_or_init(|| super::source_utf16_excess(text)),
-        ),
+        std::borrow::Cow::Borrowed(line_starts),
+        std::borrow::Cow::Borrowed(utf16_excess),
     );
     compiler.source_comments = parsed
         .program
@@ -976,13 +961,13 @@ pub(crate) fn recompile(
 }
 
 impl ShiftSpans {
-    fn shift(&self, span: &mut oxc_span::Span) {
+    pub(super) fn shift(&self, span: &mut oxc_span::Span) {
         oxc_ast_visit::VisitMut::visit_span(&mut Self(self.0), span);
     }
 }
 
 /// Recompiles every replayable function of `program` and appends to the file named by
-/// `QUENCH_REPLAY_LOG` one line per function whose record or table entries differ from the
+/// the `replay` trace channel's path one line per function whose record or table entries differ from the
 /// load's, or that does not recompile, and one summary line.
 #[cfg(feature = "verify-replay")]
 pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
@@ -990,7 +975,7 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
     let Some(replay) = program.replay.as_deref() else {
         return;
     };
-    let Some(path) = std::env::var_os("QUENCH_REPLAY_LOG") else {
+    let Some(path) = crate::trace::Channel::Replay.value() else {
         return;
     };
     let mut ids: Vec<u32> = replay.functions.keys().copied().collect();
@@ -1047,6 +1032,13 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
     ));
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all((lines.join("\n") + "\n").as_bytes());
+    }
+}
+
+impl Default for super::NameSharedSites<'_> {
+    /// A load's, which has given out none yet.
+    fn default() -> Self {
+        Self::Load { sites: FxHashMap::default(), next: crate::bytecode::UNIQUE_CACHE_SITES }
     }
 }
 

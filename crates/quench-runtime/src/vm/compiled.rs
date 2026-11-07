@@ -23,6 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+use tier_policy::TIERS;
 use super::*;
 use crate::bytecode::{
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
@@ -52,7 +53,11 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
-mod facts;
+pub(super) mod facts;
+pub(super) mod switches;
+pub(super) mod tier_policy;
+#[cfg(test)]
+mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
@@ -71,6 +76,9 @@ mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
+#[path = "compiled/direct_call.rs"]
+mod direct_call;
+use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
 pub(super) use osr_loop::{
@@ -588,7 +596,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
         LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
-        lane_region::Coverage::Full, lane_region::Completion::Number)?;
+        lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
         |code| Some(code.to_vec())).ok()?;
@@ -1045,17 +1053,7 @@ fn read_js_tagged_operand(
             ))
         }
         OperandKind::Constant => {
-            let value = match program.constants.get(usize::from(operand.payload()))? {
-                crate::bytecode::Constant::Number(number) => Value::number(*number),
-                crate::bytecode::Constant::Boolean(boolean) => Value::boolean(*boolean),
-                crate::bytecode::Constant::Null => Value::NULL,
-                crate::bytecode::Constant::Undefined => Value::UNDEFINED,
-                crate::bytecode::Constant::String(_)
-                | crate::bytecode::Constant::StringUnits(_)
-                | crate::bytecode::Constant::BigInt(_)
-                | crate::bytecode::Constant::WasmBits64(_)
-                | crate::bytecode::Constant::WasmV128(_) => return None,
-            };
+            let value = facts::immediate(program.constants.get(usize::from(operand.payload()))?)?;
             Some(builder.ins().iconst(types::I64, value.to_bits() as i64))
         }
         OperandKind::Field | OperandKind::Local => None,
@@ -1101,15 +1099,22 @@ fn emit_js_tagged_truthiness(
     let known_primitive = builder.ins().bor(is_true, is_false);
     let known_primitive = builder.ins().bor(known_primitive, is_null);
     let known_primitive = builder.ins().bor(known_primitive, is_undefined);
+    // A direct object or array record is truthy: neither family holds the IsHTMLDDA object.
+    let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let array = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
+    let record = builder.ins().bor(object, array);
+    let known = builder.ins().bor(known_primitive, record);
+    let truthy_known = builder.ins().bor(is_true, record);
 
     let known_block = builder.create_block();
     let number_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::I8);
-    builder.ins().brif(known_primitive, known_block, &[], number_block, &[]);
+    builder.ins().brif(known, known_block, &[], number_block, &[]);
 
     builder.switch_to_block(known_block);
-    builder.ins().jump(join, &[ir::BlockArg::Value(is_true)]);
+    builder.ins().jump(join, &[ir::BlockArg::Value(truthy_known)]);
 
     builder.switch_to_block(number_block);
     let number = emit_js_tagged_number(builder, bits, fallback);
@@ -1215,23 +1220,34 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 }
 
 /// Encode a Number result with `Value::number`'s integer, double and NaN
-/// representations.
-fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    let (truncated, is_integer) = emit_js_exact_int32(builder, number);
-    let result_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let integer_bits = builder.ins().uextend(types::I64, truncated);
+/// representations. A double with a fraction is its own bits, after one compare
+/// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
+pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let (cold, join) = (builder.create_block(), builder.create_block());
+    builder.set_cold_block(cold);
+    let result = builder.append_block_param(join, types::I64);
+    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
+    let truncated = builder.ins().trunc(number);
+    let whole_or_nan = builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
+    builder.ins().brif(whole_or_nan, cold, &[], join, &[ir::BlockArg::Value(bits)]);
+    builder.switch_to_block(cold);
+    builder.seal_block(cold);
+    let (integer, is_integer) = emit_js_exact_int32(builder, number);
+    let integer_bits = builder.ins().uextend(types::I64, integer);
     let integer_bits = builder
         .ins()
         .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
-    let encoded = builder
-        .ins()
-        .select(is_integer, integer_bits, result_bits);
+    let encoded = builder.ins().select(is_integer, integer_bits, bits);
     let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
     let canonical_nan = builder.ins().iconst(
         types::I64,
         crate::value::ValueLayout::CANONICAL_NAN as i64,
     );
-    builder.ins().select(is_nan, canonical_nan, encoded)
+    let encoded = builder.ins().select(is_nan, canonical_nan, encoded);
+    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    builder.switch_to_block(join);
+    builder.seal_block(join);
+    result
 }
 
 /// Keep the integer tier of Quench's shared Number arithmetic denotation in
@@ -1370,7 +1386,6 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
 
 /// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
 fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     use crate::value::ValueLayout;
 
     let family = builder
@@ -1402,10 +1417,40 @@ fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base
         .ins()
         .icmp_imm_u(IntCC::NotEqual, record_base, 0);
     emit_js_guard(builder, base_is_present, fallback);
+    emit_array_record_address(builder, record_base, record_id)
+}
 
+/// Where record `record_id` (an `i64`) of the array reservation at `record_base` lives.
+fn emit_array_record_address(builder: &mut FunctionBuilder<'_>, record_base: ir::Value, record_id: ir::Value) -> ir::Value {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
     let record_offset = builder.ins().imul_imm_u(record_id, record_size);
     builder.ins().iadd(record_base, record_offset)
+}
+
+/// Whether the array record's object part holds extras: indexed descriptors, an arguments
+/// map, sparse elements or a prototype watch, any of which an element access must consult.
+fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let object_payload = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record,
+        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
+    );
+    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
+    builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64)
+}
+
+/// The backing header of an array record.
+fn emit_array_header(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record,
+        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
+    )
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -1418,24 +1463,13 @@ pub(super) fn emit_array_length_read(
     base: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
 
     let record = emit_array_record(builder, payload, base, fallback);
-    let object_payload = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
-    );
-    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
-    let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+    let extras = emit_array_extras(builder, record);
+    let ordinary = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
     emit_js_guard(builder, ordinary, fallback);
-    let header = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
-    );
+    let header = emit_array_header(builder, record);
     let length = builder.ins().load(
         types::I32,
         MemFlagsData::trusted(),
@@ -1447,10 +1481,128 @@ pub(super) fn emit_array_length_read(
     length
 }
 
+/// A dense own array's elements as one access proved them: the backing's first value and
+/// its length. Holds until something changes the array's storage (`ArrayElements`): only
+/// element reads and in-place replacements may run in between.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct DenseArrayView {
+    pub(super) values: ir::Value,
+    /// The backing's `u32` length, as `i32`.
+    pub(super) length: ir::Value,
+    /// Whether a store may replace a present element in place: the array owns its backing
+    /// alone, is not frozen and has no extras (indexed descriptors, an arguments map or a
+    /// prototype watch), as `Vm::try_replace_record_element` requires.
+    pub(super) writable: bool,
+}
+
+/// The view of the dense own array `base` (tagged); `writable` also proves in-place
+/// replacement. Any other base leaves through `fallback`, with nothing read.
+pub(super) fn emit_dense_array_view(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    base: ir::Value,
+    writable: bool,
+    fallback: ir::Block,
+) -> DenseArrayView {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+
+    let record = emit_array_record(builder, payload, base, fallback);
+    let header = emit_array_header(builder, record);
+    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    if writable {
+        let owners = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_owners_offset as i32);
+        let unique = builder.ins().icmp_imm_u(IntCC::Equal, owners, 1);
+        emit_js_guard(builder, unique, fallback);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record,
+            (ARRAY.object_offset + OBJECT.meta_offset) as i32);
+        let frozen = builder.ins().band_imm_u(meta, i64::from(ARRAY.frozen_mask));
+        let unfrozen = builder.ins().icmp_imm_u(IntCC::Equal, frozen, 0);
+        emit_js_guard(builder, unfrozen, fallback);
+        let extras = emit_array_extras(builder, record);
+        let plain = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
+        emit_js_guard(builder, plain, fallback);
+    }
+    let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
+    DenseArrayView { values, length, writable }
+}
+
+/// The backing's first value and length of the array `base` (tagged) an earlier view
+/// proved, after a helper that may have grown its backing: the array, its record and its
+/// writability stay what the view proved, so only the backing is read again.
+pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
+    let record = emit_array_record_address(builder, record_base, record_id);
+    let header = emit_array_header(builder, record);
+    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
+}
+
+/// The address of `view`'s present element `index` (an int32) and its value; an index past
+/// the elements (a negative one among them, compared unsigned) or a hole leaves through
+/// `fallback`.
+pub(super) fn emit_dense_element(
+    builder: &mut FunctionBuilder<'_>,
+    view: DenseArrayView,
+    index: ir::Value,
+    fallback: ir::Block,
+) -> (ir::Value, ir::Value) {
+    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, index, view.length);
+    emit_js_guard(builder, in_bounds, fallback);
+    let value_offset = emit_value_index_offset(builder, index);
+    let address = builder.ins().iadd(view.values, value_offset);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let is_present = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    emit_js_guard(builder, is_present, fallback);
+    (address, value)
+}
+
+/// Replace the present element at `address`, whose value was `old`, with the non-heap
+/// `value` through a writable view, as `ArrayElements::replace_through` does: the backing's
+/// count of non-int32 values (`OTHERS_FROM_VALUES`) follows the write, and an unknown count
+/// stays unknown. A non-heap value needs no generational log (`RecordSpace::store_logs`).
+pub(super) fn emit_dense_element_replace(
+    builder: &mut FunctionBuilder<'_>,
+    view: DenseArrayView,
+    address: ir::Value,
+    old: ir::Value,
+    value: ir::Value,
+) {
+    use crate::value::ValueLayout;
+    debug_assert!(view.writable, "an in-place replacement needs a writable view");
+    let other = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+        let other = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
+        builder.ins().uextend(types::I32, other)
+    };
+    let added = other(builder, value);
+    let removed = other(builder, old);
+    let others = builder.ins().load(types::I32, MemFlagsData::trusted(), view.values, crate::heap::OTHERS_FROM_VALUES);
+    let delta = builder.ins().isub(added, removed);
+    let recounted = builder.ins().iadd(others, delta);
+    let unknown = builder.ins().icmp_imm_u(IntCC::Equal, others, i64::from(crate::heap::OTHERS_UNKNOWN));
+    let others = builder.ins().select(unknown, others, recounted);
+    builder.ins().store(MemFlagsData::trusted(), others, view.values, crate::heap::OTHERS_FROM_VALUES);
+    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+}
+
+/// Mark a writable view's backing as holding uncounted other values (`OTHERS_UNKNOWN`), so
+/// stores through it need not keep the count (`ArrayElements::replace_through`), as
+/// `osr_loop` does for the arrays a region writes; the count stays unknown until the heap
+/// counts the values again.
+pub(super) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
+    debug_assert!(view.writable, "only a writable view's backing is this array's own");
+    let unknown = builder.ins().iconst(types::I32, i64::from(crate::heap::OTHERS_UNKNOWN));
+    builder.ins().store(MemFlagsData::trusted(), unknown, view.values, crate::heap::OTHERS_FROM_VALUES);
+}
+
 /// The present element `index` (an int32) of the dense own-array `base` (tagged): the
 /// record and its current backing reloaded per access, so receiver changes and copy-on-write
-/// writes are visible. Any other base, an index past the elements (a negative one among them,
-/// compared unsigned) or a hole leaves through `fallback`, with nothing read.
+/// writes are visible. Any other base, an index past the elements or a hole leaves through
+/// `fallback`, with nothing read.
 pub(super) fn emit_dense_element_read(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
@@ -1458,50 +1610,8 @@ pub(super) fn emit_dense_element_read(
     index: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-
-    let record = emit_array_record(builder, payload, base, fallback);
-    let elements = builder.ins().iadd_imm_s(
-        record,
-        i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
-    );
-    let header = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        elements,
-        i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
-    );
-    let length = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        header,
-        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
-    );
-    let index_is_present = builder
-        .ins()
-        .icmp(IntCC::UnsignedLessThan, index, length);
-    emit_js_guard(builder, index_is_present, fallback);
-
-    let value_offset = emit_value_index_offset(builder, index);
-    let values = builder.ins().iadd_imm_s(
-        header,
-        i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
-    );
-    let value_address = builder.ins().iadd(values, value_offset);
-    let value = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        value_address,
-        0,
-    );
-    let is_present = builder.ins().icmp_imm_u(
-        IntCC::NotEqual,
-        value,
-        Value::DELETED.to_bits() as i64,
-    );
-    emit_js_guard(builder, is_present, fallback);
-
-    value
+    let view = emit_dense_array_view(builder, payload, base, false, fallback);
+    emit_dense_element(builder, view, index, fallback).1
 }
 
 /// Lower a present dense own-array read. The receiver and key come from the
@@ -1595,6 +1705,9 @@ struct FieldSlotBinding {
     records: ir::Value,
     arena: FieldArena,
     writes: Option<crate::typed_ir::Type>,
+    /// Whether the run's entry admitted `writes` for the slot (`Lowering::entry_facts`): a
+    /// store through the binding guards it, so an unadmitted slot leaves only its stores.
+    admitted: Option<ir::Value>,
 }
 
 /// A bound slot moves invariant address arithmetic off the receiver-load chain.
@@ -1685,7 +1798,7 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
     let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
-        arena: FieldArena::Unbound { values, length }, writes: None }
+        arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
 }
 
 // `packed_slot`, when requested, receives a proved own-slot address holding a narrow
@@ -1895,22 +2008,53 @@ impl JsExactFallback {
     }
 }
 
-/// Lower a cached data-field read (`emit_js_cached_field_slot`); the destination stays untouched
-/// on a failed proof, which resumes `Vm::step` at this GetField PC and may fill the cache.
+/// Lower a cached data-field read (`emit_js_cached_field_slot`), or a nested lookup's chain of
+/// them, each read's value the next one's receiver; the destination stays untouched on a
+/// failed proof, which resumes `Vm::step` at this GetField PC and may fill the caches.
 #[allow(clippy::too_many_arguments)]
 fn emit_js_own_field_get(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
     receiver: JsFieldReceiver,
-    site: u16,
+    sites: &[(Atom, u16)],
     destination_offset: i32,
     next: ir::Block,
     exact: &JsExactFallback,
+    table: NarrowTable,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let mut object = match receiver {
+        JsFieldReceiver::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
+        JsFieldReceiver::Value(value) => value,
+    };
+    for &(atom, site) in sites {
+        // An own slot in inline storage holds a packed value, which decodes to the same Value;
+        // a read the site's primary row does not answer asks the VM's caches
+        // (`general_field_get`), whose miss alone takes the exact step.
+        let (packed, miss, read) = (builder.create_block(), builder.create_block(), builder.create_block());
+        let packed_address = builder.append_block_param(packed, types::I64);
+        let field = builder.append_block_param(read, types::I64);
+        let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, JsFieldReceiver::Value(object), site,
+            true, miss, None, None, Some(packed));
+        let stored = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        builder.ins().jump(read, &[ir::BlockArg::Value(stored)]);
+        builder.switch_to_block(packed);
+        let narrow = builder.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
+        emit_narrow_read(builder, narrow, table, read);
+        builder.switch_to_block(miss);
+        builder.set_cold_block(miss);
+        let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_get));
+        let named = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
+        let probed = emit_lane_helper_call(builder, payload, helper, &[object, named]);
+        let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, probed, Value::DELETED.to_bits() as i64);
+        emit_js_guard(builder, hit, fallback);
+        builder.ins().jump(read, &[ir::BlockArg::Value(probed)]);
+        builder.switch_to_block(read);
+        object = field;
+    }
+    let value = object;
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -1946,6 +2090,11 @@ fn emit_js_guarded_return(
     builder.switch_to_block(returns);
     builder.seal_block(returns);
     builder.ins().store(MemFlagsData::trusted(), value, result_pointer, 0);
+    emit_js_return_status(builder, pc);
+}
+
+/// Complete the frame from general dispatch: the value is already in the completion record.
+fn emit_js_return_status(builder: &mut RegionCore<'_>, pc: usize) {
     let status = builder.ins().iconst(
         types::I32,
         i64::from(JS_GENERAL_RETURN_STATUS_BASE)
@@ -2000,12 +2149,22 @@ fn emit_js_own_field_set(
         JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
         JsFieldReceiver::Value(value) => value,
     };
+    let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
     let atom = builder.ins().iconst(types::I64, i64::from(atom));
     let site = builder.ins().iconst(types::I64, i64::from(site));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_store));
     let stored = emit_lane_helper_call(builder, payload, helper, &[receiver, atom, site, value]);
     let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-    emit_js_guard(builder, stored, fallback);
+    // A store that names no existing slot adds the property by its site's cached transition.
+    let (add, done) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(stored, done, &[], add, &[]);
+    builder.switch_to_block(add);
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_add));
+    let added = emit_lane_helper_call(builder, payload, helper, &[payload, receiver, write, value]);
+    let added = builder.ins().icmp_imm_u(IntCC::NotEqual, added, 0);
+    emit_js_guard(builder, added, fallback);
+    builder.ins().jump(done, &[]);
+    builder.switch_to_block(done);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     }
@@ -2081,6 +2240,18 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
 }
 
+/// Whether a back edge leaves for its safepoint: an interrupt is requested, or a collection is
+/// due (`Heap::should_collect`), which the exact step of the edge's `Jump` performs.
+fn emit_js_safepoint_due(builder: &mut RegionCore<'_>, payload: ir::Value) -> ir::Value {
+    let interrupted = emit_js_interrupt_requested(builder);
+    let allocated = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, allocated));
+    let allocated = builder.ins().load(types::I64, MemFlagsData::trusted(), allocated, 0);
+    let collect_at = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, collect_at));
+    let collect_at = builder.ins().load(types::I64, MemFlagsData::trusted(), collect_at, 0);
+    let due = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, allocated, collect_at);
+    builder.ins().bor(interrupted, due)
+}
+
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
 /// storage mode found at entry, which only an adding store changes, after which the body reads
 /// them again (`Lowering::reload_receiver`); and the property arena's base, which an
@@ -2154,20 +2325,6 @@ fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         }
         None => narrow,
     }
-}
-
-/// Decode a packed property using the canonical NarrowLayout, transferring
-/// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
-fn emit_packed_object_slot_read(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    slot: u16,
-    join: ir::Block,
-) {
-    debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
-    let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
-    let narrow = builder.ins().ireduce(types::I32, half);
-    emit_narrow_read(builder, narrow, NarrowTable::Process, join);
 }
 
 /// Binding time changes the table address, never the packed-value semantics.
@@ -2313,6 +2470,8 @@ lane_helper_inventory! { H;
     NewArray => lane_new_array::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
+    /// A loop's hoisted typed array view (`lane_typed_array_view`).
+    TypedArrayView => lane_typed_array_view::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -2504,9 +2663,26 @@ fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: Wide
     Some(NullishComparison { source, expected, strict, negated })
 }
 
+/// What the online division may fold as Stable facts of one VM, and where the code learns
+/// that one changed (`typed_ir::BindingTime::Stable`).
+#[derive(Clone, Copy)]
+pub(super) struct OnlineFacts<'a> {
+    /// The names method caches hold now.
+    pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
+    /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
+    pub(super) invalidation: usize,
+}
+
+impl OnlineFacts<'_> {
+    /// Whether a method cache names `atom` now.
+    pub(super) fn names(&self, atom: Atom) -> bool {
+        self.method_cache_atoms.contains(atom)
+    }
+}
+
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
 #[derive(Clone, Copy)]
-pub(super) struct VmFacts {
+pub(super) struct VmFacts<'a> {
     /// The VM's `length` name.
     pub(super) length: Atom,
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
@@ -2517,19 +2693,23 @@ pub(super) struct VmFacts {
     /// The `call` name and the realm's `Function.prototype.call`, through which a call
     /// inlines the function it calls (`lane_unit::Frame::function_call`).
     pub(super) function_call: Option<(Atom, Value)>,
+    /// The Stable facts the code may fold under a code dependency: `None` for code that takes
+    /// no dependency on this VM (`Division::Offline`).
+    pub(super) online: Option<OnlineFacts<'a>>,
 }
 
-impl VmFacts {
+impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
-    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None };
+    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
+    /// no Stable facts.
+    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, online: None };
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn vm_facts(&self) -> VmFacts {
+    pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call }
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call, online: None }
     }
 }
 
@@ -2603,7 +2783,7 @@ pub(super) struct StaticTypedRegion {
 }
 
 #[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<Option<u32>>],
+pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<lane_unit::StaticTargets>],
     isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
 {
     if isa.pointer_type() != types::I64 { return Vec::new(); }
@@ -2612,8 +2792,8 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // Both binding-time divisions plan the full call graph. Static bindings use
     // actual function admission and the same exact suspended-frame recovery.
     let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc|
-        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).copied().flatten()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
+            .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
@@ -2633,30 +2813,48 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
             || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
                 | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return)
             || (instruction.op() == Op::LoadCapture && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
-    let lower = |coverage: lane_region::Coverage| {
+    // A region whose loops index arrays in place also gets its typed-array variant, which the
+    // dispatcher enters at the same header where the dense one leaves there (it comes first
+    // here, the dispatcher trying the last first). Each variant's symbol is its header and kind.
+    let lower = |coverage: lane_region::Coverage| -> Option<Vec<StaticTypedRegion>> {
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
-        lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-            &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
-            coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
-            .map(|mut region| {
-                region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, header);
-                StaticTypedRegion { header: header as usize, function: region.function }
-            })
+        let variant = |views: lane_region::ElementViews| {
+            lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
+                &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
+                coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
+                .map(|mut region| {
+                    let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
+                    region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, symbol);
+                    (region.hoists_arrays, StaticTypedRegion { header: header as usize, function: region.function })
+                })
+        };
+        let (hoists_arrays, dense) = variant(lane_region::ElementViews::Dense)?;
+        let typed = hoists_arrays.then(|| variant(lane_region::ElementViews::Typed)).flatten().map(|(_, region)| region);
+        Some(typed.into_iter().chain(std::iter::once(dense)).collect())
     };
     // Preserve pure preheaders in the SSA graph. Otherwise, first try the
     // complete region previously admitted by the whole-suffix contract.
-    if scalar && !headers.is_empty() && let Some(region) = lower(lane_region::Coverage::Full) {
-        return vec![region];
+    if scalar && !headers.is_empty() && let Some(regions) = lower(lane_region::Coverage::Full) {
+        return regions;
     }
     if let Some(header) = headers.first().copied().or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))
-        && let Some(region) = lower(lane_region::Coverage::FullFrom(header)) {
-        return vec![region];
+        && let Some(regions) = lower(lane_region::Coverage::FullFrom(header)) {
+        return regions;
     }
     // Independent loop entries share the original unit PC/frame IDs. Prefix
     // lowering stops before an opaque operation and returns its exact origin;
     // neither initialization nor a preceding loop is replayed on re-entry.
-    headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).collect()
+    // A body without loops of its own whose inlined calls a full region cannot cover runs
+    // them from its entry up to the first opaque operation. An inlined callee's loop that
+    // indexes arrays stays the callee's own region, which views its arrays at its header.
+    let array_loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
+        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            && instruction.jump_target() as usize <= pc
+            && unit.instructions[instruction.jump_target() as usize..=pc].iter()
+                .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
+    if headers.is_empty() && !array_loops && !unit.frames.is_empty() { headers.push(0); }
+    headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect()
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
@@ -2745,6 +2943,13 @@ pub(super) fn lower_js_general_dispatch(
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
     }
+    // Packed values decode through the process's table, or an image's linked copy of it.
+    let narrow_table = match callout_kind {
+        #[cfg(feature = "aot")]
+        JsGeneralCallout::Relocatable { .. } => NarrowTable::Linked(
+            u32::try_from(program.function_count()).map_err(|_| "native-data-symbol-overflow")?),
+        _ => NarrowTable::Process,
+    };
     if isa.pointer_type() != types::I64 {
         return Err("general-dispatch-requires-64-bit-pointers");
     }
@@ -2820,10 +3025,13 @@ pub(super) fn lower_js_general_dispatch(
         for entry in _scalar_regions {
             entries.to_mut()[entry.range.start] = builder.create_block();
         }
+        // Units of one header chain: each leaves at the header into the one registered before
+        // it, the first into the header's own code.
         let typed_entries: Vec<_> = _typed_regions.iter().copied().map(|unit| {
             let fallback = entries[unit.header];
-            entries.to_mut()[unit.header] = builder.create_block();
-            (unit, fallback)
+            let entry = builder.create_block();
+            entries.to_mut()[unit.header] = entry;
+            (unit, entry, fallback)
         }).collect();
         (entries, typed_entries)
     };
@@ -2925,12 +3133,7 @@ pub(super) fn lower_js_general_dispatch(
             builder
                 .ins()
                 .store(MemFlagsData::trusted(), value, result_pointer, 0);
-            let status = builder.ins().iconst(
-                types::I32,
-                i64::from(JS_GENERAL_RETURN_STATUS_BASE)
-                    + i64::try_from(pc).expect("bounded general-dispatch PC"),
-            );
-            builder.ins().return_(&[status]);
+            emit_js_return_status(&mut builder, pc);
             builder.switch_to_block(fallback);
             emit_js_step_fallback(
                 &mut builder,
@@ -3049,13 +3252,89 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
+        // A call of a method read as `push` with one argument or `pop` with none asks the
+        // array builtins' dense shortcut first (`general_native_call`); anything else, or its
+        // miss, is the exact step's call.
+        if instruction.op() == Op::Call
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.direct_eval()
+            && !instruction.parameter_eval()
+            && let Some(next) = next
+            && let window = instruction.call_window()
+            && window.count <= 1
+            && let Some(read) = function.code[..pc].iter().rev()
+                .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+                .find(|earlier| earlier.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister
+                    && earlier.result_register() == instruction.register_b())
+            && read.op() == Op::GetField
+            && let Some(FieldLookup::Atom { atom, .. }) = read.field_lookup()
+            && program.atoms.get(atom as usize).is_some_and(|name| (name == "push" && window.count == 1) || (name == "pop" && window.count == 0))
+            && let Some(callee_offset) = register_offset(instruction.register_b())
+            && let Some(receiver_offset) = register_offset(instruction.register_c())
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+            && let Some(argument_offset) = if window.count == 1 { register_offset(window.base).map(Some) } else { Some(None) }
+        {
+            let exact = JsExactFallback {
+                context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc,
+            };
+            let fallback = builder.create_block();
+            let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, callee_offset);
+            let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, receiver_offset);
+            let argument = match argument_offset {
+                Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+                None => builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64),
+            };
+            let count = builder.ins().iconst(types::I64, i64::from(window.count));
+            let helper = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, native_call));
+            let value = emit_lane_helper_call(&mut builder, payload, helper, &[payload, callee, receiver, argument, count]);
+            let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut builder, hit, fallback);
+            builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+            builder.ins().jump(next, &[]);
+            exact.emit(&mut builder, fallback);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        // A direct array's `length` is its record's; any other receiver reads the field as
+        // the plain read below does.
         if instruction.op() == Op::GetField
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
-            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup()
+            && program.atoms.get(atom as usize).is_some_and(|name| name == "length")
+            && let Some(receiver @ JsFieldReceiver::Register(source)) = js_field_receiver(base, &register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            let exact = JsExactFallback {
+                context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc,
+            };
+            let generic = builder.create_block();
+            let array = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+            let length = emit_array_length_read(&mut builder, payload, array, generic);
+            let length = lane_region::int_tagged(&mut builder, length);
+            builder.ins().store(MemFlagsData::trusted(), length, arguments, destination_offset);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(generic);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &[(atom, cache_site)], destination_offset, next, &exact, narrow_table);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::GetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some((base, sites)) = match instruction.field_lookup() {
+                Some(FieldLookup::Atom { base, atom, cache_site }) => Some((base, smallvec::smallvec![(atom, cache_site)])),
+                Some(FieldLookup::Site(site)) => program.field_sites.get(site).map(|site| (site.base,
+                    std::iter::once(site.first).chain(site.second).collect::<smallvec::SmallVec<[(Atom, u16); 2]>>())),
+                None => None,
+            }
             && let Some(receiver) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
@@ -3068,7 +3347,7 @@ pub(super) fn lower_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_get(&mut builder, arguments, payload, receiver, cache_site, destination_offset, next, &exact);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact, narrow_table);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -3179,8 +3458,8 @@ pub(super) fn lower_js_general_dispatch(
                         {
                             let fallback = builder.create_block();
                             let resume = builder.create_block();
-                            let interrupted = emit_js_interrupt_requested(&mut builder);
-                            builder.ins().brif(interrupted, fallback, &[], resume, &[]);
+                            let due = emit_js_safepoint_due(&mut builder, payload);
+                            builder.ins().brif(due, fallback, &[], resume, &[]);
                             builder.switch_to_block(fallback);
                             emit_js_step_fallback(
                                 &mut builder,
@@ -3682,31 +3961,44 @@ pub(super) fn lower_js_general_dispatch(
                 )
             })
             .flatten();
-        // A returning result's flags are the return bit alone (`result_target`).
-        let result_flags_plain = instruction.result_flags() == 0
-            || (instruction.returns_from_frame() && result_target.is_some());
+        // A returning result's flags are the return bit alone; its value completes the frame.
+        let arithmetic_returns = numeric_binary && instruction.returns_from_frame();
         let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
-            && result_flags_plain
+            && (instruction.result_flags() == 0
+                || (arithmetic_returns && instruction.result_flags() == RETURN_REGISTER))
             && !instruction.writes_current_this()
-            && result_target.and_then(register_offset).is_some()
+            && (arithmetic_returns || result_target.and_then(register_offset).is_some())
+            && (arithmetic_returns || result_next.is_some())
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
-        if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
-            (numeric_result, result_next, arithmetic, operands)
+        if let (true, Some(arithmetic), Some((left_operand, right_operand))) =
+            (numeric_result, arithmetic, operands)
         {
             let fallback = builder.create_block();
-            let destination = result_target
-                .and_then(register_offset)
-                .expect("prevalidated JS numeric destination");
+            let registers = arguments;
+            // A returning result proves no interrupt is pending before any effect, then
+            // lands in the completion record; a plain one lands in its register.
+            let (arguments, destination, next) = if arithmetic_returns {
+                let compute = builder.create_block();
+                let interrupted = emit_js_interrupt_requested(&mut builder);
+                builder.ins().brif(interrupted, fallback, &[], compute, &[]);
+                builder.switch_to_block(compute);
+                (result_pointer, 0, builder.create_block())
+            } else {
+                let destination = result_target
+                    .and_then(register_offset)
+                    .expect("prevalidated JS numeric destination");
+                (arguments, destination, result_next.expect("prevalidated JS numeric continuation"))
+            };
             let left_bits = read_js_tagged_operand(
                 &mut builder,
                 program,
                 left_operand,
-                arguments,
+                registers,
                 &register_offset,
             )
             .expect("prevalidated JS numeric operand");
@@ -3714,7 +4006,7 @@ pub(super) fn lower_js_general_dispatch(
                 &mut builder,
                 program,
                 right_operand,
-                arguments,
+                registers,
                 &register_offset,
             )
             .expect("prevalidated JS numeric operand");
@@ -3748,6 +4040,10 @@ pub(super) fn lower_js_general_dispatch(
                 destination,
             );
             builder.ins().jump(next, &[]);
+            if arithmetic_returns {
+                builder.switch_to_block(next);
+                emit_js_return_status(&mut builder, pc);
+            }
             builder.switch_to_block(fallback);
             emit_js_step_fallback(
                 &mut builder,
@@ -3770,7 +4066,7 @@ pub(super) fn lower_js_general_dispatch(
         let bitwise_result = numeric_binary
             && bitwise.is_some()
             && instruction.numeric_local_target().is_none()
-            && result_flags_plain
+            && instruction.result_flags() == 0
             && !instruction.writes_current_this()
             && result_target.and_then(register_offset).is_some()
             && operands.is_some_and(|(left, right)| {
@@ -3945,8 +4241,8 @@ pub(super) fn lower_js_general_dispatch(
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
-        let gate = typed_entries.iter().find(|(unit, _)| unit.header == entry.range.start)
-            .map_or(entries[entry.range.start], |(_, fallback)| *fallback);
+        let gate = typed_entries.iter().find(|(unit, _, _)| unit.header == entry.range.start)
+            .map_or(entries[entry.range.start], |(_, _, fallback)| *fallback);
         let call = scalar_region::emit_entry(&mut builder, isa, entry, gate,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc, &control);
         frame_flow.residual(call, entry.frame);
@@ -3954,8 +4250,8 @@ pub(super) fn lower_js_general_dispatch(
     #[cfg(feature = "aot")]
     let mut typed_returns = Vec::new();
     #[cfg(feature = "aot")]
-    for (unit, fallback) in &typed_entries {
-        builder.switch_to_block(entries[unit.header]);
+    for (unit, entry, fallback) in &typed_entries {
+        builder.switch_to_block(*entry);
         let run = builder.create_block();
         let specialized = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
@@ -3970,7 +4266,7 @@ pub(super) fn lower_js_general_dispatch(
         // After inlining ordinary exits preserve SSA edges. Exact callee
         // materialization owns a canonical frame boundary below.
         let pc = builder.inst_results(call)[0];
-        typed_returns.push((unit.header, pc));
+        typed_returns.push((*fallback, unit.header, pc));
         let pc = builder.ins().uextend(types::I64, pc);
         builder.ins().jump(typed_continue.expect("typed continuation").0, &[ir::BlockArg::Value(pc)]);
     }
@@ -3990,7 +4286,7 @@ pub(super) fn lower_js_general_dispatch(
         builder.ins().brif(materialized, stopped_block, &[], source, &[]);
         builder.switch_to_block(source);
         let targets: Vec<_> = entries.iter().copied().enumerate().map(|(pc, entry)|
-            typed_entries.iter().find(|(unit, _)| unit.header == pc).map_or(entry, |(_, fallback)| *fallback)).collect();
+            typed_entries.iter().find(|(unit, _, _)| unit.header == pc).map_or(entry, |(_, _, fallback)| *fallback)).collect();
         emit_js_pc_dispatch(&mut builder, pc, &targets, invalid_pc);
     }
     builder.seal_block(continue_block);
@@ -4023,7 +4319,7 @@ pub(super) fn lower_js_general_dispatch(
         // The residual returns a statically fixed source PC on every exit.
         // Link those edges before frame promotion instead of dispatching a
         // known PC through a memory/result join and another jump table.
-        for (header, result) in typed_returns {
+        for (own_fallback, header, result) in typed_returns {
             let result = native.dfg.resolve_aliases(result);
             let ir::ValueDef::Param(join, parameter) = native.dfg.value_def(result) else {
                 return Err("typed-residual-return-is-not-a-join");
@@ -4037,9 +4333,7 @@ pub(super) fn lower_js_general_dispatch(
                     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
                     let pc = usize::try_from(imm.bits()).ok()?;
                     if pc == JS_INLINE_MATERIALIZED_PC as usize { return Some((instruction, stopped_block)); }
-                    let target = *entries.get(pc)?;
-                    let target = typed_entries.iter().find(|(unit, _)| unit.header == header && header == pc)
-                        .map_or(target, |(_, fallback)| *fallback);
+                    let target = if pc == header { own_fallback } else { *entries.get(pc)? };
                     Some((instruction, target))
                 }).collect();
             for (instruction, target) in exits {
@@ -4504,9 +4798,6 @@ const TRAPS: [crate::WasmTrap; 6] = [
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
 const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
-const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
-const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
-const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -4516,30 +4807,6 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
-
-/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
-/// compiled call consults several, and reading the environment on each call cost more than
-/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
-struct EnvSwitch {
-    name: &'static str,
-    enabled: std::sync::OnceLock<bool>,
-}
-
-impl EnvSwitch {
-    const fn new(name: &'static str) -> Self {
-        Self { name, enabled: std::sync::OnceLock::new() }
-    }
-
-    fn enabled(&self) -> bool {
-        *self.enabled.get_or_init(|| {
-            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
-        })
-    }
-}
-
-static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
-static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
-static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -4563,7 +4830,7 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) fn jit_wasm_selective_enabled() -> bool {
-    JIT_WASM_SELECTIVE.enabled()
+    switches::WASM_JIT_SELECTIVE.enabled()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4571,7 +4838,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    JIT_ROOT_ONLY.enabled()
+    switches::WASM_JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -4579,7 +4846,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    JIT_ROOT_FIRST.enabled()
+    switches::WASM_JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -5027,7 +5294,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // No guest code or collector ran, so all entry identities remain rooted and live.
             unsafe { (&mut *payload.entry).refresh_array_backing(&*payload.region, old, elements, length, capacity) };
             let due = vm.heap.should_collect();
-            if payload.diagnostics_enabled && std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if payload.diagnostics_enabled && crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_ARRAY_RESERVE function={} length={length} capacity={capacity} gc_due={due}", payload.function);
             }
             // Collection is never performed with native SSA values unrooted. A debt exit
@@ -5055,7 +5322,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
         let site = u16::try_from(cache_site).ok()?;
         // The ABI slot is used as a raw 64-bit Value, never as an address.
         let receiver = Value::from_bits(receiver_bits);
-        let probe = vm.cached_field_hit(program, receiver, site);
+        let probe = vm.compiled_field_hit(program, receiver, site);
         if payload.diagnostics_enabled {
             let function = payload.function;
             vm.programs.record_js_jit_field_cache_probe(
@@ -6288,8 +6555,7 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
+    crate::trace::Channel::WasmJit.on()
 }
 
 impl CompiledProgram {
@@ -6557,11 +6823,11 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
 /// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
 /// for disassembly at `BASE` (diagnostics only).
 fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
-    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+    if !crate::trace::Channel::PerfMap.on() {
         return;
     }
     use std::io::Write;
@@ -6760,37 +7026,12 @@ pub(super) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
-/// The Cranelift optimization level the loop tier compiles regions at under each memory
-/// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
-/// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and
-/// the code pages of the compiler and of the region.
-///
-/// Memory-first compiles no loop region, on the owner's direction of 2026-10-24 (TOD-123:
-/// memory-first may trade Score for memory under `--jit`). The per-function tier, which this
-/// leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below their interpreted
-/// peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988 interpreted, Crypto at
-/// 4000 and 3128 (static BOLT x86_64, memory-first, median of 5, 2026-10-24). Compiling at
-/// `none`, without the e-graph pass, saved only 576 KiB on Crypto and 648 on NavierStokes
-/// (`tod137-loop-tier-opt-level-…`). Throughput compiles at `speed`.
-const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
-
-/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_opt_level`).
 pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
-    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
+    tier_policy::by_policy(policy).loop_opt_level.is_some()
 }
 
-/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
-/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
-/// order). Memory-first compiles
-/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
-/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
-/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
-/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
-/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
-/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
-const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
-
-/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+/// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     #[cfg(feature = "gc-tuning")]
     {
@@ -6804,7 +7045,7 @@ pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
             return false;
         }
     }
-    JS_FUNCTION_TIERS[policy as usize]
+    tier_policy::by_policy(policy).js_function_tiers
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -6819,7 +7060,7 @@ pub(super) fn compile_osr_region(
     if loop_tier_region_budget_spent() {
         return None;
     }
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
+    let isa = super::jit_backend::target_isa(tier_policy::by_policy(policy).loop_opt_level?)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -6851,7 +7092,7 @@ pub(super) fn compile_osr_region(
     })
 }
 
-/// The process's peak resident set in KiB, for `QUENCH_JS_JIT_PEAK_TRACE`.
+/// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 #[cfg(feature = "gc-tuning")]
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
@@ -6874,7 +7115,7 @@ fn process_peak_rss_kib() -> i64 {
 /// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
 /// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
 /// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`LOOP_TIER_OPT_LEVELS`).
+/// (`PolicyTiers::loop_opt_level`).
 #[cfg(feature = "gc-tuning")]
 fn loop_tier_region_budget_spent() -> bool {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -6889,12 +7130,11 @@ fn loop_tier_region_budget_spent() -> bool {
     COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
-/// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
+/// The directory the `jit-dump` trace channel names: each loop region
 /// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
 /// instruction-level profiles to native code.
 fn native_dump_directory() -> Option<&'static std::path::Path> {
-    static DIRECTORY: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    DIRECTORY.get_or_init(|| std::env::var_os("QUENCH_JS_JIT_DUMP").map(std::path::PathBuf::from)).as_deref()
+    crate::trace::Channel::JitDump.value().map(std::path::Path::new)
 }
 
 /// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
@@ -7162,6 +7402,9 @@ pub(super) struct JsNativeStep {
     pub(super) result: Result<super::StepResult, JsError>,
 }
 
+/// Generated code reads this payload by field offset, and an image's code is compiled by a
+/// different build than the runtime it links: the layout is declared, not left to the compiler.
+#[repr(C)]
 struct JsStepDispatch {
     program_id: ProgramId,
     frame: usize,
@@ -7232,6 +7475,20 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
+    /// What a store missing its existing slot tries next (`lane_store_miss`): the object's
+    /// shape and storage may change, which only re-proved reads see.
+    field_add: usize,
+    /// The VM's cached read (`general_field_get`), which a read its site's primary row does
+    /// not answer asks before the exact step.
+    field_get: usize,
+    /// The dense shortcut of an array builtin call (`general_native_call`), which a `push` or
+    /// `pop` call site asks before the exact step.
+    native_call: usize,
+    /// The running heap's charged allocation weight and the weight a collection is due at,
+    /// by address (`Heap::should_collect`), which a native back edge compares to leave for its
+    /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
+    allocated: usize,
+    collect_at: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7239,15 +7496,24 @@ struct JsStepDispatch {
     outcome: Option<JsNativeStep>,
 }
 
-/// A general-dispatch body specialized for frameless lane activations
-/// (`GeneralDispatchMode::Lane`): it runs on the activation's own registers, so they stay
-/// the interpreter's exact state, and leaves at the PC of any instruction it does not run.
-/// The length below which a lane body without loops or inlined calls declines
-/// (`Vm::compile_lane_method`).
-const LANE_BODY_MIN_INSTRUCTIONS: usize = 24;
+/// The slots a lane body's field reads and its direct callees' bodies depend on, once each.
+fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
+    -> Vec<crate::code_dependencies::SlotDependency> {
+    let mut slot_dependencies: Vec<_> = fields.values().flatten()
+        .filter_map(|field| field.slot_dependency())
+        .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
+        .collect();
+    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
+    slot_dependencies.dedup();
+    slot_dependencies
+}
 
 pub(super) struct LaneMethod {
     pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// The Stable facts its code folded, each a dependency its publication takes.
+    pub(super) stable: lane_region::StableFacts,
+    /// The word its code reads at its invalidation points, set when it retires.
+    pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: Entry,
     /// An OSR-only body keeps normal calls on their baseline entry.
@@ -7291,7 +7557,7 @@ impl LaneMethod {
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
+    /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.first_entry && self.amortizes
     }
@@ -7402,10 +7668,51 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
 /// leaves native code for the lane's full read.
 unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
-    // The read's atom above its cache site (`Lowering::field_probe`).
-    let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
+    unsafe { cached_field_read::<H>(vm, residual, receiver, read) }
+}
+
+/// General dispatch's read of a field its site's primary row does not answer: the same
+/// cached read as a lane body's (`lane_field_get`), reached only from a row miss.
+unsafe extern "C" fn general_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+    // SAFETY: as `lane_field_get`.
+    unsafe { cached_field_read::<H>(vm, residual, receiver, read) }
+}
+
+/// A general-dispatch call of an array builtin: `Array.prototype.push` of one value or `pop`
+/// onto a dense array, by the lane's own shortcuts (`Vm::array_push_dense`,
+/// `Vm::array_pop_dense`); `Value::DELETED`, having done nothing, for any other callee,
+/// receiver or argument count, which the exact step calls. A push may move the array's
+/// elements, which native code reads anew at every access.
+unsafe extern "C" fn general_native_call<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, receiver: u64,
+    argument: u64, count: u64) -> u64 {
+    // SAFETY: as `lane_field_add`.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let native = match vm.heap.function(Value::from_bits(callee)).map(|record| &record.kind) {
+        Some(crate::heap::FunctionKind::Native(native)) => *native,
+        _ => return Value::DELETED.to_bits(),
+    };
+    let receiver = Value::from_bits(receiver);
+    let value = match (native, count) {
+        (crate::heap::Native::ArrayPush, 1) => vm.array_push_dense(receiver, &[Value::from_bits(argument)]),
+        (crate::heap::Native::ArrayPop, 0) => vm.array_pop_dense(receiver),
+        _ => None,
+    };
+    let Some(value) = value else { return Value::DELETED.to_bits() };
+    // As `lane_store_miss`: a due collection waits for the next back edge's safepoint.
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
+}
+
+/// The VM's cached read of the field `read` names (its atom above its cache site): an array's
+/// `length`, a proved inherited entry, else the site's caches; `Value::DELETED` for a miss.
+///
+/// # Safety
+/// `vm` and `residual` are the running VM and residual, live and unborrowed for the call.
+unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+    let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
+    // SAFETY: as the caller promises; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
     // An array's `length`, an own data property no shape holds, answers first: a loop's
     // condition reads it every iteration (`Vm::array_length_field`).
@@ -7418,7 +7725,7 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
         return value.to_bits();
     }
     let receiver = Value::from_bits(receiver);
-    match vm.cached_field_hit(residual, receiver, site) {
+    match vm.compiled_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         _ => Value::DELETED.to_bits(),
     }
@@ -7594,6 +7901,32 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     1
 }
 
+/// A general-dispatch store that missed its existing slot (`lane_field_set`): the site's cached
+/// add, by its inline proved entry first (`Vm::proved_field_add_hit`), else with its chain proof
+/// (`Vm::primary_field_add_hit`), else a polymorphic site's own-slot store. Zero where none hits,
+/// a collection is due, or the program or key takes no cached add (a lane body's lowering
+/// admits only those statically). An add may move the property arena, which the dispatch reads again.
+unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_field_add`.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
+    if vm.heap.should_collect() || !vm.specialized_operations_enabled(residual) || !vm.field_add_atom_eligible(atom) {
+        return 0;
+    }
+    let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
+    if !(vm.proved_field_add_hit(receiver, atom, value, site)
+        || vm.primary_field_add_hit(residual, receiver, atom, value, site)
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_some()) {
+        return 0;
+    }
+    // A collection the add made due waits for the next back edge's safepoint
+    // (`emit_js_safepoint_due`); the lane's own floor exists only while a lane runs.
+    dispatch.refresh_object_bases(vm);
+    1
+}
+
 /// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
 /// `DELETED` where a collection is due, which the body leaves for. The allocation may move
 /// the property arena, whose base and length the dispatch reads again.
@@ -7618,6 +7951,28 @@ unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     array.to_bits()
+}
+
+/// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
+#[repr(C)]
+pub(super) struct LaneTypedArrayView {
+    pub(super) elements: u64,
+    pub(super) length: u64,
+    /// The `TypedArrayKind` discriminant.
+    pub(super) kind: u64,
+}
+
+/// A lane loop's typed array view (`Vm::lane_typed_array_elements`), written to `out`; zero
+/// where the loop cannot address the elements in place, which leaves at the loop's header.
+unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64, writable: u64, out: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the view reads cells and allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let Some((elements, length, kind)) = vm.lane_typed_array_elements(Value::from_bits(object), writable != 0) else {
+        return 0;
+    };
+    // SAFETY: `out` is the caller's stack slot of one view.
+    unsafe { *(out as *mut LaneTypedArrayView) = LaneTypedArrayView { elements: elements as u64, length: length as u64, kind: kind as u64 } };
+    1
 }
 
 /// A lane body's element store: the lane's own in-place replacement of a record array's
@@ -7735,7 +8090,12 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let result = (|| {
             let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
-            let facts = self.vm_facts();
+            // The body folds Stable facts under its own invalidation word, which its publication
+            // sets when one changes (`ProgramStore::publish_lane_method`).
+            let invalidation = crate::code_dependencies::Invalidation::default();
+            let method_cache_atoms = self.method_cache_atoms.bits().clone();
+            let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
+                invalidation: invalidation.address() }), ..self.vm_facts() };
             let body = program.function_get(function as usize)?;
             let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
             let (unit, region, fields, direct, direct_sites) = loop {
@@ -7826,7 +8186,7 @@ impl<H: Host> Vm<H> {
                 instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
                     && (instruction.imm() as usize) <= pc
             });
-            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
+            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions;
             let code = CodeMemory::new(&region.code)?;
             if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
                 dump_native_code(directory, function, &code, clif);
@@ -7845,13 +8205,8 @@ impl<H: Host> Vm<H> {
                 .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
             let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
             let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
-            let mut slot_dependencies: Vec<_> = fields.values().flatten()
-                .filter_map(|field| field.slot_dependency())
-                .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
-                .collect();
-            slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-            slot_dependencies.dedup();
-            Some(LaneMethod { slot_dependencies, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
+            let slot_dependencies = lane_slot_dependencies(&fields, &direct);
+            Some(LaneMethod { slot_dependencies, stable: region.stable, invalidation, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
         })();
         self.host.after_native_compilation();
         result
@@ -8160,6 +8515,11 @@ impl LaneFrame {
                 property_buffer: 0,
                 field_entries: 0,
                 field_store: 0,
+                field_add: 0,
+                field_get: 0,
+                native_call: 0,
+                allocated: 0,
+                collect_at: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
@@ -8224,8 +8584,8 @@ fn run_js_native_entry<H: Host>(
     interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
     native_pcs: &[u8],
 ) -> Option<(u32, u64)> {
-    // Taking the idle slot leaves reentrant calls no access to this live context.
-    let mut context = match unsafe { (*vm).js_native_context.take() } {
+    // Taking an idle context leaves reentrant entries no access to this live one.
+    let mut context = match unsafe { (*vm).js_native_contexts.pop() } {
         Some(mut context) => {
             context.bind_native_adapter(payload, interrupt, poll_page);
             context
@@ -8269,12 +8629,8 @@ fn run_js_native_entry<H: Host>(
         )
     };
     let raised = context.raised.take();
-    // Idle JS adapters own no guest roots or raised completions. Nested
-    // entries may already have returned a reusable context; retain only one.
-    let idle = unsafe { &mut (*vm).js_native_context };
-    if idle.is_none() {
-        *idle = Some(context);
-    }
+    // Idle JS adapters own no guest roots or raised completions.
+    unsafe { (*vm).js_native_contexts.push(context) };
     match raised {
         Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
         Some(Raised::Error(_)) => return None,
@@ -8312,7 +8668,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8346,6 +8702,12 @@ impl JsStepDispatch {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
         self.field_store = lane_field_set::<H> as *const () as usize;
+        self.field_add = lane_store_miss::<H> as *const () as usize;
+        self.field_get = general_field_get::<H> as *const () as usize;
+        self.native_call = general_native_call::<H> as *const () as usize;
+        let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));
+        self.allocated = heap.wrapping_add(crate::heap::Heap::ALLOCATED_OFFSET) as usize;
+        self.collect_at = heap.wrapping_add(crate::heap::Heap::COLLECT_AT_OFFSET) as usize;
     }
 
     /// Object loads, stores and barriers share these bases in lane and general code.
@@ -8895,6 +9257,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             } else {
                 None
             };
+            // A pushed call is the shared frame transition however it then completes.
+            let pushed = diagnostics_enabled && matches!(in_loop_call, Some(Ok(super::StepResult::PushFrame { .. })));
+            let in_loop_call = in_loop_call.map(|step| vm.complete_pushed_call(program, dispatch.frame, current_instruction, step));
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]
                     .registers
@@ -8927,8 +9292,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     dispatch.allow_inline_calls,
                 )
             };
+            // A construction the operation pushed completes as a pushed call does.
+            let step = if current_instruction.op() == Op::Construct && dispatch.allow_inline_calls {
+                vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
+            } else { step };
             if is_call && diagnostics_enabled {
                 let outcome = match &step {
+                    _ if pushed => super::program_store::JsJitCallOutcome::PushFrame,
                     Ok(super::StepResult::Continue) => {
                         super::program_store::JsJitCallOutcome::Continue
                     }
@@ -9392,6 +9762,7 @@ impl CompiledJsFunction {
                 NativeNumberResult::Float64 => Value::number(f64::from_bits(result)),
             }));
         }
+        if let Some(result) = self.call_leaf(arguments) { return Some(result); }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
             interrupt: interrupt.atomic_flag(),
@@ -13927,7 +14298,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the JavaScript function tiers run: compiled execution under a memory policy
-    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// that compiles them (`PolicyTiers::js_function_tiers`), in a build whose profiles do not count
     /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
         !cfg!(quench_profiled)
@@ -14197,6 +14568,64 @@ impl<H: Host> Vm<H> {
         self.guarded_call_values(program, program_id, callee, receiver)
     }
 
+    /// Runs the body a native caller's call pushed (`push_in_loop_call`) to its completion on
+    /// the native stack, so the caller continues past the call natively instead of stopping
+    /// for the loop to run the callee and entering again after it; a `call`'s returning from
+    /// the caller's frame returns its value. A callee of another program, or one past the
+    /// native stack budget, stays the loop's push.
+    fn complete_pushed_call(&mut self, program: &ResidualProgram, caller: usize, call: WideInstruction,
+        step: Result<super::StepResult, JsError>) -> Result<super::StepResult, JsError> {
+        // A construction yields its receiver unless the body returns an object, as the loop's
+        // return of a pushed constructor does (`CallCompletion::Constructor`).
+        let (destination, call_guard, constructed) = match step {
+            Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Value }) =>
+                (destination, call_guard, None),
+            Ok(super::StepResult::PushFrame { destination, call_guard, completion: super::CallCompletion::Constructor(this) }) =>
+                (destination, call_guard, Some(this)),
+            step => return step,
+        };
+        let callee = self.frames.len() - 1;
+        let stack = (self.frames[callee].program == self.frames[caller].program)
+            .then(crate::stack::StackGuard::enter_optional).flatten();
+        let Some(_stack) = stack else {
+            let completion = constructed.map_or(super::CallCompletion::Value, super::CallCompletion::Constructor);
+            return Ok(super::StepResult::PushFrame { destination, call_guard, completion });
+        };
+        // A linked body that returns completes the call without a loop; any other transition
+        // it made is the loop's to continue, as its own entry of the body would.
+        #[cfg(feature = "native-execution")]
+        let result = {
+            let caller_registers = self.active_registers;
+            self.active_registers = self.frames[callee].registers.as_mut_ptr();
+            let result = match self.js_linked_frame_entry(callee, 0, None, true) {
+                Some(JsNativeStep { result: Ok(super::StepResult::Return(value)), .. }) => Ok(super::FrameOutcome::Complete(value)),
+                Some(entered) => self.run_frame_general_after(program, callee, entered),
+                None => self.run_frame_general(program, callee),
+            };
+            self.active_registers = caller_registers;
+            result
+        };
+        #[cfg(not(feature = "native-execution"))]
+        let result = self.run_frame_general(program, callee);
+        // A construction yields the activation's own receiver, which a derived constructor's
+        // `super()` binds in the body.
+        let outcome = self.complete_user_frame(program, result, constructed.is_some());
+        drop(call_guard);
+        let outcome = match outcome? {
+            super::FrameOutcome::ConstructComplete { value, this } =>
+                super::FrameOutcome::Complete(if self.is_object_like(value) { value } else { this }),
+            outcome => outcome,
+        };
+        match outcome {
+            super::FrameOutcome::Complete(value) if call.returns_from_frame() => Ok(super::StepResult::Return(value)),
+            super::FrameOutcome::Complete(value) => {
+                self.frames[caller].registers[usize::from(destination)] = value;
+                Ok(super::StepResult::Continue)
+            }
+            _ => Err(JsError::validation("an in-loop body completed without its value".into())),
+        }
+    }
+
     /// One no-frame, no-GC call operation for linked AOT and JIT regions.
     /// A miss runs no guest operation; a hit preserves every storage layout.
     fn guarded_call_values(&mut self, program: &ResidualProgram, program_id: ProgramId,
@@ -14223,7 +14652,7 @@ impl<H: Host> Vm<H> {
             self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
             self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
             if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
-                && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+                && !arguments.iter().all(|value| facts::is_int32_number(*value))
             {
                 return None;
             }
@@ -14911,7 +15340,7 @@ impl<H: Host> Vm<H> {
         if numeric && int32_bitwise_candidate {
             numeric = arguments
                 .iter()
-                .all(|value| super::js_compiled::is_i32_number(*value));
+                .all(|value| facts::is_int32_number(*value));
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
@@ -15046,7 +15475,7 @@ impl<H: Host> Vm<H> {
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
                 #[cfg(feature = "gc-tuning")]
-                let peak_before = (std::env::var_os("QUENCH_JS_JIT_PEAK_TRACE").is_some())
+                let peak_before = crate::trace::Channel::JitPeak.on()
                     .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
                 #[cfg(feature = "gc-tuning")]
@@ -15112,7 +15541,7 @@ impl<H: Host> Vm<H> {
         if compiled.is_int32_identity()
             && !arguments
                 .first()
-                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+                .is_some_and(|value| facts::is_int32_number(*value))
         {
             if !compiled.is_general_dispatch() {
                 *specialized_guard_miss = true;
@@ -15320,6 +15749,7 @@ impl<H: Host> Vm<H> {
             compiled: Rc::downgrade(compiled),
             return_pc,
             return_register: terminal.register_a(),
+            leaf: LeafCall::of(compiled),
         })
     }
 
@@ -15332,6 +15762,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         parameters: &[Value],
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        if let Some(entered) = entry.run_leaf(parameters) { return entered; }
         let compiled = entry.compiled.upgrade()?;
         let result = direct_call(&compiled, parameters, &self.execution_interrupt)?;
         let value = match result {
@@ -16475,46 +16906,6 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 
-fn direct_call(
-    compiled: &CompiledJsFunction,
-    arguments: &[Value],
-    interrupt: &crate::ExecutionInterrupt,
-) -> Option<CompiledJsCallResult> {
-    let int32_identity = compiled.is_int32_identity();
-    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for (index, argument) in arguments.iter().take(compiled.params()).enumerate() {
-        // An integer Value is an int32 Number by representation; any other Number is
-        // checked where the body's guards require one.
-        let value = match argument.as_int() {
-            Some(integer) => f64::from(integer),
-            None => {
-                let value = argument.as_number()?;
-                let int32 = compiled.requires_signed_int32_arguments() || (int32_identity && index == 0);
-                if int32 && !super::js_compiled::is_i32_number(value) {
-                    return None;
-                }
-                value
-            }
-        };
-        numeric_arguments.push(value);
-    }
-    // Only a body that polls reads the poll page.
-    let poll_page = (compiled.native_entry_mode() == NativeEntryMode::Resumable)
-        .then(|| native_poll_page(interrupt))
-        .flatten();
-    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
-        CompiledJsResult::Number(value) => Some(CompiledJsCallResult::Value(value)),
-        CompiledJsResult::Int32Identity { value, .. } => Some(CompiledJsCallResult::Value(Value::number(value))),
-        CompiledJsResult::Boolean(value) => {
-            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
-        }
-        CompiledJsResult::StringReturnPc(return_pc) => {
-            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
-        }
-        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
-    }
-}
-
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
 /// artifact, held weakly so that the tier retiring it ends the direct run,
 /// and the `Return` its result completes. The artifact owns the input signature.
@@ -16522,6 +16913,8 @@ pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
     return_pc: usize,
     return_register: crate::bytecode::Register,
+    /// The artifact's plain leaf call, copied out so a run reads no artifact field.
+    leaf: Option<LeafCall>,
 }
 
 impl DirectTierEntry {
@@ -18124,7 +18517,7 @@ mod tests {
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
         let receiver_atom = vm.intern_atom("receiver");
@@ -18163,7 +18556,7 @@ mod tests {
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
             assert!(!method.slot_dependencies.is_empty());
-            let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+            let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -18234,7 +18627,7 @@ mod tests {
         assert!(!method.supports_first_entry());
         assert!(!method.amortizes_entry());
         assert!(!method.calls_only_natively());
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         // No guest code executes at these collection/realm events; a code lease
         // may remain alive independently of the publication's validity.
         unsafe { vm.programs.retire_dead_native_calls(|_| false); }
@@ -18305,11 +18698,11 @@ mod tests {
             let targets = static_call_targets(&program);
             let body = program.function(id);
             let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
-                instruction.op() == Op::Call && targets[id][*pc].is_some()).count();
+                instruction.op() == Op::Call && !targets[id][*pc].is_empty()).count();
             assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
             let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
-                (caller == id as u32).then(|| targets[id][pc as usize]).flatten()
-                    .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                (caller == id as u32).then(|| &targets[id][pc as usize]).into_iter().flatten()
+                    .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
@@ -18768,9 +19161,9 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let (caller, callee) = (id("run"), id("step"));
             let targets = static_call_targets(&program);
-            assert!(targets[caller].contains(&Some(callee as u32)), "capture must supply the shared inliner");
+            assert!(targets[caller].iter().any(|site| site.contains(&(callee as u32))), "capture must supply the shared inliner");
             let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc|
-                targets[function as usize].get(pc as usize).copied().flatten()
+                targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                     .map(|function| CallTarget {function, callee: CalleeBinding::Function}).into_iter().collect(),
                 &|function| program.function_get(function as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1);
@@ -18892,7 +19285,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -18951,7 +19344,7 @@ mod tests {
             let targets = static_call_targets(&program);
             if nested {
                 let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|id, pc|
-                    targets[id as usize].get(pc as usize).copied().flatten()
+                    targets[id as usize].get(pc as usize).into_iter().flatten().copied().next()
                         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                     &|id| program.function_get(id as usize)).unwrap();
                 assert!(unit.frames.iter().any(|frame| frame.parent.is_some()), "exercise nested recovery planning");
@@ -19158,7 +19551,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -19198,7 +19591,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -19218,7 +19611,7 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).copied().flatten()
+            .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1, "the static method hint must reach the shared inliner");
@@ -19558,7 +19951,7 @@ mod tests {
             slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
             records: parameters[0],
             arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
-            writes: None,
+            writes: None, admitted: None,
         };
         let slot = binding.slot.read(&mut builder);
         binding.arena = binding.arena.bind(&mut builder, slot);
@@ -19936,7 +20329,7 @@ mod tests {
             "object-boolean-region.js",
         ).unwrap();
         let id = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "check")
         }).unwrap() as u32;
         let isa = super::super::jit_backend::target_isa_for(

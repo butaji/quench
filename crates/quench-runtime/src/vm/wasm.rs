@@ -2022,9 +2022,9 @@ mod tests {
     }
 
     #[test]
-    fn compiled_wasm_vector_accesses_compile_without_a_memory_register() {
-        // A function whose only accesses are vector ones has no memory register
-        // (`memory_register`): its accesses read the memory through the binding each loads.
+    fn compiled_wasm_vector_accesses_compile_through_the_prologue_memory_register() {
+        // A function whose only accesses are vector ones binds its memory once, in its
+        // prologue, and that binding is its memory register (`memory_register`).
         let memarg = |offset| wasmparser::MemArg {
             align: 0,
             max_align: 4,
@@ -2086,7 +2086,7 @@ mod tests {
         )
         .unwrap();
         let function = module.residual().function_get(0).expect("double");
-        assert_eq!(super::super::dispatch_fast::memory_register(function), None);
+        assert_eq!(super::super::dispatch_fast::memory_register(function), Some(0));
         let mut vm = Vm::new(crate::SystemHost);
         vm.programs.compile_wasm_modules_at_first_entry();
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
@@ -2952,7 +2952,7 @@ mod tests {
             vm.programs.compile_wasm_modules_at_first_entry();
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
             let instance = vm.instantiate_wasm_module(&module).unwrap();
-            let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
+            let promotion_entries = crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries;
             for _ in 0..promotion_entries {
                 assert_eq!(
                     vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
@@ -5866,7 +5866,7 @@ mod tests {
         assert_eq!(root_artifact.native_entries(0), Some(1));
         assert_eq!(
             root_first_vm.programs.wasm_tier_entry_count(program, 1),
-            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES)
+            Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries)
         );
         assert_eq!(
             root_first_vm.programs.wasm_tier_attempted(program, 1),
@@ -5936,7 +5936,7 @@ mod tests {
     #[test]
     fn compiled_wasm_selective_tiering_promotes_a_function_by_its_loop_work() {
         // One entry runs this many iterations: below the call threshold in entries, far
-        // above it in backward jumps (`WASM_JIT_BACKEDGES_PER_ENTRY`).
+        // above it in backward jumps (`TIERS.wasm.backedges_per_entry`).
         const ITERATIONS: i32 = 40_000;
         let root = vec![
             Operator::I32Const { value: ITERATIONS },
@@ -5984,7 +5984,7 @@ mod tests {
         assert!(vm.programs.wasm_tier(program, 0).is_none(), "an entry never compiles mid-loop");
         assert_eq!(
             vm.programs.wasm_tier_entry_count(program, 0),
-            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES - 1),
+            Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries - 1),
             "the loop's work stops one short of the threshold"
         );
         assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
@@ -6130,11 +6130,10 @@ mod tests {
     #[cfg(not(quench_profiled))]
     #[test]
     fn compiled_wasm_selective_module_compiles_whole_after_its_interpreted_work() {
-        use super::super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY;
         // The work at which this test's module compiles whole (never by time).
         const WORK: u32 = 64;
         // One entry loops through that work, plus one entry's worth.
-        let iterations = i32::try_from((WORK + 1) * WASM_JIT_BACKEDGES_PER_ENTRY).unwrap();
+        let iterations = i32::try_from((WORK + 1) * crate::vm::compiled::tier_policy::TIERS.wasm.backedges_per_entry).unwrap();
         let root = vec![
             Operator::LocalGet { local_index: 0 },
             Operator::LocalSet { local_index: 1 },
@@ -6267,7 +6266,7 @@ mod tests {
         assert!(matches!(vm.programs.compiled(program), Some(None)));
         assert_eq!(
             vm.programs.wasm_tier_entry_count(program, 1),
-            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES)
+            Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries)
         );
         assert_eq!(vm.programs.wasm_tier_attempted(program, 1), Some(true));
         let tier = vm
@@ -6325,7 +6324,7 @@ mod tests {
             assert_eq!(compiled.native_entries(0), None);
             assert_eq!(vm.programs.wasm_tier_entry_count(program, 0), Some(1));
 
-            for _ in 0..(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES as usize - 2) {
+            for _ in 0..(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries as usize - 2) {
                 assert_eq!(
                     vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                     Some(crate::WasmTrap::Unreachable)
@@ -6333,7 +6332,7 @@ mod tests {
             }
             assert_eq!(
                 vm.programs.wasm_tier_entry_count(program, 0),
-                Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES - 1)
+                Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries - 1)
             );
             assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
             assert!(vm.programs.wasm_tier(program, 0).is_none());
@@ -6422,7 +6421,7 @@ mod tests {
         // A small function's `unreachable` lowers to a native trap: the eager artifact holds
         // it, so no tier promotion follows.
         assert_eq!(compiled.native_entries(0), Some(1));
-        for _ in 0..usize::from(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES) {
+        for _ in 0..usize::from(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries) {
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
@@ -6430,7 +6429,7 @@ mod tests {
         }
         assert_eq!(
             compiled.native_entries(0),
-            Some(1 + u64::from(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES))
+            Some(1 + u64::from(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries))
         );
         assert!(vm.programs.wasm_tier(program, 0).is_none());
 

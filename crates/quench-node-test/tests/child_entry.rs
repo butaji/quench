@@ -10386,6 +10386,14 @@ fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
 }
 
 #[test]
+fn prepared_native_callbacks_match_node() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-prepared-native-callbacks.js"),
+        &["--expose-gc"],
+    );
+}
+
+#[test]
 fn node_compatibility_version_follows_bundled_library_target() {
     compare_node_source_with_args(
         include_str!("../node-tests/test-node-compatibility-version.js"),

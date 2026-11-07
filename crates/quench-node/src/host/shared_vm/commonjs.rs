@@ -3207,7 +3207,7 @@ pub(crate) fn native_commonjs_source(
         keep_records: entry, typescript,
     };
     let body = if typescript {
-        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or(body.into())
+        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or_else(|| body.into())
     } else { body.into() };
     let source = [WRAPPER_PREFIX, body.as_ref(), WRAPPER_SUFFIX].concat();
     quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])

@@ -853,7 +853,7 @@ pub(crate) fn really_exit(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    // A memory census of the process as it exits (`QUENCH_MEMORY`), whose allocation counts
+    // A memory census of the process as it exits (`QUENCH_TRACE=memory`), whose allocation counts
     // after a known amount of work give that work's allocations.
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("process_exit");

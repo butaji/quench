@@ -8685,6 +8685,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                       var object = { toString: function () { return String(this); } };
                       String(object);
                     });
+                    // JSON.parse is iterative, as V8's: deep nesting is bounded by memory.
                     check(function () {
                       var nesting = 10000;
                       JSON.parse('['.repeat(nesting) + '0' + ']'.repeat(nesting));
@@ -8709,8 +8710,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                         "true",
                         "Maximum call stack size exceeded",
                         "42",
-                        "true",
-                        "Maximum call stack size exceeded",
+                        "returned",
                         "42",
                     ],
                 );
