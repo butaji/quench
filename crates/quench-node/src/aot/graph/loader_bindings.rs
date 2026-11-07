@@ -20,6 +20,12 @@ enum Origin {
     RequireMethod,
     RequireUnknown,
 }
+impl Origin {
+    /// Whether the value is a `require` function.
+    fn is_require(&self) -> bool {
+        matches!(self, Origin::RequireCurrent | Origin::RequireMethod | Origin::RequireUnknown)
+    }
+}
 type Origins = BTreeSet<Origin>;
 #[derive(Clone, Copy)]
 enum Member {
@@ -294,10 +300,7 @@ impl<'s> LoaderBindings<'s> {
             _ => return false,
         };
         values.iter().any(|value| {
-            matches!(
-                value,
-                Origin::RequireCurrent | Origin::RequireMethod | Origin::RequireUnknown
-            )
+            value.is_require()
         })
     }
 
@@ -316,10 +319,7 @@ impl<'s> LoaderBindings<'s> {
             }
             Flow::Binding(_, offset)
                 if self.evaluate(value).iter().any(|value| {
-                    matches!(
-                        value,
-                        Origin::RequireCurrent | Origin::RequireMethod | Origin::RequireUnknown
-                    )
+                    value.is_require()
                 }) =>
             {
                 positions.insert(*offset);

@@ -21,6 +21,11 @@ pub(crate) enum Mode {
 }
 
 impl Mode {
+    /// Whether the mode compresses or decompresses Zstandard.
+    pub(crate) fn is_zstd(self) -> bool {
+        matches!(self, Self::ZstdCompress | Self::ZstdDecompress)
+    }
+
     /// The modes a `binding.Zlib` handle accepts.
     pub(crate) const ZLIB: [Self; 7] =
         [Self::Deflate, Self::Inflate, Self::Gzip, Self::Gunzip, Self::DeflateRaw, Self::InflateRaw, Self::Unzip];

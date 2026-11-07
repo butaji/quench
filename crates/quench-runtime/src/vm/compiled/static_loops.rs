@@ -53,12 +53,11 @@ fn operand(program: &ResidualProgram, values: &[Option<Value>], operand: Operand
 /// remain dynamic; no guest conversion or effect is executed by the compiler.
 fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: WideInstruction) {
     if !scalar_body(instruction) {
-        if matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain) && instruction.numeric_local_target().is_none() {
+        if instruction.op().loads_frame_local() && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
-        } else if instruction.op() != Op::Nop && !matches!(instruction.op().control_flow_layout(),
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
+        } else if instruction.op() != Op::Nop && !instruction.op().control_flow_layout().jumps() {
             values.fill(None);
         }
         return;
@@ -185,7 +184,7 @@ pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -
             || unit.markers.iter().any(|pc| *pc > header && *pc < latch) { continue; }
         if instructions.iter().enumerate().any(|(pc, instruction)|
             !(header..=latch).contains(&pc)
-                && matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+                && instruction.op().control_flow_layout().jumps()
                 && (header + 1..=latch).contains(&(instruction.jump_target() as usize))) { continue; }
         let known = constants(program, unit, instructions, entry, latch, exit);
         if known.at(header).and_then(|values| test(program, values, condition)) != Some(true)

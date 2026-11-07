@@ -33,6 +33,7 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/literals.rs"] mod literals;
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -901,7 +902,7 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
     let mut leaders = CompoundBitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
-        if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
+        if instruction.op().control_flow_layout().jumps() {
             if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < instructions.len()) {
                 leaders.insert(target);
             }
@@ -975,10 +976,8 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], starts: &[usize])
     -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
-    let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
-        ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump).then(|| instruction.jump_target() as usize);
-    let falls = |instruction: &WideInstruction| !matches!(instruction.op().control_flow_layout(),
-        ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
+    let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
+    let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
     let mut loops = Vec::new();
     for (back, instruction) in instructions.iter().enumerate() {
         let Some(header) = target(instruction).filter(|header| *header <= back
@@ -1126,10 +1125,7 @@ struct LoopField {
 
 fn successors(pc: usize, instruction: WideInstruction) -> [Option<usize>; 2] {
     let layout = instruction.op().control_flow_layout();
-    let falls = !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
-    let jumps = matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
-        .then(|| instruction.jump_target() as usize);
-    [falls.then_some(pc + 1), jumps]
+    [layout.falls_through().then_some(pc + 1), layout.jumps().then(|| instruction.jump_target() as usize)]
 }
 
 /// Forward must-alias analysis through inline argument copies and branch joins.
@@ -1244,7 +1240,8 @@ pub(super) fn lower_body(
     allow_first_entry: bool,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
-    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
+    // A call-free loop enters at its header (its lowering asks a native back-edge); one that calls, where it inlines.
+    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry || !unit.instructions.iter().any(|instruction| matches!(instruction.op(), Op::Call | Op::CallArray | Op::Construct))).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
         vm, generic, direct, frame_captures, None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense));
     let first_entry = osr.is_none();
     let region = osr.or_else(|| allow_first_entry.then(|| lower(program, function_id, unit, helpers, fields,
@@ -1304,7 +1301,7 @@ pub(super) fn lower(
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     ) };
     let fault_poll = super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        instruction.op().control_flow_layout().jumps()
             && instruction.jump_target() as usize <= pc);
     let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
     let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
@@ -1483,8 +1480,7 @@ pub(super) fn lower(
     }
     if coverage.selected_entry() {
         lowering.written = CompoundBitSet::with_capacity(count);
-        for (pc, instruction) in instructions.iter().copied().enumerate() {
-            if !lowering.facts.reached(pc) { continue; }
+        for instruction in instructions.iter().copied() {
             for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
         }
         // Backedge definitions choose a numeric entry signature. Conformance
@@ -2332,7 +2328,6 @@ impl Lowering<'_, '_> {
         (self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0), domain.ty())
     }
 
-
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
@@ -2588,8 +2583,8 @@ impl Lowering<'_, '_> {
                 let value = if instruction.op() == Op::MakeObject {
                     self.helper_call(LaneHelper::NewObject, &[payload])
                 } else {
-                    let length = self.ins().iconst(types::I64, instruction.array_length() as i64);
-                    self.helper_call(LaneHelper::NewArray, &[payload, length])
+                    let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
+                    self.helper_call(LaneHelper::NewArray, &[payload, length, elements])
                 };
                 let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, made, exit);
@@ -2625,7 +2620,7 @@ impl Lowering<'_, '_> {
                     if self.shared_backedge(state, target) { return false; }
                     self.interrupt_check(state, pc32);
                     if let Some(header) = instructions.get(target).copied()
-                        && matches!(header.op(), Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+                        && header.op().is_js_conditional_jump()
                         && header.result_flags() == 0
                         && header.jump_target() as usize > pc
                     {
@@ -5117,7 +5112,7 @@ impl Lowering<'_, '_> {
                     let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
                     // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
                     // result, which needs no overflow exit.
-                    if !(matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
+                    if !(arithmetic.int32_projection_is_wrapping()
                         && self.truncated(pc, destination)) {
                         emit_js_guard_not(&mut self.builder, overflow, exit);
                     }
@@ -5129,7 +5124,7 @@ impl Lowering<'_, '_> {
                         emit_js_guard_not(&mut self.builder, negative_zero, exit);
                     }
                     self.set_int(state, destination, result);
-                } else if matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
+                } else if arithmetic.int32_projection_is_wrapping()
                     && self.truncated(pc, destination) {
                     // Only its ToInt32 is read: int32 operands wrap, any other numbers take
                     // ToInt32 of their double result, and both join as an int32.
@@ -5350,7 +5345,7 @@ mod tests {
             let unit = unit_for(polymorphic);
             assert_eq!(unit.frames.len(), if polymorphic { 2 } else { 1 });
             let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
-                matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+                instruction.op().control_flow_layout().jumps()
                     .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
             let loops = local_loops(&unit, &program.constants, &[header]);
             let reads = invariant_reads(&unit, &loops);
@@ -5486,7 +5481,7 @@ mod tests {
         let function = program.function(1);
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
-            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
         let induction = unit.instructions[header].operand_b().register_index().unwrap();
         let limit = unit.instructions[header].operand_c().register_index().unwrap();

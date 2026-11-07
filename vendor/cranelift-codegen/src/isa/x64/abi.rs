@@ -798,8 +798,10 @@ impl ABIMachineSpec for X64ABIMachineSpec {
             + frame_layout.clobber_size
             + frame_layout.outgoing_args_size;
 
-        // Adjust RSP back upward.
-        if stack_size > 0 {
+        // Adjust RSP back upward. Quench: every x64 frame has a setup area, and
+        // the frame restore that follows (`mov %rbp, %rsp`) resets RSP itself,
+        // so the adjustment is dead there.
+        if stack_size > 0 && frame_layout.setup_area_size == 0 {
             let rsp = Writable::from_reg(regs::rsp());
             let stack_size = i32::try_from(stack_size)
                 .expect("`stack_size` is too large to fit in a 32-bit immediate");

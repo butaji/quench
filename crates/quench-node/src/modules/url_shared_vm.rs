@@ -89,7 +89,7 @@ pub(crate) fn is_url_like(c: &mut Context<'_>, value: RootId) -> Result<bool, Ro
         if c.string_text(value)?.is_some() && !strings_have_href(c)? {
             return Ok(false);
         }
-        if matches!(type_of(c, value), ValueType::Undefined | ValueType::Null) {
+        if type_of(c, value).is_nullish() {
             return Ok(false);
         }
     }
@@ -154,7 +154,7 @@ fn coded_type_error(c: &mut Context<'_>, message: &str, code: &'static str) -> R
 fn windows_option(c: &mut Context<'_>, options: RootId) -> Result<bool, RootedError> {
     if c.is_object_rooted(options)? {
         let windows = get(c, options, "windows")?;
-        if !matches!(type_of(c, windows), ValueType::Undefined | ValueType::Null) {
+        if !type_of(c, windows).is_nullish() {
             return c.truthy_rooted(windows);
         }
     }
@@ -377,13 +377,13 @@ pub(crate) fn domain_to_unicode(c: &mut Context<'_>, _: RootId, args: &[RootId])
 /// auth switches.
 pub(crate) fn format_whatwg(c: &mut Context<'_>, href: RootId, options: RootId) -> Result<RootId, RootedError> {
     let mut flags = [true, false, true, true];
-    if !matches!(type_of(c, options), ValueType::Undefined | ValueType::Null) {
+    if !type_of(c, options).is_nullish() {
         if type_of(c, options) != ValueType::Object {
             return Err(super::util_shared_vm::argument_type_error(c, options, "options", "Object")?);
         }
         for (flag, name) in flags.iter_mut().zip(["fragment", "unicode", "search", "auth"]) {
             let value = get(c, options, name)?;
-            if !matches!(type_of(c, value), ValueType::Undefined | ValueType::Null) {
+            if !type_of(c, value).is_nullish() {
                 *flag = c.truthy_rooted(value)?;
             }
         }

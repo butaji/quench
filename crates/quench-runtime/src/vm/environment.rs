@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        self.clone_frame_environment(frame, &[slot], &[])?;
+        self.clone_frame_environment(frame, &[slot], crate::bytecode::Resets::listed(&[]))?;
         *self
             .frame_binding_mut(p, frame, usize::from(slot))
             .ok_or_else(|| JsError("invalid handler binding".into()))? = value;

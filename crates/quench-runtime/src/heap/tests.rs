@@ -383,7 +383,7 @@ fn scope_slot_owners_survive_collection_and_release() {
             with_objects: Box::default(),
         }),
     });
-    let slots = heap.clone_environment_slots(owner, &[0], &[]).unwrap();
+    let slots = heap.clone_environment_slots(owner, &[0], crate::bytecode::Resets::listed(&[])).unwrap();
     let view = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,
@@ -953,10 +953,7 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
             descriptor: Some(descriptor),
         }),
     });
-    let tag = heap.alloc(Cell::WasmTag {
-        declarations: Box::default(),
-        ty: 0,
-    });
+    let tag = heap.alloc(Cell::WasmTag { object: Box::new(plain_object()), declarations: crate::WasmTypes::default(), ty: 0 });
     let exception = heap.alloc(Cell::WasmException {
         tag,
         payload: Box::new(vec![owner]),
@@ -1159,7 +1156,7 @@ fn dense_storage_reads_writes_and_native_views_share_the_owner_checks() {
         assert_eq!(EnvironmentSlots::native_storage_view(empty_storage), empty.native_dense_view());
         let mut heap = Heap::new();
         let owner = heap.alloc_environment(Value::NULL, 1, slots.clone(), EnvironmentScopeRef::of_program(0)).0;
-        let shared = slots.iteration_copy(owner, &[], &[], |_, _| unreachable!()).unwrap();
+        let shared = slots.iteration_copy(owner, &[], crate::bytecode::Resets::listed(&[]), |_, _| unreachable!()).unwrap();
         let shared_storage = shared.dense_storage().unwrap();
         assert_eq!(EnvironmentSlots::read_storage(shared_storage, 0), None);
         assert_eq!(EnvironmentSlots::write_storage(shared_storage, 0, Value::TRUE), None);
@@ -1193,7 +1190,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let mut values = (0..width).map(|slot| Value::number(slot as f64)).collect::<Vec<_>>();
     values[width - 1] = kept;
     let owner = environment(&mut heap, values.into());
-    let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
+    let first = heap.clone_environment_slots(owner, &[3], crate::bytecode::Resets::listed(&[5])).unwrap();
     // A length and owner, then the fresh and reset slots, each with its index.
     assert_eq!((first.len(), first.0.len()), (width, 6));
     assert!(first.dense_storage().is_none());
@@ -1208,7 +1205,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert_eq!(heap.environment_slot(owner, 3), Some(Value::number(3.0)));
     assert_eq!(heap.environment_slot(owner, 7), Some(Value::number(70.0)));
     // A copy of a copy shares the first copy's own slots and the original's others.
-    let second = heap.clone_environment_slots(first, &[], &[]).unwrap();
+    let second = heap.clone_environment_slots(first, &[], crate::bytecode::Resets::listed(&[])).unwrap();
     assert_eq!(second.0.len(), 6);
     let second = environment(&mut heap, second);
     assert_eq!(heap.environment_slot_owner(second, 3), Some(first));
@@ -1220,7 +1217,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert!(matches!(heap.get(kept), Some(Cell::Error(_))));
     // A narrow environment's copy stays dense.
     let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
-    assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
+    assert_eq!(heap.clone_environment_slots(narrow, &[0], crate::bytecode::Resets::listed(&[])).unwrap().0.len(), 2);
 }
 
 /// The owners remembered for the next minor collection, of every family these tests use.
@@ -1866,7 +1863,7 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     let slots = EnvironmentSlots::from_values(std::iter::repeat_n(Value::UNDEFINED, width));
     let (owner, _) = heap.alloc_environment(Value::UNDEFINED, 0, slots, EnvironmentScopeRef::of_program(0));
     let Some(Cell::Environment { slots, .. }) = heap.get(owner) else { unreachable!() };
-    let sparse = slots.iteration_copy(owner, &[], &[], |_, _| None).unwrap();
+    let sparse = slots.iteration_copy(owner, &[], crate::bytecode::Resets::listed(&[]), |_, _| None).unwrap();
     assert!(sparse.dense().is_none());
     let sparse_bytes = sparse.0.allocated_bytes();
     let (copy, _) = heap.alloc_environment(owner, 0, sparse, EnvironmentScopeRef::of_program(0));

@@ -45,13 +45,13 @@ impl FunctionFacts {
         let mut captures: Vec<(u32, u16)> = function
             .code
             .iter()
-            .filter(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
+            .filter(|instruction| instruction.op().addresses_capture())
             .map(|instruction| (instruction.capture_depth(), instruction.capture_slot()))
             .chain(
                 function
                     .wide
                     .iter()
-                    .filter(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
+                    .filter(|instruction| instruction.op().addresses_capture())
                     .map(|instruction| (instruction.capture_depth(), instruction.capture_slot())),
             )
             .map(|(depth, slot)| (u32::from(depth) + 1, slot))
@@ -361,7 +361,7 @@ fn rewrite_local_ownership(function: &mut Function, captured: &[u16]) {
         rewrite_if_captured(instruction, captured);
     }
     for instruction in &mut function.wide {
-        if matches!(instruction.op(), Op::LoadLocal | Op::StoreLocal)
+        if instruction.op().is_relocatable_local_access()
             && u16::try_from(instruction.local_slot())
                 .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
         {
@@ -401,13 +401,9 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
 /// (target, source): jumps, branch table entries (which are jumps), and exception and
 /// `finally` continuations, taken from the last instruction their range covers.
 fn backward_transfers(function: &Function) -> Vec<(usize, usize)> {
-    use crate::bytecode::ControlFlowLayout;
     let mut transfers = Vec::new();
     for (pc, instruction) in function.instructions().enumerate() {
-        if matches!(
-            instruction.op().control_flow_layout(),
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
-        ) && instruction.jump_target() as usize <= pc
+        if instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc
         {
             transfers.push((instruction.jump_target() as usize, pc));
         }
@@ -431,7 +427,7 @@ fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
 }
 
 fn rewrite_if_captured(instruction: &mut crate::bytecode::Instr, captured: &[u16]) {
-    if !matches!(instruction.op(), Op::LoadLocal | Op::StoreLocal)
+    if !instruction.op().is_relocatable_local_access()
         || !u16::try_from(instruction.local_slot())
             .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
     {
@@ -446,7 +442,7 @@ fn rewrite_if_captured(instruction: &mut crate::bytecode::Instr, captured: &[u16
 
 fn rewrite_all_locals_to_environment(function: &mut Function) {
     for instruction in &mut function.code {
-        if matches!(instruction.op(), Op::LoadLocal | Op::StoreLocal) {
+        if instruction.op().is_relocatable_local_access() {
             instruction.set_op(if instruction.op() == Op::LoadLocal {
                 Op::LoadEnvLocal
             } else {
@@ -455,7 +451,7 @@ fn rewrite_all_locals_to_environment(function: &mut Function) {
         }
     }
     for instruction in &mut function.wide {
-        if matches!(instruction.op(), Op::LoadLocal | Op::StoreLocal) {
+        if instruction.op().is_relocatable_local_access() {
             instruction.set_op(if instruction.op() == Op::LoadLocal {
                 Op::LoadEnvLocal
             } else {
