@@ -60,7 +60,7 @@ pub(in crate::vm) enum LaneBodyOutcome {
 
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = super::jit_backend::target_isa().ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
+    let isa = super::jit_backend::lane_body_isa().ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 
