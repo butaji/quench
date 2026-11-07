@@ -37,6 +37,7 @@ mod records;
 mod root;
 mod slots;
 mod snapshot;
+mod string_atoms;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -581,6 +582,7 @@ pub(crate) struct Heap {
     iterator_records: IteratorRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
+    string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
@@ -2013,6 +2015,7 @@ impl Heap {
         self.await_records = AwaitRecordSpace::default();
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
+        self.clear_string_atoms();
         self.v128_records = V128RecordSpace::default();
         self.marks.clear();
         self.aged.clear();
@@ -2053,13 +2056,9 @@ impl Heap {
         self.ascii_unit_strings = None;
         self.collection_state = CollectionState::Idle;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        {
-            self.gc_profile = GcProfile::default();
-        }
+        { self.gc_profile = GcProfile::default(); }
         #[cfg(feature = "profile-memory")]
-        {
-            self.memory_profile = memory_profile::MemoryProfile::default();
-        }
+        { self.memory_profile = memory_profile::MemoryProfile::default(); }
     }
     /// Counts collections; a slot index names the same cell for as long as this is unchanged.
     #[inline(always)]
@@ -2617,12 +2616,9 @@ impl Heap {
                     }
                 });
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
-                RecordSweep::Keep(_, string) => {
-                    if full {
-                        live_payload_bytes += string.flat_unit_bytes();
-                    }
-                }
-                RecordSweep::Dead(_, string) => {
+                RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
+                RecordSweep::Dead(record_id, string) => {
+                    self.string_atoms.forget(record_id);
                     *payload_bytes = payload_bytes.saturating_sub(string.flat_unit_bytes());
                 }
             });

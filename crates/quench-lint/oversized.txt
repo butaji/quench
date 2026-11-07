@@ -528,7 +528,6 @@ complexity crates/quench-runtime/src/compile/ast/object.rs::FunctionCompiler<'_,
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::statement_at_current_position 46
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::switch_statement 11
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 14
-complexity crates/quench-runtime/src/compile/binding_time.rs::expression 13
 complexity crates/quench-runtime/src/compile/capture_layout.rs::activation_is_private 11
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::emit_instance_fields 18
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::lower_class 90
@@ -1380,7 +1379,7 @@ file-lines crates/quench-runtime/src/compile.rs 4473
 file-lines crates/quench-runtime/src/compile/ast.rs 1310
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
-file-lines crates/quench-runtime/src/compile/ast/expression.rs 987
+file-lines crates/quench-runtime/src/compile/ast/expression.rs 980
 file-lines crates/quench-runtime/src/compile/ast/statement.rs 857
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2031
@@ -1389,7 +1388,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 778
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1053
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1771
-file-lines crates/quench-runtime/src/heap.rs 4840
+file-lines crates/quench-runtime/src/heap.rs 4836
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 873
 file-lines crates/quench-runtime/src/heap/cell.rs 4111
@@ -1464,10 +1463,10 @@ file-lines crates/quench-runtime/src/vm/object.rs 5127
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 1015
 file-lines crates/quench-runtime/src/vm/object_get.rs 1518
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
-file-lines crates/quench-runtime/src/vm/object_static.rs 1009
+file-lines crates/quench-runtime/src/vm/object_static.rs 990
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
-file-lines crates/quench-runtime/src/vm/operations.rs 2735
+file-lines crates/quench-runtime/src/vm/operations.rs 2682
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
 file-lines crates/quench-runtime/src/vm/primitives.rs 728
 file-lines crates/quench-runtime/src/vm/program_store.rs 4243
@@ -2553,7 +2552,6 @@ function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::emit_parameter_bindings 54
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::new 108
 function-lines crates/quench-runtime/src/compile/ast/array_literal.rs::FunctionCompiler<'_,'_>::accumulated_array 48
-function-lines crates/quench-runtime/src/compile/ast/array_literal.rs::FunctionCompiler<'_,'_>::array_expression 43
 function-lines crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::call 74
 function-lines crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::delete_expression 46
 function-lines crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::name_bindings 58
@@ -2639,14 +2637,14 @@ function-lines crates/quench-runtime/src/heap.rs::Heap::alloc_cell 76
 function-lines crates/quench-runtime/src/heap.rs::Heap::cell_kind 48
 function-lines crates/quench-runtime/src/heap.rs::Heap::cell_payload_bytes 72
 function-lines crates/quench-runtime/src/heap.rs::Heap::children 200
-function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 562
+function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 559
 function-lines crates/quench-runtime/src/heap.rs::Heap::compact_property_arena 69
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_full 41
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_minor 73
 function-lines crates/quench-runtime/src/heap.rs::Heap::iterator_edges 60
 function-lines crates/quench-runtime/src/heap.rs::Heap::mark_value 224
 function-lines crates/quench-runtime/src/heap.rs::Heap::profile_allocation 58
-function-lines crates/quench-runtime/src/heap.rs::Heap::reset 57
+function-lines crates/quench-runtime/src/heap.rs::Heap::reset 54
 function-lines crates/quench-runtime/src/heap.rs::Heap::retire_dead_prototypes 42
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_full_parallel 67
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_serial 153

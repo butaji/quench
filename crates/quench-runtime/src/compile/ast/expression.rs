@@ -803,13 +803,21 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
+        if let Some(constant) = binding_time::binary(value) {
+            return self.literal(constant);
+        }
         if let Some(test) = self.typeof_test(value) {
             return test;
         }
-        let left = if let Some(constant) = binding_time::expression(&value.left) {
-            self.constant_operand(constant)
-        } else {
-            Operand::register(self.expression(&value.left))
+        let (left, right) = self.binary_operands(value);
+        self.emit_binary(value.operator as u32, left, right)
+    }
+
+    /// The operands of `value`: a static one as a constant, a register local as itself.
+    fn binary_operands(&mut self, value: &BinaryExpression<'_>) -> (Operand, Operand) {
+        let left = match binding_time::expression(&value.left) {
+            Some(constant) => self.constant_operand(constant),
+            None => Operand::register(self.expression(&value.left)),
         };
         let right = if let Some(constant) = binding_time::expression(&value.right) {
             self.constant_operand(constant)
@@ -820,7 +828,7 @@ impl FunctionCompiler<'_, '_> {
         } else {
             Operand::register(self.last_operand(&value.right))
         };
-        self.emit_binary(value.operator as u32, left, right)
+        (left, right)
     }
     pub(super) fn constant_operand(&mut self, constant: Constant) -> Operand {
         let index = self.owner.constant(constant);
@@ -912,22 +920,7 @@ impl FunctionCompiler<'_, '_> {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
-            let left = if let Some(constant) = binding_time::expression(&binary.left)
-            {
-                self.constant_operand(constant)
-            } else {
-                Operand::register(self.expression(&binary.left))
-            };
-            let right =
-                if let Some(constant) = binding_time::expression(&binary.right) {
-                    self.constant_operand(constant)
-                } else if let Expression::Identifier(identifier) = &binary.right
-                    && let Some(operand) = self.local_operand(identifier.name.as_str())
-                {
-                    operand
-                } else {
-                    Operand::register(self.last_operand(&binary.right))
-                };
+            let (left, right) = self.binary_operands(binary);
             let (operator, left, right) = constant_right(binary.operator as u32, left, right);
             return self.emit(Op::JumpBinaryFalse, operator as u16, left.0, right.0, 0);
         }
