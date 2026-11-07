@@ -1044,3 +1044,10 @@ mod tests {
         assert_eq!(size_of::<super::FunctionEntry>(), 2 * size_of::<usize>());
     }
 }
+
+impl Default for super::NameSharedSites<'_> {
+    /// A load's, which has given out none yet.
+    fn default() -> Self {
+        Self::Load { sites: FxHashMap::default(), next: crate::bytecode::UNIQUE_CACHE_SITES }
+    }
+}

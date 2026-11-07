@@ -1342,7 +1342,7 @@ impl Engine {
         // tree changed after parsing, that their text alone does not give back. A released
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
-        compiler.first_call_roots = expected_shape.first_call_roots(compiler.replayable_source, &parsed.program, inherited_strict);
+        compiler.first_call.roots = expected_shape.first_call_roots(compiler.replayable_source, &parsed.program, inherited_strict);
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -1826,13 +1826,6 @@ enum NameSharedSites<'a> {
     Replay(&'a NameSharedSiteMap),
 }
 
-impl Default for NameSharedSites<'_> {
-    /// A load's, which has given out none yet.
-    fn default() -> Self {
-        Self::Load { sites: FxHashMap::default(), next: crate::bytecode::UNIQUE_CACHE_SITES }
-    }
-}
-
 type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
 
 struct Compiler<'a> {
@@ -1930,12 +1923,8 @@ struct Compiler<'a> {
     replay_program: Option<&'a ResidualProgram>,
     /// Whether the program's functions compile again from their text alone.
     replayable_source: bool,
-    /// The starts of the root's function declarations that may compile as first-call stubs
-    /// (`first_call::roots`).
-    first_call_roots: FxHashSet<u32>,
-    /// The source of the program whose text a first-call chunk compiles from, which the
-    /// chunk shares (`first_call::ChunkWindow`).
-    kept_source: Option<&'a crate::bytecode::ProgramSource>,
+    /// What the compilation knows of first-call stubs (`first_call`).
+    first_call: first_call::Stubs<'a>,
     /// The compile-cache records of the functions released during the load, when its
     /// program will be encoded (`ReleasedRecords::Encoded`).
     load_encoding: Option<crate::bytecode::LoadEncoding>,
@@ -2448,8 +2437,7 @@ impl<'a> Compiler<'a> {
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
             replayable_source: false,
-            first_call_roots: FxHashSet::default(),
-            kept_source: None,
+            first_call: first_call::Stubs::default(),
             load_encoding: None,
         }
     }
@@ -3426,7 +3414,7 @@ impl<'a> Compiler<'a> {
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
-        let replay_atoms = self.keeps_replay(replays.is_empty())
+        let replay_atoms = first_call::keeps_replay(&self.first_call.roots, replays.is_empty())
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let mut constants = self.constants.into_vec();
         constants.shrink_to_fit();
@@ -3449,7 +3437,7 @@ impl<'a> Compiler<'a> {
             module_imports,
             module_link_plan,
             source_name: self.source.to_owned(),
-            source: Some(self.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
+            source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
                 text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
                 typescript: self.source_type.is_typescript(),
                 base: 0,

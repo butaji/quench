@@ -86,7 +86,7 @@ impl<'a> ChunkWindow<'a> {
             std::borrow::Cow::Borrowed(self.line_starts),
             std::borrow::Cow::Borrowed(self.utf16_excess),
         );
-        compiler.kept_source = Some(self.source);
+        compiler.first_call.kept_source = Some(self.source);
         compiler
     }
 }
@@ -134,6 +134,21 @@ impl ParsedProgramShape<'_> {
     }
 }
 
+/// What a compilation knows of first-call stubs (`Compiler::first_call`).
+#[derive(Default)]
+pub(super) struct Stubs<'a> {
+    /// The starts of the root's function declarations that may compile as stubs.
+    pub(super) roots: FxHashSet<u32>,
+    /// The source of the program a chunk compiles from, which the chunk shares.
+    pub(super) kept_source: Option<&'a crate::bytecode::ProgramSource>,
+}
+
+/// Whether a program keeps a replay: it has functions a replay compiles (unless
+/// `no_replays`), or first-call stubs (`roots`), whose chunks compile with its layout tables.
+pub(super) fn keeps_replay(roots: &FxHashSet<u32>, no_replays: bool) -> bool {
+    !no_replays || !roots.is_empty()
+}
+
 impl Compiler<'_> {
     /// `function`, whose body at `body` was parsed lazily: its first-call stub, or the
     /// function compiled from its body parsed again (`compile_lazy_function`).
@@ -145,15 +160,9 @@ impl Compiler<'_> {
         self.compile_lazy_function(function, context)
     }
 
-    /// Whether the program keeps a replay: it has functions a replay compiles (unless
-    /// `no_replays`), or first-call stubs, whose chunks compile with its layout tables.
-    pub(super) fn keeps_replay(&self, no_replays: bool) -> bool {
-        !no_replays || !self.first_call_roots.is_empty()
-    }
-
     /// Whether `function`, whose body was parsed lazily, compiles as a first-call stub.
     fn stubs_first_call(&self, function: &oxc_ast::ast::Function<'_>) -> bool {
-        self.first_call_roots.contains(&function.span.start)
+        self.first_call.roots.contains(&function.span.start)
             && self.replay_target.is_none()
             && !function.r#async
             && !function.generator
