@@ -16,21 +16,23 @@ pub(super) fn parse_program<'a>(
     source: &'a str,
     source_type: SourceType,
 ) -> ParserReturn<'a> {
-    parse_program_with(allocator, source, source_type, None)
+    parse_program_with(allocator, source, source_type, None, None)
 }
 
 /// `parse_program`, with the function bodies starting at or after `lazy_from` parsed lazily
-/// (`lazy_bodies`).
+/// (`lazy_bodies`), each function checked by `lazy_body_check` before its body is released.
 pub(super) fn parse_program_with<'a>(
     allocator: &'a Allocator,
     source: &'a str,
     source_type: SourceType,
     lazy_from: Option<u32>,
+    lazy_body_check: Option<oxc_parser::LazyBodyCheck>,
 ) -> ParserReturn<'a> {
     Parser::new(allocator, source, source_type)
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
             lazy_function_bodies: lazy_from,
+            lazy_body_check,
             ..ParseOptions::default()
         })
         .parse()
