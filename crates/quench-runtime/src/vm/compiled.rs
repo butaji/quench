@@ -96,6 +96,7 @@ mod general_elements;
 mod frameless;
 mod exact_budget;
 mod general_getter;
+mod general_binary;
 pub(super) use frameless::{ChainFrame, Frameless};
 use exact_budget::PcLowering;
 use direct_call::{direct_call, LeafCall};
@@ -2545,25 +2546,26 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
     let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
-    let callee = if instruction.op() == Op::GetField { entry.callee } else { vm.read(caller, instruction.register_b()) };
-    let (window, receiver, completion) = match instruction.op() {
-        Op::Construct => {
-            let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { unreachable!() };
-            vm.construct_target = Some(super::ConstructionTarget { callee, new_target: callee });
-            (window, entry.this, super::CallCompletion::Constructor(entry.this))
-        }
-        // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-        Op::GetField => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
-        _ => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
+    // The activation the instruction's exact step pushes (`Vm::push_in_loop_activation`): a
+    // getter's of its read (`general_getter`), a construction's or a call's.
+    let getter = instruction.op() == Op::GetField;
+    let callee = if getter { entry.callee } else { vm.read(caller, instruction.register_b()) };
+    let construction = (instruction.op() == Op::Construct).then(|| instruction.construct_arguments());
+    let (window, receiver, completion) = match construction {
+        Some(crate::bytecode::ConstructArguments::Registers(window)) => (window, entry.this, super::CallCompletion::Constructor(entry.this)),
+        Some(crate::bytecode::ConstructArguments::Array(_)) => unreachable!("a frameless construction passes registers"),
+        None if getter => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
+        None => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
     };
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
-    vm.frames[caller].pc = entry.call_pc as usize + 1;
-    vm.frames[caller].pc_is_resume = true;
-    let guard = vm.push_general_user_frame(program, entry.function, env, receiver,
-        unsafe { &*passed }, super::CallContext::user_function(entry.function, callee));
-    vm.construct_target = None;
-    let guard = guard.map_err(|error| (entry.call_pc, error))?;
+    let target = (vm.frames[caller].program, entry.function, env);
+    // SAFETY: the caller's window outlives the callee's setup.
+    let pushed = vm.push_in_loop_activation(program, caller, entry.call_pc as usize + 1, target, callee, receiver,
+        unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
+    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (entry.call_pc, error))? else {
+        unreachable!("an in-loop push pushes a frame")
+    };
     let frame = vm.frames.last_mut().expect("recovered inline frame");
     let count = frame.registers.len();
     // SAFETY: the chain's registers hold the frame's register count of live values.
@@ -3334,15 +3336,7 @@ pub(super) fn lower_js_general_dispatch(
             && let Some(receiver) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
-            let exact = JsExactFallback {
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            };
+            let exact = JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc };
             emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact, narrow_table);
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
@@ -4165,8 +4159,9 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
-        // An exact-only PC (`PcLowering::Exact`), which `exact_budget` counts.
-        emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
+        // An exact-only PC (`PcLowering::Exact`), which `exact_budget` counts, unless a general lowering takes it.
+        general_dispatch_native_pcs[pc] = general_binary::lower_rest(&mut builder, program, (instruction, next), &register_offset,
+            (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) as u8;
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
@@ -7305,6 +7300,8 @@ struct JsStepDispatch {
     element_set: usize,
     /// The receiver a frameless construction allocates and the value it yields (`frameless`).
     construct_receiver: usize, construct_result: usize,
+    /// A binary operation of number or string operands (`general_binary`).
+    binary: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
@@ -8169,7 +8166,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0, field_getter: 0,
-                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -8320,7 +8317,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8363,6 +8360,7 @@ impl JsStepDispatch {
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         (self.construct_receiver, self.construct_result) = frameless::construct_helpers::<H>();
+        self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
             general_elements::general_element_set::<H> as *const () as usize);
         let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));

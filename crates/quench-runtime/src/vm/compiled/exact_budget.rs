@@ -27,7 +27,7 @@ mod tests {
     /// The exact-only PCs of every function general dispatch lowers in `source`, by
     /// opcode; a function it rejects counts all its PCs. The root body runs once and is not
     /// counted.
-    fn exact_steps(source: &str, name: &str) -> BTreeMap<&'static str, usize> {
+    fn exact_steps(source: &str, name: &str) -> BTreeMap<String, usize> {
         let program = crate::Engine::specialize(source, name).expect("benchmark source compiles");
         let isa = crate::vm::jit_backend::target_isa().expect("host ISA");
         let mut ops = BTreeMap::new();
@@ -36,8 +36,12 @@ mod tests {
             let lowered = lower_js_general_dispatch(&program, id as u32, &*isa, JsGeneralCallout::Address(0), &[], &[]);
             let pcs = lowered.map_or_else(|_| vec![PcLowering::Exact as u8; function.code.len()], |(_, pcs)| pcs);
             for (packed, _) in function.code.iter().zip(pcs).filter(|(_, lowering)| *lowering == PcLowering::Exact as u8) {
-                let op = crate::vm::dispatch_fast::decoded_instruction(function, *packed).op();
-                *ops.entry(crate::bytecode::Op::NAMES[op as usize]).or_default() += 1;
+                let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
+                let op = instruction.op();
+                // A binary operation names its operator, which decides its lowering.
+                let name = if op == crate::bytecode::Op::Binary { format!("Binary {:?}", instruction.binary_operator()) }
+                    else { crate::bytecode::Op::NAMES[op as usize].to_owned() };
+                *ops.entry(name).or_default() += 1;
             }
         }
         ops
