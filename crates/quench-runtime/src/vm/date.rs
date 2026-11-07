@@ -527,6 +527,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
+        new_target: Value,
     ) -> Result<Value, JsError> {
         let milliseconds = if args.len() < DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD {
             match args.first().copied() {
@@ -556,10 +557,10 @@ impl<H: Host> Vm<H> {
             }
             make_date_milliseconds(parts, false)
         };
-        let prototype_atom = self.prototype_atom();
-        let native_date = self.native_value(Native::Date);
+        // OrdinaryCreateFromConstructor(NewTarget, "%Date.prototype%") follows the time value,
+        // so the object is born with its final prototype in NewTarget's realm.
         let prototype = self
-            .own_property(native_date, prototype_atom)
+            .native_constructor_prototype(p, new_target, Native::Date)?
             .unwrap_or(self.object_proto);
         Ok(self.heap.alloc(Cell::Date {
             milliseconds,

@@ -369,7 +369,8 @@ impl<H: Host> Vm<H> {
             call_targets: _,
             field_caches: _,
             inherited_field_indices: _,
-            accessor_field_caches: _,
+            accessor_field_indices: _,
+            accessor_fields: _,
             field_add_indices: _,
             field_add_sets: _,
             keyed_adds: _,
@@ -754,6 +755,8 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.clear();
         self.field_add_indices.clear();
         self.inherited_field_indices.clear();
+        self.accessor_field_indices.clear();
+        self.accessor_fields.clear();
         self.method_caches.clear();
         self.object_shapes.clear();
         self.field_cache_writes = Some(Vec::new());

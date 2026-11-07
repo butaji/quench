@@ -1139,6 +1139,7 @@ impl Native {
                     | Self::ArrayBuffer
                     | Self::SharedArrayBuffer
                     | Self::RegExp
+                    | Self::Date
                     | Self::Map
                     | Self::Set
                     | Self::WeakMap

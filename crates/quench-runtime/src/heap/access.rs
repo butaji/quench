@@ -454,10 +454,23 @@ impl Heap {
         if stored.heap_index().is_some() {
             return self.get_mut(value);
         }
+        self.get_mut_unbarriered(value)
+    }
+
+    /// `get_mut` for a write that adds no edge from the cell, past the write barrier.
+    #[inline(always)]
+    fn get_mut_unbarriered(&mut self, value: Value) -> Option<&mut Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
         };
         self.slots.get_mut(index as usize)?.cell.as_mut()
+    }
+
+    /// The ArrayBuffer `value`, mutably, for a write of its bytes: bytes hold no heap
+    /// reference, so the write passes no write barrier. `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn buffer_bytes_mut(&mut self, value: Value) -> Option<&mut Cell> {
+        self.get_mut_unbarriered(value).filter(|cell| matches!(cell, Cell::ArrayBuffer { .. }))
     }
 
     /// `record_array_mut` for a store of `stored` into the array's elements.

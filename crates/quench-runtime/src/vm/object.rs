@@ -1047,6 +1047,7 @@ impl<H: Host> Vm<H> {
                     self.field_add_indices.set(site, NO_FIELD_ADD_SET);
                     self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
                     self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
+                    self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
                 }
                 sites.clear();
             }
@@ -1055,6 +1056,7 @@ impl<H: Host> Vm<H> {
                 self.field_add_indices.reset();
                 self.megamorphic_field_indices.reset();
                 self.inherited_field_indices.reset();
+                self.accessor_field_indices.reset();
                 self.field_cache_writes = Some(Vec::new());
             }
         }
@@ -1071,7 +1073,7 @@ impl<H: Host> Vm<H> {
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_fields.clear();
         self.heap.dependencies_mut().clear_inherited();
-        self.accessor_field_caches.clear();
+        self.accessor_fields.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
@@ -2204,7 +2206,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
     pub(super) fn field_site_getter(&self, site: u16) -> bool {
-        self.accessor_field_caches.contains_key(&self.field_cache_index(site))
+        self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
@@ -2965,6 +2967,7 @@ impl<H: Host> Vm<H> {
                         slot: slot as u16,
                         slot_accessor: self.slot_accessor(receiver_shape, slot),
                         epoch,
+                        next: NO_ACCESSOR_FIELD,
                     },
                 );
             }
@@ -3017,6 +3020,7 @@ impl<H: Host> Vm<H> {
                 slot: slot as u16,
                 slot_accessor,
                 epoch,
+                next: NO_ACCESSOR_FIELD,
             },
         );
     }
@@ -3033,27 +3037,52 @@ impl<H: Host> Vm<H> {
 
     /// Records `entry` among the site's accessor entries: one for its receiver shape is
     /// replaced, and a full site drops its oldest.
-    fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
-        let entries = self.accessor_field_caches.entry(site).or_default();
-        if let Some(existing) = entries.iter_mut().find(|cached| cached.receiver == entry.receiver) {
-            *existing = entry;
-            return;
+    fn record_accessor_entry(&mut self, site: usize, mut entry: AccessorFieldCache) {
+        let head = self.accessor_field_indices.get(site);
+        let (mut index, mut previous, mut length) = (head, NO_ACCESSOR_FIELD, 0);
+        while index != NO_ACCESSOR_FIELD {
+            let cached = self.accessor_fields[index as usize];
+            if cached.receiver == entry.receiver {
+                entry.next = cached.next;
+                self.accessor_fields[index as usize] = entry;
+                return;
+            }
+            length += 1;
+            if cached.next == NO_ACCESSOR_FIELD {
+                break;
+            }
+            (previous, index) = (index, cached.next);
         }
-        if entries.len() >= INHERITED_FIELD_CACHE_WAYS {
-            entries.remove(0);
-        }
-        entries.push(entry);
+        let slot = if length >= INHERITED_FIELD_CACHE_WAYS {
+            // The oldest entry, `index`, follows `previous`, as in `record_inherited_field`.
+            self.accessor_fields[previous as usize].next = NO_ACCESSOR_FIELD;
+            index
+        } else {
+            self.accessor_fields.push(entry);
+            (self.accessor_fields.len() - 1) as u32
+        };
+        entry.next = head;
+        self.accessor_fields[slot as usize] = entry;
+        self.accessor_field_indices.set(site, slot);
+        self.note_field_cache_write(site);
     }
 
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it (`record_accessor_field_cache`).
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        let entries = self.accessor_field_caches.get(&site)?;
+        let mut index = self.accessor_field_indices.get(site);
+        if index == NO_ACCESSOR_FIELD {
+            return None;
+        }
         let receiver = self.shape_property_lookup(object, atom)?;
-        let epoch = crate::heap::prototype_layout_epoch();
-        let cache = entries.iter().find(|cache| {
-            receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch
-        })?;
+        let (shape, proto, epoch) = (receiver.shape(), receiver.proto(), crate::heap::prototype_layout_epoch());
+        let cache = loop {
+            let cache = self.accessor_fields.get(index as usize)?;
+            if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
+                break cache;
+            }
+            index = cache.next;
+        };
         let holder = if cache.holder == OWN_ACCESSOR {
             if receiver.has_side_descriptors() {
                 return None;
