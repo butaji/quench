@@ -2184,7 +2184,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// BigInt operator `op` of two BigInt values: the result, or the error it raises. `None`
-    /// when an operand is not a BigInt or the operator has no BigInt meaning.
+    /// when an operand is not a BigInt or the operator has no BigInt meaning. Inline, so the
+    /// result is written where its caller allocates it.
+    #[inline(always)]
     fn bigint_operation(
         &self,
         op: u32,

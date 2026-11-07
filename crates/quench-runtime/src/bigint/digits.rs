@@ -49,25 +49,28 @@ pub(crate) fn cmp(a: &[Digit], b: &[Digit]) -> Ordering {
 
 /// `a + b` into `out`, `a.len() >= b.len()`, `out.len() > a.len()`.
 pub(crate) fn add(a: &[Digit], b: &[Digit], out: &mut [Digit]) -> usize {
+    let (out, top) = out[..=a.len()].split_at_mut(a.len());
+    let (low, high) = out.split_at_mut(b.len());
     let mut carry = false;
-    for (index, slot) in out[..a.len()].iter_mut().enumerate() {
-        let (sum, first) = a[index].overflowing_add(b.get(index).copied().unwrap_or(0));
-        let (sum, second) = sum.overflowing_add(Digit::from(carry));
-        *slot = sum;
-        carry = first | second;
+    for ((slot, &x), &y) in low.iter_mut().zip(a).zip(b) {
+        (*slot, carry) = x.carrying_add(y, carry);
     }
-    out[a.len()] = Digit::from(carry);
+    for (slot, &x) in high.iter_mut().zip(&a[b.len()..]) {
+        (*slot, carry) = x.overflowing_add(Digit::from(carry));
+    }
+    top[0] = Digit::from(carry);
     a.len() + usize::from(carry)
 }
 
 /// `a - b` into `out`, `a >= b`, `out.len() >= a.len()`.
 pub(crate) fn sub(a: &[Digit], b: &[Digit], out: &mut [Digit]) -> usize {
+    let (low, high) = out[..a.len()].split_at_mut(b.len());
     let mut borrow = false;
-    for (index, slot) in out[..a.len()].iter_mut().enumerate() {
-        let (difference, first) = a[index].overflowing_sub(b.get(index).copied().unwrap_or(0));
-        let (difference, second) = difference.overflowing_sub(Digit::from(borrow));
-        *slot = difference;
-        borrow = first | second;
+    for ((slot, &x), &y) in low.iter_mut().zip(a).zip(b) {
+        (*slot, borrow) = x.borrowing_sub(y, borrow);
+    }
+    for (slot, &x) in high.iter_mut().zip(&a[b.len()..]) {
+        (*slot, borrow) = x.overflowing_sub(Digit::from(borrow));
     }
     debug_assert!(!borrow);
     normalized_len(&out[..a.len()])

@@ -82,24 +82,32 @@ impl JsBigInt {
             Storage { spilled: unsafe { NonNull::new_unchecked(Box::into_raw(spilled).cast()) } }
         } else {
             let mut inline = [0; INLINE_DIGITS];
-            inline[..len].copy_from_slice(magnitude);
+            // A loop, not `copy_from_slice`: at most `INLINE_DIGITS` stores, with no call.
+            for (slot, &digit) in inline.iter_mut().zip(magnitude) {
+                *slot = digit;
+            }
             Storage { inline }
         };
         Self { len: len as u32, negative: negative && len != 0, storage }
     }
 
-    /// The value `write` leaves in `capacity` zeroed digits, signed `negative`: written in
-    /// the cell's own digits when they hold `capacity`, otherwise through scratch.
+    /// The value `write` leaves in `capacity` zeroed digits, signed `negative`, of which it
+    /// returns the normalized length. Up to one digit past the cell's (a carry), the digits
+    /// are written on the stack and taken into the cell whole.
     #[inline(always)]
     fn build(negative: bool, capacity: usize, write: impl FnOnce(&mut [Digit]) -> usize) -> Self {
-        if Self::spills(capacity) {
+        if capacity > INLINE_DIGITS + 1 {
             return digits::with_scratch(capacity, |out| {
                 let len = write(out);
                 Self::from_digits(negative, &out[..len])
             });
         }
-        let mut inline = [0; INLINE_DIGITS];
-        let len = write(&mut inline[..capacity]);
+        let mut out = [0; INLINE_DIGITS + 1];
+        let len = write(&mut out[..capacity]);
+        if Self::spills(len) {
+            return Self::from_digits(negative, &out[..len]);
+        }
+        let inline = *out.first_chunk().expect("the buffer holds the cell's digits");
         Self { len: len as u32, negative: negative && len != 0, storage: Storage { inline } }
     }
 
@@ -167,16 +175,17 @@ impl JsBigInt {
         if digits::cmp(a, b) == Ordering::Less {
             return Ok(if want_quotient { Self::ZERO } else { self.clone() });
         }
+        // The wanted part is built in place; the other takes scratch.
         let quotient_len = a.len() - b.len() + 1;
-        Ok(digits::with_scratch(quotient_len + b.len(), |scratch| {
-            let (quotient, remainder) = scratch.split_at_mut(quotient_len);
-            let (quotient_len, remainder_len) = digits::div_rem(a, b, quotient, remainder);
-            if want_quotient {
-                Self::from_digits(self.negative != other.negative, &quotient[..quotient_len])
-            } else {
-                Self::from_digits(self.negative, &remainder[..remainder_len])
-            }
-        }))
+        Ok(if want_quotient {
+            Self::build(self.negative != other.negative, quotient_len, |quotient| {
+                digits::with_scratch(b.len(), |remainder| digits::div_rem(a, b, quotient, remainder).0)
+            })
+        } else {
+            Self::build(self.negative, b.len(), |remainder| {
+                digits::with_scratch(quotient_len, |quotient| digits::div_rem(a, b, quotient, remainder).1)
+            })
+        })
     }
 
     pub(crate) fn pow(&self, exponent: &Self) -> Result<Self, Error> {
