@@ -31,7 +31,6 @@ autotests = false
 autobenches = false
 description = "A collection of JavaScript tools written in Rust."
 homepage = "https://oxc.rs"
-readme = "README.md"
 keywords = [
     "JavaScript",
     "TypeScript",
