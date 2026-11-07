@@ -16,9 +16,12 @@ use std::{
 };
 
 /// One test per execution path a regression has broken unseen: a large compile-heavy
-/// bundle, a generator pipeline, a Proxy-heavy assertion library, async functions and a
-/// Wasm module.
-const DEFAULT_TESTS: &[&str] = &["typescript-lib", "lazy-collections", "chai-wtb", "doxbee-async", "zlib-wasm"];
+/// bundle, a generator pipeline, a Proxy-heavy assertion library, async functions, a Wasm
+/// module, and small hot callees storing fields past their caches under `--jit` (cdjs,
+/// gbemu, Box2D: lane leaf calls into views the JS tier claims) and through getters
+/// (chai-wtb, jsdom-d3-startup).
+const DEFAULT_TESTS: &[&str] =
+    &["typescript-lib", "lazy-collections", "chai-wtb", "doxbee-async", "zlib-wasm", "cdjs", "gbemu", "Box2D", "jsdom-d3-startup"];
 /// Driver arguments that make each test one short run: a score needs a worst case, which
 /// needs more than the one iteration it is the worst of.
 const SMOKE_DRIVER_ARGUMENTS: &[&str] = &["--iteration-count=2", "--worst-case-count=1"];
@@ -38,7 +41,7 @@ fn main() -> ExitCode {
     let (jit, tests): (Vec<String>, Vec<String>) = args.partition(|arg| arg == "--jit");
     let tests: Vec<String> =
         if tests.is_empty() { DEFAULT_TESTS.iter().map(|test| test.to_string()).collect() } else { tests };
-    if let Some(unknown) = tests.iter().find(|test| !jetstream::FIXTURES.contains(&test.as_str())) {
+    if let Some(unknown) = tests.iter().find(|test| !known(test)) {
         eprintln!("jetstream-smoke: unknown JetStream test {unknown}");
         return ExitCode::from(2);
     }
@@ -55,6 +58,13 @@ fn main() -> ExitCode {
         eprintln!("jetstream-smoke: {failures} of {} tests failed", tests.len());
         ExitCode::FAILURE
     }
+}
+
+/// Whether `test` is a fixture the harness measures or a test JetStream's driver declares.
+fn known(test: &str) -> bool {
+    jetstream::FIXTURES.contains(&test)
+        || fs::read_to_string(Path::new(jetstream::SUITE_DIR).join("JetStreamDriver.js"))
+            .is_ok_and(|driver| driver.contains(&format!("name: \"{test}\"")))
 }
 
 /// Whether `test` exits successfully and prints its score, reporting the outcome either way.

@@ -1,6 +1,8 @@
 //! Module type facts retain recursive group boundaries and source index order.
 //! Executable signatures are projections, not replacements for declarations.
 
+mod fingerprint;
+
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
 use wasmparser::{
@@ -11,27 +13,26 @@ use wasmparser::{
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WasmTypes {
     groups: Rc<[Vec<SubType>]>,
+    /// Each declaration's group and its position in it, so a declaration is found at once.
+    members: Rc<[(u32, u32)]>,
 }
 
 impl WasmTypes {
     pub fn from_groups(groups: impl IntoIterator<Item = RecGroup>) -> Self {
-        Self {
-            groups: groups
-                .into_iter()
-                .map(|group| group.into_types().collect())
-                .collect(),
-        }
+        Self::of(groups.into_iter().map(|group| group.into_types().collect()).collect())
+    }
+
+    fn of(groups: Rc<[Vec<SubType>]>) -> Self {
+        let members = groups.iter().enumerate()
+            .flat_map(|(group, types)| (0..types.len()).map(move |member| (group as u32, member as u32)))
+            .collect();
+        Self { groups, members }
     }
 
     /// Embedding inputs without a binary type section declare singleton,
     /// final, unshared function groups, just like ordinary function types.
     pub fn from_functions(functions: impl IntoIterator<Item = FuncType>) -> Self {
-        Self {
-            groups: functions
-                .into_iter()
-                .map(|function| vec![SubType::func(function, false)])
-                .collect(),
-        }
+        Self::of(functions.into_iter().map(|function| vec![SubType::func(function, false)]).collect())
     }
 
     pub(crate) fn struct_fields(&self, index: u32) -> Option<&[FieldType]> {
@@ -82,14 +83,9 @@ impl WasmTypes {
         &self.groups
     }
 
-    fn locate(&self, mut index: usize) -> Option<(&[SubType], usize)> {
-        for group in self.groups.iter() {
-            if index < group.len() {
-                return Some((group, index));
-            }
-            index -= group.len();
-        }
-        None
+    fn locate(&self, index: usize) -> Option<(&[SubType], usize)> {
+        let &(group, member) = self.members.get(index)?;
+        Some((&self.groups[group as usize], member as usize))
     }
 
     pub fn get(&self, index: usize) -> Option<&SubType> {
@@ -109,6 +105,9 @@ impl WasmTypes {
         };
         if member != other_member {
             return false;
+        }
+        if index == other_index && Rc::ptr_eq(&self.groups, &other.groups) {
+            return true;
         }
         let mut comparison = Equivalence {
             tables: [self, other],
@@ -134,7 +133,7 @@ impl WasmTypes {
     /// Defined-type subtyping follows declared ancestry, never an accidental
     /// structural match between unrelated declarations.
     pub fn is_subtype(&self, mut index: usize, other: &Self, other_index: usize) -> bool {
-        let declarations = self.groups.iter().map(Vec::len).sum::<usize>();
+        let declarations = self.members.len();
         // Validated ancestry is acyclic. The declaration count also bounds
         // malformed embedding input without inventing a runtime type-depth cap.
         for _ in 0..declarations {

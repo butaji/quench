@@ -4,7 +4,7 @@
 //! generator's thread (`jit_backend::run_in_background`) while the program runs on.
 
 use super::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
 
@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
         };
         let left_at = unit_leaves(&unit, generic);
         let fields = self.lane_unit_fields(program, &unit, &left_at);
-        let global_reads: BTreeSet<usize> = self.lane_global_reads(program, function, &unit);
+        let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
