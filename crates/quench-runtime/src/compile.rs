@@ -1420,6 +1420,12 @@ impl Engine {
         drop(located);
         let (compiler, module) = emitted?;
         let program = compiler.finish(module)?;
+        // Lazy parsing releases function-body ASTs. A native-only build freezes complete
+        // diagnostic facts once from source without forcing their bytecode replay; a
+        // dynamic one defers that parse to the first diagnostic or write that reads them.
+        if !crate::DYNAMIC_EXECUTION_ENABLED {
+            crate::vm::freeze_call_sites(&program);
+        }
         #[cfg(feature = "aot")]
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]

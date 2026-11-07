@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
             .and_then(|position| {
                 let source = program.source.as_ref()?;
                 let offset = source.byte_offset(position)?;
-                let sites = call_sites(program)?;
+                let sites = frozen_call_sites(source)?;
                 sites.binary_search_by_key(&(offset, construct), |site| (site.offset, site.construct))
                     .ok().map(|index| sites[index].callee.clone())
             })
@@ -171,20 +171,26 @@ fn call_kind(instruction: WideInstruction) -> Option<bool> {
     }
 }
 
-/// The program's call-site descriptions: frozen before a native image publishes it, which
-/// then has no syntax frontend; a build that compiles source derives them on the first
-/// diagnostic that reads them, so a program that never reports a call site never parses
-/// its source again.
-fn call_sites(program: &ResidualProgram) -> Option<&[crate::bytecode::CallSiteDescription]> {
-    if crate::DYNAMIC_EXECUTION_ENABLED {
-        freeze_call_sites(program);
+/// Freeze source-derived descriptions without opening or compiling lazy function bodies.
+/// A native-only build freezes them as it compiles; a dynamic one on their first read
+/// (`frozen_call_sites`) or before writing the program, so a load that raises no error
+/// parses its source once.
+pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
+    if let Some(source) = &program.source {
+        freeze_source_call_sites(source);
     }
-    program.source.as_ref()?.call_sites.get().map(|sites| &sites[..])
 }
 
-/// Freeze source-derived descriptions without opening or compiling lazy function bodies.
-pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
-    let Some(source) = &program.source else { return };
+/// The call-site descriptions of `source`: frozen ones, or, in a dynamic build, those its
+/// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
+fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate::bytecode::CallSiteDescription]> {
+    if crate::DYNAMIC_EXECUTION_ENABLED {
+        freeze_source_call_sites(source);
+    }
+    source.call_sites.get().map(|sites| &sites[..])
+}
+
+pub(crate) fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
     source.call_sites.get_or_init(|| {
         let mut found = CallSites::new();
         for goal in CALL_SOURCE_GOALS.map(|goal| goal.with_typescript(source.typescript)) {
@@ -202,7 +208,7 @@ pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
 pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u32) -> Option<String> {
     let source = program.source.as_ref()?;
     let offset = source.byte_offset(crate::bytecode::SourcePosition { pc: 0, line, column })?;
-    let sites = call_sites(program)?;
+    let sites = frozen_call_sites(source)?;
     let index = sites.binary_search_by_key(&offset, |site| site.offset).ok()?;
     let span = sites[index].expression?;
     source.text.get(span.start as usize..span.end as usize).map(str::to_owned)
@@ -470,34 +476,47 @@ mod tests {
             ("assert.ok(/[(;)]/.test(''))", "ok(", "assert.ok(/[(;)]/.test(''))"),
         ] {
             let program = crate::Engine::specialize(text, "assertion-source.js").unwrap();
-            program.freeze_native_diagnostics();
+            freeze_call_sites(&program);
             let source = program.source.as_ref().unwrap();
-            let site = source.call_sites.get().expect("facts are frozen").iter()
+            let site = source.call_sites.get().expect("facts are frozen from source").iter()
                 .find(|site| site.offset as usize == text.find(position).unwrap())
                 .expect("assertion call");
             let actual = site.expression.map(|span| &source.text[span.start as usize..span.end as usize]);
             assert_eq!(actual, Some(expected), "{text}");
         }
         let program = crate::Engine::specialize("assert.ok((()=>{return false;})())", "semicolon-expression.js").unwrap();
-        program.freeze_native_diagnostics();
+        freeze_call_sites(&program);
         let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
         assert!(sites.iter().find(|site| site.callee == "assert.ok").unwrap().expression.is_none(),
             "Node's semicolon terminator yields an empty expression");
     }
 
     #[test]
-    fn dynamic_diagnostics_derive_call_sites_once_and_keep_lazy_records() {
-        let program = crate::Engine::specialize(
+    fn diagnostics_keep_lazy_records_and_native_lookup_never_parses() {
+        let mut program = crate::Engine::specialize(
             "function cold(value) { assert.ok(value); }", "cold-diagnostics.js").unwrap();
         let released: Vec<_> = program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect();
         assert!(released.iter().any(|released| *released), "the fixture must keep a cold record");
-        assert!(program.source.as_ref().unwrap().call_sites.get().is_none(), "admission parses no call sites");
-        let column = "function cold(value) { assert.".len() as u32 + 1;
-        assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"));
-        let owner = program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr();
+        // A dynamic build defers the facts to their first read; a native-only one admits them.
+        assert_eq!(program.source.as_ref().unwrap().call_sites.get().is_some(), !crate::DYNAMIC_EXECUTION_ENABLED);
+        program.source.as_mut().unwrap().call_sites.take();
+        freeze_call_sites(&program);
         assert_eq!(program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect::<Vec<_>>(), released);
-        assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"));
-        assert_eq!(program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr(), owner, "derived once");
+        let source = program.source.as_ref().unwrap();
+        let sites = source.call_sites.get().unwrap();
+        let owner = sites.as_ptr();
+        let column = "function cold(value) { assert.".len() as u32 + 1;
+        for _ in 0..2 {
+            assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"));
+            assert_eq!(program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr(), owner);
+        }
+        program.source.as_mut().unwrap().call_sites.take();
+        if crate::DYNAMIC_EXECUTION_ENABLED {
+            assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"), "a dynamic lookup derives them");
+        } else {
+            assert_eq!(source_expression(&program, 1, column), None, "lookup never derives missing facts");
+            assert!(program.source.as_ref().unwrap().call_sites.get().is_none());
+        }
     }
 
     #[test]

@@ -3915,6 +3915,7 @@ impl ProgramSource {
 
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
+        crate::vm::freeze_source_call_sites(self);
         let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);

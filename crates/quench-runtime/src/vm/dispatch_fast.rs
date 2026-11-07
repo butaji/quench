@@ -11774,6 +11774,13 @@ const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
 #[inline(always)]
 fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -> Resumed {
     let (r, ip, view) = lane_frame_state(cx, frame, pc);
+    // A frame call or return reached from an out-of-line path may nest rather than run as a
+    // sibling, so a run of calls and returns with no backward jump between them grew the
+    // stack until it overflowed (mandreel). Below the floor the lane loop dispatches the
+    // record instead, from the frame state the context now holds.
+    if script_below_floor(cx) {
+        return Resumed::Exit(ip);
+    }
     Resumed::At(r, ip, view)
 }
 
@@ -21133,14 +21140,7 @@ fn derive_lane_view<'live, H: Host>(
     // entry stays a plain jump, since tables take the entry's jump without
     // running its record. This runs before the fusions below, which take a
     // following jump's record as a plain jump.
-    let mut entry_jumps = InstructionSet::new(records.len());
-    for (pc, &instruction) in decoded.iter().enumerate() {
-        if instruction.op() == Op::WasmBranchTable {
-            for entry in crate::bytecode::branch_table_entries(pc, instruction) {
-                entry_jumps.insert(entry);
-            }
-        }
-    }
+    let entry_jumps = branch_table_entry_records(&decoded);
     let record_bytes = size_of::<LaneInstruction>() as isize;
     for (pc, &instruction) in decoded.iter().enumerate() {
         let target = instruction.imm() as usize;
@@ -21802,6 +21802,7 @@ fn install_loop_sites<'live, H: Host>(
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
+    let table_entries = branch_table_entry_records(decoded);
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
     // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
     // offset those records read with the site (the eslint npm scenario under --jit jumped to
@@ -21816,7 +21817,9 @@ fn install_loop_sites<'live, H: Host>(
             && [lane_move_pair::<H, true, false> as Handler, lane_move_pair::<H, true, true>]
                 .iter()
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
-        then || pair
+        // A branch table takes its entry's jump offset the same way (`lane_branch_table`):
+        // babel-minify-wtb's generator `switch` under --jit jumped to a site read as an offset.
+        then || pair || table_entries.contains(pc)
     };
     // The masks are derived for the first loop site only: a body without a backward jump
     // needs none, and every view under a loop tier had derived them (npm scenarios under
@@ -23047,6 +23050,19 @@ impl InstructionSet {
 }
 
 /// The instruction PCs targeted by a jump.
+/// The records of every branch table's entries, whose jump offsets the table reads.
+fn branch_table_entry_records(instructions: &[WideInstruction]) -> InstructionSet {
+    let mut entries = InstructionSet::new(instructions.len());
+    for (pc, &instruction) in instructions.iter().enumerate() {
+        if instruction.op() == Op::WasmBranchTable {
+            for entry in crate::bytecode::branch_table_entries(pc, instruction) {
+                entries.insert(entry);
+            }
+        }
+    }
+    entries
+}
+
 fn jump_targets(instructions: &[WideInstruction]) -> InstructionSet {
     let mut targets = InstructionSet::new(instructions.len());
     for instruction in instructions {
