@@ -26327,3 +26327,37 @@ fn young_array_elements_keep_array_semantics_across_collections() {
         assert_eq!(global_text_under(policy, source, "result"), expected, "{policy:?}");
     }
 }
+
+#[test]
+fn appended_strings_keep_their_text_when_appends_extend_a_shared_buffer() {
+    // Text built by `+=` past the copy bound grows in an append buffer (`AppendBuffer`):
+    // strings taken along the way, two appends to one string, ASCII text meeting non-ASCII,
+    // wide text, keys, long appends, regexps and comparisons read as in Node (v22.23).
+    let source = "var log = [];\n\
+         function hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }\n\
+         // ASCII text past the copy bound grows by appends; earlier strings keep their text.\n\
+         var out = \"\", kept = [];\n\
+         for (var i = 0; i < 3000; i++) { out += \"<i>\" + i + \"</i>\"; if (i % 700 === 0) kept.push(out); }\n\
+         log.push(out.length, hash(out), kept.map(function (k) { return k.length + \":\" + hash(k); }).join(\",\"));\n\
+         // Two appends to one string: the second must not see the first.\n\
+         var base = out, a = base + \"A\", b = base + \"BB\";\n\
+         log.push(a.length, b.length, a.slice(-3), b.slice(-3), base.slice(-4), a === base + \"A\", b.endsWith(\"BB\"));\n\
+         // An ASCII buffer meeting non-ASCII text, then ASCII again.\n\
+         var w = out; w += \"Château\"; w += \" ok\"; var w2 = w + \"🍷\";\n\
+         log.push(w.length, w.slice(-11), w2.length, w2.charCodeAt(w2.length - 1), hash(w2), w.indexOf(\"â\"));\n\
+         // Wide text built by appends, with branches and keys.\n\
+         var t = \"é\";\n\
+         for (var j = 0; j < 4000; j++) t += j % 3 ? \"x\" + j : \"î\";\n\
+         var t1 = t + \"1\", t2 = t + \"2\";\n\
+         var o = {}; o[t1] = 1; o[t2] = 2;\n\
+         log.push(t.length, hash(t), t1 < t2, o[t + \"1\"], o[t + \"2\"], t1.charAt(t1.length - 1), t2.lastIndexOf(\"î\"));\n\
+         // Long appends, regexps, splitting, JSON and comparisons on built text.\n\
+         var big = out; for (var k = 0; k < 5; k++) big += big.slice(0, 600);\n\
+         log.push(big.length, hash(big), /<i>2999<\\/i>/.test(big), big.match(/<i>\\d+<\\/i>/g).length, big.split(\"</i>\").length);\n\
+         log.push(JSON.stringify(w.slice(-7)), (out + \"z\") > out, (out + \"z\").localeCompare(out + \"y\"), String(out + \"\").length);\n\
+         var result = log.join(\"|\");";
+    let expected = "31890|1893119096|8:2009183303,6900:2055862346,14301:1906283492,22001:249205826,29701:1813277707|31891|31892|i>A|>BB|</i>|true|true|31900|>Château ok|31902|57207|-153158003|31892|13927|1601758801|true|1|2|1|13926|34890|982673343|true|3335|3336|\"teau ok\"|true|1|31890";
+    for policy in crate::MemoryPolicy::ALL {
+        assert_eq!(global_text_under(policy, source, "result"), expected, "{policy:?}");
+    }
+}
