@@ -107,6 +107,8 @@ pub type Register = u16;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
+mod field_store;
+pub(crate) use field_store::{FieldStore, StoreReceiver};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
@@ -2727,9 +2729,7 @@ impl Function {
         // The temporaries primitive constants were loaded into, latest last.
         let mut temporaries: SmallVec<[(Register, InitializerConstant); 4]> = SmallVec::new();
         let mut pc = 0;
-        let store = |instruction: &WideInstruction| {
-            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict).then_some(())
-        };
+        let store = |instruction: &WideInstruction| instruction.stores_to_this().then_some(());
         loop {
             let at = |offset: usize| instructions.get(pc + offset);
             let target = |offset: usize| (pc + offset) as u32;

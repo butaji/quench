@@ -28,7 +28,7 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::{
-    FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
+    FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
@@ -1801,11 +1801,11 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
             // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
             // place (`lane_set_field_in_place`) or on the general path, either of which makes
             // the leaf an activation first.
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => {
+            op if op.is_field_store() => {
                 if private(instruction.imm()) {
                     return None;
                 }
-                if matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict) { CONTEXT_LEAF } else { PLAIN_LEAF }
+                if instruction.field_store_register().is_some() { PLAIN_LEAF } else { CONTEXT_LEAF }
             }
             // A global name's first load finds the running function (`lane_load_name_first`),
             // which makes the leaf an activation first; its later loads read the realm alone.
@@ -7391,10 +7391,8 @@ fn lane_set_field_in_place<H: Host>(
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    let strict = match decoded_instruction(body, body.code[pc]).op() {
-        Op::SetFieldStrict | Op::SetThisFieldStrict => true,
-        Op::SetField | Op::SetThisField => false,
-        _ => return Resumed::Exit(exit(ip)),
+    let Some(FieldStore { strict, .. }) = decoded_instruction(body, body.code[pc]).op().field_store() else {
+        return Resumed::Exit(exit(ip));
     };
     let (atom, value, site) = (i.imm(), r.get(i.a), i.c);
     if lane_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)).is_none() {
@@ -20017,8 +20015,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
-        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H, false>),
-        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H, false>),
+        op if matches!(op.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
+        op if matches!(op.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::ToPropertyKey => Some(lane_to_property_key::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
