@@ -3,8 +3,7 @@
 //! Weak collections are not iterable, so entries keep no insertion order: a delete moves the
 //! last entry into the hole. Collection prunes entries whose keys died (`retain`).
 
-use super::CollectionEntry;
-use crate::value::Value;
+use super::{CollectionEntry, Value};
 use rustc_hash::FxHashMap;
 
 #[derive(Clone, Debug)]

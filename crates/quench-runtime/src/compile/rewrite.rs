@@ -1,4 +1,3 @@
-use crate::bitset::BitSet;
 use super::*;
 use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
@@ -593,7 +592,7 @@ fn coalesce_distant_producer_moves(
 /// and none from it to the move leaves the block).
 fn block_producer(
     function: &BcFunction,
-    protected: &BitSet,
+    protected: &crate::bitset::BitSet,
     transfers: &[(RegisterSet, RegisterSet)],
     target: usize,
     pair: RegisterSet,
@@ -929,7 +928,7 @@ pub(super) fn protected_positions(
     handlers: &[crate::bytecode::Handler],
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
-) -> BitSet {
+) -> crate::bitset::BitSet {
     let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
         let instruction = fixed_width(*instruction, wide);
@@ -955,8 +954,8 @@ fn region_boundaries(
     handlers: &[crate::bytecode::Handler],
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
-) -> BitSet {
-    let mut protected = BitSet::new(length + 1);
+) -> crate::bitset::BitSet {
+    let mut protected = crate::bitset::BitSet::new(length + 1);
     for handler in handlers {
         protected.insert(handler.start as usize);
         protected.insert(handler.end as usize);

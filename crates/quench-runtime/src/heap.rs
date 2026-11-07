@@ -22,7 +22,6 @@ pub(crate) use dependencies::{
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
-mod weak_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
@@ -44,8 +43,7 @@ pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
-pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, number_key_hash};
-pub(crate) use weak_entries::{WeakMapEntries, WeakSetEntries};
+pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,

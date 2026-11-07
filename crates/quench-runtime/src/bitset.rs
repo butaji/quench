@@ -6,13 +6,26 @@
 
 use smallvec::SmallVec;
 
-const WORD_BITS: usize = u64::BITS as usize;
+pub(crate) const WORD_BITS: usize = u64::BITS as usize;
 /// Words kept inline: 128 members without allocation.
-const INLINE_WORDS: usize = 2;
+pub(crate) const INLINE_WORDS: usize = 2;
 
 #[inline(always)]
 fn position(index: usize) -> (usize, u64) {
     (index / WORD_BITS, 1 << (index % WORD_BITS))
+}
+
+/// The membership words of `len` bits packed little-endian in `bytes`, eight per byte; bits
+/// past `len` are dropped.
+pub(crate) fn words_from_le_bytes(len: usize, bytes: &[u8]) -> Vec<u64> {
+    let mut words = vec![0; words_for(len)];
+    for (byte, &bits) in bytes.iter().enumerate().take(len.div_ceil(8)) {
+        words[byte / 8] |= u64::from(bits) << (byte % 8 * 8);
+    }
+    if !len.is_multiple_of(WORD_BITS) && let Some(last) = words.last_mut() {
+        *last &= (1 << (len % WORD_BITS)) - 1;
+    }
+    words
 }
 
 /// Whether bit `index` of the membership words `words` (`BitSet::words`) is set; false past
@@ -208,6 +221,8 @@ mod tests {
         assert!(set.insert_growing(300));
         assert!(set.spilled() && set.len() == 301 && set.contains(300));
         assert!(words_contain(set.words(), 300) && !words_contain(set.words(), 301) && !words_contain(&[], 0));
+        assert_eq!(words_from_le_bytes(10, &[0xff, 0xff]), [0x3ff]);
+        assert_eq!(words_from_le_bytes(72, &[1, 0, 0, 0, 0, 0, 0, 0x80, 2]), [0x8000_0000_0000_0001, 2]);
         let flags = [true, false, false, true];
         let set = BitSet::from_fn(4, |index| flags[index]);
         assert_eq!((0..4).map(|index| set.contains(index)).collect::<Vec<_>>(), flags);

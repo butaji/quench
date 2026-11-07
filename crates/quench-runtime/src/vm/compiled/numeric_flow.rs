@@ -57,8 +57,7 @@ impl Incoming {
 mod tests {
     use super::*;
 
-    const WORD_BITS: usize = u64::BITS as usize;
-    const INLINE_WORDS: usize = 2;
+    use crate::bitset::{INLINE_WORDS, WORD_BITS};
 
     #[test]
     fn membership_respects_register_and_inline_boundaries() {

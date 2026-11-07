@@ -1395,6 +1395,7 @@ impl<H: Host> Vm<H> {
         key_hash: u64,
     ) -> Option<usize> {
         entries.position(
+            key,
             key_hash,
             |candidate| self.same_value_zero_hash(candidate),
             |candidate| self.same_value_zero(candidate, key),

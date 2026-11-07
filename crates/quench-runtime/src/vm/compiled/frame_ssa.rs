@@ -439,8 +439,7 @@ mod tests {
 
     #[test]
     fn register_bitsets_batch_joins_and_kills_across_inline_and_spilled_words() {
-        const WORD_BITS: usize = u64::BITS as usize;
-        const INLINE_WORDS: usize = 2;
+        use crate::bitset::{INLINE_WORDS, WORD_BITS};
         for count in [0, 1, WORD_BITS as u16, (WORD_BITS * INLINE_WORDS + 1) as u16, u16::MAX] {
             let mut left = RegisterSet::new(count);
             let mut right = RegisterSet::new(count);

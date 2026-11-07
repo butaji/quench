@@ -801,10 +801,7 @@ impl Cell {
                 let ordered = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
                 Self::WeakMap { object, entries: Box::new(WeakMapEntries::from_entries(ordered)) }
             }
-            tag::WEAK_SET => Self::WeakSet {
-                object: boxed_object(reader)?,
-                entries: Box::new(WeakSetEntries::from_entries(reader.values()?)),
-            },
+            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(WeakSetEntries::from_entries(reader.values()?)) },
             tag::WEAK_REF => Self::WeakRef {
                 object: boxed_object(reader)?,
                 target: reader.option_value()?.map(|value| WeakHandle { value }),

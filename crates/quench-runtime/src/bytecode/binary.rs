@@ -1316,16 +1316,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let plain_locals: crate::heap::ThinBoxSlice<u64> = {
-            let mut plain = crate::bitset::BitSet::new(usize::from(locals));
-            for byte in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
-                let bits = input.u8()?;
-                for bit in (0..8).filter(|bit| bits & (1 << bit) != 0) {
-                    plain.checked_insert(byte * 8 + bit);
-                }
-            }
-            plain.words().to_vec().into()
-        };
+        let plain_bytes = (0..usize::from(locals).div_ceil(u8::BITS as usize)).map(|_| input.u8()).collect::<Result<Vec<_>, _>>()?;
+        let plain_locals: crate::heap::ThinBoxSlice<u64> = crate::bitset::words_from_le_bytes(usize::from(locals), &plain_bytes).into();
         let derived_facts = input.u32()?;
         let function = Function {
             parent,

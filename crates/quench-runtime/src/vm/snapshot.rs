@@ -578,9 +578,7 @@ impl<H: Host> Vm<H> {
         }
         builtin_prototypes!(read_prototypes);
         self.natives = Snap::unsnap(&mut reader)?;
-        for (atom, string) in Vec::<(Atom, Value)>::unsnap(&mut reader)? {
-            self.heap.register_string_atom(string, atom, true);
-        }
+        Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
         #[cfg(feature = "profile-memory")]
