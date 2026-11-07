@@ -4223,11 +4223,8 @@ unsafe fn lane_returning_binary_value<H: Host>(
 /// An operator of operands not both Numbers the lane computes in place: a concatenation of
 /// strings for `+`, or BigInt arithmetic; `None` leaves it to the general path.
 fn lane_other_operator_value<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
-    if operator == super::operations::ADDITION {
-        lane_concatenation(cx, left, right).or_else(|| lane_bigint_value(cx, operator, left, right))
-    } else {
-        lane_bigint_value(cx, operator, left, right)
-    }
+    let concatenated = (operator == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right));
+    concatenated.flatten().or_else(|| lane_bigint_value(cx, operator, left, right))
 }
 
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
@@ -4821,9 +4818,8 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_constant_numbers` of operands not both Numbers: a concatenation of
-    /// strings or BigInt arithmetic in place, as `lane_operator_other` does for registers;
-    /// anything else takes the general path.
+    /// `lane_operator_other` of `lane_operator_constant_numbers`, whose right operand is the
+    /// record's constant.
     #[inline(never)]
     fn lane_operator_constant_other<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), i.constant()) else {
