@@ -1057,10 +1057,9 @@ impl LaneView {
     }
 
     /// Starts the function's frameless activations at the tier prologue, which enters the
-    /// JavaScript tier with its `params` parameters and, where it `binds_this`, its receiver
-    /// (`lane_tier_prologue`). The prologue's fields hold those: `imm` the function, `a` its
-    /// parameter count, `b` whether it binds its own `this`.
-    fn claim_for_tier(&self, handler: Handler, function: u32, params: u16, binds_this: bool) {
+    /// JavaScript tier with its `params` parameters (`lane_tier_prologue`). The prologue's
+    /// fields hold those: `imm` the function, `a` its parameter count.
+    fn claim_for_tier(&self, handler: Handler, function: u32, params: u16) {
         let prologue = self.prologue.get();
         // SAFETY: the lane runs on the view's thread, and nothing reads the prologue while
         // the start does not name it.
@@ -1069,7 +1068,7 @@ impl LaneView {
                 handler: handler as *const (),
                 operand: LaneOperand { imm: function },
                 a: params,
-                b: u16::from(binds_this),
+                b: 0,
                 c: 0,
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
             };
@@ -12295,7 +12294,7 @@ impl<H: Host> Vm<H> {
             && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.lane_tier_unclaimed())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
+            unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params);
         }
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {
@@ -16135,14 +16134,14 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (function, params) = (i.imm(), usize::from(i.a));
         // SAFETY: the activation just set the context to its own function's.
-        let (program, base) = unsafe { ((*cx).program, (*cx).base) };
+        let base = unsafe { (*cx).base };
         // SAFETY: the program's views outlive the lane run.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         // SAFETY: the activation's registers hold its parameters from its first.
         let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         let entered = own
-            .and_then(|own| lane_tier_direct(vm, own, program, parameters))
-            .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
+            .and_then(|own| lane_tier_direct(vm, own, parameters))
+            .or_else(|| lane_tier_enter(cx, function, own, parameters));
         if let Some((pc, register, value)) = entered {
             r.set(register, value);
             // SAFETY: the tier returns a PC of the function, whose records are contiguous.
@@ -16213,20 +16212,10 @@ script_handler! {
 fn lane_tier_direct<H: Host>(
     vm: &mut Vm<H>,
     own: &LaneView,
-    program: ProgramId,
     parameters: &[Value],
 ) -> Option<(usize, crate::bytecode::Register, Value)> {
-    // A leaf run reads only the entry and the parameters, and nothing it calls reaches this
-    // cell, so it borrows the entry in place.
-    // SAFETY: no other reference into the cell is live during the leaf run.
-    if let Some(entered) = unsafe { &*own.tier_direct.as_ptr() }.as_ref()
-        .and_then(|direct| direct.run_leaf(parameters))
-    {
-        // A retired artifact's entry is dropped on the next general run.
-        if entered.is_some() { return entered; }
-    }
     let direct = own.tier_direct.take()?;
-    let entered = vm.run_direct_tier_entry(&direct, program, parameters);
+    let entered = vm.run_direct_tier_entry(&direct, parameters);
     if !direct.retired() {
         own.tier_direct.set(Some(direct));
     }
@@ -16242,14 +16231,12 @@ fn lane_tier_direct<H: Host>(
 fn lane_tier_enter<H: Host>(
     cx: *mut LaneContext<H>,
     function: u32,
-    binds_this: bool,
     own: Option<&LaneView>,
     parameters: &[Value],
 ) -> Option<(usize, crate::bytecode::Register, Value)> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
-    let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
-    let receiver = (binds_this && !this.is_deleted()).then_some(this);
+    let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     // A lane body runs on the activation itself, so it takes the function from the
     // frame-entering tier: the activation warms toward it in the lane, and a function whose
     // body declines runs in the lane, as it does without lane bodies.
@@ -16264,7 +16251,7 @@ fn lane_tier_enter<H: Host>(
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
     let may_claim = vm.js_tier_may_claim(code, program, function);
     if may_claim
-        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
+        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters)
     {
         if let Some(own) = own
             && let Some(direct) = vm.direct_tier_entry(code, program, function)

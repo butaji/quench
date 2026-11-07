@@ -368,11 +368,9 @@ fn inlinable(instruction: WideInstruction) -> bool {
 }
 
 /// The shared lowering performs only guarded, non-guest operations for an inlinable pure
-/// leaf. A miss may restart that call without replaying effects. Captured stores
-/// additionally allow one final write with an infallible tail.
+/// leaf. A miss may restart that call without replaying effects.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
         Op::SetIndex | Op::Call => false,
         op if op.is_field_store() => false,

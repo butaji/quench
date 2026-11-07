@@ -300,10 +300,6 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
-            #[cfg(feature = "aot")]
-            pub(super) const fn operator(self) -> u32 {
-                match self { $(Self::$operation => BinaryOperator::$operator as u32,)+ }
-            }
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -330,12 +326,6 @@ macro_rules! number_bitwise {
                 (instruction == Op::Binary)
                     .then(|| Self::from_operator(operator))
                     .flatten()
-            }
-
-            /// Whether this operation produces a signed Int32 from signed Int32
-            /// inputs, which is the current entry guard's proof domain.
-            pub(super) const fn in_signed_int32_domain(self) -> bool {
-                matches!(self, Self::And | Self::Or | Self::Xor)
             }
 
             #[inline(always)]
