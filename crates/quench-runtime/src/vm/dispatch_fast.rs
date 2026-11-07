@@ -799,7 +799,10 @@ enum LaneBody {
     /// Counting its entries toward specialization; `recompiles` bodies before it left too
     /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
     /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
+    /// `lifetimes` counts the bodies a lifecycle edge (a shape compaction, a dependency)
+    /// retired: each doubles the warm-up of the next (`LaneBody::warmup`), so a function
+    /// whose bodies keep being discarded stops paying a compile for each.
+    Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves, lifetimes: u8 },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -820,11 +823,32 @@ enum LaneBody {
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
+        /// Its function's bodies lifecycle edges discarded before it (`LaneBody::Unspecialized`).
+        lifetimes: u8,
     },
     /// A body whose runs mostly left: its function runs in the lane again, and its code stays
     /// for the direct callers that name it until they retire with it at a shape compaction.
     Retired { _method: std::rc::Rc<super::compiled::PublishedLaneMethod> },
     Declined,
+}
+
+/// The most bodies of one function lifecycle edges may discard before it runs in the lane
+/// for good: past them a compile costs more than its runs regain.
+const LANE_BODY_MAX_LIFETIMES: u8 = 8;
+
+impl LaneBody {
+    /// The entries a function warms for before its next body, `lifetimes` bodies of it
+    /// having been discarded.
+    fn warmup(lifetimes: u8) -> u16 {
+        LANE_BODY_WARMUP_ENTRIES << lifetimes.min(7)
+    }
+
+    /// The warming state after a lifecycle edge discarded a body of `lifetimes` before.
+    fn after_lifecycle(lifetimes: u8) -> Self {
+        let lifetimes = lifetimes.saturating_add(1);
+        if lifetimes > LANE_BODY_MAX_LIFETIMES { return LaneBody::Declined; }
+        LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE, lifetimes }
+    }
 }
 
 /// The most distinct places a body's leaves may go for them to be its specialization's
@@ -995,10 +1019,10 @@ impl LaneView {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Unspecialized { entries, recompiles, stuck } = body {
-            let (recompiles, stuck) = (*recompiles, *stuck);
-            *entries += 1;
-            if *entries >= LANE_BODY_WARMUP_ENTRIES {
+        if let LaneBody::Unspecialized { entries, recompiles, stuck, lifetimes } = body {
+            let (recompiles, stuck, lifetimes) = (*recompiles, *stuck, *lifetimes);
+            *entries = entries.saturating_add(1);
+            if *entries >= LaneBody::warmup(lifetimes) {
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 *body = match specialize(&generic) {
@@ -1025,6 +1049,7 @@ impl LaneView {
                             completed: std::cell::Cell::new(false),
                             recompiles,
                             stuck,
+                            lifetimes,
                         }
                     }
                     None => LaneBody::Declined,
@@ -1050,12 +1075,12 @@ impl LaneView {
     fn settle_retired_body(&self) {
         // SAFETY: as `lane_body`; settling runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized { method, tier_prologue, .. } = body
+        if let LaneBody::Specialized { method, tier_prologue, lifetimes, .. } = body
             && !method.is_published()
         {
             // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
-            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
+            *body = LaneBody::after_lifecycle(*lifetimes);
         }
     }
 
@@ -1063,7 +1088,8 @@ impl LaneView {
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
     fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
-        if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() } {
+        // A function whose bodies lifecycle edges discarded warms as any entry does.
+        if let LaneBody::Unspecialized { entries, lifetimes: 0, .. } = unsafe { &mut *self.tier_lane.get() } {
             *entries = LANE_BODY_WARMUP_ENTRIES - 1;
         }
         self.specialize_lane_body(entry, specialize);
@@ -1103,7 +1129,7 @@ impl LaneView {
     fn note_lane_body_end(&self, exit: super::compiled::LaneExit, completed_region: bool) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, recompiles, tier_prologue, stuck, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, recompiles, tier_prologue, stuck, lifetimes, .. } = body else { return };
         if completed_region || matches!(exit, super::compiled::LaneExit::Returned { .. }) {
             completed.set(true);
             return;
@@ -1130,7 +1156,7 @@ impl LaneView {
         let recompiles = *recompiles + 1;
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let next = if unmoved { LaneBody::Declined } else { LaneBody::Unspecialized { entries: 0, recompiles, stuck: feedback } };
+        let next = if unmoved { LaneBody::Declined } else { LaneBody::Unspecialized { entries: 0, recompiles, stuck: feedback, lifetimes: *lifetimes } };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         if unmoved {
             *body = LaneBody::Retired { _method: method };
@@ -1158,16 +1184,17 @@ impl LaneView {
     pub(super) fn invalidate_shape_bindings(&self) {
         // SAFETY: no lane body runs during a collection.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized { method, tier_prologue, .. } = body
+        if let LaneBody::Specialized { method, tier_prologue, lifetimes, .. } = body
             && method.lease().is_some_and(|method| method.names_shapes)
         {
+            let lifetimes = *lifetimes;
             // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection,
             // and no method borrower is held.
             unsafe {
                 (*self.prologue.get()).handler = *tier_prologue;
                 method.retire();
             }
-            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
+            *body = LaneBody::after_lifecycle(lifetimes);
         }
         self.retired.borrow_mut().clear();
         // Its direct callers name shapes too, so they retire with this compaction.
@@ -8801,6 +8828,23 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     lane_loop_release_header(unsafe { ip.byte_offset(site.jump) }, site);
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, lane_jump_always::<H, true>);
+    // The site kept the update before the jump from fusing with it (`install_loop_sites`
+    // runs before `specialize_update_jumps`): the plain jump takes that fusion now.
+    if site.backedge > site.header {
+        // SAFETY: the record before the backedge is the loop body's, in the same view.
+        let update = unsafe { ip.sub(1) };
+        let handler = unsafe { (*update).handler };
+        let fused: Option<Handler> = if handler == lane_inc_dec::<H, false> as Handler as *const () {
+            Some(lane_inc_dec_jump::<H, false, true>)
+        } else if handler == lane_inc_dec::<H, true> as Handler as *const () {
+            Some(lane_inc_dec_jump::<H, true, true>)
+        } else {
+            None
+        };
+        if let Some(fused) = fused {
+            requicken::<H>(update, fused);
+        }
+    }
 }
 
 /// Restore the semantic header at the event that replaces its native owner.
@@ -16538,6 +16582,15 @@ fn lane_tier_direct<H: Host>(
     program: ProgramId,
     parameters: &[Value],
 ) -> Option<(usize, crate::bytecode::Register, Value)> {
+    // A leaf run reads only the entry and the parameters, and nothing it calls reaches this
+    // cell, so it borrows the entry in place.
+    // SAFETY: no other reference into the cell is live during the leaf run.
+    if let Some(entered) = unsafe { &*own.tier_direct.as_ptr() }.as_ref()
+        .and_then(|direct| direct.run_leaf(parameters))
+    {
+        // A retired artifact's entry is dropped on the next general run.
+        if entered.is_some() { return entered; }
+    }
     let direct = own.tier_direct.take()?;
     let entered = vm.run_direct_tier_entry(&direct, program, parameters);
     if !direct.retired() {
@@ -21716,7 +21769,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE, lifetimes: 0 }),
         retired: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
