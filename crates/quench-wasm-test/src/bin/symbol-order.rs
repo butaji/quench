@@ -45,11 +45,9 @@ const PROCESS_RUNTIME: &[&str] = &[
     "frame_dummy",
 ];
 
-/// The mangling prefix of Rust symbols (v0).
-const RUST_SYMBOL_PREFIX: &str = "_R";
+use quench_wasm_test::RUST_SYMBOL_PREFIX;
 
-/// `nm` symbol kinds that name code.
-const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
+use quench_wasm_test::CODE_KINDS;
 
 /// The binary's code symbols, by mangled name.
 fn code_symbols(binary: &str) -> Result<Vec<String>, String> {

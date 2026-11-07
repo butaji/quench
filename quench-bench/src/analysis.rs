@@ -7,8 +7,8 @@ use std::{
 
 use crate::{now_ns, sha256};
 
-const MIN_QUALIFYING_ROUNDS: usize = 11;
-const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
+pub(crate) const MIN_QUALIFYING_ROUNDS: usize = 11;
+pub(crate) const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
 const BOOTSTRAP_REPLICATES: usize = 100_000;
 const BOOTSTRAP_INTERVAL_LEVEL: f64 = 0.95;
 const BOOTSTRAP_BASE_SEED: u64 = 0x51A7_BEEF_CAFE_2C31;

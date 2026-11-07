@@ -276,7 +276,8 @@ mod tests {
         )));
         let memory = MemoryStorage::Shared(shared.clone());
         let mut observed = std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..4)
+            
+            (0..4)
                 .map(|_| {
                     let memory = MemoryStorage::Shared(shared.clone());
                     scope.spawn(move || {
@@ -290,9 +291,6 @@ mod tests {
                             .collect::<Vec<_>>()
                     })
                 })
-                .collect();
-            handles
-                .into_iter()
                 .flat_map(|handle| handle.join().unwrap())
                 .map(integer_bits)
                 .collect::<Vec<_>>()

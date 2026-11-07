@@ -2608,7 +2608,7 @@ impl ProgramStore {
                 let slot = entry.residual.functions.get(function as usize);
                 let function_code = slot.and_then(|slot| slot.record());
                 let function_name = slot
-                    .and_then(|slot| slot.header().name.or(slot.header().inferred_name))
+                    .and_then(|slot| slot.header().name.or_else(|| slot.header().inferred_name))
                     .and_then(|atom| {
                         let index = atom as usize;
                         (index < entry.residual.atoms.len())

@@ -13,7 +13,7 @@ pub(crate) mod kmac_request;
 const ASYNC: u32 = 0;
 const SYNC: u32 = 1;
 const WEBCRYPTO: u32 = 2;
-const BITS_PER_BYTE: u32 = u8::BITS;
+pub(crate) const BITS_PER_BYTE: u32 = u8::BITS;
 const CACHE: &str = "\0crypto:secret-job";
 #[derive(Default)]
 pub(crate) struct State {
@@ -955,15 +955,13 @@ pub(crate) fn digest_inventory(c: &mut Context<'_>, aliases: bool) -> Result<Roo
         }
         Ok(result)
     } else {
-        let names = shared
+        
+        let values = shared
             .borrow()
             .crypto_secret_jobs
             .digests
             .names()
             .map(str::to_owned)
-            .collect::<Vec<_>>();
-        let values = names
-            .into_iter()
             .map(|name| c.string_rooted(&name))
             .collect::<Vec<_>>();
         c.array_rooted(&values)

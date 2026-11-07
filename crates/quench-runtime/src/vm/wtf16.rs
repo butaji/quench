@@ -617,11 +617,7 @@ impl JsStringInner {
 
     /// A flat `Wide` string's host text, if `host` has made it.
     fn cached_host(&self) -> Option<&str> {
-        // SAFETY: a shared read; a `Host` is never replaced once written (`host`).
-        match unsafe { (*self.aside.get()).as_deref() } {
-            Some(Aside::Host(host)) => Some(host),
-            Some(Aside::Rope(..)) | None => None,
-        }
+        self.existing_host().map(|host| &**host)
     }
 
     /// A flat `Wide` string's host text, made by `make` on first use.

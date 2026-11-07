@@ -2,14 +2,14 @@ use super::temporal_date::{IsoDate, checked_iso_date};
 
 const ISO_CALENDAR: &str = "iso8601";
 const GREGORIAN_CALENDAR: &str = "gregory";
-const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
+pub(crate) const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
 const MAX_NON_ISO_MONTH_DAY_YEAR_MAGNITUDE: i32 = 271_821;
-const ISO_YEAR_DIGITS: usize = 4;
-const EXTENDED_YEAR_DIGITS: usize = 6;
-const ISO_MONTH_DIGITS: usize = 2;
-const ISO_DAY_DIGITS: usize = 2;
+pub(crate) const ISO_YEAR_DIGITS: usize = 4;
+pub(crate) const EXTENDED_YEAR_DIGITS: usize = 6;
+pub(crate) const ISO_MONTH_DIGITS: usize = 2;
+pub(crate) const ISO_DAY_DIGITS: usize = 2;
 const COMPACT_ISO_TIME_SECONDS_DIGITS: usize = ISO_DAY_DIGITS * 3;
-const MAX_FRACTION_DIGITS: usize = 9;
+pub(crate) const MAX_FRACTION_DIGITS: usize = 9;
 
 pub(super) fn parse_plain_date_string(text: &str) -> Option<(IsoDate, String)> {
     if !valid_plain_date_string(text) {

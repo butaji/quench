@@ -1,8 +1,8 @@
-const YEARS_FIELD: usize = 0;
-const MONTHS_FIELD: usize = 1;
-const WEEKS_FIELD: usize = 2;
-const DAYS_FIELD: usize = 3;
-const HOURS_FIELD: usize = 4;
+pub(crate) const YEARS_FIELD: usize = 0;
+pub(crate) const MONTHS_FIELD: usize = 1;
+pub(crate) const WEEKS_FIELD: usize = 2;
+pub(crate) const DAYS_FIELD: usize = 3;
+pub(crate) const HOURS_FIELD: usize = 4;
 const MINUTES_FIELD: usize = 5;
 const SECONDS_FIELD: usize = 6;
 const MILLISECONDS_FIELD: usize = 7;
@@ -23,7 +23,7 @@ const TIME_FIELDS: [(char, usize); TIME_FIELD_COUNT] = [
     ('S', SECONDS_FIELD),
 ];
 const TIME_UNIT_NANOSECOND_SCALES: [f64; TIME_FIELDS.len()] = [3_600.0, 60.0, 1.0];
-const NANOSECONDS_PER_SECOND: f64 = 1_000_000_000.0;
+const NANOSECONDS_PER_SECOND: f64 = crate::units::NANOSECONDS_PER_SECOND as f64;
 const NANOSECONDS_PER_MINUTE: i64 = 60_000_000_000;
 const NANOSECONDS_PER_SECOND_INTEGER: i64 = 1_000_000_000;
 const NANOSECONDS_PER_MILLISECOND: i64 = 1_000_000;

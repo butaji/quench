@@ -198,7 +198,7 @@ impl<H: Host> Vm<H> {
                     {
                         locale = locale
                             .split_once("-u-")
-                            .map_or(locale.clone(), |(base, _)| base.into());
+                            .map_or_else(|| locale.clone(), |(base, _)| base.into());
                     }
                     let style = vm.string_option(
                         p,

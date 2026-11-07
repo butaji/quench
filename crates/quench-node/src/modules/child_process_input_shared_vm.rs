@@ -227,7 +227,7 @@ pub(crate) fn complete(
         .get(1)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
-        .unwrap_or(f64::from(COMPLETION_SUCCESS)) as i32;
+        .unwrap_or_else(|| f64::from(COMPLETION_SUCCESS)) as i32;
     let undefined = context.undefined();
     if errno == COMPLETION_SUCCESS {
         context.call_rooted(callback, undefined, &[])

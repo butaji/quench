@@ -581,12 +581,12 @@ pub(crate) fn get_cipher_info(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
         let block = c.number(cipher.block_size() as f64);
         put(c, result, "blockSize", block)?;
     }
-    let iv = iv_length.unwrap_or(cipher.iv_length());
+    let iv = iv_length.unwrap_or_else(|| cipher.iv_length());
     if iv != 0 {
         let iv = c.number(iv as f64);
         put(c, result, "ivLength", iv)?;
     }
-    let key = c.number(key_length.unwrap_or(cipher.key_length()) as f64);
+    let key = c.number(key_length.unwrap_or_else(|| cipher.key_length()) as f64);
     put(c, result, "keyLength", key)?;
     Ok(result)
 }

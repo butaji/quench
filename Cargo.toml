@@ -7,6 +7,7 @@ exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression", "vendor/iana-ti
 members = [
     "quench-bench",
     "crates/quench-js-check",
+    "crates/quench-lint",
     "crates/quench-macros",
     "crates/quench-node",
     "crates/quench-node-test",
@@ -21,11 +22,20 @@ members = [
     "crates/quench-wasm-test",
 ]
 
-# Function arity and type size are not review caps here (AGENTS.md: no mandatory
-# complexity caps); every other clippy lint stays at its default level.
+# Function arity and type size are not review caps here; every other clippy lint stays at
+# its default level, plus the redundancy rules below (AGENTS.md "Check once", "One fact, one
+# authoritative representation"): no second lookup, copy or eagerly built value where one
+# suffices. `quench-lint` enforces the same law for duplicated functions and constants.
 [workspace.lints.clippy]
 too_many_arguments = "allow"
 type_complexity = "allow"
+assigning_clones = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+needless_collect = "warn"
+or_fun_call = "warn"
+redundant_clone = "warn"
+set_contains_or_insert = "warn"
 
 [workspace.dependencies]
 oxc = "=0.153.0"

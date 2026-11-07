@@ -34,7 +34,7 @@ members!(Member, "webSocket", [
 
 /// The `builtin_cache` key of the class, and the socket's private slot.
 const CLASS: &str = "\0webSocket:class";
-const SLOT: &str = "\0slot:WebSocket";
+use crate::modules::keys::SLOT;
 const INTERFACE: &str = "WebSocket";
 
 /// The ready states, by value.
@@ -80,7 +80,7 @@ const MAX_REASON_BYTES: usize = 123;
 
 /// A socket's fields.
 mod field {
-    pub(super) const URL: &str = "url";
+    pub(crate) use crate::modules::keys::URL;
     pub(super) const STATE: &str = "readyState";
     pub(super) const BINARY_TYPE: &str = "binaryType";
     pub(super) const PROTOCOL: &str = "protocol";
@@ -95,7 +95,7 @@ mod field {
     pub(super) const CLOSE_SENT: &str = "closeSent";
     pub(super) const CLOSE_RECEIVED: &str = "closeReceived";
     pub(super) const CODE: &str = "code";
-    pub(super) const REASON: &str = "reason";
+    pub(crate) use crate::modules::keys::REASON;
     pub(super) const OBJECT: &str = "object";
 }
 use field::*;

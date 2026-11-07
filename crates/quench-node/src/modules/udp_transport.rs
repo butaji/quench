@@ -6,7 +6,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
     rc::Rc,
 };
-pub(crate) const IPV6_ONLY: u32 = 1;
+pub(crate) use crate::modules::tcp_owned::IPV6_ONLY;
 pub(crate) const REUSE_ADDR: u32 = super::util_system_error_shared_vm::UV_UDP_REUSEADDR as u32;
 pub(crate) const REUSE_PORT: u32 = 64; // libuv UV_UDP_REUSEPORT, deps/uv/include/uv.h.
 pub(crate) const DATAGRAM_CAPACITY: usize = u16::MAX as usize;

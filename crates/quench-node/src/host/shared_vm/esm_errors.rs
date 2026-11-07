@@ -10,7 +10,7 @@ const SUPPORTED_SCHEMES: [&str; 2] = ["file", "data"];
 /// TypeScript, which it strips outside node_modules.
 const LOADABLE_EXTENSIONS: [&str; 5] = ["js", "mjs", "cjs", "json", "wasm"];
 const TYPESCRIPT_EXTENSIONS: [&str; 3] = ["ts", "mts", "cts"];
-const NODE_MODULES: &str = "node_modules";
+use crate::modules::keys::NODE_MODULES;
 
 /// `ERR_UNKNOWN_BUILTIN_MODULE`.
 pub(super) fn unknown_builtin(specifier: &str) -> ModuleLoadError {

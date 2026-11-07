@@ -6,22 +6,22 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-const ERROR_EVENT: &str = "error";
-const ABORT_EVENT: &str = "abort";
+use crate::modules::keys::ERROR_EVENT;
+use crate::modules::keys::ABORT_EVENT;
 
 /// The fields of a pending `once` and of an `on` iterator.
 mod field {
     pub(super) const EMITTER: &str = "emitter";
-    pub(super) const NAME: &str = "name";
-    pub(super) const SIGNAL: &str = "signal";
-    pub(super) const PROMISE: &str = "promise";
+    pub(crate) use crate::modules::keys::NAME;
+    pub(crate) use crate::modules::keys::SIGNAL;
+    pub(crate) use crate::modules::keys::PROMISE;
     pub(super) const SETTLED: &str = "settled";
     pub(super) const RESOLVER: &str = "resolver";
     pub(super) const ERROR_LISTENER: &str = "errorListener";
     pub(super) const ABORT_LISTENER: &str = "abortListener";
     pub(super) const EVENTS: &str = "events";
-    pub(super) const WAITERS: &str = "waiters";
-    pub(super) const ERROR: &str = "error";
+    pub(crate) use crate::modules::keys::WAITERS;
+    pub(crate) use crate::modules::keys::ERROR;
     pub(super) const HAS_ERROR: &str = "hasError";
     pub(super) const FINISHED: &str = "finished";
     pub(super) const PAUSED: &str = "paused";

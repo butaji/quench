@@ -470,9 +470,9 @@ mod tests {
     fn ipc_reference_rejects_the_measured_contention_band() {
         let reference = percentile(vec![5.7, 5.8, 5.9, 6.0, 5.75], 75).unwrap();
         let references = References {
-            ipc: BTreeMap::from([(COHORT.clone(), metric_reference(reference))]),
+            ipc: BTreeMap::from([(COHORT, metric_reference(reference))]),
             effective_cycle_rate: BTreeMap::from([(
-                COHORT.clone(),
+                COHORT,
                 metric_reference(4_000_000_000.0),
             )]),
             ..References::default()
@@ -505,11 +505,11 @@ mod tests {
         let reference = percentile(quiet_rates.to_vec(), 25).unwrap();
         let references = References {
             effective_cycle_rate: BTreeMap::from([(
-                COHORT.clone(),
+                COHORT,
                 metric_reference(4_000_000_000.0),
             )]),
             involuntary_switch_rate: BTreeMap::from([(
-                COHORT.clone(),
+                COHORT,
                 metric_reference(reference),
             )]),
             ..References::default()
@@ -544,12 +544,12 @@ mod tests {
     fn saturated_load_is_flagged_even_when_counters_are_typical() {
         let sample = sample(5.8, 100, 1_000_000_000, Some(10.0));
         let references = References {
-            ipc: BTreeMap::from([(COHORT.clone(), metric_reference(5.8))]),
+            ipc: BTreeMap::from([(COHORT, metric_reference(5.8))]),
             effective_cycle_rate: BTreeMap::from([(
-                COHORT.clone(),
+                COHORT,
                 metric_reference(4_000_000_000.0),
             )]),
-            involuntary_switch_rate: BTreeMap::from([(COHORT.clone(), metric_reference(100.0))]),
+            involuntary_switch_rate: BTreeMap::from([(COHORT, metric_reference(100.0))]),
         };
         let assessment = assess_sample(
             &sample,
@@ -573,12 +573,12 @@ mod tests {
         let wall_ns = 979_003_875;
         let ipc = instructions as f64 / cycles as f64;
         let references = References {
-            ipc: BTreeMap::from([(COHORT.clone(), metric_reference(ipc))]),
+            ipc: BTreeMap::from([(COHORT, metric_reference(ipc))]),
             effective_cycle_rate: BTreeMap::from([(
-                COHORT.clone(),
+                COHORT,
                 metric_reference(3_950_000_000.0),
             )]),
-            involuntary_switch_rate: BTreeMap::from([(COHORT.clone(), metric_reference(105.0))]),
+            involuntary_switch_rate: BTreeMap::from([(COHORT, metric_reference(105.0))]),
         };
         let mut measured = sample(ipc, 105, wall_ns, Some(9.47));
         measured.instructions = Some(instructions);

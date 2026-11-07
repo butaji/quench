@@ -253,7 +253,7 @@ fn host(response: &Response, family: Family) -> Result<Host, Status> {
     for record in response.answers.iter().filter(|record| record.class == CLASS_IN) {
         match &record.data {
             RecordData::Name(target) if record.kind == Some(RecordType::Cname) => {
-                name = target.clone();
+                name.clone_from(target);
                 first_target.get_or_insert_with(|| target.clone());
                 cname_ttl = cname_ttl.min(record.ttl);
                 any = true;

@@ -82,9 +82,8 @@ const CRLF: &[u8] = b"\r\n";
 const HEAD_END: &[u8] = b"\r\n\r\n";
 const HTTP_PREFIX: &str = "HTTP/";
 /// A status code's digit count.
-const STATUS_DIGITS: usize = 3;
-/// The radix of a chunk-size line.
-const CHUNK_SIZE_RADIX: u32 = 16;
+pub(crate) const STATUS_DIGITS: usize = 3;
+use crate::modules::http_shared_vm::outgoing::CHUNK_SIZE_RADIX;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -410,7 +409,7 @@ impl Parser {
         let line = &self.buffer[..line_end.unwrap_or(self.buffer.len())];
         let digits_end = line.iter().position(|&byte| byte == b';').unwrap_or(line.len());
         let invalid = line[..digits_end].iter().position(|byte| !byte.is_ascii_hexdigit());
-        if let Some(position) = invalid.or((line_end.is_some() && digits_end == 0).then_some(0)) {
+        if let Some(position) = invalid.or_else(|| (line_end.is_some() && digits_end == 0).then_some(0)) {
             return Err(self.fail(failure::INVALID_CHUNK_SIZE, position));
         }
         let Some(end) = line_end else {

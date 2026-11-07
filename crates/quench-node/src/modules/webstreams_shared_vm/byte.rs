@@ -72,7 +72,7 @@ mod desc {
     pub(super) const MINIMUM_FILL: &str = "minimumFill";
     pub(super) const ELEMENT_SIZE: &str = "elementSize";
     pub(super) const CTOR: &str = "ctor";
-    pub(super) const TYPE: &str = "type";
+    pub(crate) use crate::modules::keys::TYPE;
 }
 
 /// What a pull-into descriptor fills.

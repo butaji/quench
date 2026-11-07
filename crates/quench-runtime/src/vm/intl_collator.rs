@@ -627,7 +627,7 @@ fn normalize_collator_locale(
         && let Some(value) = ext_value("kf")
         && let Some(value) = value.first()
     {
-        case_first = value.clone();
+        case_first.clone_from(value);
     }
     if !overrides.ignore_punctuation {
         ignore_punctuation = locale.starts_with("th-") || locale == "th";

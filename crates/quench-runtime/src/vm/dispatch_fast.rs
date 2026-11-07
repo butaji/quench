@@ -609,7 +609,7 @@ impl LaneRecoverySpace {
         let mut chains = smallvec::SmallVec::<[Self; 1]>::new();
         let mut space = Self::default();
         for frame in frames {
-            let parent = frame.parent.map_or(Self::default(), |parent| chains[parent]);
+            let parent = frame.parent.map_or_else(Self::default, |parent| chains[parent]);
             let chain = Self { values: parent.values + fill_room::<SCRIPT_FILL_BLOCK>(usize::from(frame.registers)),
                 activations: parent.activations + 1 };
             space.values = space.values.max(chain.values);
@@ -18754,7 +18754,7 @@ fn derive_lane_view<'live, H: Host>(
                     op.immediate_role() == ImmediateRole::JumpTarget
                         && instruction.imm() as usize <= pc
                 };
-            let selected = operand.and(if binds_memory {
+            let selected = operand.and_then(|_| if binds_memory {
                 Some(LaneHandler {
                     handler: lane_instance_binding::<H, true> as Handler,
                     produces: false,

@@ -55,10 +55,10 @@ fn interface(url: &str, bytes: &[u8]) -> Interface {
     let mut interface = Interface::default();
     for import in &module.imports {
         if import.module.starts_with(RESERVED_MODULE_PREFIX) {
-            interface.link_error.get_or_insert(format!("Invalid Wasm import \"{}\" in {url}", import.module));
+            interface.link_error.get_or_insert_with(|| format!("Invalid Wasm import \"{}\" in {url}", import.module));
         }
         if RESERVED_NAME_PREFIXES.iter().any(|prefix| import.name.starts_with(prefix)) {
-            interface.link_error.get_or_insert(format!("Invalid Wasm import name \"{}\" in {url}", import.name));
+            interface.link_error.get_or_insert_with(|| format!("Invalid Wasm import name \"{}\" in {url}", import.name));
         }
         if import.kind == ExternKind::Global {
             interface.global_imports.push((import.module.clone(), import.name.clone()));
@@ -69,7 +69,7 @@ fn interface(url: &str, bytes: &[u8]) -> Interface {
     }
     for export in &module.exports {
         if RESERVED_NAME_PREFIXES.iter().any(|prefix| export.name.starts_with(prefix)) {
-            interface.link_error.get_or_insert(format!("Invalid Wasm export name \"{}\" in {url}", export.name));
+            interface.link_error.get_or_insert_with(|| format!("Invalid Wasm export name \"{}\" in {url}", export.name));
         }
         interface.exports.push((export.name.clone(), export.kind == ExternKind::Global));
     }

@@ -39,7 +39,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Outcome {
     let stream_module = crate::modules::stream_shared_vm::module(c)?;
     let readable = get(c, stream_module, "Readable")?;
     let class = super::constructor(c, Member::Construct, "IncomingMessage")?;
-    super::inherit(c, class, readable)?;
+    crate::modules::stream_shared_vm::inherit(c, class, readable)?;
     let prototype = get(c, class, "prototype")?;
     super::accessors(c, prototype, &[
         ("connection", Member::Connection, Some(Member::SetConnection)),
@@ -301,8 +301,8 @@ enum Repeat {
 }
 
 fn repeat_of(field: &str) -> Repeat {
-    const SET_COOKIE: &str = "set-cookie";
-    const COOKIE: &str = "cookie";
+    use crate::modules::keys::SET_COOKIE;
+    use crate::modules::keys::COOKIE;
     if field == SET_COOKIE {
         Repeat::Array
     } else if field == COOKIE {

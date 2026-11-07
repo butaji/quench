@@ -195,20 +195,9 @@ fn continuation(c: &mut Context<'_>, record: RootId, operation: &str) -> Outcome
 /// `changeToAsyncValues(value)`.
 fn change_to_async_values(c: &mut Context<'_>, record: RootId, value: RootId) -> Result<(), RootedError> {
     put_bool(c, record, "isAsyncValues", true)?;
-    let fulfilled = continuation(c, record, "streamFromFirstAsyncValue")?;
+    let fulfilled = continuation(c, record, "streamFromAsyncValue")?;
     let rejected = continuation(c, record, "streamFromRejected")?;
     await_then(c, value, fulfilled, rejected)
-}
-
-pub(crate) fn first_async_value(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let [record] = captures(c)?;
-    let value = arg(c, args, 0);
-    match push_value(c, record, value)? {
-        Ok(Pushed::More) => next_sync_with_async_values(c, record)?,
-        Ok(Pushed::Stop) => {}
-        Err(thrown) => destroy_with(c, record, thrown)?,
-    }
-    Ok(c.undefined())
 }
 
 pub(crate) fn rejected(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {

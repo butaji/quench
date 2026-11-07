@@ -98,28 +98,28 @@ impl State {
 /// The record fields of streams, readers, controllers and read requests.
 pub(crate) mod field {
     pub(crate) const SELF: &str = "self";
-    pub(crate) const STATE: &str = "state";
+    pub(crate) use crate::modules::keys::STATE;
     pub(crate) const DISTURBED: &str = "disturbed";
-    pub(crate) const READER: &str = "reader";
+    pub(crate) use crate::modules::keys::READER;
     pub(crate) const STORED_ERROR: &str = "storedError";
-    pub(crate) const CONTROLLER: &str = "controller";
+    pub(crate) use crate::modules::keys::CONTROLLER;
     pub(crate) const CLOSED_PROMISE: &str = "closedPromise";
-    pub(crate) const STREAM: &str = "stream";
+    pub(crate) use crate::modules::keys::STREAM;
     pub(crate) const CLOSED: &str = "closed";
     pub(crate) const REQUESTS: &str = "requests";
     pub(crate) const QUEUE: &str = "queue";
     pub(crate) const QUEUE_SIZE: &str = "queueTotalSize";
     pub(crate) const HIGH_WATER_MARK: &str = "highWaterMark";
-    pub(crate) const STARTED: &str = "started";
+    pub(crate) use crate::modules::keys::STARTED;
     pub(crate) const CLOSE_REQUESTED: &str = "closeRequested";
     pub(crate) const PULLING: &str = "pulling";
     pub(crate) const PULL_AGAIN: &str = "pullAgain";
     pub(crate) const PULL: &str = "pull";
-    pub(crate) const CANCEL: &str = "cancel";
-    pub(crate) const SIZE: &str = "size";
-    pub(crate) const KIND: &str = "kind";
-    pub(crate) const PROMISE: &str = "promise";
-    pub(crate) const VALUE: &str = "value";
+    pub(crate) use crate::modules::keys::CANCEL;
+    pub(crate) use crate::modules::keys::SIZE;
+    pub(crate) use crate::modules::keys::KIND;
+    pub(crate) use crate::modules::keys::PROMISE;
+    pub(crate) use crate::modules::keys::VALUE;
 }
 use field::*;
 
@@ -152,15 +152,15 @@ impl ReadSteps {
 
 /// The fields of a read request beyond its kind.
 pub(crate) mod request {
-    pub(crate) const READER: &str = "reader";
+    pub(crate) use crate::modules::keys::READER;
     pub(crate) const ITERATION: &str = "iteration";
-    pub(crate) const WRITER: &str = "writer";
+    pub(crate) use crate::modules::keys::WRITER;
     pub(crate) const PIPE: &str = "pipe";
     pub(crate) const TEE: &str = "tee";
     pub(crate) const BRANCH: &str = "branch";
     pub(crate) const CHUNK: &str = "chunk";
-    pub(crate) const CLOSE: &str = "close";
-    pub(crate) const ERROR: &str = "error";
+    pub(crate) use crate::modules::keys::CLOSE;
+    pub(crate) use crate::modules::keys::ERROR;
 }
 
 pub(crate) fn new_request(c: &mut Context<'_>, steps: ReadSteps, fields: &[(&str, RootId)]) -> Outcome {
@@ -873,11 +873,11 @@ fn inspect(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
 
 /// An async iterator's state: Node's `{ done, current }` and whether a step ran yet.
 mod iteration {
-    pub(super) const DONE: &str = "done";
+    pub(crate) use crate::modules::keys::DONE;
     pub(super) const CURRENT: &str = "current";
-    pub(super) const STARTED: &str = "started";
-    pub(super) const READER: &str = "reader";
-    pub(super) const PREVENT_CANCEL: &str = "preventCancel";
+    pub(crate) use crate::modules::keys::STARTED;
+    pub(crate) use crate::modules::keys::READER;
+    pub(crate) use crate::modules::keys::PREVENT_CANCEL;
 }
 
 fn values(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
@@ -985,8 +985,8 @@ fn finish_iteration(c: &mut Context<'_>, request: RootId) -> Done {
 
 /// A default tee's shared state (`readableStreamDefaultTee`'s variables).
 pub(crate) mod tee {
-    pub(crate) const STREAM: &str = "stream";
-    pub(crate) const READER: &str = "reader";
+    pub(crate) use crate::modules::keys::STREAM;
+    pub(crate) use crate::modules::keys::READER;
     pub(crate) const READING: &str = "reading";
     pub(crate) const CANCELED1: &str = "canceled1";
     pub(crate) const CANCELED2: &str = "canceled2";
@@ -1125,9 +1125,9 @@ fn tee_reader_error(c: &mut Context<'_>, tee: RootId, failure: RootId) -> Done {
 
 /// An iterator record: `{ iterator, next }`, and whether it wraps a sync iterator.
 mod iterator_record {
-    pub(super) const ITERATOR: &str = "iterator";
-    pub(super) const NEXT: &str = "next";
-    pub(super) const SYNC: &str = "sync";
+    pub(crate) use crate::modules::keys::ITERATOR;
+    pub(crate) use crate::modules::keys::NEXT;
+    pub(crate) use crate::modules::keys::SYNC;
 }
 
 /// `ReadableStream.from(iterable)`.

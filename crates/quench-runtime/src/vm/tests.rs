@@ -2144,7 +2144,7 @@ fn global_text_under(policy: crate::MemoryPolicy, source: &str, name: &str) -> S
     vm.execute(&program).unwrap();
     let name = vm.intern_atom(name);
     let value = vm.own_property(vm.realm.globals, name).unwrap();
-    vm.to_string(&program, value).unwrap().to_string()
+    vm.to_string(&program, value).unwrap()
 }
 
 #[test]
@@ -4905,10 +4905,7 @@ fn error_new_target_roots_release_after_prototype_success_and_throw() {
                     Native::SuppressedError => vec![cause, options, message],
                     _ => vec![message, options],
                 };
-                let weak = args
-                    .iter()
-                    .map(|value| vm.heap.weak_handle(*value).unwrap())
-                    .collect::<Vec<_>>();
+                
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let constructor = vm.native_value(native);
@@ -4920,7 +4917,9 @@ fn error_new_target_roots_release_after_prototype_success_and_throw() {
                 let result = result.ok().map(|value| vm.heap.weak_handle(value).unwrap());
                 vm.collect_now(&program);
                 assert!(
-                    weak.into_iter()
+                    args
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
                         .all(|value| vm.heap.weak_value(value).is_none())
                 );
                 if let Some(value) = result {
@@ -6472,10 +6471,7 @@ fn property_copy_roots_release_after_callback_completion() {
                     .array_elements(operands)
                     .map(|elements| elements.to_vec())
                     .expect("operands");
-                let handles = args
-                    .iter()
-                    .map(|v| vm.heap.weak_handle(*v).unwrap())
-                    .collect::<Vec<_>>();
+                
                 let excluded = if phase == "excluded" {
                     vec![vm.heap.alloc_string("first".into())]
                 } else {
@@ -6528,7 +6524,9 @@ fn property_copy_roots_release_after_callback_completion() {
                     );
                 }
                 vm.collect_now(&program);
-                for handle in handles.into_iter().chain(excluded_handles) {
+                for handle in args
+                    .iter()
+                    .map(|v| vm.heap.weak_handle(*v).unwrap()).chain(excluded_handles) {
                     assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
@@ -11857,7 +11855,7 @@ fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
@@ -11905,7 +11903,7 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "scaled")
         })
         .unwrap() as u32;
@@ -12078,7 +12076,7 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "magnitude")
         })
         .unwrap() as u32;
@@ -12126,7 +12124,7 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "magnitudeJoined")
         })
         .unwrap() as u32;
@@ -12181,7 +12179,7 @@ fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -12235,7 +12233,7 @@ fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "read")
         })
         .unwrap() as u32;
@@ -12279,7 +12277,7 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -12324,7 +12322,7 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "mask")
         })
         .unwrap() as u32;
@@ -12437,7 +12435,7 @@ fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly(
             .position(|body| {
                 body.header()
                     .name
-                    .or(body.header().inferred_name)
+                    .or_else(|| body.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
@@ -12504,7 +12502,7 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "hashKey")
         })
         .unwrap() as u32;
@@ -12662,7 +12660,7 @@ fn js_jit_repeated_specialized_guard_misses_release_cache_for_general_tier() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -12726,7 +12724,7 @@ fn js_jit_counts_only_tagged_guard_misses_after_falsy_native_success() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -12753,7 +12751,7 @@ fn js_jit_counts_only_tagged_guard_misses_after_falsy_native_success() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "read")
         })
         .unwrap() as u32;
@@ -12796,7 +12794,7 @@ fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -16785,7 +16783,7 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "twice")
         })
         .unwrap() as u32;
@@ -16860,7 +16858,7 @@ fn js_jit_compiles_guarded_boolean_fields_and_captures() {
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-capture-boolean.js")).unwrap();
     let check = program.functions.iter().position(|function| {
-        function.header().name.or(function.header().inferred_name)
+        function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "check")
     }).unwrap() as u32;
     let mut interpreter = Vm::new(TestHost::default());
@@ -16912,7 +16910,7 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "read")
         })
         .unwrap() as u32;
@@ -16959,7 +16957,7 @@ fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "scaledSum")
         })
         .unwrap() as u32;
@@ -17006,7 +17004,7 @@ fn js_jit_compiles_guarded_field_bitwise_boolean_regions() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "isHeldOrSuspended")
         })
         .unwrap() as u32;
@@ -17052,7 +17050,7 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "isBlockStatement")
         })
         .unwrap() as u32;
@@ -17113,7 +17111,7 @@ fn js_jit_compiles_number_truthiness_branches() {
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32
@@ -17304,7 +17302,7 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
@@ -17344,7 +17342,7 @@ fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "literal")
         })
         .unwrap() as u32;
@@ -17463,7 +17461,7 @@ fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
             .position(|body| {
                 body.header()
                     .name
-                    .or(body.header().inferred_name)
+                    .or_else(|| body.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32
@@ -17595,7 +17593,7 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "transfer")
         })
         .unwrap();
@@ -17649,7 +17647,7 @@ fn js_jit_general_dispatch_lowers_return_to_the_shared_frame_dispatcher() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "choose")
         })
         .unwrap() as u32;
@@ -17789,7 +17787,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
@@ -17818,7 +17816,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
@@ -17874,7 +17872,7 @@ fn js_jit_general_dispatch_returns_number_relations_with_exact_fallback() {
     compiled.execute(&program).unwrap();
     for name in ["equal", "strict", "less"] {
         let function = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap() as u32;
         let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
@@ -17919,7 +17917,7 @@ fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
     compiled.execute(&program).unwrap();
     for name in ["loose", "notLoose", "strict", "notStrict"] {
         let function = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap() as u32;
         let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
@@ -17995,7 +17993,7 @@ fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() 
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
@@ -18079,7 +18077,7 @@ fn js_jit_general_dispatch_reads_live_dense_array_elements_and_falls_back_exactl
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "readIndex")
         })
         .unwrap() as u32;
@@ -18192,7 +18190,7 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "readField")
         })
         .unwrap() as u32;
@@ -18235,13 +18233,13 @@ fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
     let source = include_str!("../../tests/fixtures/captured-field-store.js");
     let program = Engine::specialize(source, "captured-field-store.js").unwrap();
     let store = program.functions.iter().position(|function| {
-        function.header().name.or(function.header().inferred_name)
+        function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "store")
     }).unwrap();
     assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(store)).is_some());
     for name in ["and", "or", "xor", "shl", "shr", "ushr"] {
         let id = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap();
         assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id))
@@ -18257,7 +18255,7 @@ fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
     compiled.execute(&program).unwrap();
     for name in ["store", "and", "or", "xor", "shl", "shr", "ushr"] {
         let id = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap();
         assert!(compiled.programs.js_jit_captured_store_entries(super::ProgramId::MAIN, id as u32)
@@ -18345,7 +18343,7 @@ fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_b
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "writeField")
         })
         .unwrap() as u32;
@@ -18425,7 +18423,7 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "readX")
         })
         .unwrap() as u32;
@@ -18494,7 +18492,7 @@ fn js_jit_general_dispatch_fused_field_copy_preserves_effects_and_collection() {
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
     let function = program.functions.iter().position(|function| {
-        function.header().name.or(function.header().inferred_name)
+        function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "copy")
     }).unwrap() as u32;
     let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
@@ -18540,7 +18538,7 @@ fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
     let function = program.functions.iter().position(|function| {
-        function.header().name.or(function.header().inferred_name)
+        function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "receiver")
     }).unwrap() as u32;
     let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
@@ -18595,7 +18593,7 @@ fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
     compiled.execute(&program).unwrap();
     for name in ["write", "writeStrict"] {
         let function = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap() as u32;
         let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
@@ -18634,7 +18632,7 @@ fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-capture.js")).unwrap();
     let function = program.functions.iter().position(|function| {
-        function.header().name.or(function.header().inferred_name)
+        function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "read")
     }).unwrap() as u32;
     let mut interpreter = Vm::new(TestHost::default().with_test262());
@@ -18676,7 +18674,7 @@ fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-field.js")).unwrap();
     let function = program.functions.iter().position(|function| {
-        function.header().name.or(function.header().inferred_name)
+        function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "readThis")
     }).unwrap() as u32;
     let mut interpreter = Vm::new(TestHost::default());
@@ -18724,7 +18722,7 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "addCaptured")
         })
         .unwrap() as u32;
@@ -18772,7 +18770,7 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "caller")
         })
         .unwrap() as u32;
@@ -18782,7 +18780,7 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "callee")
         })
         .unwrap() as u32;
@@ -18911,7 +18909,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
             .position(|body| {
                 body.header()
                     .name
-                    .or(body.header().inferred_name)
+                    .or_else(|| body.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32
@@ -18995,7 +18993,7 @@ fn js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments() {
             .position(|body| {
                 body.header()
                     .name
-                    .or(body.header().inferred_name)
+                    .or_else(|| body.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32
@@ -19095,7 +19093,7 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
             function
                 .header()
                 .name
-                .or(function.header().inferred_name)
+                .or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
         })
         .unwrap() as u32;
@@ -19166,7 +19164,7 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
         })
         .unwrap() as u32;
@@ -19268,7 +19266,7 @@ fn js_jit_general_dispatch_attributes_frameless_arrow_loop_work_to_its_owner() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "countDown")
         })
         .unwrap() as u32;
@@ -19326,7 +19324,7 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
         })
         .unwrap() as u32;
@@ -19395,7 +19393,7 @@ fn js_jit_general_dispatch_attributes_inlined_osr_work_to_the_loop_owner() {
             .position(|body| {
                 body.header()
                     .name
-                    .or(body.header().inferred_name)
+                    .or_else(|| body.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32
@@ -19456,7 +19454,7 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
             .position(|body| {
                 body.header()
                     .name
-                    .or(body.header().inferred_name)
+                    .or_else(|| body.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == "add")
             })
             .unwrap() as u32;
@@ -19493,7 +19491,7 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
         .position(|body| {
             body.header()
                 .name
-                .or(body.header().inferred_name)
+                .or_else(|| body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -21648,7 +21646,7 @@ fn js_general_artifact_key_tracks_only_code_generation_dependencies() {
                 function
                     .header()
                     .name
-                    .or(function.header().inferred_name)
+                    .or_else(|| function.header().inferred_name)
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .expect("test function exists") as u32

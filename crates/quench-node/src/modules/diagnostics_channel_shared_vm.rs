@@ -108,17 +108,16 @@ const FUNCTIONS: [Method; 5] = [
 /// A channel's own fields, in Node's definition order.
 const SUBSCRIBERS: &str = "_subscribers";
 const STORES: &str = "_stores";
-const NAME: &str = "name";
+pub(crate) use crate::modules::keys::NAME;
 
 /// The members of the group's shared data (`SharedDiagnosticsState::api`).
 mod api {
-    /// The private key of a channel's registry key.
-    pub(super) const SLOT: &str = "slot";
+    pub(crate) use crate::modules::keys::SLOT;
     /// The channels by name (a `Map`), as `channel(name)` finds them.
     pub(super) const CHANNELS: &str = "channels";
-    pub(super) const MAP: &str = "Map";
+    pub(crate) use crate::modules::keys::MAP;
     pub(super) const MAP_GET: &str = "mapGet";
-    pub(super) const MAP_SET: &str = "mapSet";
+    pub(crate) use crate::modules::keys::MAP_SET;
     pub(super) const MAP_DELETE: &str = "mapDelete";
     pub(super) const STORE_MAP_PROTOTYPE: &str = "storeMapPrototype";
     pub(super) const CHANNEL_PROTOTYPE: &str = "channelPrototype";

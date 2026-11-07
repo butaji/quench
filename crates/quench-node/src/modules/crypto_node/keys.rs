@@ -612,7 +612,7 @@ pub(crate) fn encode_key(c: &mut Context<'_>, key: &Key, encoding: &KeyEncoding)
         }
     }
     let format = if encoding.format == KeyFormat::Der { Format::Der } else { Format::Pem };
-    let kind = encoding.encoding.unwrap_or(if owned.kind() == KeyKind::Public { Encoding::Spki } else { Encoding::Pkcs8 });
+    let kind = encoding.encoding.unwrap_or_else(|| if owned.kind() == KeyKind::Public { Encoding::Spki } else { Encoding::Pkcs8 });
     let bytes = owned.export(format, kind, encoding.cipher.as_deref(), encoding.passphrase.as_deref());
     let bytes = bytes.map_err(|error| key_error(c, error))?;
     encoded(c, bytes, encoding.format)

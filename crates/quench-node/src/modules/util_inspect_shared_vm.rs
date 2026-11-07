@@ -8,18 +8,14 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 /// `kMinLineWidth`: strings at most this long are never split into lines.
 const MIN_LINE_WIDTH: usize = 16;
-/// The space `formatPrimitive` keeps beside a string before splitting it.
-const STRING_LINE_RESERVE: usize = 4;
-/// The indentation `formatProperty`, collections and wrapped values add for their entries.
-const ENTRY_INDENTATION: usize = 2;
+use crate::modules::console_shared_vm::STRING_LINE_RESERVE;
+use crate::modules::console_shared_vm::ENTRY_INDENTATION;
 /// `formatProperty` indents object properties by three columns in `compact: true` mode.
 const SINGLE_LINE_PROPERTY_INDENTATION: usize = 3;
-/// `reduceToSingleString`: the room an entry line reserves beyond its entries.
-const SINGLE_LINE_START: usize = 10;
+use crate::modules::console_shared_vm::SINGLE_LINE_START;
 /// `reduceToSingleString` groups arrays with more output entries than this.
 const GROUPING_MIN_ENTRIES: usize = 6;
-/// `groupArrayElements`: a comma and a space follow each entry.
-const SEPARATOR_SPACE: usize = 2;
+use crate::modules::console_shared_vm::SEPARATOR_SPACE;
 /// `groupArrayElements`: a character is about this many times as high as wide.
 const APPROXIMATE_CHARACTER_HEIGHT: f64 = 2.5;
 /// `groupArrayElements`: at least this many columns must fit next to each other.
@@ -40,8 +36,7 @@ const MAX_ARRAY_INDEX: f64 = 4_294_967_294.0;
 const MIN_IDENTICAL_FRAMES: usize = 3;
 /// The frames an elided run keeps visible around its message.
 const KEPT_IDENTICAL_FRAMES: usize = 2;
-/// The registry key of `util.inspect.custom`.
-pub(crate) const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
+pub(crate) use crate::modules::keys::INSPECT_CUSTOM;
 /// `inspectDefaultOptions`, in Node's order.
 pub(crate) const DEFAULT_OPTIONS: [(&str, DefaultOption); 12] = [
     ("showHidden", DefaultOption::Boolean(false)),
@@ -777,7 +772,7 @@ impl Inspector {
                 }
             } else if constructor == Some("Object") {
                 if c.has_builtin_brand_rooted(value, BuiltinBrand::ArgumentsObject)? {
-                    braces.0 = "[Arguments] {".to_owned();
+                    "[Arguments] {".clone_into(&mut braces.0);
                 } else if !tag.is_empty() {
                     braces.0 = format!("{}{{", prefix(constructor, &tag, "Object", ""));
                 }
@@ -1564,7 +1559,7 @@ fn pad(text: &str, width: usize, start: bool) -> String {
 }
 
 /// `keyStrRegExp`: a key `formatProperty` writes unquoted.
-fn identifier_key(key: &str) -> bool {
+pub(super) fn identifier_key(key: &str) -> bool {
     let mut characters = key.chars();
     characters.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
         && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
@@ -1987,7 +1982,7 @@ fn has_built_in_to_string(c: &mut Context<'_>, value: RootId) -> Result<bool, Ro
 
 /// `formatWithOptionsInternal`: the `util.format` algorithm over UTF-16 code units.
 pub(crate) fn format_with_options(c: &mut Context<'_>, options: Option<RootId>, args: &[RootId]) -> Result<Vec<u16>, RootedError> {
-    const PERCENT: u16 = b'%' as u16;
+    use crate::modules::querystring_shared_vm::PERCENT;
     let mut prepared = None;
     let mut output = Vec::new();
     let mut join: &[u16] = &[];

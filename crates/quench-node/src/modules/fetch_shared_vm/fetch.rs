@@ -30,20 +30,20 @@ members!(Member, "fetchNetwork", [
 
 /// A fetch's state.
 mod field {
-    pub(super) const PROMISE: &str = "promise";
+    pub(crate) use crate::modules::keys::PROMISE;
     pub(super) const URLS: &str = "urls";
-    pub(super) const METHOD: &str = "method";
-    pub(super) const REDIRECT: &str = "redirect";
-    pub(super) const HEADERS: &str = "headers";
-    pub(super) const BODY: &str = "body";
-    pub(super) const SIGNAL: &str = "signal";
+    pub(crate) use crate::modules::keys::METHOD;
+    pub(crate) use crate::modules::keys::REDIRECT;
+    pub(crate) use crate::modules::keys::HEADERS;
+    pub(crate) use crate::modules::keys::BODY;
+    pub(crate) use crate::modules::keys::SIGNAL;
     pub(super) const CLIENT: &str = "client";
-    pub(super) const MESSAGE: &str = "message";
-    pub(super) const SOURCE: &str = "source";
-    pub(super) const CONTROLLER: &str = "controller";
+    pub(crate) use crate::modules::keys::MESSAGE;
+    pub(crate) use crate::modules::keys::SOURCE;
+    pub(crate) use crate::modules::keys::CONTROLLER;
     pub(super) const RESPONDED: &str = "responded";
-    pub(super) const DONE: &str = "done";
-    pub(super) const LISTENER: &str = "listener";
+    pub(crate) use crate::modules::keys::DONE;
+    pub(crate) use crate::modules::keys::LISTENER;
 }
 use field::*;
 

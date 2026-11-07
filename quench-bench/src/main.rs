@@ -27,8 +27,7 @@ const FIXTURES: &[&str] = &[
     "richards.js",
     "splay.js",
 ];
-const MIN_QUALIFYING_ROUNDS: usize = 11;
-const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
+use analysis::{MIN_DIAGNOSTIC_SCREEN_ROUNDS, MIN_QUALIFYING_ROUNDS};
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
@@ -2005,7 +2004,7 @@ fn prepare_quench_pair(options: &Options) -> Vec<EngineSpec> {
         env!("CARGO_PKG_VERSION")
     );
     for engine in [&mut baseline, &mut candidate] {
-        engine.version = version.clone();
+        engine.version.clone_from(&version);
         engine.jit_proof_command = vec![engine.executable.display().to_string()];
         engine.jit_proof =
             "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
@@ -3824,8 +3823,8 @@ mod jit_wasm_memcpy_ab_tests {
                 .map(String::as_str),
             Some("1")
         );
-        let mut off_environment = early_off.env.clone();
-        let mut on_environment = early_on.env.clone();
+        let mut off_environment = early_off.env;
+        let mut on_environment = early_on.env;
         off_environment.remove(QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT);
         on_environment.remove(QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT);
         assert_eq!(off_environment, on_environment);
@@ -3955,8 +3954,8 @@ mod jit_wasm_affine_pair_ab_tests {
         assert_eq!(affine_on.argv, affine_off.argv);
         assert_eq!(affine_off.executable, affine_on.executable);
         assert_eq!(affine_off.executable_sha256, affine_on.executable_sha256);
-        let mut off_environment = affine_off.env.clone();
-        let mut on_environment = affine_on.env.clone();
+        let mut off_environment = affine_off.env;
+        let mut on_environment = affine_on.env;
         assert_eq!(
             off_environment
                 .remove(QUENCH_WASM_JIT_AFFINE_PAIR)
@@ -4027,8 +4026,8 @@ mod jit_wasm_reference_body_cache_ab_tests {
         assert_eq!(cache_on.argv, cache_off.argv);
         assert_eq!(cache_off.executable, cache_on.executable);
         assert_eq!(cache_off.executable_sha256, cache_on.executable_sha256);
-        let mut off_environment = cache_off.env.clone();
-        let mut on_environment = cache_on.env.clone();
+        let mut off_environment = cache_off.env;
+        let mut on_environment = cache_on.env;
         assert_eq!(
             off_environment
                 .remove(QUENCH_WASM_JIT_REFERENCE_BODY_CACHE)
@@ -4669,7 +4668,7 @@ mod tests {
         assert!(!resume_metadata_matches(&raw_ab_loaded, &compare_branch_ab));
 
         let memcpy_leaf_ab_path = directory.join("memcpy-leaf-ab-report.json");
-        let mut memcpy_leaf_ab = expected.clone();
+        let mut memcpy_leaf_ab = expected;
         memcpy_leaf_ab.jit_wasm_root = None;
         memcpy_leaf_ab.jit_wasm_root_only = false;
         memcpy_leaf_ab.jit_wasm_memcpy_leaf_ab = true;

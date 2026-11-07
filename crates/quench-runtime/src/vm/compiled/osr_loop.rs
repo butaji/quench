@@ -60,8 +60,7 @@ const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
 const MAX_REGION_FIELD_STORES: usize = 16;
-/// The largest native body a region may produce.
-pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
+pub(crate) use crate::vm::js_compiled::MAX_CODE_BYTES;
 
 /// What native code writes to its result word: the outcome in the high word, a bytecode PC
 /// in the low one.
@@ -3204,7 +3203,7 @@ pub(super) fn verify_region<'a>(
             let root = webs.defined(region, pc);
             let result = match instruction.op() {
                 Op::LoadConst => constant_type(instruction.constant_index())
-                    .ok_or(TypeError::InvalidConstant { pc, index: instruction.constant_index() })?,
+                    .ok_or_else(|| TypeError::InvalidConstant { pc, index: instruction.constant_index() })?,
                 Op::Move | Op::ToNumeric => {
                     let register = instruction.register_b();
                     let source = webs.checked_read(region, pc, register)
@@ -3992,7 +3991,7 @@ fn counted_loop(
         state
             .get(&register)
             .copied()
-            .unwrap_or(Some(Affine::of(Base::Start(register))))
+            .unwrap_or_else(|| Some(Affine::of(Base::Start(register))))
     };
     // Whether a source the instruction at `pc` reads is held as an `i32`, and its value.
     let source = |state: &BTreeMap<Register, Option<Affine>>, pc: u32, operand: Operand| match operand.kind()? {
@@ -4027,7 +4026,7 @@ fn counted_loop(
             })
             .collect();
     };
-    for pc in body.clone() {
+    for pc in body {
         if let Some(others) = pending.remove(&pc) {
             merge(&mut state, reached, others);
             reached = true;

@@ -134,7 +134,7 @@ const VARINT_PAYLOAD_BITS: u32 = 7;
 const VARINT_PAYLOAD_MASK: u8 = 0x7F;
 const VARINT_CONTINUATION: u8 = 0x80;
 
-const DESERIALIZATION_ERROR: &str = "Unable to deserialize cloned data.";
+pub const DESERIALIZATION_ERROR: &str = "Unable to deserialize cloned data.";
 const VERSION_ERROR: &str = "Unable to deserialize cloned data due to invalid or unsupported version.";
 const DETACHED_MESSAGE: &str = "An ArrayBuffer is detached and could not be cloned.";
 
@@ -519,7 +519,7 @@ impl<H: Host> ReadHooks<H> for MessageHooks {
             Some(backing) => {
                 let backing = backing.clone_for_agent();
                 let (maximum, growable) = (backing.maximum(), backing.growable());
-                let bytes = crate::heap::BufferBytes::from_shared(backing.clone());
+                let bytes = crate::heap::BufferBytes::from_shared(backing);
                 vm.new_array_buffer_cell(bytes, true, maximum, growable, false)
             }
             None => Value::UNDEFINED,

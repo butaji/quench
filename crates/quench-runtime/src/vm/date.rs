@@ -57,10 +57,10 @@ const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
     ("toTemporalInstant", Native::DateToTemporalInstant),
 ];
 const DATE_PROTOTYPE_ALIASES: &[(&str, &str)] = &[("toGMTString", "toUTCString")];
-const SECONDS_PER_MINUTE: i32 = 60;
+use crate::units::SECONDS_PER_MINUTE;
 const LEGACY_DATE_YEAR_OFFSET: i32 = 1900;
 const MONTHS_PER_YEAR: f64 = 12.0;
-const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+use crate::units::MILLISECONDS_PER_SECOND;
 const MILLISECONDS_PER_MINUTE: f64 = 60_000.0;
 const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;

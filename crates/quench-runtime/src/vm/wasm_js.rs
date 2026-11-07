@@ -475,7 +475,7 @@ fn reference_value_type(element_type: wasmparser::RefType) -> WasmType {
 fn reference_value_type_in(element_type: wasmparser::RefType, declarations: &crate::WasmTypes) -> WasmType {
     declarations
         .callable_value_type(wasmparser::ValType::Ref(element_type))
-        .unwrap_or(WasmType::Reference {
+        .unwrap_or_else(|| WasmType::Reference {
             kind: crate::WasmReferenceKind::External,
             nullable: element_type.is_nullable(),
         })

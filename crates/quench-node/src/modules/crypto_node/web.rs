@@ -199,7 +199,7 @@ const GCM_DEFAULT_TAG_BITS: u32 = 128;
 const AES_BLOCK_BYTES: usize = 16;
 /// AES-CTR's counter length bounds, in bits.
 const CTR_MAX_LENGTH_BITS: u32 = 128;
-const BITS_PER_BYTE: u32 = u8::BITS;
+use crate::modules::crypto_secret_job_shared_vm::BITS_PER_BYTE;
 
 /// A CryptoKey's algorithm, as the native layer needs it.
 #[derive(Clone)]
@@ -926,7 +926,7 @@ fn generate_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcom
     match kind {
         Algorithm::Hmac => {
             let hash = hash_member(c, &normalized, "HmacKeyGenParams")?;
-            let length = optional_number_member(c, &normalized, "length")?.map(|length| length as u32).unwrap_or(hash.block_bits());
+            let length = optional_number_member(c, &normalized, "length")?.map(|length| length as u32).unwrap_or_else(|| hash.block_bits());
             check_usages(c, kind, &usages, kind.usages().0)?;
             if length == 0 {
                 return Err(operation_failed(c));

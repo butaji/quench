@@ -106,7 +106,7 @@ impl<H: Host> Vm<H> {
                 if buffer_source {
                     let offset_value = offset
                         .and_then(|root| self.heap.root_value(root))
-                        .unwrap_or(Value::number(0.0));
+                        .unwrap_or_else(|| Value::number(0.0));
                     let offset = self.buffer_to_index(
                         p,
                         offset_value,

@@ -18,15 +18,13 @@ pub(super) const PATH: &str = ":path";
 const PROTOCOL: &str = ":protocol";
 pub(super) const DATE: &str = "date";
 const HOST: &str = "host";
-const COOKIE: &str = "cookie";
-const SET_COOKIE: &str = "set-cookie";
+pub(crate) use crate::modules::keys::COOKIE;
+use crate::modules::keys::SET_COOKIE;
 pub(super) const METHOD_GET: &str = "GET";
 pub(super) const METHOD_HEAD: &str = "HEAD";
 const METHOD_CONNECT: &str = "CONNECT";
-/// The status a response head defaults to.
-pub(super) const STATUS_OK: f64 = 200.0;
-/// The response statuses HTTP/2 permits (`validatePreparedResponseHeaders`).
-const STATUS_RANGE: std::ops::RangeInclusive<f64> = 200.0..=599.0;
+pub(crate) use crate::modules::http2_shared_vm::compat::STATUS_OK;
+use crate::modules::fetch_shared_vm::response::STATUS_RANGE;
 
 /// The pseudo-headers RFC 9113 defines (`kValidPseudoHeaders`).
 const VALID_PSEUDO_HEADERS: [&str; 6] = [STATUS, METHOD, AUTHORITY, SCHEME, PATH, PROTOCOL];

@@ -6,10 +6,8 @@ pub(super) type ConditionExits = smallvec::SmallVec<[usize; 2]>;
 
 /// The TypeError message for assigning an immutable binding, as V8 words it.
 const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
-/// The implicit binding `ArgumentsLength` and `ArgumentGet` read, and the property the
-/// former reads.
-const ARGUMENTS: &str = "arguments";
-const LENGTH: &str = "length";
+use crate::compile::early::ARGUMENTS;
+use crate::property_names::LENGTH;
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         self.expression_with_debug_name(expression, None)
