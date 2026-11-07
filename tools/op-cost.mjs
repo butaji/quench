@@ -148,7 +148,7 @@ const WIN_MARGIN = 1.2;
 // name, arguments before the fixture, environment.
 const MODES = {
   "no-jit": [[], {}],
-  jit: [["--jit"], { QUENCH_JS_JIT_LANE_METHODS: "1" }],
+  jit: [["--jit"], { QUENCH_DEV: "js-lane-methods" }],
 };
 const BUN = process.env.BUN ?? join(process.env.HOME ?? "", ".bun/bin/bun");
 // name, command, arguments, environment.

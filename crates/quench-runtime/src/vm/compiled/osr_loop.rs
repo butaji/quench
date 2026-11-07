@@ -674,13 +674,11 @@ fn tagged_registers_with_failure(
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
         // (`LoopRegion::dynamic_field_stores`); a Number result is boxed at the store.
-        .chain(instructions.iter().filter(|instruction| {
-            matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
-                && instructions.iter().any(|candidate| candidate.defined_register() == Some(instruction.register_b()))
-        }).map(|instruction| instruction.register_b()))
+        .chain(instructions.iter().filter_map(|instruction| instruction.field_store_register().filter(|&receiver|
+            instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)))))
         // Any store of a value only field reads give stores it tagged: it may be an object,
         // which the entry's barrier on the receiver covers (`lane_loop_entry`).
-        .chain(instructions.iter().filter(|instruction| matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField)).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| admitted_store(instruction.op())).filter_map(|instruction| {
             let value = instruction.register_a();
             let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
             (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
@@ -953,11 +951,16 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             _ => None,
         },
         Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::SetField | Op::SetFieldStrict | Op::RequireObjectCoercible => {
-            Some(instruction.register_b())
-        }
+        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
         _ => None,
     }
+}
+
+/// Whether a loop region admits `op` as a named field store: every one the opcode table
+/// names (`Op::field_store`) but a strict store to `this`.
+fn admitted_store(op: Op) -> bool {
+    op.field_store().is_some_and(|store| !(store.strict && store.receiver == crate::bytecode::StoreReceiver::This))
 }
 
 /// The PCs of `instructions` control reaches from the first.
@@ -1069,7 +1072,7 @@ pub(super) fn inline_region<'a>(
     let caller_stored: std::collections::BTreeSet<crate::bytecode::Atom> = caller
         .iter()
         .filter_map(|instruction| match instruction.op() {
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField => Some(instruction.atom_index()),
+            op if admitted_store(op) => Some(instruction.atom_index()),
             // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
             Op::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
                 FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
@@ -1892,6 +1895,22 @@ fn admit_region(
     }
 }
 
+/// Whether a lifetime region admits `instruction`: number and element operations, jumps, a
+/// field store through a register, and a field read by name from a register or `this`, whose
+/// base renames as a register does. A site's lookup names its base in the site table, which
+/// keeps VM slots.
+fn lifetime_instruction(instruction: WideInstruction) -> bool {
+    matches!(instruction.op(),
+        Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply
+        | Op::IncDec | Op::ToNumeric | Op::Unary | Op::GetIndex | Op::SetIndex
+        | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
+        | Op::JumpBinaryFalse)
+        || instruction.field_store_register().is_some()
+        || (instruction.op() == Op::GetField
+            && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
+                if base == FieldBase::THIS || base.register_index().is_some()))
+}
+
 /// Retry scalar/array admission on value identities, using the same checks and emitter.
 /// This is analysis-only renaming: generated code and recovery still name VM slots.
 fn admit_lifetime_roles(
@@ -1903,16 +1922,7 @@ fn admit_lifetime_roles(
 ) -> Option<LoopRegion> {
     use std::collections::{BTreeMap, BTreeSet};
     if live.is_none() || instructions.is_empty() || registers > MAX_REGION_REGISTERS
-        || !instructions.iter().all(|instruction| matches!(instruction.op(),
-            Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply
-            | Op::IncDec | Op::ToNumeric | Op::Unary | Op::GetIndex | Op::SetIndex
-            | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
-            | Op::JumpBinaryFalse | Op::SetField | Op::SetFieldStrict)
-            // A field read by name from a register or `this`: its base renames as a register
-            // does. A site's lookup names its base in the site table, which keeps VM slots.
-            || (instruction.op() == Op::GetField
-                && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
-                    if base == FieldBase::THIS || base.register_index().is_some())))
+        || !instructions.iter().all(|instruction| lifetime_instruction(*instruction))
     {
         return None;
     }
@@ -2091,7 +2101,7 @@ fn admit_register_roles(
     // the path could change: a path through a name the region stores is not held.
     let stored_names: std::collections::BTreeSet<crate::bytecode::Atom> = instructions
         .iter()
-        .filter(|instruction| matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField))
+        .filter(|instruction| admitted_store(instruction.op()))
         .map(|instruction| instruction.atom_index())
         .collect();
     let paths: std::collections::BTreeMap<Register, FieldPath> = held_registers(&instructions, sites, header_live, objects)
@@ -2178,12 +2188,11 @@ fn admit_register_roles(
         instructions.iter().filter_map(|instruction| instruction.defined_register()).collect();
     let stored_fixed: std::collections::BTreeSet<(crate::bytecode::Atom, FieldReceiver)> = instructions
         .iter()
-        .filter_map(|instruction| match instruction.op() {
-            Op::SetThisField => Some((instruction.atom_index(), FieldReceiver::This)),
-            Op::SetField | Op::SetFieldStrict if !written.contains(&instruction.register_b()) => {
-                Some((instruction.atom_index(), FieldReceiver::Register(instruction.register_b())))
-            }
-            _ => None,
+        .filter(|instruction| admitted_store(instruction.op()))
+        .filter_map(|instruction| match instruction.field_store_register() {
+            None => Some((instruction.atom_index(), FieldReceiver::This)),
+            Some(receiver) if !written.contains(&receiver) => Some((instruction.atom_index(), FieldReceiver::Register(receiver))),
+            Some(_) => None,
         })
         .collect();
     let mut dynamic_field_stores = std::collections::BTreeMap::new();
@@ -2221,7 +2230,7 @@ fn admit_register_roles(
                 }
             }
         }
-        if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField) {
+        if admitted_store(instruction.op()) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
                 return Err(RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(instruction.op()),
@@ -2229,11 +2238,7 @@ fn admit_register_roles(
                     offset,
                 ));
             }
-            let receiver = if instruction.op() == Op::SetThisField {
-                FieldReceiver::This
-            } else {
-                FieldReceiver::Register(instruction.register_b())
-            };
+            let receiver = instruction.field_store_register().map_or(FieldReceiver::This, FieldReceiver::Register);
             let atom = instruction.atom_index();
             let cache_site = instruction.cache_site_index();
             // A receiver the region redefines stores through the VM's cached store at the
@@ -2559,26 +2564,18 @@ fn admit(
             }
             admission.number(instruction.register_c())?;
         }
-        Op::SetThisField => {
+        op if admitted_store(op) => {
             let value_register = instruction.register_a();
+            // An unchanged entry value can be any tagged value. The VM logs a register
+            // receiver in the generational barrier before native writes begin.
             if tagged.contains(&value_register) || !defined_registers.contains(&value_register) {
                 admission.tagged(value_register)?;
             } else {
                 admission.number(value_register)?;
             }
-        }
-        Op::SetField | Op::SetFieldStrict => {
-            let value_register = instruction.register_a();
-            if tagged.contains(&value_register) {
-                admission.tagged(value_register)?;
-            } else if defined_registers.contains(&value_register) {
-                admission.number(value_register)?;
-            } else {
-                // An unchanged entry value can be any tagged value. The VM logs the
-                // receiver in the generational barrier before native writes begin.
-                admission.tagged(value_register)?;
+            if let Some(receiver) = instruction.field_store_register() {
+                admission.tagged(receiver)?;
             }
-            admission.tagged(instruction.register_b())?;
         }
         Op::LoadEnvLocal => {
             if instruction.result_flags() != 0
@@ -2806,12 +2803,12 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
             Op::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
             Op::GetIndex => region.dynamic_arrays.contains(&register)
                 || !region.arrays.iter().any(|array| array.register == register),
-            Op::SetField | Op::SetFieldStrict => region.dynamic_field_stores.contains_key(&(offset as u32)),
+            _ if instruction.field_store_register().is_some() => region.dynamic_field_stores.contains_key(&(offset as u32)),
             _ => region.dynamic_arrays.contains(&register),
         };
         if dynamic { reads.push((register, Type::ANY)); }
     }
-    if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField) {
+    if admitted_store(instruction.op()) {
         let store = region.field_stores.get(&(offset as u32)).map(|index| &region.field_store_sites[*index]);
         let expected = store.map_or(Type::ANY, |store| region.field_store_type(store));
         reads.push((instruction.register_a(), expected));
@@ -2965,10 +2962,6 @@ fn webs(region: &LoopRegion) -> Webs {
     let read_webs: BTreeSet<Definition> = reads.iter().map(|definition| webs.find(*definition)).collect();
     webs.entry_read = (0..entries).map(|entry| read_webs.contains(&webs.find(entry))).collect();
     webs
-}
-
-fn int32_number(number: f64) -> bool {
-    Value::number(number).as_int().is_some()
 }
 
 /// Each web's, capture's and field's representation: an `i32` where every definition in
@@ -3325,7 +3318,7 @@ fn definition(
     let source = |operand: Operand| match operand.kind() {
         Some(OperandKind::Register) => registers(operand.payload()),
         _ => match region.constants.get(&usize::from(operand.payload())) {
-            Some(number) if int32_number(*number) => Representation::Int32,
+            Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
             _ => Representation::Float64,
         },
     };
@@ -3340,7 +3333,7 @@ fn definition(
         Op::LoadConst => {
             let index = instruction.constant_index();
             match region.constants.get(&index) {
-                Some(number) if int32_number(*number) => Representation::Int32,
+                Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
                 _ => Representation::Float64,
             }
         }
@@ -3582,7 +3575,7 @@ struct Int32Facts {
 fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option<Range>, register: &dyn Fn(Register) -> Option<Range>, constants: &std::collections::BTreeMap<usize, f64>) -> Option<Range> {
     use super::super::operations::NumberBitwise as Bitwise;
     let constant = |operand: Operand| match operand.kind() {
-        Some(OperandKind::Constant) => constants.get(&usize::from(operand.payload())).copied().filter(|number| int32_number(*number)).map(|number| number as i64),
+        Some(OperandKind::Constant) => constants.get(&usize::from(operand.payload())).copied().filter(|number| crate::vm::compiled::facts::is_int32_number(*number)).map(|number| number as i64),
         _ => None,
     };
     let corners = |(a, b): Range, (c, d): Range, f: fn(i64, i64) -> i64| {
@@ -3592,7 +3585,7 @@ fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option
     Some(match instruction.op() {
         Op::LoadConst => {
             match constants.get(&instruction.constant_index()) {
-                Some(number) if int32_number(*number) => (*number as i64, *number as i64),
+                Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => (*number as i64, *number as i64),
                 _ => INT32_RANGE,
             }
         }
@@ -3669,7 +3662,7 @@ fn operand_range(
     match operand.kind()? {
         OperandKind::Register => register_range(region, webs, representations, ranges, pc, operand.payload()),
         OperandKind::Constant => match region.constants.get(&usize::from(operand.payload())) {
-            Some(number) if int32_number(*number) => Some((*number as i64, *number as i64)),
+            Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Some((*number as i64, *number as i64)),
             _ => Some(INT32_RANGE),
         },
         OperandKind::Field | OperandKind::Local => Some(INT32_RANGE),
@@ -3985,7 +3978,7 @@ fn counted_loop(
         base(value.base) && value.addend.is_none_or(base)
     };
     let mut terms: Vec<Term> = Vec::new();
-    let constant = |number: f64| int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
+    let constant = |number: f64| crate::vm::compiled::facts::is_int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
     let mut state: BTreeMap<Register, Option<Affine>> = BTreeMap::new();
     let value = |state: &BTreeMap<Register, Option<Affine>>, register: Register| {
         state
@@ -4001,7 +3994,7 @@ fn counted_loop(
         }
         OperandKind::Constant => {
             let number = *region.constants.get(&usize::from(operand.payload()))?;
-            Some((int32_number(number), constant(number)))
+            Some((crate::vm::compiled::facts::is_int32_number(number), constant(number)))
         }
         OperandKind::Field | OperandKind::Local => None,
     };
@@ -5825,7 +5818,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let chain = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
         let key = (receiver, load.shape);
         if let Some((object, proved)) = self.objects.get(&key).copied()
-            && proved == chain && usize::from(load.slot) < object.storage_len {
+            && proved == chain && usize::from(load.slot) < object.storage_len() {
             return Some(object);
         }
         let heap_base = self.region.native_heap_word();
@@ -5936,7 +5929,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 ty: Type::immediate(value),
                 representation: Representation::Tagged,
             },
-            Source::Number(number) if int32_number(number) => Typed {
+            Source::Number(number) if crate::vm::compiled::facts::is_int32_number(number) => Typed {
                 value: self.body.builder.ins().iconst(types::I32, i64::from(number as i32)),
                 ty: Type::INT32,
                 representation: Representation::Int32,
@@ -6975,7 +6968,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.ins().store(flags(), bits, address, displacement);
                 self.fall_through(pc)
             }
-            Op::SetField | Op::SetFieldStrict if let Some(&(atom, site)) = self.region.dynamic_field_stores.get(&(pc - self.region.header)) => {
+            _ if let (Some(_), Some(&(atom, site))) = (instruction.field_store_register(), self.region.dynamic_field_stores.get(&(pc - self.region.header))) => {
                 let value = self.register(instruction.register_a());
                 let bits = self.boxed(value);
                 let receiver = self.register(instruction.register_b());
@@ -6993,7 +6986,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.guard(pc, miss);
                 self.fall_through(pc)
             }
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField => {
+            op if admitted_store(op) => {
                 let index = *self.region.field_stores.get(&(pc - self.region.header))?;
                 let pointer = self.field_store_pointer(index);
                 let value = self.register(instruction.register_a());
@@ -7196,10 +7189,8 @@ mod tests {
             (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))
         }).unwrap();
-        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::Number(value) => Value::number(*value),
-            _ => Value::UNDEFINED,
-        }).collect();
+        let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
         region(function, &decoded, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap()
     }
@@ -7224,11 +7215,8 @@ mod tests {
         let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
             (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))).unwrap();
-        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::Number(value) => Value::number(*value),
-            crate::bytecode::Constant::Null => Value::NULL,
-            _ => Value::UNDEFINED,
-        }).collect();
+        let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
         let region = region(function, &instructions, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap();
         assert_eq!(region.fields.len(), 2);
@@ -7284,10 +7272,8 @@ mod tests {
             let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
                 (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                     .then(|| (pc as u32, instruction.jump_target()))).unwrap();
-            let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-                crate::bytecode::Constant::Number(value) => Value::number(*value),
-                _ => Value::UNDEFINED,
-            }).collect();
+            let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
             let region = region(function, &instructions, &constants, &program.field_sites,
                 program.shared_register_root_masks(1), header, backedge).unwrap();
             let verified = verify_unprofiled(&region).unwrap();
