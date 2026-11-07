@@ -27,30 +27,40 @@ pub fn static_runtime() -> bool {
     env::var("CARGO_CFG_TARGET_FEATURE").is_ok_and(|features| features.split(',').any(|feature| feature == "crt-static"))
 }
 
-/// Emits the link arguments for the including crate's binaries; `ordered` is false when the
-/// build asks to link without the trained order.
-pub fn link_binaries(ordered: bool) {
+/// The linker driver arguments of this target's executables; `ordered` is false when the build
+/// asks to link without the trained order. Cargo binaries get them from `link_binaries`; native
+/// images the including crate links later get the same list.
+pub fn executable_link_args(ordered: bool) -> Vec<String> {
     println!("cargo::rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo::rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
+    let mut arguments = Vec::new();
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
-        return;
+        return arguments;
     }
     let static_runtime = static_runtime();
     // A static C runtime chooses its own executable kind.
     if static_runtime {
-        for hook in FRAME_REGISTRATION_HOOKS {
-            println!("cargo::rustc-link-arg-bins=-Wl,--defsym={hook}=0");
-        }
+        arguments.extend(FRAME_REGISTRATION_HOOKS.iter().map(|hook| format!("-Wl,--defsym={hook}=0")));
     } else {
-        println!("cargo::rustc-link-arg-bins=-no-pie");
+        arguments.push("-no-pie".into());
     }
     let order = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
         .join(if static_runtime { X86_64_LINUX_STATIC_ORDER } else { X86_64_LINUX_ORDER });
     if ordered && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") && order.is_file() && on_path(ORDERING_LINKER) {
-        println!("cargo::rustc-link-arg-bins=-fuse-ld=lld");
-        println!("cargo::rustc-link-arg-bins=-Wl,--symbol-ordering-file={}", order.display());
-        println!("cargo::rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
+        arguments.push("-fuse-ld=lld".into());
+        arguments.push(format!("-Wl,--symbol-ordering-file={}", order.display()));
+        arguments.push("-Wl,--no-warn-symbol-ordering".into());
     }
+    arguments
+}
+
+/// Emits `executable_link_args` for the including crate's binaries and returns them.
+pub fn link_binaries(ordered: bool) -> Vec<String> {
+    let arguments = executable_link_args(ordered);
+    for argument in &arguments {
+        println!("cargo::rustc-link-arg-bins={argument}");
+    }
+    arguments
 }
 
 fn on_path(program: &str) -> bool {
