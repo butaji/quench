@@ -872,18 +872,17 @@ const EMPTY_CACHE: FieldCache = FieldCache {
 /// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
 /// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver of exact shape `receiver`, which
 /// lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
-/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` while
-/// the prototype value epoch was `epoch` (`heap::prototype_value_epoch`), which every change
-/// to a marked prototype's layout or slot values advances. `prototype` is `holder` as an
-/// object's header links it, which an object receiver's test compares.
-#[derive(Clone, Copy)]
+/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` under
+/// `watch`, which a change to the holder's slot values or any prototype's layout retires.
+/// `prototype` is `holder` as an object's header links it, which an object receiver's test compares.
+#[derive(Clone)]
 struct HolderHint {
     receiver: u32,
     atom: Atom,
     prototype: crate::heap::ProtoLink,
     holder: Value,
     value: Value,
-    epoch: u64,
+    watch: crate::heap::PrototypeValueWatch,
 }
 /// Stored as `[receiver, holder, slot]` complemented against `EMPTY_CACHE`, which stores
 /// as zero words.
@@ -2103,7 +2102,7 @@ pub(crate) struct Vm<H> {
     json_output: Vec<u8>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
-    promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,
+    promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
@@ -2148,6 +2147,7 @@ pub(crate) struct Vm<H> {
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
+    frameless: compiled::Frameless,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
@@ -2179,10 +2179,6 @@ pub(crate) struct Vm<H> {
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
     holder_hints: Vec<HolderHint>,
-    /// This thread's prototype value epoch (`heap::prototype_value_epoch_address`), which
-    /// the lane's constant reads load as native code does: a VM stays on the thread that made
-    /// it, and the cell lives as long as that thread.
-    prototype_value_epoch: *const u64,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
@@ -2288,14 +2284,6 @@ struct IteratorRealmPrototypes {
     generator: Value,
     async_generator: Value,
 }
-impl<H> Vm<H> {
-    /// The current prototype value epoch (`heap::prototype_value_epoch`), one load.
-    #[inline(always)]
-    fn prototype_value_epoch(&self) -> u64 {
-        // SAFETY: the address of this thread's epoch cell (`Vm::prototype_value_epoch`).
-        unsafe { *self.prototype_value_epoch }
-    }
-}
 
 impl<H: Host> Vm<H> {
     /// Diagnostic: general-loop dispatches by the register width of their function, since
@@ -2335,11 +2323,8 @@ impl<H: Host> Vm<H> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
     }
 
-    /// Retire weak callee bindings at their lifetime-changing edge. The fixed
-    /// direct-mapped cache pays no generation/realm polling on a hit.
-    fn clear_call_targets(&mut self) {
-        self.call_targets.fill(EMPTY_CALL_TARGET);
-    }
+    /// Retire weak callee bindings and frameless admissions at their lifetime-changing edge.
+    fn clear_call_targets(&mut self) { self.call_targets.fill(EMPTY_CALL_TARGET); self.frameless.clear(); }
 
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
@@ -3155,7 +3140,7 @@ impl<H: Host> Vm<H> {
         self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
-        self.promise_species_proof.set(None);
+        self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();

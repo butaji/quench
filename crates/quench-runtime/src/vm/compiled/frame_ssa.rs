@@ -350,7 +350,7 @@ mod tests {
         const SOURCE_OFFSET: u32 = 42;
         const OWNER_TAG: u32 = 7;
         const OWNER_LABEL: u32 = 0;
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         for (tagged, conservative) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 3]);
@@ -510,7 +510,7 @@ mod tests {
     #[test]
     #[cfg(feature = "aot")]
     fn scalar_effect_preserves_uncommitted_values_outside_its_footprint() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn register_values_cross_cfg_backedges_without_canonical_spills() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I64));
         signature.returns.push(AbiParam::new(types::I64));
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn semantic_call_commits_then_resumes_from_changed_canonical_inputs() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -674,7 +674,7 @@ mod tests {
 
     #[test]
     fn overlapping_frame_views_decline_promotion_before_mutation() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         for derived in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.push(AbiParam::new(types::I64));

@@ -7230,7 +7230,7 @@ mod tests {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
                 native_field_loads: &loads, widened: &widened,
             };
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             let (native, _) = lower_verified(verify_region(&region, &observation).unwrap(),
                 &observation, &*isa, None, false).unwrap();
             let shape_loads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -7335,7 +7335,7 @@ mod tests {
             register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let verified = verify_region(&region, &observation).unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
         let mut verified = verify_region(&region, &observation).unwrap();
@@ -7368,7 +7368,7 @@ mod tests {
         };
         let verified = verify_region(&region, &observation).unwrap();
         assert_eq!(verified.obligations[1], DefinitionObligation::NumberLoad);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
     }
 
@@ -7394,7 +7394,7 @@ mod tests {
         let comparison = verified.webs.defined(&region, 0);
         assert_eq!(verified.values[comparison].unwrap().ty, Type::language(crate::ValueType::Boolean));
         assert_eq!(verified.obligations[1], DefinitionObligation::None);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
 
         // Same tagged machine representation, incompatible semantic type:
@@ -7425,7 +7425,7 @@ mod tests {
             let verified = verify_region(&region, &observation).unwrap();
             let result = verified.webs.defined(&region, 1);
             assert_eq!(verified.values[result].unwrap().ty, Type::TYPEOF_INDEX);
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
         }
     }

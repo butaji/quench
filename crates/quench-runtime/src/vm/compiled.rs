@@ -61,6 +61,8 @@ mod stable_fact_tests;
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+#[path = "compiled/lane_sites.rs"]
+mod lane_sites;
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -80,6 +82,15 @@ pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
+#[path = "compiled/general_call.rs"]
+mod general_call;
+#[path = "compiled/general_capture.rs"]
+mod general_capture;
+#[path = "compiled/general_names.rs"]
+mod general_names;
+#[path = "compiled/frameless.rs"]
+mod frameless;
+pub(super) use frameless::Frameless;
 use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
@@ -560,7 +571,7 @@ pub(super) fn compile_js_numeric_region(
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let native = lower_js_numeric_region(
         program,
         function_id,
@@ -595,9 +606,9 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -1361,6 +1372,17 @@ fn emit_js_step_fallback(
 
 /// Continue native code only when one guard holds. All failures share the exact-PC
 /// VM fallback emitted after the direct path.
+/// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
+/// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
+pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
+    let magnitude = builder.ins().fabs(number);
+    let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
+    let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
+    emit_js_guard(builder, exact, exit);
+    let wide = builder.ins().fcvt_to_sint_sat(types::I64, number);
+    builder.ins().ireduce(types::I32, wide)
+}
+
 fn emit_js_guard(
     builder: &mut FunctionBuilder<'_>,
     condition: ir::Value,
@@ -2495,45 +2517,63 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
             &mut *(payload as *mut JsStepDispatch),
             std::slice::from_raw_parts(entries as *const InlineRecoveryFrame, count as usize))
     };
-    let mut recovered = super::dispatch_frame::RecoveredCalls {
-        calls: Vec::with_capacity(entries.len()), failure: None,
-    };
-    for (caller, entry) in (dispatch.frame..).zip(entries) {
-        let body = program.function(vm.frames[caller].function as usize);
-        let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
-        let callee = vm.read(caller, instruction.register_b());
-        let receiver = vm.read(caller, instruction.register_c());
-        let env = vm.heap.function(callee).expect("admitted inline closure").env;
-        let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
-        vm.frames[caller].pc = entry.call_pc as usize + 1;
-        vm.frames[caller].pc_is_resume = true;
-        let guard = vm.push_general_user_frame(program, entry.function, env, receiver,
-            unsafe { &*passed }, super::CallContext::user_function(entry.function, callee));
-        let guard = match guard {
-            Ok(guard) => guard,
-            Err(error) => { recovered.failure = Some((entry.call_pc, error)); break; }
-        };
-        let frame = vm.frames.last_mut().expect("recovered inline frame");
-        let snapshot = unsafe { std::slice::from_raw_parts(
-            (registers as *const Value).add(entry.registers as usize), frame.registers.len()) };
-        frame.registers.copy_from_slice(snapshot);
-        frame.pc = entry.source_pc as usize;
-        frame.pc_is_resume = true;
-        vm.active_registers = frame.registers.as_mut_ptr();
-        recovered.calls.push(super::dispatch_frame::PendingGeneralCall {
-            caller, caller_cursor: None, call_pc: entry.call_pc,
-            destination: instruction.result_register(), completion: super::CallCompletion::Value,
-            returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
-        });
-        #[cfg(test)] {
-            INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
-            INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((entry.function, entry.source_pc))));
+    let base = registers as *const Value;
+    // An inlined chain inside frameless activations follows theirs (`frameless::chain`).
+    let inlined = entries.iter().map(|entry|
+        (entry.function, entry.call_pc, entry.source_pc, base.wrapping_add(entry.registers as usize)));
+    #[cfg(test)] {
+        INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + entries.len()));
+        let last = entries.last().expect("a recovery chain");
+        INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((last.function, last.source_pc))));
+    }
+    let chain = frameless::chain(vm, dispatch, entries[0].call_pc, inlined);
+    materialize_chain(vm, program, dispatch, &chain);
+    0
+}
+
+/// Makes the frames of a chain of native activations, outer to inner, each `(function,
+/// call PC in its caller, PC it continues at, registers)`, above the payload's frame, and
+/// stops the payload with them (`StepResult::ResumeFrames`).
+fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch,
+    chain: &[(u32, u32, u32, *const Value)]) {
+    let mut recovered = super::dispatch_frame::RecoveredCalls { calls: Vec::with_capacity(chain.len()), failure: None };
+    for (caller, entry) in (dispatch.frame..).zip(chain) {
+        match recover_call(vm, program, caller, *entry) {
+            Ok(call) => recovered.calls.push(call),
+            Err(failure) => { recovered.failure = Some(failure); break; }
         }
     }
-    let call_pc = entries[0].call_pc as usize;
+    let call_pc = chain[0].1 as usize;
     dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
         result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
-    0
+}
+
+/// Makes the frame of one chain entry above `caller`, its registers copied from the entry's.
+fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize,
+    (function, call_pc, source_pc, registers): (u32, u32, u32, *const Value))
+    -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
+    let body = program.function(vm.frames[caller].function as usize);
+    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[call_pc as usize]);
+    let callee = vm.read(caller, instruction.register_b());
+    let receiver = vm.read(caller, instruction.register_c());
+    let env = vm.heap.function(callee).expect("admitted inline closure").env;
+    let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
+    vm.frames[caller].pc = call_pc as usize + 1;
+    vm.frames[caller].pc_is_resume = true;
+    let guard = vm.push_general_user_frame(program, function, env, receiver,
+        unsafe { &*passed }, super::CallContext::user_function(function, callee)).map_err(|error| (call_pc, error))?;
+    let frame = vm.frames.last_mut().expect("recovered inline frame");
+    let count = frame.registers.len();
+    // SAFETY: the chain's registers hold the frame's register count of live values.
+    frame.registers.copy_from_slice(unsafe { std::slice::from_raw_parts(registers, count) });
+    frame.pc = source_pc as usize;
+    frame.pc_is_resume = true;
+    vm.active_registers = frame.registers.as_mut_ptr();
+    Ok(super::dispatch_frame::PendingGeneralCall {
+        caller, caller_cursor: None, call_pc, destination: instruction.result_register(),
+        completion: super::CallCompletion::Value, returns: instruction.returns_from_frame(),
+        call_guard: Some(guard), caller_program: None,
+    })
 }
 
 unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
@@ -2823,7 +2863,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
             lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-                &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
+                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
                     let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
@@ -2871,7 +2911,7 @@ pub(super) fn compile_js_general_dispatch(
     function_id: u32,
     unresolved_names_are_global: bool,
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
-    let isa = super::jit_backend::target_isa("speed")
+    let isa = super::jit_backend::target_isa()
         .ok_or("target-isa-unavailable")?;
     let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
         program, function_id, unresolved_names_are_global, &*isa,
@@ -3161,21 +3201,13 @@ pub(super) fn lower_js_general_dispatch(
                 .is_some_and(|name| {
                     !name.starts_with('\0') && !crate::bytecode::is_intrinsic_name(name)
                 })
-            && next.is_some()
+            && let Some(next) = next
         {
-            // The shared callout takes a cached data-property hit where the
-            // global environment proves it side-effect-free; every lexical,
-            // accessor, and miss case resumes Vm::step at this exact PC.
-            emit_js_step_fallback(
-                &mut builder,
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            );
+            if !general_names::lower_global_read(&mut builder, (instruction, next), &register_offset, (arguments, payload),
+                &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
+                emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer,
+                    stopped_block, continue_block, pc);
+            }
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -3254,48 +3286,14 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        // A call of a method read as `push` with one argument or `pop` with none asks the
-        // array builtins' dense shortcut first (`general_native_call`); anything else, or its
-        // miss, is the exact step's call.
-        if instruction.op() == Op::Call
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
-            && !instruction.direct_eval()
-            && !instruction.parameter_eval()
-            && let Some(next) = next
-            && let window = instruction.call_window()
-            && window.count <= 1
-            && let Some(read) = function.code[..pc].iter().rev()
-                .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
-                .find(|earlier| earlier.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister
-                    && earlier.result_register() == instruction.register_b())
-            && read.op() == Op::GetField
-            && let Some(FieldLookup::Atom { atom, .. }) = read.field_lookup()
-            && program.atoms.get(atom as usize).is_some_and(|name| (name == "push" && window.count == 1) || (name == "pop" && window.count == 0))
-            && let Some(callee_offset) = register_offset(instruction.register_b())
-            && let Some(receiver_offset) = register_offset(instruction.register_c())
-            && let Some(destination_offset) = register_offset(instruction.result_register())
-            && let Some(argument_offset) = if window.count == 1 { register_offset(window.base).map(Some) } else { Some(None) }
-        {
-            let exact = JsExactFallback {
-                context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc,
-            };
-            let fallback = builder.create_block();
-            let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, callee_offset);
-            let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, receiver_offset);
-            let argument = match argument_offset {
-                Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-                None => builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64),
-            };
-            let count = builder.ins().iconst(types::I64, i64::from(window.count));
-            let helper = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, native_call));
-            let value = emit_lane_helper_call(&mut builder, payload, helper, &[payload, callee, receiver, argument, count]);
-            let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-            emit_js_guard(&mut builder, hit, fallback);
-            builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
-            builder.ins().jump(next, &[]);
-            exact.emit(&mut builder, fallback);
+        if let Some(next) = next && general_capture::lower_capture(&mut builder, (instruction, next), &register_offset, (arguments, payload),
+            &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if let Some(next) = next && general_call::lower_call(&mut builder, program, function, (pc, instruction, next), &register_offset,
+            (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
+            // A call stays in a fallback island's batch: native code only resumes past it.
             continue;
         }
         // A direct array's `length` is its record's; any other receiver reads the field as
@@ -3621,45 +3619,6 @@ pub(super) fn lower_js_general_dispatch(
                             destination,
                         );
                         builder.ins().jump(next, &[]);
-                        true
-                    } else {
-                        false
-                    }
-                }
-                JsDenotation::CapturedValue
-                    if instruction.capture_depth() == 0
-                        && instruction.result_flags() == 0
-                        && !instruction.returns_from_frame()
-                        && !instruction.writes_current_this()
-                        && instruction.numeric_local_target().is_none() =>
-                {
-                    if let Some(destination) = register_offset(instruction.result_register()) {
-                        use crate::value::ValueLayout;
-                        let fallback = builder.create_block();
-                        let values = emit_js_payload_word(
-                            &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values),
-                        );
-                        let len = emit_js_payload_word(
-                            &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len),
-                        );
-                        let slot = usize::from(instruction.capture_slot());
-                        let in_bounds = builder.ins().icmp_imm_u(
-                            IntCC::UnsignedGreaterThan, len, i64::try_from(slot).expect("capture slot fits i64"),
-                        );
-                        emit_js_guard(&mut builder, in_bounds, fallback);
-                        let offset = i32::try_from(slot * std::mem::size_of::<Value>())
-                            .expect("capture slot offset fits i32");
-                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
-                        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-                        let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
-                        emit_js_guard(&mut builder, ordinary, fallback);
-                        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
-                        builder.ins().jump(next, &[]);
-                        builder.switch_to_block(fallback);
-                        emit_js_step_fallback(
-                            &mut builder, context, callout, callout_signature, result_pointer,
-                            stopped_block, continue_block, pc,
-                        );
                         true
                     } else {
                         false
@@ -4067,85 +4026,67 @@ pub(super) fn lower_js_general_dispatch(
         let bitwise_result = numeric_binary
             && bitwise.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
+            && (instruction.result_flags() == 0
+                || (arithmetic_returns && instruction.result_flags() == RETURN_REGISTER))
             && !instruction.writes_current_this()
-            && result_target.and_then(register_offset).is_some()
+            && (arithmetic_returns || (result_target.and_then(register_offset).is_some() && result_next.is_some()))
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
-        if let (true, Some(next), Some(operation), Some((left_operand, right_operand))) =
-            (bitwise_result, result_next, bitwise, operands)
-        {
-            let fallback = builder.create_block();
-            let native = builder.create_block();
-            let destination = result_target
-                .and_then(register_offset)
-                .expect("prevalidated JS bitwise destination");
-            let left_bits = read_js_tagged_operand(
-                &mut builder,
-                program,
-                left_operand,
-                arguments,
-                &register_offset,
-            )
-            .expect("prevalidated JS bitwise operand");
-            let right_bits = read_js_tagged_operand(
-                &mut builder,
-                program,
-                right_operand,
-                arguments,
-                &register_offset,
-            )
-            .expect("prevalidated JS bitwise operand");
+        if let (true, Some(operation), Some((left_operand, right_operand))) = (bitwise_result, bitwise, operands) {
+            let (fallback, native) = (builder.create_block(), builder.create_block());
+            // A returning result lands in the completion record once no interrupt is pending,
+            // as a returning arithmetic result does.
+            let (target, destination, next) = if arithmetic_returns {
+                let compute = builder.create_block();
+                let interrupted = emit_js_interrupt_requested(&mut builder);
+                builder.ins().brif(interrupted, fallback, &[], compute, &[]);
+                builder.switch_to_block(compute);
+                (result_pointer, 0, builder.create_block())
+            } else {
+                (arguments, result_target.and_then(register_offset).expect("prevalidated JS bitwise destination"),
+                    result_next.expect("prevalidated JS bitwise continuation"))
+            };
+            let left_bits = read_js_tagged_operand(&mut builder, program, left_operand, arguments, &register_offset)
+                .expect("prevalidated JS bitwise operand");
+            let right_bits = read_js_tagged_operand(&mut builder, program, right_operand, arguments, &register_offset)
+                .expect("prevalidated JS bitwise operand");
             let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
             let int_tag = (crate::value::ValueLayout::INT_TAG >> shift) as i64;
             let left_tag = builder.ins().ushr_imm_u(left_bits, shift);
             let right_tag = builder.ins().ushr_imm_u(right_bits, shift);
-            let left_integer = builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, left_tag, int_tag);
-            let right_integer = builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, right_tag, int_tag);
+            let left_integer = builder.ins().icmp_imm_u(IntCC::Equal, left_tag, int_tag);
+            let right_integer = builder.ins().icmp_imm_u(IntCC::Equal, right_tag, int_tag);
             let both_integer = builder.ins().band(left_integer, right_integer);
-            builder
-                .ins()
-                .brif(both_integer, native, &[], fallback, &[]);
-
+            let (numbers, left, right) = (builder.create_block(), builder.append_block_param(native, types::I32),
+                builder.append_block_param(native, types::I32));
+            let (left_int, right_int) = (builder.ins().ireduce(types::I32, left_bits), builder.ins().ireduce(types::I32, right_bits));
+            builder.ins().brif(both_integer, native, &[ir::BlockArg::Value(left_int), ir::BlockArg::Value(right_int)], numbers, &[]);
+            // Other Numbers take their ToInt32 (ECMA-262 7.1.6), as the lane's do.
+            builder.switch_to_block(numbers);
+            let converted = [left_bits, right_bits].map(|bits| {
+                let number = emit_js_tagged_number(&mut builder, bits, fallback);
+                ir::BlockArg::Value(emit_number_to_int32(&mut builder, number, fallback))
+            });
+            builder.ins().jump(native, &converted);
             builder.switch_to_block(native);
-            let left = builder.ins().ireduce(types::I32, left_bits);
-            let right = builder.ins().ireduce(types::I32, right_bits);
-            let encoded = if operation
-                == super::operations::NumberBitwise::ShiftRightUnsigned
-            {
+            let encoded = if operation == super::operations::NumberBitwise::ShiftRightUnsigned {
                 let number = emit_number_bitwise_operation(&mut builder, operation, left, right);
                 emit_js_box_number(&mut builder, number)
             } else {
                 let result = emit_number_bitwise_bits(&mut builder, operation, left, right);
                 let payload = builder.ins().uextend(types::I64, result);
-                builder
-                    .ins()
-                    .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
+                builder.ins().bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
             };
-            builder.ins().store(
-                MemFlagsData::trusted(),
-                encoded,
-                arguments,
-                destination,
-            );
+            builder.ins().store(MemFlagsData::trusted(), encoded, target, destination);
             builder.ins().jump(next, &[]);
+            if arithmetic_returns {
+                builder.switch_to_block(next);
+                emit_js_return_status(&mut builder, pc);
+            }
             builder.switch_to_block(fallback);
-            emit_js_step_fallback(
-                &mut builder,
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            );
+            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -7012,9 +6953,9 @@ pub(super) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
-/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_opt_level`).
+/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
 pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).loop_opt_level.is_some()
+    tier_policy::by_policy(policy).loop_tier
 }
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
@@ -7046,7 +6987,7 @@ pub(super) fn compile_osr_region(
     if loop_tier_region_budget_spent() {
         return None;
     }
-    let isa = super::jit_backend::target_isa(tier_policy::by_policy(policy).loop_opt_level?)?;
+    let isa = super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -7101,7 +7042,7 @@ fn process_peak_rss_kib() -> i64 {
 /// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
 /// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
 /// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`PolicyTiers::loop_opt_level`).
+/// (`PolicyTiers::loop_tier`).
 #[cfg(feature = "gc-tuning")]
 fn loop_tier_region_budget_spent() -> bool {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7467,9 +7408,20 @@ struct JsStepDispatch {
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step.
     field_get: usize,
-    /// The dense shortcut of an array builtin call (`general_native_call`), which a `push` or
-    /// `pop` call site asks before the exact step.
+    /// The call shortcuts a call site asks before the exact step (`general_call`).
     native_call: usize,
+    user_call: usize,
+    /// The capture slots a capture site without a view asks for (`general_capture`), and
+    /// whether `capture_values` admits a direct write.
+    captures: usize,
+    capture_stores: usize,
+    /// A global name's cached read (`general_names`).
+    global_get: usize,
+    /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
+    /// `epoch`, and the admission a site whose entry misses asks.
+    call_cache: usize,
+    epoch: u64,
+    frameless: usize,
     /// The running heap's charged allocation weight and the weight a collection is due at,
     /// by address (`Heap::should_collect`), which a native back edge compares to leave for its
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
@@ -7674,31 +7626,6 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
 unsafe extern "C" fn general_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
     // SAFETY: as `lane_field_get`.
     unsafe { cached_field_read::<H>(vm, residual, receiver, read) }
-}
-
-/// A general-dispatch call of an array builtin: `Array.prototype.push` of one value or `pop`
-/// onto a dense array, by the lane's own shortcuts (`Vm::array_push_dense`,
-/// `Vm::array_pop_dense`); `Value::DELETED`, having done nothing, for any other callee,
-/// receiver or argument count, which the exact step calls. A push may move the array's
-/// elements, which native code reads anew at every access.
-unsafe extern "C" fn general_native_call<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, receiver: u64,
-    argument: u64, count: u64) -> u64 {
-    // SAFETY: as `lane_field_add`.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    let native = match vm.heap.function(Value::from_bits(callee)).map(|record| &record.kind) {
-        Some(crate::heap::FunctionKind::Native(native)) => *native,
-        _ => return Value::DELETED.to_bits(),
-    };
-    let receiver = Value::from_bits(receiver);
-    let value = match (native, count) {
-        (crate::heap::Native::ArrayPush, 1) => vm.array_push_dense(receiver, &[Value::from_bits(argument)]),
-        (crate::heap::Native::ArrayPop, 0) => vm.array_pop_dense(receiver),
-        _ => None,
-    };
-    let Some(value) = value else { return Value::DELETED.to_bits() };
-    // As `lane_store_miss`: a due collection waits for the next back edge's safepoint.
-    dispatch.refresh_object_bases(vm);
-    value.to_bits()
 }
 
 /// The VM's cached read of the field `read` names (its atom above its cache site): an array's
@@ -7999,28 +7926,6 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 }
 
 impl<H: Host> Vm<H> {
-    /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
-    /// (`dispatch_fast::lane_load_name_first`): in a function whose unresolved names are
-    /// global and resolve statically, a name no internal binding owns.
-    fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeSet<usize> {
-        let global = |function: u32| program.function_get(function as usize)
-            .is_some_and(|body| body.names_resolve_statically(program))
-            && self.programs.unresolved_names_are_global(self.active_program, function);
-        unit.instructions.iter().enumerate()
-            .filter(|(_, instruction)| matches!(instruction.op(), Op::LoadName | Op::LoadNameCall))
-            .filter(|(pc, instruction)| {
-                let atom = instruction.atom_index();
-                let function = match unit.origins[*pc] {
-                    lane_unit::Origin::Caller(_) => function,
-                    lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
-                };
-                global(function) && (!self.atom_class(atom).contains(super::object::AtomClass::INTERNAL)
-                    || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
-            })
-            .map(|(pc, _)| pc)
-            .collect()
-    }
-
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
     /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
     /// global object's cached data property; none for a binding in its TDZ or a miss.
@@ -8376,7 +8281,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0,
-                native_call: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -8527,7 +8432,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8563,7 +8468,11 @@ impl JsStepDispatch {
         self.field_store = lane_field_set::<H> as *const () as usize;
         self.field_add = lane_store_miss::<H> as *const () as usize;
         self.field_get = general_field_get::<H> as *const () as usize;
-        self.native_call = general_native_call::<H> as *const () as usize;
+        self.native_call = general_call::general_native_call::<H> as *const () as usize;
+        self.user_call = general_call::general_user_call::<H> as *const () as usize;
+        self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
+        self.global_get = general_names::general_global_get::<H> as *const () as usize;
+        self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));
         self.allocated = heap.wrapping_add(crate::heap::Heap::ALLOCATED_OFFSET) as usize;
         self.collect_at = heap.wrapping_add(crate::heap::Heap::COLLECT_AT_OFFSET) as usize;
@@ -8575,6 +8484,7 @@ impl JsStepDispatch {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let atoms = vm.method_cache_atoms.words();
@@ -8596,6 +8506,8 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
+        self.capture_stores = 0;
+        vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
     }
@@ -8858,10 +8770,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             .map_err(|_| JsError::validation("native JS PC does not fit usize".into()))?;
         let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
-        // SAFETY: the owning JsNativeActivation admits both pointers once and
-        // retains the shared program until native execution (including reentry)
-        // finishes. Record release requires unique ownership of that program.
+        // SAFETY: the owning JsNativeActivation admits both pointers once and retains the shared
+        // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
+        if let Some(step) = frameless::leave(vm, program, dispatch, pc) { return Ok(JsCalloutStep::Stop(step)); }
         let body = unsafe { &*dispatch.body };
         #[cfg(feature = "native-execution")]
         if SINGLE_OPERATION && dispatch.stop_pc == pc {
@@ -8912,49 +8824,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let next_pc = pc
             .checked_add(1)
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
-
-        let native_pc = !SINGLE_OPERATION && !dispatch.native_pcs.is_null()
-            && pc < dispatch.native_pc_count
-            // SAFETY: the compiled artifact owns this byte map for the entire
-            // native callout and the PC is bounded by its recorded length.
-            && unsafe { *dispatch.native_pcs.add(pc) != 0 };
-        if !SINGLE_OPERATION && native_pc
-            && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
-            && !vm.realm.global_lexical_declarations.contains(&instruction.atom_index())
-            && program
-                .atoms
-                .get(instruction.atom_index() as usize)
-                .is_some_and(|name| {
-                    !name.starts_with('\0') && !crate::bytecode::is_intrinsic_name(name)
-                })
-        {
-            let globals = vm.realm.globals;
-            let cache_site = instruction.cache_site_index();
-            let probe = vm.cached_field_hit(program, globals, cache_site);
-            if vm.programs.js_jit_diagnostics_enabled() {
-                vm.programs.record_js_jit_field_cache_probe(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    cache_site,
-                    matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
-                );
-            }
-            if let super::object::FieldCacheProbe::Hit(value) = probe {
-                #[cfg(test)]
-                {
-                    dispatch.global_name_cache_hits =
-                        dispatch.global_name_cache_hits.saturating_add(1);
-                }
-                let frame = &mut vm.frames[dispatch.frame];
-                frame.registers[usize::from(instruction.result_register())] = value;
-                if instruction.op() == Op::LoadNameCall {
-                    frame.registers[usize::from(instruction.register_b())] = Value::UNDEFINED;
-                }
-                frame.pc = next_pc;
-                frame.pc_is_resume = true;
-                return Ok(JsCalloutStep::Continue(next_pc));
-            }
-        }
 
         let frame = &mut vm.frames[dispatch.frame];
         // Entry admits these homes, and every effectful continuation validates
@@ -15874,7 +15743,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = super::jit_backend::target_isa(opt_level)?;
+        let isa = super::jit_backend::target_isa_at(opt_level)?;
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
@@ -16873,7 +16742,7 @@ mod tests {
     #[test]
     fn native_narrow_store_encoding_matches_shared_values() {
         use crate::value::NarrowLayout as N;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I64));
         signature.returns.push(AbiParam::new(types::I64));
@@ -16978,7 +16847,7 @@ mod tests {
     #[test]
     fn native_narrow_decoder_matches_value_bits() {
         use crate::value::NarrowLayout as N;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I32));
         signature.returns.push(AbiParam::new(types::I64));
@@ -17058,7 +16927,7 @@ mod tests {
         const ASR_KIND: u32 = 0b10 << SHIFT_KIND_OFFSET;
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLSH");
         use crate::vm::operations::NumberBitwise;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let width = ty.bits();
             let mask = u64::MAX >> (u64::BITS - width);
@@ -17184,7 +17053,7 @@ mod tests {
         "#;
         let program = crate::Engine::specialize(source, "countdown-dependencies.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "countdown_dependencies").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let coupled = module.functions.into_iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
                 if name == "countdown_dependencies_function_1" => Some(function), _ => None,
@@ -17206,7 +17075,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn private_store_commits_preserve_overlapping_bytes_and_zero_trips() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         let mut function = ir::Function::with_name_signature(UserFuncName::testcase("private_store_commit"), signature);
@@ -17255,7 +17124,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn conditional_xor_masks_preserve_integer_words_and_bit_positions() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word = u64::MAX >> (u64::BITS - ty.bits());
             let sign = 1_u64 << (ty.bits() - 1);
@@ -17324,7 +17193,7 @@ mod tests {
         "#);
         let program = crate::Engine::specialize(&source, "conditional-countdown.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "conditional_countdown").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let function = module.functions.into_iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
                 if name == "conditional_countdown_function_1" => Some(function), _ => None,
@@ -17365,7 +17234,7 @@ mod tests {
         "#;
         let program = crate::Engine::specialize(source, "inline-receiver.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "inline_receiver").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let function = module.functions.into_iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
                 if name == "inline_receiver_function_1" => Some(function), _ => None,
@@ -17461,7 +17330,7 @@ mod tests {
 
     #[test]
     fn masked_integer_conditions_preserve_width_polarity_and_other_uses() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word_mask = u64::MAX >> (u64::BITS - ty.bits());
             let sign_bit = 1_u64 << (ty.bits() - 1);
@@ -17508,7 +17377,7 @@ mod tests {
 
     #[test]
     fn rotated_countdown_preserves_empty_loops_and_early_exit_values() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
           for observe_counter in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
@@ -17844,7 +17713,7 @@ mod tests {
         const STORE_SOURCE_OFFSET: u32 = 42;
         let update_label = ir::ValueLabel::from_u32(UPDATE_LABEL);
         let store_location = ir::SourceLoc::new(STORE_SOURCE_OFFSET);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 5]);
@@ -17953,7 +17822,7 @@ mod tests {
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLCP");
         const FEEDBACK: u64 = 0xD008;
         const UNTOUCHED: u64 = 0x55;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 5]);
@@ -18064,7 +17933,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
         let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0).into_iter().next().unwrap();
         let native = &region.function;
         let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -18158,7 +18027,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
         let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0).into_iter().next().unwrap();
         assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -18335,7 +18204,7 @@ mod tests {
     #[cfg(feature = "aot")]
     fn linked_optimized_test_program(program: ResidualProgram) -> crate::NativeJsProgram<crate::test_host::TestHost> {
         let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
@@ -18564,7 +18433,7 @@ mod tests {
                     .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0);
             assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
             assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
@@ -18675,7 +18544,7 @@ mod tests {
                 else { crate::Engine::specialize(source, "field-values.cjs") }.unwrap();
             let pair = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pair")).unwrap();
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             let regions = lower_static_typed_regions(&program, pair as u32, &[], &*isa, 0);
             assert!(!regions.is_empty() && FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0,
@@ -19027,7 +18896,7 @@ mod tests {
                 &|function| program.function_get(function as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1);
             assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).is_empty());
             let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default());
@@ -19060,7 +18929,7 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "walk")).unwrap();
             let targets = static_call_targets(&program);
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).is_empty());
             let native = linked_optimized_test_program(program);
             let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
@@ -19118,7 +18987,7 @@ mod tests {
             let (caller, consume) = (named("run"), named("consume"));
             let call = program.function(consume).instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
             let targets = static_call_targets(&program);
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0)
                 .into_iter().next().expect("non-leaf prefix has exact one-frame recovery");
             assert!(!region.function.sized_stack_slots.is_empty(), "callee state must have recovery homes");
@@ -19209,7 +19078,7 @@ mod tests {
                 assert!(unit.frames.iter().any(|frame| frame.parent.is_some()), "exercise nested recovery planning");
 
             }
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             let mut region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next().unwrap();
             let consume = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
@@ -19626,7 +19495,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn bound_field_arena_preserves_slot_bounds() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for bound in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 4]);
@@ -19676,7 +19545,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "var before=0,after=0; var receiver={value:0,a:1,b:2}; function write(x){before++;receiver.value=x;after++;} for(let i=0;i<200;i++)write(i); write(0.5);",
             "untyped-native-write.js").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
@@ -19793,7 +19662,7 @@ mod tests {
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
 
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 4]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -20149,7 +20018,7 @@ mod tests {
 
     #[test]
     fn scalar_core_binds_poll_pointer_before_loop_but_keeps_atomic_reads() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
         let mut native = ir::Function::with_name_signature(UserFuncName::testcase("bound_poll"), signature);
         let mut context = FunctionBuilderContext::new();
@@ -20301,7 +20170,7 @@ mod tests {
         -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>)
     {
         let sites = super::super::specialize::instruction_sites(super::super::specialize::Division::Offline, program.function(function_id as usize));
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = None;
         let native = super::super::native_graph::lower_body(&sites, function_id, &*isa, None,
             |builder, site, context, result| {
@@ -20514,7 +20383,7 @@ mod tests {
             for (source, expected) in sources.iter().zip(["pbr", "p"]) {
                 let program = if typescript { crate::Engine::specialize_typescript(source, "bounded.cts") }
                     else { crate::Engine::specialize(source, "bounded.cjs") }.unwrap();
-                let isa = super::super::jit_backend::target_isa("speed").unwrap();
+                let isa = super::super::jit_backend::target_isa().unwrap();
                 let mut owners = Vec::new();
                 let mut entries = Vec::new();
                 for id in 0..program.function_count() {
@@ -21293,7 +21162,7 @@ mod tests {
     #[test]
     #[cfg(all(target_arch = "x86_64", unix))]
     fn native_value_index_offset_preserves_large_indices() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.push(AbiParam::new(types::I64));
@@ -21323,7 +21192,7 @@ mod tests {
     #[test]
     #[cfg(all(target_arch = "x86_64", unix))]
     fn native_checked_signed_multiply_preserves_product_and_overflow() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I16, types::I32, types::I64] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 3]);
@@ -21369,7 +21238,7 @@ mod tests {
     fn native_vector_rotations_preserve_near_matches_and_unaligned_accesses() {
         #[derive(Clone, Copy, Debug)]
         enum Shape { Rotate, DistinctInputs, SignedRight, NonComplementaryShift }
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         // A baseline x86-64 target has no optional SSSE3: it must retain
         // the existing shifts/OR lowering while producing the same values.
         let baseline = cranelift_codegen::isa::lookup(isa.triple().clone())
@@ -21444,7 +21313,7 @@ mod tests {
 
     #[test]
     fn native_alias_regions_preserve_overlapping_untagged_accesses() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for tagged_load in [false, true] {
             for tagged_store in [false, true] {
                 let mut signature = Signature::new(isa.default_call_conv());
@@ -21488,7 +21357,7 @@ mod tests {
 
     #[test]
     fn native_unsigned_widening_multiply_preserves_lane_products() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         // Exhaust both single-input shuffle encodings and all lane selectors,
         // including the unaffected cases, against scalar unsigned products.
         for shuffle in std::iter::once(None).chain(
