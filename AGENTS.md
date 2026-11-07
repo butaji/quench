@@ -29,6 +29,16 @@ is the interpreter specialized to what is known, and each fact has a binding tim
    the same specialized program: values in registers, numbers unboxed, layouts as
    constants, no boxing, spills or checks C would not need.
 
+Single homes (add to these; never a second copy):
+- `crates/quench-runtime/src/staged.rs`: object-layout and narrow-value reads, written once
+  over the `Stage` trait. `Concrete` runs them in the interpreter, `Emit` generates them as
+  Cranelift IR. Tests check that layout decodes outside this file only go down.
+- `vm/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
+  compiles.
+- `vm/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
+- `code_dependencies.rs`: stable facts (binding time `Stable`) fold only under a code
+  dependency. Retirement sets the body's invalidation word; there are no global epochs.
+
 ## Lisp mindset manifesto
 
 Every line carries domain meaning. Code is a liability; data is leverage.
