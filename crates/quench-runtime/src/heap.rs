@@ -582,7 +582,6 @@ pub(crate) struct Heap {
     iterator_records: IteratorRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
-    /// The atom each string record names, once known (`Heap::string_atom`).
     string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
@@ -2057,13 +2056,9 @@ impl Heap {
         self.ascii_unit_strings = None;
         self.collection_state = CollectionState::Idle;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        {
-            self.gc_profile = GcProfile::default();
-        }
+        { self.gc_profile = GcProfile::default(); }
         #[cfg(feature = "profile-memory")]
-        {
-            self.memory_profile = memory_profile::MemoryProfile::default();
-        }
+        { self.memory_profile = memory_profile::MemoryProfile::default(); }
     }
     /// Counts collections; a slot index names the same cell for as long as this is unchanged.
     #[inline(always)]
@@ -2620,15 +2615,10 @@ impl Heap {
                         memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
                 });
-            let string_atoms = &self.string_atoms;
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
-                RecordSweep::Keep(_, string) => {
-                    if full {
-                        live_payload_bytes += string.flat_unit_bytes();
-                    }
-                }
+                RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
                 RecordSweep::Dead(record_id, string) => {
-                    string_atoms.forget(record_id);
+                    self.string_atoms.forget(record_id);
                     *payload_bytes = payload_bytes.saturating_sub(string.flat_unit_bytes());
                 }
             });

@@ -27,25 +27,14 @@ impl FunctionCompiler<'_, '_> {
             && constants.len() <= u16::MAX as usize
         {
             let start = self.owner.constant_run(constants);
-            self.emit(
-                Op::MakeConstArray,
-                dst,
-                value.elements.len() as u16,
-                0,
-                start,
-            );
+            self.emit(Op::MakeConstArray, dst, value.elements.len() as u16, 0, start);
             return dst;
         }
-        let element_temporaries = self.next_reg;
-        if let Some(values) = self.literal_element_values(value) {
-            self.emit(Op::MakeArray, dst, 0, 0, values.len() as u32);
-            for (index, item) in values.into_iter().enumerate() {
-                self.emit(Op::DefineArrayElement, item, dst, 0, index as u32);
-            }
-            self.next_reg = element_temporaries;
+        if self.short_array_literal(dst, value) {
             return dst;
         }
         self.emit(Op::MakeArray, dst, 0, 0, value.elements.len() as u32);
+        let element_temporaries = self.next_reg;
         for (index, item) in value.elements.iter().enumerate() {
             let Some(expr) = item.as_expression() else {
                 continue;
@@ -55,6 +44,21 @@ impl FunctionCompiler<'_, '_> {
             self.next_reg = element_temporaries;
         }
         dst
+    }
+
+    /// A short literal without holes (`literal_element_values`) made into `dst`: its
+    /// element definitions follow `MakeArray` back to back. `false` emits nothing.
+    fn short_array_literal(&mut self, dst: Register, value: &ArrayExpression<'_>) -> bool {
+        let element_temporaries = self.next_reg;
+        let Some(values) = self.literal_element_values(value) else {
+            return false;
+        };
+        self.emit(Op::MakeArray, dst, 0, 0, values.len() as u32);
+        for (index, item) in values.into_iter().enumerate() {
+            self.emit(Op::DefineArrayElement, item, dst, 0, index as u32);
+        }
+        self.next_reg = element_temporaries;
+        true
     }
 
     /// The registers holding a short literal's elements, every one evaluated before the

@@ -1393,7 +1393,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 778
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1053
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1773
-file-lines crates/quench-runtime/src/heap.rs 4845
+file-lines crates/quench-runtime/src/heap.rs 4841
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 873
 file-lines crates/quench-runtime/src/heap/cell.rs 4149
@@ -1411,7 +1411,7 @@ file-lines crates/quench-runtime/src/snapshot.rs 892
 file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 605
 file-lines crates/quench-runtime/src/value.rs 1031
-file-lines crates/quench-runtime/src/value_vec.rs 1493
+file-lines crates/quench-runtime/src/value_vec.rs 1490
 file-lines crates/quench-runtime/src/vm.rs 3824
 file-lines crates/quench-runtime/src/vm/array.rs 1232
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
@@ -1423,7 +1423,7 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 628
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 525
 file-lines crates/quench-runtime/src/vm/collections.rs 1534
-file-lines crates/quench-runtime/src/vm/compiled.rs 21908
+file-lines crates/quench-runtime/src/vm/compiled.rs 21876
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 539
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 714
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 6072
@@ -1437,7 +1437,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 657
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24166
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24119
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3047
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1470,7 +1470,7 @@ file-lines crates/quench-runtime/src/vm/object.rs 5129
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 1015
 file-lines crates/quench-runtime/src/vm/object_get.rs 1518
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
-file-lines crates/quench-runtime/src/vm/object_static.rs 1009
+file-lines crates/quench-runtime/src/vm/object_static.rs 990
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2735
@@ -2561,7 +2561,6 @@ function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::emit_parameter_bindings 54
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::new 108
 function-lines crates/quench-runtime/src/compile/ast/array_literal.rs::FunctionCompiler<'_,'_>::accumulated_array 48
-function-lines crates/quench-runtime/src/compile/ast/array_literal.rs::FunctionCompiler<'_,'_>::array_expression 43
 function-lines crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::call 74
 function-lines crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::delete_expression 46
 function-lines crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::name_bindings 58
@@ -2647,14 +2646,14 @@ function-lines crates/quench-runtime/src/heap.rs::Heap::alloc_cell 76
 function-lines crates/quench-runtime/src/heap.rs::Heap::cell_kind 48
 function-lines crates/quench-runtime/src/heap.rs::Heap::cell_payload_bytes 72
 function-lines crates/quench-runtime/src/heap.rs::Heap::children 200
-function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 562
+function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 559
 function-lines crates/quench-runtime/src/heap.rs::Heap::compact_property_arena 69
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_full 41
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_minor 73
 function-lines crates/quench-runtime/src/heap.rs::Heap::iterator_edges 60
 function-lines crates/quench-runtime/src/heap.rs::Heap::mark_value 224
 function-lines crates/quench-runtime/src/heap.rs::Heap::profile_allocation 58
-function-lines crates/quench-runtime/src/heap.rs::Heap::reset 57
+function-lines crates/quench-runtime/src/heap.rs::Heap::reset 54
 function-lines crates/quench-runtime/src/heap.rs::Heap::retire_dead_prototypes 42
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_full_parallel 67
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_serial 153
@@ -3032,7 +3031,7 @@ function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_
 function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_user_call 107
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::note_lane_body_end 48
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::osr_diagnostics 75
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_lane_body 46
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_lane_body 45
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_leaf_returns 45
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::call_prepared_lane 86
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_callback 151

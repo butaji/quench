@@ -3167,7 +3167,6 @@ impl<H: Host> Vm<H> {
         self.atoms.clear();
         self.name_atom_memo.clear();
         self.array_index_atoms.clear();
-        self.heap.clear_string_atoms();
         self.atom_classes.clear();
         self.intrinsic_natives.clear();
         self.regexp_subjects.clear();
