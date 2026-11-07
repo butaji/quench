@@ -4407,12 +4407,12 @@ impl<'a> Compiler<'a> {
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
-    ) -> Vec<bool> {
+    ) -> crate::bitset::BitSet {
         let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                    if plain_slots.contains(instruction.local_slot()) =>
                 {
                     instruction.set_op(if instruction.op() == Op::LoadLocal {
                         Op::LoadLocalPlain
@@ -4426,7 +4426,7 @@ impl<'a> Compiler<'a> {
         for instruction in &mut function.wide {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                    if plain_slots.contains(instruction.local_slot()) =>
                 {
                     instruction.set_op(if instruction.op() == Op::LoadLocal {
                         Op::LoadLocalPlain

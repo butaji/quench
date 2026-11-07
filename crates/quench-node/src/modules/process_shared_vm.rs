@@ -3010,12 +3010,21 @@ pub(super) fn route_callback_failure(
     let Some(exception) = failure.exception else {
         return Err(runtime.format_rooted_error(program, &mut failure));
     };
+    route_uncaught_failure(runtime, program, exception, &mut failure)
+}
+
+/// Routes a thrown `exception` (rooted in `failure`) to `uncaughtException` listeners and
+/// releases its root: handled, or the uncaught error's text when nobody listens.
+fn route_uncaught_failure(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    exception: RootId,
+    failure: &mut RootedError,
+) -> Result<(), String> {
     let routed = route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
     let result = match routed {
         Ok(true) => Ok(()),
-        Ok(false) => {
-            Err(format_uncaught_error(runtime, program, &mut failure))
-        }
+        Ok(false) => Err(format_uncaught_error(runtime, program, failure)),
         Err(handler_error) => Err(handler_error),
     };
     runtime.release_root(exception);
@@ -3250,17 +3259,7 @@ pub(crate) fn run_host_jobs_with_uncaught(
             error,
             exception: Some(exception),
         };
-        let routed =
-            route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
-        let result = match routed {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                Err(format_uncaught_error(runtime, program, &mut failure))
-            }
-            Err(handler_error) => Err(handler_error),
-        };
-        runtime.release_root(exception);
-        result?;
+        route_uncaught_failure(runtime, program, exception, &mut failure)?;
     }
 }
 

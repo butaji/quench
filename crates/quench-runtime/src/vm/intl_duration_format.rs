@@ -869,52 +869,11 @@ fn push_duration_text(
     });
 }
 
+/// A duration unit's label; duration units are the plural measure units.
 fn duration_unit_label(unit: &str, style: &str, value: f64) -> String {
-    let (long, short, narrow) = match unit {
-        "years" => (if value == 1.0 { "year" } else { "years" }, "yr", "y"),
-        "months" => (if value == 1.0 { "month" } else { "months" }, "mo", "m"),
-        "weeks" => (if value == 1.0 { "week" } else { "weeks" }, "wk", "w"),
-        "days" => (
-            if value == 1.0 { "day" } else { "days" },
-            if value == 1.0 { "day" } else { "days" },
-            "d",
-        ),
-        "hours" => (if value == 1.0 { "hour" } else { "hours" }, "hr", "h"),
-        "minutes" => (if value == 1.0 { "minute" } else { "minutes" }, "min", "m"),
-        "seconds" => (if value == 1.0 { "second" } else { "seconds" }, "sec", "s"),
-        "milliseconds" => (
-            if value == 1.0 {
-                "millisecond"
-            } else {
-                "milliseconds"
-            },
-            "ms",
-            "ms",
-        ),
-        "microseconds" => (
-            if value == 1.0 {
-                "microsecond"
-            } else {
-                "microseconds"
-            },
-            "μs",
-            "μs",
-        ),
-        _ => (
-            if value == 1.0 {
-                "nanosecond"
-            } else {
-                "nanoseconds"
-            },
-            "ns",
-            "ns",
-        ),
-    };
-    match style {
-        "long" => long.into(),
-        "narrow" => narrow.into(),
-        _ => short.into(),
-    }
+    let unit = unit.strip_suffix('s').unwrap_or(unit);
+    let label = super::intl_number::unit_label(unit, style, value == 1.0);
+    label.unwrap_or_else(|| unreachable!("{unit} is a duration unit")).into()
 }
 
 fn localize_duration_number(value: &str, numbering: &str) -> String {

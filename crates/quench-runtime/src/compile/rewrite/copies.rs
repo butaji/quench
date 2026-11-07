@@ -42,7 +42,7 @@ pub(super) fn forward_move_sources(
 
 /// What copy propagation may not cross or rewrite in a function.
 struct Scope {
-    protected: Vec<bool>,
+    protected: crate::bitset::BitSet,
     handlers: Vec<(usize, usize)>,
     /// Promoted local storage, and the parameters' part of it.
     storage: RegisterSet,
@@ -108,7 +108,7 @@ fn move_reader(function: &BcFunction, transfers: &[(RegisterSet, RegisterSet)], 
     let (source, destination) = (register_bit(mov.register_b()), register_bit(mov.result_register()));
     for at in (pc + 1..function.code.len()).take(WINDOW) {
         let (read, written) = transfers[at];
-        if scope.protected[at] || scope.in_handler(at) {
+        if scope.protected.contains(at) || scope.in_handler(at) {
             return None;
         }
         if read & destination != 0 {

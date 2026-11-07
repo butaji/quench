@@ -1,7 +1,6 @@
 use super::*;
 const ZERO_OFFSET_TIME_ZONES: [&str; 5] = ["UTC", "+00", "-00", "+00:00", "-00:00"];
 use chrono::{Datelike, Duration, Offset, TimeZone, Timelike, Utc};
-use std::cmp::Ordering;
 
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 use crate::units::NANOSECONDS_PER_SECOND;
@@ -453,11 +452,7 @@ impl<H: Host> Vm<H> {
                 args.get(1).copied().unwrap_or(Value::UNDEFINED),
             )?;
             let ordering = left.epoch_nanoseconds.cmp(&right.epoch_nanoseconds);
-            return Ok(Value::number(match ordering {
-                Ordering::Less => -1.0,
-                Ordering::Equal => 0.0,
-                Ordering::Greater => 1.0,
-            }));
+            return Ok(Value::number(f64::from(ordering as i8)));
         }
         if native == Native::TemporalZonedDateTimeEquals {
             let Some(Cell::TemporalZonedDateTime {
@@ -1661,11 +1656,7 @@ impl<H: Host> Vm<H> {
             return Ok(([0.0; 10], start.epoch_nanoseconds));
         }
         let direction = (target.epoch_nanoseconds - start.epoch_nanoseconds).signum();
-        let wall_direction = match end_time.cmp(&start_time) {
-            Ordering::Less => -1,
-            Ordering::Equal => 0,
-            Ordering::Greater => 1,
-        };
+        let wall_direction = i128::from(end_time.cmp(&start_time) as i8);
         // DifferenceZonedDateTime bounds corrections to the target date:
         // forward differences permit two corrections, backward ones one.
         const MAX_FORWARD_DAY_CORRECTION: i128 = 2;

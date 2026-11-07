@@ -49,7 +49,7 @@ static DISPATCH_OPS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::
 
 static CALL_TARGET_SAMPLE: AtomicU64 = AtomicU64::new(0);
 /// Exact, opt-in census of the general dispatch loop's in-loop call-target probe.
-static CALL_ELIGIBILITY: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+static CALL_ELIGIBILITY: [AtomicU64; CallEligibility::NAMES.len()] = [const { AtomicU64::new(0) }; CallEligibility::NAMES.len()];
 static CALL_TARGETS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<(u32, u32, u32), CallTargetProfile>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
@@ -89,9 +89,34 @@ pub(super) fn call_target(
     *profile.functions.entry(target).or_default() += 1;
 }
 
-/// Record an in-loop call-target probe outcome. `outcome` indexes the labels below.
-pub(super) fn call_eligibility(outcome: usize) {
-    if let Some(counter) = CALL_ELIGIBILITY.get(outcome) {
+/// An in-loop call-target probe outcome.
+#[derive(Clone, Copy)]
+pub(super) enum CallEligibility {
+    PositiveCacheHit,
+    PositiveResolution,
+    NonHeapCallee,
+    NativeOrWrongRealmOrNonCallable,
+    MissingProgramOrFunction,
+    UnsupportedCallPlan,
+}
+
+impl CallEligibility {
+    /// Each outcome's report label, in declaration order.
+    const NAMES: [&str; 6] = [
+        "positive_cache_hit",
+        "positive_resolution",
+        "non_heap_callee",
+        "native_or_wrong_realm_or_non_callable",
+        "missing_program_or_function",
+        "unsupported_call_plan",
+    ];
+}
+
+const _: () = assert!(CallEligibility::UnsupportedCallPlan as usize + 1 == CallEligibility::NAMES.len());
+
+/// Record an in-loop call-target probe outcome.
+pub(super) fn call_eligibility(outcome: CallEligibility) {
+    if let Some(counter) = CALL_ELIGIBILITY.get(outcome as usize) {
         counter.fetch_add(1, Ordering::Relaxed);
         REPORT.call_once(|| {
             // SAFETY: `report` is a plain function that outlives the process.
@@ -153,15 +178,7 @@ extern "C" fn report() {
         let (name, counter) = event.counter();
         eprintln!("capture {name}: {}", counter.load(Ordering::Relaxed));
     }
-    const CALL_ELIGIBILITY_NAMES: [&str; 6] = [
-        "positive_cache_hit",
-        "positive_resolution",
-        "non_heap_callee",
-        "native_or_wrong_realm_or_non_callable",
-        "missing_program_or_function",
-        "unsupported_call_plan",
-    ];
-    let call_eligibility: Vec<_> = CALL_ELIGIBILITY_NAMES
+    let call_eligibility: Vec<_> = CallEligibility::NAMES
         .iter()
         .enumerate()
         .map(|(index, name)| (*name, CALL_ELIGIBILITY[index].load(Ordering::Relaxed)))

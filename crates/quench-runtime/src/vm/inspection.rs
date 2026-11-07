@@ -101,10 +101,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
-            Some(Cell::TypedArray { kind, .. }) => super::typed_array_install::TYPED_ARRAY_INSTALLS
-                .iter()
-                .find_map(|(installed, _, name)| (installed == kind).then_some(*name))
-                .expect("typed array intrinsic"),
+            Some(Cell::TypedArray { kind, .. }) => kind.name(),
             Some(Cell::DataView { .. }) => {
                 if uncaptured_factory {
                     "DataView"

@@ -641,14 +641,7 @@ impl<H: Host> Vm<H> {
             .month_code
             .map(|month| self.calendarized_month_code(p, month, &fields.calendar, year, constrain))
             .transpose()?;
-        let month = match (fields.month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "month and monthCode must agree".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
-        };
+        let month = self.temporal_month(p, fields.month, month_code)?;
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainDateTime".into()));
         }
@@ -742,11 +735,7 @@ impl<H: Host> Vm<H> {
         let left_key = (left.0.year, left.0.month, left.0.day, left.1);
         let right_key = (right.0.year, right.0.month, right.0.day, right.1);
         let ordering = left_key.cmp(&right_key);
-        Ok(Value::number(match ordering {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        }))
+        Ok(Value::number(f64::from(ordering as i8)))
     }
 
     pub(super) fn temporal_plain_date_time_constructor(

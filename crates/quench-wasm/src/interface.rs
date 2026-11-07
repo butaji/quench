@@ -1,17 +1,9 @@
 //! A module's imports and exports as its binary declares them, read without validating or
 //! lowering it: what a host needs to link the module before it compiles it.
 
-use wasmparser::{ExternalKind, Parser, Payload, TypeRef};
+use wasmparser::{Parser, Payload};
 
-/// An import or export's kind, as the JS API names it (`WebAssembly.Module.imports`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExternKind {
-    Function,
-    Table,
-    Memory,
-    Global,
-    Tag,
-}
+pub use quench_runtime::WasmExternKind as ExternKind;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Import {
@@ -42,26 +34,14 @@ pub fn interface(bytes: &[u8]) -> Option<Interface> {
             Payload::ImportSection(reader) => {
                 for import in reader.into_imports() {
                     let import = import.ok()?;
-                    let kind = match import.ty {
-                        TypeRef::Func(_) | TypeRef::FuncExact(_) => ExternKind::Function,
-                        TypeRef::Table(_) => ExternKind::Table,
-                        TypeRef::Memory(_) => ExternKind::Memory,
-                        TypeRef::Global(_) => ExternKind::Global,
-                        TypeRef::Tag(_) => ExternKind::Tag,
-                    };
+                    let kind = ExternKind::from(import.ty);
                     interface.imports.push(Import { module: import.module.to_owned(), name: import.name.to_owned(), kind });
                 }
             }
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export = export.ok()?;
-                    let kind = match export.kind {
-                        ExternalKind::Func | ExternalKind::FuncExact => ExternKind::Function,
-                        ExternalKind::Table => ExternKind::Table,
-                        ExternalKind::Memory => ExternKind::Memory,
-                        ExternalKind::Global => ExternKind::Global,
-                        ExternalKind::Tag => ExternKind::Tag,
-                    };
+                    let kind = ExternKind::from(export.kind);
                     interface.exports.push(Export { name: export.name.to_owned(), kind });
                 }
             }
