@@ -247,7 +247,7 @@ impl<H: Host> Vm<H> {
             return LaneBodyOutcome::Stale;
         }
         match pending.poll() {
-            Err(pending) => LaneBodyOutcome::Compiling(Box::new(pending)),
+            Err(pending) => LaneBodyOutcome::Compiling(pending),
             Ok(LaneCompile::Replan) => LaneBodyOutcome::Stale,
             Ok(LaneCompile::Done(method)) => method
                 .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
@@ -265,9 +265,9 @@ fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
 
 impl PendingLaneMethod {
     /// What its compile came to, or itself while its code compiles.
-    fn poll(self) -> Result<LaneCompile, Self> {
+    fn poll(self) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
-            std::task::Poll::Pending => return Err(self),
+            std::task::Poll::Pending => return Err(Box::new(self)),
             std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) => LaneCompile::Replan,
             std::task::Poll::Ready(_) => LaneCompile::Done(None),

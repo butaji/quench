@@ -99,7 +99,7 @@ fn function(rng: &mut Rng, index: usize, out: &mut String) {
     for _ in 0..STATEMENTS {
         statement(rng, out, 2);
     }
-    let _ = write!(out, " return {}; }}\n", expression(rng, EXPRESSION_DEPTH));
+    let _ = writeln!(out, " return {}; }}", expression(rng, EXPRESSION_DEPTH));
 }
 
 /// A digest of every result: type, int32 image, sign of zero, NaN, and string length.
@@ -118,7 +118,7 @@ fn program(seed: u64) -> String {
     for index in 0..FUNCTIONS {
         function(&mut rng, index, &mut out);
     }
-    let _ = write!(out, "var o = {{p: 1, q: 2}}, arr = [1, 2, 3, 4], c = counter();\n");
+    let _ = writeln!(out, "var o = {{p: 1, q: 2}}, arr = [1, 2, 3, 4], c = counter();");
     let _ = write!(out, "for (var i = 0; i < {HOT_CALLS}; i++) {{ ");
     for index in 0..FUNCTIONS {
         let (a, b) = (rng.pick(ARGUMENTS), rng.pick(ARGUMENTS));
