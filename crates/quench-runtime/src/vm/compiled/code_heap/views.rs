@@ -124,6 +124,7 @@ impl Views {
 #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
 compile_error!("the code zone needs a W^X mapping scheme for this operating system");
 
+#[cfg(target_os = "linux")]
 /// The page-aligned span covering `[offset, offset + bytes)`.
 fn page_span(offset: usize, bytes: usize) -> (usize, usize) {
     let page = page_bytes();
@@ -132,7 +133,8 @@ fn page_span(offset: usize, bytes: usize) -> (usize, usize) {
 }
 
 /// The system page size, which every region and chunk is a multiple of.
-pub(super) fn page_bytes() -> usize {
+#[cfg(target_os = "linux")]
+fn page_bytes() -> usize {
     static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     // SAFETY: `sysconf` has no preconditions.
     *PAGE.get_or_init(|| {
