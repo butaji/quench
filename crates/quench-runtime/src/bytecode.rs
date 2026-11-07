@@ -1330,11 +1330,13 @@ pub(crate) struct DeclaredAtomSets {
 pub(crate) enum RootSlotRule {
     /// The binding itself.
     Binding,
-    /// A Script's global lexical binding: the slot itself outside a dynamic script's
-    /// evaluation, the realm's record during one.
-    GlobalLexical,
-    /// A global var or module import, which reads go through.
-    Projection,
+    /// A Script's global lexical binding of this name: the slot itself until the realm
+    /// retains the name, the realm's record from then on.
+    GlobalLexical(Atom),
+    /// A global var of this name: a property of the global object, which reads go through.
+    GlobalVar(Atom),
+    /// A module import, which reads go through.
+    Import,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -4402,9 +4404,9 @@ impl ResidualProgram {
         };
         let declaration = root.slot_declaration(slot);
         if declaration.global_var && !self.root_variables_are_local() {
-            RootSlotRule::Projection
+            RootSlotRule::GlobalVar(root.local_atoms[slot])
         } else if declaration.global_lexical && self.kind == ProgramKind::Script {
-            RootSlotRule::GlobalLexical
+            RootSlotRule::GlobalLexical(root.local_atoms[slot])
         } else {
             RootSlotRule::Binding
         }

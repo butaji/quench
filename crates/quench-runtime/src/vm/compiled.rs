@@ -4538,28 +4538,8 @@ pub(super) fn jit_wasm_selective_enabled() -> bool {
     super::switches::WASM_JIT_SELECTIVE.enabled()
 }
 
-fn jit_direct_compare_branches_enabled() -> bool {
-    super::switches::WASM_JIT_DIRECT_COMPARE_BRANCHES.enabled()
-}
-
-/// Keep the screened affine pair loop opt-in; the benchmark harness can still
-/// run a same-binary, same-host comparison arm with it enabled.
-fn jit_affine_pair_enabled() -> bool {
-    super::switches::WASM_JIT_AFFINE_PAIR.enabled()
-}
-
-fn jit_reference_body_cache_enabled() -> bool {
-    super::switches::WASM_JIT_REFERENCE_BODY_CACHE.enabled()
-}
-
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
     super::switches::WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
-}
-
-/// Run the guarded numeric hash-map loop by default. Set the environment
-/// variable to `0` to retain the interpreter path for A/B measurement.
-fn jit_numeric_find_enabled() -> bool {
-    super::switches::JS_JIT_NUMERIC_FIND.enabled()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4643,11 +4623,6 @@ pub(super) fn with_wasm_jit_mode_for_test<R>(
     });
     let _restore = Restore(previous);
     run()
-}
-
-#[cfg(test)]
-pub(super) fn with_jit_direct_compare_branches_for_test<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
-    super::switches::with_switch(&super::switches::WASM_JIT_DIRECT_COMPARE_BRANCHES, enabled, run)
 }
 
 fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
@@ -9894,330 +9869,6 @@ impl Plan {
     }
 }
 
-/// A counted `i32` loop whose body computes two adjacent element-wise sums.
-/// The fast path is admitted only when the memory ranges are statically
-/// disjoint and fit memory32 without wrapping; a one-time runtime length guard
-/// falls back to the original scalar loop when the memory is too short.
-#[derive(Clone, Copy, Debug)]
-struct AffinePairLoop {
-    header: usize,
-    branch: usize,
-    exit: usize,
-    induction: u16,
-    bound: u32,
-    destination: u32,
-    left: u32,
-    right: u32,
-    max_end: u64,
-}
-
-fn affine_pair_loop(
-    parameter_registers: Option<u16>,
-    register_count: u16,
-    plan: &Plan,
-    instructions: &[WideInstruction],
-    memory_register: u16,
-) -> Option<AffinePairLoop> {
-    for branch_pc in 1..instructions.len() {
-        let branch = instructions[branch_pc];
-        if branch.op() != Op::WasmJumpI32NotEqualImmediate {
-            continue;
-        }
-        let header = branch.jump_target() as usize;
-        let induction = branch.a();
-        let Ok(bound) = u32::try_from(branch.b() as i16) else {
-            continue;
-        };
-        if header >= branch_pc || bound == 0 || bound % 4 != 0 {
-            continue;
-        }
-        let update = instructions[branch_pc - 1];
-        if update.op() != Op::WasmI32AddImmediate
-            || update.a() != induction
-            || update.b() != induction
-            || update.imm() as i32 != 2
-        {
-            continue;
-        }
-        let shift = instructions[header];
-        if shift.op() != Op::WasmI32ShiftLeftImmediate
-            || shift.b() != induction
-            || shift.imm() != 2
-            || shift.a() == induction
-        {
-            continue;
-        }
-        let scaled = shift.a();
-        let Some(parameter_base) = parameter_registers else {
-            continue;
-        };
-        if (usize::from(parameter_base)..usize::from(parameter_base) + plan.params.len())
-            .contains(&usize::from(induction))
-        {
-            continue;
-        }
-        if instructions[..header]
-            .iter()
-            .any(|instruction| writes_register(*instruction, induction))
-        {
-            continue;
-        }
-        // The activation initializes locals to zero, which makes the
-        // induction start valid only if the function reaches this header by
-        // its ordinary prefix. Keep that prefix straight-line; a jump into
-        // its middle could otherwise carry a value from an earlier visit to
-        // the loop.
-        if instructions[..header].iter().any(|instruction| {
-            matches!(
-                instruction.op().control_flow_layout(),
-                ControlFlowLayout::Jump
-                    | ControlFlowLayout::ConditionalJump
-                    | ControlFlowLayout::BranchTable
-                    | ControlFlowLayout::Terminal
-            )
-        }) {
-            continue;
-        }
-        // The recognized loop has one straight-line body, one counted
-        // backedge, and one fallthrough exit. Reject any external edge into
-        // its prefix or interior so a scalar entry cannot carry a different
-        // induction value through the one-time guard.
-        let external_edge = instructions.iter().enumerate().any(|(pc, instruction)| {
-            if (header..=branch_pc).contains(&pc) {
-                return false;
-            }
-            let targets: Vec<usize> = match instruction.op().control_flow_layout() {
-                ControlFlowLayout::Jump => vec![instruction.jump_target() as usize],
-                ControlFlowLayout::ConditionalJump => {
-                    vec![instruction.jump_target() as usize, pc + 1]
-                }
-                ControlFlowLayout::BranchTable => return true,
-                ControlFlowLayout::Terminal => vec![],
-                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
-                    if instruction.returns_from_frame() {
-                        vec![]
-                    } else {
-                        vec![pc + 1]
-                    }
-                }
-            };
-            targets
-                .into_iter()
-                .any(|target| target <= branch_pc && !(pc < header && target == pc + 1))
-        });
-        if external_edge {
-            continue;
-        }
-        if (header..branch_pc).any(|pc| {
-            !plan.reachable(pc)
-                || matches!(
-                    instructions[pc].op().control_flow_layout(),
-                    ControlFlowLayout::Jump
-                        | ControlFlowLayout::ConditionalJump
-                        | ControlFlowLayout::BranchTable
-                        | ControlFlowLayout::Terminal
-                )
-        }) || branch_pc + 1 >= instructions.len()
-            || !plan.reachable(branch_pc)
-            || !plan.reachable(branch_pc + 1)
-        {
-            continue;
-        }
-
-        let registers = usize::from(register_count);
-        let mut addresses = vec![None; registers];
-        let mut values = vec![None; registers];
-        let mut loads = 0usize;
-        let mut adds = 0usize;
-        let mut stores = Vec::with_capacity(2);
-        let mut address_adds = 0usize;
-        let mut written = Vec::new();
-        let mut supported = true;
-        for (pc, instruction) in instructions
-            .iter()
-            .copied()
-            .enumerate()
-            .take(branch_pc)
-            .skip(header)
-        {
-            if pc == header {
-                written.push(instruction.a());
-                continue;
-            }
-            let op = instruction.op();
-            if op == Op::WasmI32AddImmediate {
-                if pc == branch_pc - 1 {
-                    written.push(instruction.a());
-                    continue;
-                }
-                if instruction.b() != scaled || instruction.a() == scaled {
-                    supported = false;
-                    break;
-                }
-                if instruction.a() == induction {
-                    supported = false;
-                    break;
-                }
-                let offset = instruction.imm() as i32;
-                if offset < 0 {
-                    supported = false;
-                    break;
-                }
-                let destination = usize::from(instruction.a());
-                addresses[destination] = Some(offset as u32);
-                values[destination] = None;
-                address_adds += 1;
-                written.push(instruction.a());
-            } else if op == Op::WasmI32Load {
-                if instruction.b() != memory_register
-                    || instruction.imm() != 0
-                    || instruction.a() == induction
-                    || instruction.a() == scaled
-                {
-                    supported = false;
-                    break;
-                }
-                let Some(offset) = addresses[usize::from(instruction.c())].take() else {
-                    supported = false;
-                    break;
-                };
-                let destination = usize::from(instruction.a());
-                addresses[destination] = None;
-                values[destination] = Some([offset, u32::MAX]);
-                loads += 1;
-                written.push(instruction.a());
-            } else if op == Op::WasmI32Add {
-                if instruction.a() == induction || instruction.a() == scaled {
-                    supported = false;
-                    break;
-                }
-                let (Some(left), Some(right)) = (
-                    values[usize::from(instruction.b())].take(),
-                    values[usize::from(instruction.c())].take(),
-                ) else {
-                    supported = false;
-                    break;
-                };
-                if left[1] != u32::MAX || right[1] != u32::MAX {
-                    supported = false;
-                    break;
-                }
-                let destination = usize::from(instruction.a());
-                addresses[destination] = None;
-                values[destination] = Some([left[0], right[0]]);
-                adds += 1;
-                written.push(instruction.a());
-            } else if op == Op::WasmI32Store {
-                if instruction.b() != memory_register || instruction.imm() != 0 {
-                    supported = false;
-                    break;
-                }
-                let (Some(destination), Some(sources)) = (
-                    addresses[usize::from(instruction.c())].take(),
-                    values[usize::from(instruction.a())].take(),
-                ) else {
-                    supported = false;
-                    break;
-                };
-                if sources[1] == u32::MAX {
-                    supported = false;
-                    break;
-                }
-                stores.push((destination, sources));
-            } else {
-                supported = false;
-                break;
-            }
-        }
-        if !supported || loads != 4 || adds != 2 || stores.len() != 2 || address_adds != 6 {
-            continue;
-        }
-        let [(destination, sources), (second_destination, second_sources)] = stores.as_slice()
-        else {
-            continue;
-        };
-        if u64::from(*second_destination) != u64::from(*destination) + 4 {
-            continue;
-        }
-        let (left, right) = if (u64::from(second_sources[0]) == u64::from(sources[0]) + 4
-            && u64::from(second_sources[1]) == u64::from(sources[1]) + 4)
-            || (u64::from(second_sources[0]) == u64::from(sources[1]) + 4
-                && u64::from(second_sources[1]) == u64::from(sources[0]) + 4)
-        {
-            (sources[0], sources[1])
-        } else {
-            continue;
-        };
-        let range_end = |start: u32| u64::from(start) + u64::from(bound) * 4;
-        let destination_end = range_end(*destination);
-        let left_end = range_end(left);
-        let right_end = range_end(right);
-        let wasm_address_end = u64::from(u32::MAX) + 1;
-        if destination_end > wasm_address_end
-            || left_end > wasm_address_end
-            || right_end > wasm_address_end
-        {
-            continue;
-        }
-        let disjoint = |first_start: u32, first_end: u64, second_start: u32, second_end: u64| {
-            first_end <= u64::from(second_start) || second_end <= u64::from(first_start)
-        };
-        if !disjoint(*destination, destination_end, left, left_end)
-            || !disjoint(*destination, destination_end, right, right_end)
-        {
-            continue;
-        }
-        // No loop-local register may be observed after the loop before a
-        // scalar definition replaces it. This lets the vector loop jump
-        // directly to the scalar loop's exit without manufacturing unused
-        // interpreter temporaries.
-        let mut pending = written;
-        pending.sort_unstable();
-        pending.dedup();
-        let mut liveout_safe = true;
-        for instruction in instructions.iter().copied().skip(branch_pc + 1) {
-            if pending
-                .iter()
-                .any(|register| reads_register(instruction, *register))
-            {
-                liveout_safe = false;
-                break;
-            }
-            if has_ambiguous_register_write(instruction) {
-                liveout_safe = false;
-                break;
-            }
-            pending.retain(|register| !definitely_writes_register(instruction, *register));
-            if pending.is_empty() {
-                break;
-            }
-            if !matches!(
-                instruction.op().control_flow_layout(),
-                ControlFlowLayout::Fallthrough | ControlFlowLayout::Terminal
-            ) {
-                liveout_safe = false;
-                break;
-            }
-        }
-        if !liveout_safe {
-            continue;
-        }
-        let max_end = destination_end.max(left_end).max(right_end);
-        return Some(AffinePairLoop {
-            header,
-            branch: branch_pc,
-            exit: branch_pc + 1,
-            induction,
-            bound,
-            destination: *destination,
-            left,
-            right,
-            max_end,
-        });
-    }
-    None
-}
-
 /// The register a direct access of `instruction` reads its memory through.
 fn direct_access(op: Op) -> bool {
     MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some()
@@ -11229,66 +10880,6 @@ fn writes_register(instruction: WideInstruction, register: u16) -> bool {
     })
 }
 
-/// Whether the instruction definitely replaces `register` with a new value.
-/// Register windows are excluded because the base alone does not prove that a
-/// particular register in the group is overwritten.
-fn definitely_writes_register(instruction: WideInstruction, register: u16) -> bool {
-    use crate::bytecode::{FieldLayout, InstructionField};
-    InstructionField::ALL.iter().any(|field| {
-        let operand = instruction.field_value(*field);
-        matches!(
-            instruction.op().field_layout(*field),
-            FieldLayout::ResultRegister
-                | FieldLayout::WriteRegister
-                | FieldLayout::ReadWriteRegister
-        ) && operand == register
-    })
-}
-
-/// Whether an instruction contains a register-group write whose exact set of
-/// destinations is not represented by `definitely_writes_register`.
-fn has_ambiguous_register_write(instruction: WideInstruction) -> bool {
-    use crate::bytecode::{FieldLayout, InstructionField};
-    InstructionField::ALL.iter().any(|field| {
-        matches!(
-            instruction.op().field_layout(*field),
-            FieldLayout::RegisterWindowBase
-                | FieldLayout::RegisterCount
-                | FieldLayout::ConstructArguments
-                | FieldLayout::NumericLocalTarget
-        )
-    })
-}
-
-/// Whether `instruction` reads `register`, including an immediate register
-/// pair or a register window. Window reads are deliberately conservative:
-/// they prevent a vector loop from bypassing any interpreter temporary that
-/// could be observed after its exit.
-fn reads_register(instruction: WideInstruction, register: u16) -> bool {
-    use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
-    let op = instruction.op();
-    if InstructionField::ALL.iter().copied().any(|field| {
-        let layout = op.field_layout(field);
-        if !layout.reads_register() {
-            return false;
-        }
-        match layout {
-            FieldLayout::RegisterWindowBase
-            | FieldLayout::RegisterCount
-            | FieldLayout::ConstructArguments
-            | FieldLayout::NumericLocalTarget => true,
-            _ => instruction.field_value(field) == register,
-        }
-    }) {
-        return true;
-    }
-    if op.immediate_layout() == ImmediateLayout::RegisterPair {
-        let (first, second) = ImmediateLayout::register_pair(instruction.imm());
-        return first == register || second == register;
-    }
-    false
-}
-
 /// Whether conditional jump `instruction` is taken when `register` holds
 /// `value`, if that alone decides it.
 fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Option<bool> {
@@ -11642,11 +11233,6 @@ impl<'b> DerefMut for Body<'b> {
 
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
-    /// When enabled, branch-only i32 comparisons remain Cranelift booleans
-    /// instead of being extended to a Wasm i32 and tested again.
-    direct_compare_branches: bool,
-    /// Cache same-artifact Wasm body pointers at indirect-call sites.
-    reference_body_cache: bool,
     /// Emit a guarded direct leaf for the canonical Emscripten memcpy import.
     emscripten_memcpy_leaf: bool,
     /// Per `Region`, its alias region in this function.
@@ -11674,8 +11260,6 @@ struct Emitter<'a, 'b, H: Host> {
     plans: &'a [Option<Plan>],
     call_conv: cranelift_codegen::isa::CallConv,
     instructions: &'a [WideInstruction],
-    affine_loop: Option<AffinePairLoop>,
-    affine_attempt: Option<Variable>,
     /// Registers some branch table dispatches on.
     selectors: Vec<u16>,
     /// Selectors known to hold an i32 constant since the current block began.
@@ -11800,112 +11384,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.body.interrupt_safepoint();
     }
 
-    /// Try a full counted-loop SIMD replacement once on entry. If the memory
-    /// is too short, set the attempt marker and fall through to the original
-    /// scalar bytecodes; their backedge then bypasses this guard.
-    fn affine_pair_gate(&mut self) {
-        let candidate = self.affine_loop.expect("gate only for an affine loop");
-        let attempt = self
-            .affine_attempt
-            .expect("affine loop has an attempt variable");
-        let scalar = self.body.core.builder.create_block();
-        let first_attempt = self.body.core.builder.create_block();
-        let attempted = self.body.core.builder.use_var(attempt);
-        let already_attempted = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, attempted, 0);
-        self.body.core.builder
-            .ins()
-            .brif(already_attempted, scalar, &[], first_attempt, &[]);
-
-        self.body.core.builder.switch_to_block(first_attempt);
-        let one = self.body.core.builder.ins().iconst(types::I32, 1);
-        self.body.core.builder.def_var(attempt, one);
-        let memory_length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_MEMORY_LENGTH,
-        );
-        let minimum_length = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, candidate.max_end as i64);
-        let in_bounds = self.body.core.builder.ins().icmp(
-            IntCC::UnsignedGreaterThanOrEqual,
-            memory_length,
-            minimum_length,
-        );
-        let vector = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(in_bounds, vector, &[], scalar, &[]);
-
-        self.body.core.builder.switch_to_block(vector);
-        self.affine_pair_vector_loop(candidate);
-        self.body.core.builder.switch_to_block(scalar);
-    }
-
-    /// Emit the guarded vector body. Its induction range is proven to fit
-    /// memory32 without wrap, the input and output ranges are disjoint, and
-    /// it polls after each original pair of writes.
-    fn affine_pair_vector_loop(&mut self, candidate: AffinePairLoop) {
-        let loop_block = self.body.core.builder.create_block();
-        let index = self.body.core.builder.append_block_param(loop_block, types::I32);
-        let initial = self.body.core.builder.ins().iconst(types::I32, 0);
-        self.body.core.builder
-            .ins()
-            .jump(loop_block, &[ir::BlockArg::Value(initial)]);
-        self.body.core.builder.switch_to_block(loop_block);
-
-        let scaled = self.body.core.builder.ins().ishl_imm_u(index, 2);
-        let scaled = self.body.core.builder.ins().uextend(types::I64, scaled);
-        let address = |this: &mut Self, offset: u32| {
-            let address = this.body.core.builder.ins().iadd(this.base, scaled);
-            this.body.core.builder.ins().iadd_imm_s(address, i64::from(offset))
-        };
-        let left_address = address(self, candidate.left);
-        let right_address = address(self, candidate.right);
-        let destination_address = address(self, candidate.destination);
-        let flags = self.flags(Region::LinearMemory);
-        let left = self
-            .body.core.builder
-            .ins()
-            .load(types::I32X4, flags, left_address, 0);
-        let right = self
-            .body.core.builder
-            .ins()
-            .load(types::I32X4, flags, right_address, 0);
-        let sum = self.body.core.builder.ins().iadd(left, right);
-        let first_low = self.body.core.builder.ins().extractlane(sum, 0);
-        let first_high = self.body.core.builder.ins().extractlane(sum, 1);
-        let first_pair = self.body.core.builder.ins().iconcat(first_low, first_high);
-        self.body.core.builder
-            .ins()
-            .store(flags, first_pair, destination_address, 0);
-        self.interrupt_safepoint();
-
-        let second_low = self.body.core.builder.ins().extractlane(sum, 2);
-        let second_high = self.body.core.builder.ins().extractlane(sum, 3);
-        let second_pair = self.body.core.builder.ins().iconcat(second_low, second_high);
-        self.body.core.builder
-            .ins()
-            .store(flags, second_pair, destination_address, 8);
-        self.interrupt_safepoint();
-
-        let next_index = self.body.core.builder.ins().iadd_imm_s(index, 4);
-        let more =
-            self.body.core.builder
-                .ins()
-                .icmp_imm_u(IntCC::NotEqual, next_index, i64::from(candidate.bound));
-        let backedge = self.body.core.builder.create_block();
-        let done = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(more, backedge, &[], done, &[]);
-        self.body.core.builder.switch_to_block(backedge);
-        self.interrupt_safepoint();
-        self.body.core.builder
-            .ins()
-            .jump(loop_block, &[ir::BlockArg::Value(next_index)]);
-        self.body.core.builder.switch_to_block(done);
-        let exit = self.edge(candidate.exit);
-        self.body.core.builder.ins().jump(exit, &[]);
-    }
     fn finish_traps(&mut self) {
         if let Some(block) = self.body.termination_block {
             self.body.core.builder.switch_to_block(block);
@@ -11995,34 +11473,6 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
             }
         }
-    }
-
-    /// The boolean form of an i32 comparison used only by a conditional
-    /// jump. Keeping this `icmp` result as a Cranelift flag lets the backend
-    /// branch on the comparison directly, without materializing Wasm's 0/1
-    /// value first.
-    fn i32_comparison_condition(
-        &mut self,
-        operator: I32BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use I32BinaryOperator as B;
-
-        let condition = match operator {
-            B::Equal => IntCC::Equal,
-            B::NotEqual => IntCC::NotEqual,
-            B::LessSigned => IntCC::SignedLessThan,
-            B::LessUnsigned => IntCC::UnsignedLessThan,
-            B::GreaterSigned => IntCC::SignedGreaterThan,
-            B::GreaterUnsigned => IntCC::UnsignedGreaterThan,
-            B::LessEqualSigned => IntCC::SignedLessThanOrEqual,
-            B::LessEqualUnsigned => IntCC::UnsignedLessThanOrEqual,
-            B::GreaterEqualSigned => IntCC::SignedGreaterThanOrEqual,
-            B::GreaterEqualUnsigned => IntCC::UnsignedGreaterThanOrEqual,
-            _ => unreachable!("only comparison opcodes branch on an i32 comparison"),
-        };
-        self.body.core.builder.ins().icmp(condition, left, right)
     }
 
     /// An integer unary operator at the operand's width.
@@ -12699,26 +12149,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             cached_function,
             self.plans.len() as i64,
         );
-        let body = if self.reference_body_cache {
-            let load_body = self.body.core.builder.create_block();
-            self.body.core.builder
-                .ins()
-                .brif(function_in_range, load_body, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(check_entry);
-            self.body.core.builder.switch_to_block(load_body);
-            let body = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                fast_cache,
-                std::mem::offset_of!(FastReferenceCache, body) as i32,
-            );
-            let body_present = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, body, 0);
-            self.body.core.builder
-                .ins()
-                .brif(body_present, fast_call, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(load_body);
-            body
-        } else {
+        let body = {
             let lookup_entry = self.body.core.builder.create_block();
             self.body.core.builder
                 .ins()
@@ -13356,22 +12787,14 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.read(b, Kind::I32);
-            let holds = if self.direct_compare_branches {
-                self.i32_comparison_condition(operator, left, right)
-            } else {
-                self.integer_binary(widen_binary(operator), left, right)
-            };
+            let holds = self.integer_binary(widen_binary(operator), left, right);
             self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.body.core.builder.ins().iconst(types::I32, i64::from(b as i16));
-            let holds = if self.direct_compare_branches {
-                self.i32_comparison_condition(operator, left, right)
-            } else {
-                self.integer_binary(widen_binary(operator), left, right)
-            };
+            let holds = self.integer_binary(widen_binary(operator), left, right);
             self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
@@ -13947,39 +13370,6 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
             .collect();
-        let affine_loop = (self.code.kind == crate::bytecode::ProgramKind::Wasm
-            && jit_affine_pair_enabled())
-        .then(|| {
-            super::dispatch_fast::memory_register(function).and_then(|memory_register| {
-                affine_pair_loop(
-                    function.parameter_registers,
-                    function.registers,
-                    plan,
-                    &instructions,
-                    memory_register,
-                )
-            })
-        })
-        .flatten();
-        if diagnostics_enabled && let Some(candidate) = affine_loop {
-            eprintln!(
-                "QUENCH_WASM_JIT_AFFINE_PAIR function={index} header={} branch={} induction={} bound={} destination={} left={} right={} max_end={}",
-                candidate.header,
-                candidate.branch,
-                candidate.induction,
-                candidate.bound,
-                candidate.destination,
-                candidate.left,
-                candidate.right,
-                candidate.max_end
-            );
-        }
-        let affine_attempt = affine_loop.map(|_| {
-            let variable = builder.declare_var(types::I32);
-            let initial = builder.ins().iconst(types::I32, 0);
-            builder.def_var(variable, initial);
-            variable
-        });
         let mut selectors: Vec<u16> = instructions
             .iter()
             .enumerate()
@@ -13992,8 +13382,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         selectors.dedup();
         let mut emitter = Emitter {
             guarded,
-            direct_compare_branches: jit_direct_compare_branches_enabled(),
-            reference_body_cache: jit_reference_body_cache_enabled(),
             emscripten_memcpy_leaf: jit_emscripten_memcpy_leaf_enabled(),
             regions,
             globals,
@@ -14013,8 +13401,6 @@ impl<'a, H: Host> Analysis<'a, H> {
             plans,
             call_conv,
             instructions: &instructions,
-            affine_loop,
-            affine_attempt,
             selectors,
             known: Vec::new(),
             threads: Vec::new(),
@@ -14096,12 +13482,6 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.body.core.builder.ins().jump(block, &[]);
                 }
                 emitter.body.core.builder.switch_to_block(block);
-                if emitter
-                    .affine_loop
-                    .is_some_and(|candidate| candidate.header == pc)
-                {
-                    emitter.affine_pair_gate();
-                }
             }
             open = emitter.latch(function, pc, instruction);
             // Copies of an unrolled body follow its latch in the layout, so a loop that runs a few
@@ -15298,17 +14678,11 @@ impl<H: Host> Vm<H> {
                 let unresolved_names_are_global = self
                     .programs
                     .unresolved_names_are_global(program_id, function_id);
-                let cache_key = self
-                    .programs
-                    .js_general_artifact_cache_enabled()
-                    .then(|| {
-                        js_general_dispatch_cache_key(
-                            program,
-                            function_id,
-                            unresolved_names_are_global,
-                        )
-                    })
-                    .flatten();
+                let cache_key = js_general_dispatch_cache_key(
+                    program,
+                    function_id,
+                    unresolved_names_are_global,
+                );
                 let cached = cache_key
                     .as_deref()
                     .and_then(|key| self.programs.cached_js_general_artifact(key));
@@ -15546,7 +14920,7 @@ impl<H: Host> Vm<H> {
             }
             return Some((function.code.len() - 1, store.return_register, Value::UNDEFINED));
         }
-        let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
+        let numeric_find_candidate = facts.numeric_find;
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, entry, candidate)
         {
@@ -22624,97 +21998,6 @@ mod tests {
         assert_eq!(hits, 4);
     }
 
-    fn affine_pair_instructions(destination: u32, left: u32, right: u32) -> Vec<WideInstruction> {
-        vec![
-            WideInstruction::new(Op::WasmInstanceBinding, 0, 0, 0, 1),
-            WideInstruction::new(Op::WasmI32ShiftLeftImmediate, 1, 2, 0, 2),
-            WideInstruction::new(Op::WasmI32AddImmediate, 3, 1, 0, destination),
-            WideInstruction::new(Op::WasmI32AddImmediate, 4, 1, 0, left),
-            WideInstruction::new(Op::WasmI32Load, 4, 0, 4, 0),
-            WideInstruction::new(Op::WasmI32AddImmediate, 5, 1, 0, right),
-            WideInstruction::new(Op::WasmI32Load, 5, 0, 5, 0),
-            WideInstruction::new(Op::WasmI32Add, 4, 4, 5, 0),
-            WideInstruction::new(Op::WasmI32Store, 4, 0, 3, 0),
-            WideInstruction::new(Op::WasmI32AddImmediate, 3, 1, 0, destination + 4),
-            WideInstruction::new(Op::WasmI32AddImmediate, 4, 1, 0, left + 4),
-            WideInstruction::new(Op::WasmI32Load, 4, 0, 4, 0),
-            WideInstruction::new(Op::WasmI32AddImmediate, 5, 1, 0, right + 4),
-            WideInstruction::new(Op::WasmI32Load, 5, 0, 5, 0),
-            WideInstruction::new(Op::WasmI32Add, 4, 4, 5, 0),
-            WideInstruction::new(Op::WasmI32Store, 4, 0, 3, 0),
-            WideInstruction::new(Op::WasmI32AddImmediate, 2, 2, 0, 2),
-            WideInstruction::new(Op::WasmJumpI32NotEqualImmediate, 2, 256, 0, 1),
-            WideInstruction::new(Op::LoadConst, 3, 0, 0, 0),
-            WideInstruction::new(Op::Return, 3, 0, 0, 0),
-        ]
-    }
-
-    fn affine_pair_plan(instructions: &[WideInstruction]) -> Plan {
-        Plan {
-            params: Vec::new(),
-            result: None,
-            operands: vec![Some(Slot::Value(Kind::I32)); instructions.len()],
-        }
-    }
-
-    #[test]
-    fn affine_pair_loop_requires_static_disjoint_memory32_ranges() {
-        let instructions = affine_pair_instructions(77_456, 93_840, 85_648);
-        let plan = affine_pair_plan(&instructions);
-        let candidate = affine_pair_loop(Some(0), 6, &plan, &instructions, 0)
-            .expect("disjoint affine pair is admitted");
-        assert_eq!(candidate.header, 1);
-        assert_eq!(candidate.branch, 17);
-        assert_eq!(candidate.induction, 2);
-        assert_eq!(candidate.bound, 256);
-        assert_eq!(candidate.destination, 77_456);
-        assert_eq!(candidate.left, 93_840);
-        assert_eq!(candidate.right, 85_648);
-        assert_eq!(candidate.max_end, 94_864);
-
-        let mut unsupported_width = affine_pair_instructions(77_456, 93_840, 85_648);
-        unsupported_width[17] =
-            WideInstruction::new(Op::WasmJumpI32NotEqualImmediate, 2, 254, 0, 1);
-        let plan = affine_pair_plan(&unsupported_width);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &unsupported_width, 0).is_none());
-
-        let overlapping = affine_pair_instructions(77_456, 93_840, 77_456);
-        let plan = affine_pair_plan(&overlapping);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &overlapping, 0).is_none());
-
-        let wrapping = affine_pair_instructions(u32::MAX - 100, 93_840, 85_648);
-        let plan = affine_pair_plan(&wrapping);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &wrapping, 0).is_none());
-    }
-
-    #[test]
-    fn affine_pair_loop_rejects_clobbered_induction_and_external_reentry() {
-        let mut clobbered = affine_pair_instructions(77_456, 93_840, 85_648);
-        clobbered[0] = WideInstruction::new(Op::WasmI32AddImmediate, 2, 2, 0, 1);
-        let plan = affine_pair_plan(&clobbered);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &clobbered, 0).is_none());
-
-        let mut induction_in_body = affine_pair_instructions(77_456, 93_840, 85_648);
-        induction_in_body[4] = WideInstruction::new(Op::WasmI32Load, 2, 0, 4, 0);
-        let plan = affine_pair_plan(&induction_in_body);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &induction_in_body, 0).is_none());
-
-        let mut scaled_in_body = affine_pair_instructions(77_456, 93_840, 85_648);
-        scaled_in_body[2] = WideInstruction::new(Op::WasmI32AddImmediate, 1, 1, 0, 77_456);
-        let plan = affine_pair_plan(&scaled_in_body);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &scaled_in_body, 0).is_none());
-
-        let mut reentry = affine_pair_instructions(77_456, 93_840, 85_648);
-        reentry[18] = WideInstruction::new(Op::Jump, 0, 0, 0, 1);
-        let plan = affine_pair_plan(&reentry);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &reentry, 0).is_none());
-
-        let mut ambiguous_write = affine_pair_instructions(77_456, 93_840, 85_648);
-        ambiguous_write[18] = WideInstruction::new(Op::WasmFillRegisters, 0, 4, 2, 0);
-        let plan = affine_pair_plan(&ambiguous_write);
-        assert!(affine_pair_loop(Some(0), 6, &plan, &ambiguous_write, 0).is_none());
-    }
-
     #[test]
     fn root_only_jit_defaults_to_none_and_accepts_explicit_opt_level() {
         assert_eq!(parse_jit_root_opt_level(true, None), Ok("none"));
@@ -22726,82 +22009,6 @@ mod tests {
             Ok("speed_and_size")
         );
         assert_eq!(parse_jit_root_opt_level(true, Some("invalid")), Err(()));
-    }
-
-    #[test]
-    fn direct_compare_branches_match_signed_unsigned_extrema_and_fallthrough() {
-        fn comparison_if(
-            comparison: wasmparser::Operator<'static>,
-            immediate_rhs: Option<i32>,
-        ) -> Vec<wasmparser::Operator<'static>> {
-            let mut operators = vec![wasmparser::Operator::LocalGet { local_index: 0 }];
-            if let Some(rhs) = immediate_rhs {
-                operators.push(wasmparser::Operator::I32Const { value: rhs });
-            } else {
-                operators.push(wasmparser::Operator::LocalGet { local_index: 1 });
-            }
-            operators.extend([
-                comparison,
-                wasmparser::Operator::If {
-                    blockty: wasmparser::BlockType::Type(wasmparser::ValType::I32),
-                },
-                wasmparser::Operator::I32Const { value: 1 },
-                wasmparser::Operator::Else,
-                wasmparser::Operator::I32Const { value: 0 },
-                wasmparser::Operator::End,
-                wasmparser::Operator::End,
-            ]);
-            operators
-        }
-
-        let bodies = [
-            comparison_if(wasmparser::Operator::I32LtS, None),
-            comparison_if(wasmparser::Operator::I32LtU, None),
-            comparison_if(wasmparser::Operator::I32LtS, Some(0)),
-            comparison_if(wasmparser::Operator::I32LtU, Some(1)),
-        ]
-        .into_iter()
-        .map(|operators| (2, 0, true, operators.into_iter().map(Ok)));
-        let module = crate::Engine::lower_wasm_i32_module("direct-compare-branches", 0, bodies)
-            .expect("comparison branch fixtures lower");
-
-        // The first two functions exercise register comparisons. The latter
-        // two force immediate comparisons, including unsigned comparison
-        // against a positive signed-field constant.
-        let cases = [
-            (0, i32::MIN, i32::MAX, 1),
-            (0, i32::MAX, i32::MIN, 0),
-            (0, 0, 0, 0),
-            (1, 0, -1, 1),
-            (1, -1, 0, 0),
-            (1, i32::MIN, i32::MAX, 0),
-            (1, i32::MAX, i32::MIN, 1),
-            (2, i32::MIN, 0, 1),
-            (2, 0, 0, 0),
-            (2, i32::MAX, 0, 0),
-            (3, 0, 0, 1),
-            (3, 1, 0, 0),
-            (3, -1, 0, 0),
-        ];
-
-        for direct in [false, true] {
-            let mut vm = Vm::new(crate::SystemHost);
-            vm.set_execution_mode(ExecutionMode::Compiled);
-            for (function_index, left, right, expected) in cases {
-                let function = module
-                    .select_function(function_index)
-                    .expect("comparison fixture function exists");
-                let actual = with_jit_direct_compare_branches_for_test(direct, || {
-                    vm.execute_wasm_i32(&function, &[left, right])
-                        .expect("comparison branch executes")
-                });
-                assert_eq!(
-                    actual,
-                    Some(expected),
-                    "direct={direct}, function={function_index}, lhs={left}, rhs={right}"
-                );
-            }
-        }
     }
 
     #[test]

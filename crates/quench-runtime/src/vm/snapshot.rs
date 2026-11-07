@@ -569,6 +569,8 @@ impl<H: Host> Vm<H> {
         self.realm.parked = Snap::unsnap(&mut reader)?;
         self.realm.intrinsics = Snap::unsnap(&mut reader)?;
         self.realm.template_objects = Snap::unsnap(&mut reader)?;
+        // The restored realms' declarations may shadow names a derived view's hints read.
+        self.programs.clear_field_hints();
         self.realm.promise = promise::PromiseRuntime::read_snapshot(&mut reader)?;
         macro_rules! read_prototypes {
             ($($field:ident),*) => { $( self.$field = reader.value()?; )* };

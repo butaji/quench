@@ -69,11 +69,6 @@ pub(super) fn with_switch<R>(switch: &Switch, enabled: bool, run: impl FnOnce() 
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) static WASM_JIT_SELECTIVE: Switch = Switch::new("QUENCH_WASM_JIT_SELECTIVE", false);
-pub(super) static WASM_JIT_DIRECT_COMPARE_BRANCHES: Switch = Switch::new("QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES", false);
-/// The screened affine pair loop, opt-in; the benchmark harness can still run a same-binary,
-/// same-host comparison arm with it enabled.
-pub(super) static WASM_JIT_AFFINE_PAIR: Switch = Switch::new("QUENCH_WASM_JIT_AFFINE_PAIR", false);
-pub(super) static WASM_JIT_REFERENCE_BODY_CACHE: Switch = Switch::new("QUENCH_WASM_JIT_REFERENCE_BODY_CACHE", false);
 pub(super) static WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF: Switch = Switch::new("QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF", false);
 pub(super) static WASM_JIT_ROOT_ONLY: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_ONLY", false);
 pub(super) static WASM_JIT_ROOT_FIRST: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_FIRST", false);
@@ -84,8 +79,6 @@ pub(super) static WASM_EMSCRIPTEN_MEMCPY_RAW_I32: Switch = Switch::new("QUENCH_W
 /// Compiled import callouts try the raw memcpy guard before the general Wasm import dispatcher.
 /// The exact-import and current-view checks remain mandatory; this selects only where they run.
 pub(super) static WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT: Switch = Switch::new("QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT", false);
-/// The guarded numeric hash-map loop; off retains the interpreter path for A/B measurement.
-pub(super) static JS_JIT_NUMERIC_FIND: Switch = Switch::new("QUENCH_JS_JIT_NUMERIC_FIND", true);
 /// TOD-191's correctness oracle may force hot candidates past the payback model so guarded
 /// exits can be tested independently of profitability. Diagnostic only; never set by score
 /// harnesses.
@@ -94,16 +87,12 @@ pub(super) static JS_JIT_UNPRICED_GENERAL_DISPATCH: Switch = Switch::new("QUENCH
 pub(super) static JS_JIT_STATS: Switch = Switch::new("QUENCH_JS_JIT_STATS", false);
 pub(super) static JS_JIT_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_DISPATCH", false);
 pub(super) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_METHODS", false);
-pub(super) static JS_JIT_GENERAL_ARTIFACT_CACHE: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE", true);
-pub(super) static JS_JIT_DATAVIEW_FLOAT64: Switch = Switch::new("QUENCH_JS_JIT_DATAVIEW_FLOAT64", true);
 
 #[cfg(test)]
 const ALL: &[&Switch] = &[
-    &WASM_JIT_SELECTIVE, &WASM_JIT_DIRECT_COMPARE_BRANCHES, &WASM_JIT_AFFINE_PAIR, &WASM_JIT_REFERENCE_BODY_CACHE,
-    &WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF, &WASM_JIT_ROOT_ONLY, &WASM_JIT_ROOT_FIRST, &WASM_EMSCRIPTEN_MEMCPY_DIRECT,
-    &WASM_EMSCRIPTEN_MEMCPY_RAW_I32, &WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT, &JS_JIT_NUMERIC_FIND,
+    &WASM_JIT_SELECTIVE, &WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF, &WASM_JIT_ROOT_ONLY, &WASM_JIT_ROOT_FIRST,
+    &WASM_EMSCRIPTEN_MEMCPY_DIRECT, &WASM_EMSCRIPTEN_MEMCPY_RAW_I32, &WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT,
     &JS_JIT_UNPRICED_GENERAL_DISPATCH, &JS_JIT_STATS, &JS_JIT_GENERAL_DISPATCH, &JS_JIT_LANE_METHODS,
-    &JS_JIT_GENERAL_ARTIFACT_CACHE, &JS_JIT_DATAVIEW_FLOAT64,
 ];
 
 #[cfg(test)]

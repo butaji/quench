@@ -4955,7 +4955,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let instruction = region.instructions[(pc - region.header) as usize];
             instruction.op() != Op::SetIndex || {
                 let web = self.webs.read(region, pc, instruction.register_a());
-                self.values[web].expect("verified SSA definition").representation == Representation::Int32
+                // A web without a number definition (an object, a string) is not an int32.
+                self.values[web].is_some_and(|fact| fact.representation == Representation::Int32)
             }
         });
         if !stores_int32 {

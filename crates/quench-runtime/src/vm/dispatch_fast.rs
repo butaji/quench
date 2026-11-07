@@ -985,20 +985,26 @@ impl LaneView {
         if matches!(body, LaneBody::Retired { .. }) {
             *body = LaneBody::Declined;
         }
-        for &pc in &self.field_records {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: no handler runs during a collection, and each listed record is a
-            // `GetField` or `SetField` one, whose operand is `field`, and no loop's header.
-            unsafe {
-                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
-                (*record).call_link.set(NO_CALL_LINK);
-            }
-        }
+        self.clear_field_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
                 && publication.lease().is_some_and(|code| !code.shape_dependencies.is_empty()) {
                 publication.retire();
+            }
+        }
+    }
+
+    /// Drops every record's own-field hint (`LaneInstruction::field_hint`).
+    pub(super) fn clear_field_hints(&self) {
+        for &pc in &self.field_records {
+            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
+            // SAFETY: a handler reads its record's hint only as it starts, and each listed
+            // record is a field or global name one (`holds_field_hint`), whose operand is
+            // `field`, and no loop's header.
+            unsafe {
+                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
+                (*record).call_link.set(NO_CALL_LINK);
             }
         }
     }
@@ -4945,12 +4951,24 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const usize> 
 /// OSR entry and the LoadCapture slow lane use the same binding and TDZ guards.
 #[inline(never)]
 fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+    lane_read_capture_value::<H, false>(cx, depth, slot).0
+}
+
+/// `lane_capture_value`, with `PLAIN` also a root projection's plain read
+/// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held;
+/// with the global var whose global object property answered it.
+#[inline(always)]
+fn lane_read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> (Option<Value>, Option<Atom>) {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
     
     if env.is_deleted() {
         let frame = unsafe { (*cx).frame };
-        let value = vm.cached_direct_capture(frame, depth, slot);
+        let value = if PLAIN {
+            vm.cached_plain_capture(frame, depth, slot)
+        } else {
+            (vm.cached_direct_capture(frame, depth, slot), None)
+        };
         if depth == 0
             && let Some((slots, None)) = vm.current_capture_slots(frame)
             && let Some(slots) = unsafe { &*slots }.dense_storage()
@@ -4960,18 +4978,18 @@ fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -
         value
     } else {
         // A frameless activation's function has no environment of its own.
-        vm.walked_capture_slots(env, false, depth)
-            .and_then(|(slots, root)| {
-                // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
-                let slots = unsafe { &*slots };
-                if depth == 0
-                    && root.is_none()
-                    && let Some(dense) = slots.dense_storage()
-                {
-                    unsafe { (*cx).capture = dense };
-                }
-                vm.owned_capture(slots, root, slot)
-            })
+        let Some((slots, root)) = vm.walked_capture_slots(env, false, depth) else {
+            return (None, None);
+        };
+        // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+        let slots = unsafe { &*slots };
+        if depth == 0
+            && root.is_none()
+            && let Some(dense) = slots.dense_storage()
+        {
+            unsafe { (*cx).capture = dense };
+        }
+        if PLAIN { vm.plain_capture(slots, root, slot) } else { (vm.owned_capture(slots, root, slot), None) }
     }
 }
 
@@ -4983,7 +5001,18 @@ script_handler! {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
         let slot = ImmediateLayout::capture_slot(imm);
-        let value = lane_capture_value(cx, depth, slot);
+        let (value, global_var) = lane_read_capture_value::<H, true>(cx, depth, slot);
+        // A global var's own data property on the global object becomes the record's hint
+        // (`lane_load_root_var`).
+        if let Some(atom) = global_var
+            && value.is_some()
+        {
+            let vm = unsafe { vm(cx) };
+            if let Some(hint) = vm.own_data_field_hint(vm.realm.globals, atom) {
+                set_field_hint(ip, hint);
+                requicken::<H>(ip, lane_load_root_var::<H>);
+            }
+        }
         #[cfg(feature = "profile-lane-exits")]
         {
             let vm = unsafe { vm(cx) };
@@ -5008,6 +5037,25 @@ script_handler! {
         }
         let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
             return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// A `LoadCapture` of a script's top-level `var`, whose global object property its record's
+    /// hint names (`lane_load_capture_walk`): the property's slot while the global object keeps
+    /// the hinted shape and no direct eval's var scope intervenes, else the walk.
+    fn lane_load_root_var<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = vm
+            .direct_eval_var_program
+            .is_none()
+            .then(|| vm.record_field_entry_hit(i.field_hint(), vm.realm.globals))
+            .flatten();
+        let Some(value) = value else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -12317,6 +12365,25 @@ script_handler! {
     /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding,
     /// and `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`.
     fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // The record's hint first (`holds_field_hint`): the global object's own data field,
+        // which no realm's lexical declaration shadows while the hint is held.
+        if KIND != LOAD_NAME_CALL
+            && let Some(value) = vm.record_field_entry_hit(i.field_hint(), vm.realm.globals)
+        {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        sibling!(lane_load_global_name_lookup::<H, KIND>, r, ip, Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_load_global_name` past its record's hint: the realm's lexical binding, else the
+    /// site's cached global property, whose own data field becomes the hint where no realm
+    /// declares the name lexically (`Vm::global_name_hintable`).
+    #[inline(never)]
+    fn lane_load_global_name_lookup<KIND: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -12333,6 +12400,15 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script(cx))
         }
         let globals = vm.realm.globals;
+        if KIND != LOAD_NAME_CALL
+            && vm.global_name_hintable(atom)
+            && let Some(value) = vm.primary_own_field_hit(code, globals, i.c)
+        {
+            // The hit proved the entry an own one of the global object's shape.
+            set_field_hint(ip, vm.field_cache_entry(i.c));
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
             sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
         };
@@ -12974,11 +13050,9 @@ fn lane_native_value<H: Host>(
     // Each shortcut answers its native's common case; a miss falls through to the one call of
     // `lane_string_or_native_call` below.
     match native {
-        // The JIT-mode DataView lane (`js_jit_dataview_float64_enabled`); a miss takes the
-        // native, which coerces and throws.
+        // The JIT-mode DataView lane; a miss takes the native, which coerces and throws.
         Native::DataViewGetFloat64 | Native::DataViewSetFloat64
-            if vm.execution_mode == super::ExecutionMode::Compiled
-                && vm.programs.js_jit_dataview_float64_enabled() =>
+            if vm.execution_mode == super::ExecutionMode::Compiled =>
         {
             let value = vm.lane_data_view_float64(native, receiver, args);
             if value.is_some() {
@@ -18392,7 +18466,7 @@ fn lane_operand(
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,
         },
-        _ if matches!(instruction.op(), Op::GetField | Op::SetField) => LaneOperand {
+        _ if holds_field_hint(instruction.op()) => LaneOperand {
             field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
         },
         _ => LaneOperand {
@@ -19655,7 +19729,7 @@ fn derive_lane_view<'live, H: Host>(
         .iter()
         .enumerate()
         .filter(|&(pc, instruction)| {
-            matches!(instruction.op(), Op::GetField | Op::SetField)
+            holds_field_hint(instruction.op())
                 && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
         })
         .map(|(pc, _)| pc as u32)
@@ -19694,6 +19768,14 @@ fn derive_lane_view<'live, H: Host>(
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
     }
+}
+
+/// Whether an instruction's record may hold an own-field hint (`LaneInstruction::field_hint`):
+/// a field read or store's of its receiver, and a global name or top-level `var` read's of the
+/// global object (`lane_load_global_name`, `lane_load_root_var`), except a call's, which keeps
+/// a call link.
+fn holds_field_hint(op: Op) -> bool {
+    matches!(op, Op::GetField | Op::SetField | Op::LoadName | Op::LoadNameTypeof | Op::LoadCapture)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose

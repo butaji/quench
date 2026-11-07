@@ -936,10 +936,6 @@ pub(crate) struct ProgramStore {
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
-    /// Keep idle GeneralDispatch artifacts for equivalent dynamic functions
-    /// when `QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE` is enabled (default on).
-    js_general_artifact_cache_enabled: bool,
-    js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
 }
@@ -978,9 +974,6 @@ impl Default for ProgramStore {
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
-            js_general_artifact_cache_enabled: super::switches::JS_JIT_GENERAL_ARTIFACT_CACHE.enabled(),
-            js_jit_dataview_float64_enabled:
-                super::switches::JS_JIT_DATAVIEW_FLOAT64.enabled(),
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
         }
@@ -1693,6 +1686,28 @@ impl ProgramStore {
         Some(id)
     }
 
+    /// What `slot` of `id`'s root environment holds for the reads through it
+    /// (`RootSlotRule`), derived once per program.
+    pub(crate) fn root_slot(&self, id: ProgramId, slot: u16) -> crate::bytecode::RootSlotRule {
+        use crate::bytecode::RootSlotRule;
+        let Some(entry) = self.entry(id) else {
+            return RootSlotRule::Import;
+        };
+        let import = |slot: usize| entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
+        let rules = entry.root_slots.get_or_init(|| {
+            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+            (0..locals)
+                .map(|slot| if import(slot) { RootSlotRule::Import } else { entry.residual.root_slot_rule(slot) })
+                .collect()
+        });
+        match rules.get(usize::from(slot)) {
+            Some(rule) => *rule,
+            // A slot past the root's named locals is a temporary, the binding itself.
+            None if import(usize::from(slot)) => RootSlotRule::Import,
+            None => RootSlotRule::Binding,
+        }
+    }
+
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
     /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
     /// through it.
@@ -1703,24 +1718,10 @@ impl ProgramStore {
         lexical_slots_are_bindings: bool,
     ) -> bool {
         use crate::bytecode::RootSlotRule;
-        let Some(entry) = self.entry(id) else {
-            return false;
-        };
-        let rules = entry.root_slots.get_or_init(|| {
-            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
-            (0..locals)
-                .map(|slot| {
-                    let import = entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
-                    if import { RootSlotRule::Projection } else { entry.residual.root_slot_rule(slot) }
-                })
-                .collect()
-        });
-        match rules.get(usize::from(slot)).copied() {
-            Some(RootSlotRule::Binding) => true,
-            Some(RootSlotRule::GlobalLexical) => lexical_slots_are_bindings,
-            Some(RootSlotRule::Projection) => false,
-            // A slot past the root's named locals is a temporary, the binding itself.
-            None => !entry.module_imports.iter().any(|(local, _)| *local == slot),
+        match self.root_slot(id, slot) {
+            RootSlotRule::Binding => true,
+            RootSlotRule::GlobalLexical(_) => lexical_slots_are_bindings,
+            RootSlotRule::GlobalVar(_) | RootSlotRule::Import => false,
         }
     }
 
@@ -2173,10 +2174,6 @@ impl ProgramStore {
     pub(super) fn js_jit_captured_store_entries(&self, id: ProgramId, function: u32) -> Option<u64> {
         self.js_jit_diagnostics.as_ref()?.get(&(id.raw(), function))
             .map(|counters| counters.captured_store_fast_entries)
-    }
-
-    pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
-        self.js_jit_dataview_float64_enabled
     }
 
     pub(super) fn note_js_jit_dataview_float64(&mut self, setter: bool) {
@@ -3211,10 +3208,6 @@ impl ProgramStore {
         Some(cached.compiled.clone())
     }
 
-    pub(super) fn js_general_artifact_cache_enabled(&self) -> bool {
-        self.js_general_artifact_cache_enabled
-    }
-
     fn release_js_general_artifact_reference(
         &mut self,
         compiled: &Rc<super::compiled::CompiledJsFunction>,
@@ -3289,6 +3282,13 @@ impl ProgramStore {
     pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
             entry.lane_views.invalidate_shape_bindings();
+        }
+    }
+
+    /// Drops every lane view's field hints (`LaneView::clear_field_hints`).
+    pub(super) fn clear_field_hints(&self) {
+        for entry in self.programs.iter().flatten() {
+            entry.lane_views.clear_field_hints();
         }
     }
 
@@ -3836,8 +3836,7 @@ impl Drop for ProgramStore {
         }
         let _ = writeln!(
             stderr,
-            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"enabled\":{},\"get_entries\":{},\"set_entries\":{}}}",
-            self.js_jit_dataview_float64_enabled,
+            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"get_entries\":{},\"set_entries\":{}}}",
             self.js_jit_dataview_float64_get_entries,
             self.js_jit_dataview_float64_set_entries
         );
@@ -3987,6 +3986,12 @@ impl LaneViews {
     fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
             view.invalidate_shape_bindings();
+        }
+    }
+
+    fn clear_field_hints(&self) {
+        for view in self.arena.borrow().iter().flatten() {
+            view.clear_field_hints();
         }
     }
 
