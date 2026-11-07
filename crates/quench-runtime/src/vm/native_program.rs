@@ -10,163 +10,9 @@ pub type NativeJsFunctionEntry =
 
 pub type NativeProgramResolver<H> = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError>;
 
-/// A pure numeric predicate's statically resolved inputs and shared JIT body.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct NativeBooleanRegion {
-    pub(super) function: u32,
-    pub(super) capture_count: u16,
-    pub(super) field_count: u16,
-    pub(super) flags: u32,
-    pub(super) capture_slots: [u16; super::js_compiled::MAX_CAPTURE_ARGUMENTS],
-    pub(super) field_sites: [u16; super::js_compiled::MAX_NUMERIC_FIELD_INPUTS],
-    pub(super) field_sources: [u16; super::js_compiled::MAX_NUMERIC_FIELD_INPUTS],
-    pub(super) entry: unsafe extern "C" fn(*const f64) -> u32,
-}
-
-impl NativeBooleanRegion {
-    pub(super) const SIGNED_INT32_INPUTS: u32 = 1;
-}
-
-pub(super) const BOOLEAN_REGION_COUNT_WORD: usize = 1;
-pub(super) const CAPTURED_STORE_COUNT_WORD: usize = 2;
-
-/// Compiler-derived lookup: zero is no plan; low bits name the payload table,
-/// and the remaining bits its row. Binding validates this immutable projection.
-pub(super) struct GuardedCallIndex;
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub(super) enum GuardedCallKind { Boolean = 1, CapturedStore = 2 }
-impl GuardedCallIndex {
-    const KIND_BITS: u32 = 2;
-    const KIND_MASK: usize = (1 << Self::KIND_BITS) - 1;
-    #[cfg(any(feature = "aot", test))]
-    pub(super) const fn encode(kind: GuardedCallKind, row: usize) -> Option<usize> {
-        match row.checked_mul(1 << Self::KIND_BITS) {
-            Some(word) => word.checked_add(kind as usize),
-            None => None,
-        }
-    }
-    #[inline]
-    fn decode(word: usize) -> Option<(GuardedCallKind, usize)> {
-        let kind = match word & Self::KIND_MASK {
-            code if code == GuardedCallKind::Boolean as usize => GuardedCallKind::Boolean,
-            code if code == GuardedCallKind::CapturedStore as usize => GuardedCallKind::CapturedStore,
-            _ => return None,
-        };
-        Some((kind, word >> Self::KIND_BITS))
-    }
-}
-
-pub(super) enum NativeGuardedCall<'a> {
-    Boolean(&'a NativeBooleanRegion),
-    CapturedStore(&'a NativeCapturedStore),
-}
-
-/// A verified immutable lookup. Only binding can construct it; callers cannot
-/// supply an unchecked row to the execution path.
-#[derive(Clone, Copy)]
-pub(crate) struct GuardedCalls {
-    boolean_regions: &'static [NativeBooleanRegion],
-    captured_stores: &'static [NativeCapturedStore],
-    index: &'static [usize],
-}
-impl GuardedCalls {
-    fn bind(index: &'static [usize], boolean_regions: &'static [NativeBooleanRegion],
-        captured_stores: &'static [NativeCapturedStore]) -> Result<Option<Self>, String> {
-        let mut indexed = 0;
-        for (function, word) in index.iter().copied().enumerate() {
-            if word == 0 { continue; }
-            let target = match GuardedCallIndex::decode(word) {
-                Some((GuardedCallKind::Boolean, row)) => boolean_regions.get(row).map(|plan| plan.function),
-                Some((GuardedCallKind::CapturedStore, row)) => captured_stores.get(row).map(|plan| plan.function),
-                None => None,
-            };
-            if target != u32::try_from(function).ok() { return Err("invalid native guarded-call index".into()); }
-            indexed += 1;
-        }
-        if indexed != boolean_regions.len() + captured_stores.len() { return Err("incomplete native guarded-call index".into()); }
-        Ok((indexed != 0).then_some(Self { index, boolean_regions, captured_stores }))
-    }
-
-    #[inline]
-    pub(super) fn get(&self, function: u32) -> Option<NativeGuardedCall<'static>> {
-        let (kind, row) = GuardedCallIndex::decode(*self.index.get(function as usize)?)?;
-        // SAFETY: binding checked every row and function identity. These static
-        // tables cannot change while code is installed, including across GC.
-        Some(unsafe { match kind {
-            GuardedCallKind::Boolean => NativeGuardedCall::Boolean(self.boolean_regions.get_unchecked(row)),
-            GuardedCallKind::CapturedStore => NativeGuardedCall::CapturedStore(self.captured_stores.get_unchecked(row)),
-        } })
-    }
-}
-
-#[cfg(test)]
-mod guarded_index_tests {
-    use super::*;
-    unsafe extern "C" fn predicate(_: *const f64) -> u32 { 0 }
-    static BOOLEANS: [NativeBooleanRegion; 1] = [NativeBooleanRegion {
-        function: 1, capture_count: 0, field_count: 0, flags: 0,
-        capture_slots: [0; super::super::js_compiled::MAX_CAPTURE_ARGUMENTS],
-        field_sites: [0; super::super::js_compiled::MAX_NUMERIC_FIELD_INPUTS],
-        field_sources: [0; super::super::js_compiled::MAX_NUMERIC_FIELD_INPUTS],
-        entry: predicate,
-    }];
-    static STORES: [NativeCapturedStore; 1] = [NativeCapturedStore {
-        function: 3, atom: 0, capture_slot: 0, cache_site: 0,
-        operator: super::super::js_compiled::CAPTURED_STORE_ASSIGNMENT,
-    }];
-    const BOOLEAN: usize = GuardedCallIndex::encode(GuardedCallKind::Boolean, 0).unwrap();
-    const STORE: usize = GuardedCallIndex::encode(GuardedCallKind::CapturedStore, 0).unwrap();
-
-    #[test]
-    fn verified_index_borrows_exact_payloads_and_handles_absent_functions() {
-        static INDEX: [usize; 4] = [0, BOOLEAN, 0, STORE];
-        let plans = GuardedCalls::bind(&INDEX, &BOOLEANS, &STORES).unwrap().unwrap();
-        assert!(matches!(plans.get(1), Some(NativeGuardedCall::Boolean(plan)) if std::ptr::eq(plan, &BOOLEANS[0])));
-        assert!(matches!(plans.get(3), Some(NativeGuardedCall::CapturedStore(plan)) if std::ptr::eq(plan, &STORES[0])));
-        for function in [0, 2, 4, u32::MAX] { assert!(plans.get(function).is_none()); }
-        assert!(GuardedCalls::bind(&[], &[], &[]).unwrap().is_none());
-    }
-
-    #[test]
-    fn binding_rejects_bad_tags_rows_identities_and_missing_plans() {
-        static INVALID: [[usize; 4]; 5] = [
-            [0, BOOLEAN | STORE, 0, STORE],
-            [0, GuardedCallIndex::encode(GuardedCallKind::Boolean, 1).unwrap(), 0, STORE],
-            [BOOLEAN, 0, 0, STORE],
-            [0, BOOLEAN, 0, 0],
-            [0, 1 << GuardedCallIndex::KIND_BITS, 0, STORE],
-        ];
-        for index in &INVALID { assert!(GuardedCalls::bind(index, &BOOLEANS, &STORES).is_err()); }
-        assert!(GuardedCallIndex::encode(GuardedCallKind::Boolean, usize::MAX).is_none());
-    }
-}
-
-/// A projection of the shared captured-store proof needed by a linked call.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct NativeCapturedStore {
-    pub(super) function: u32,
-    pub(super) atom: crate::bytecode::Atom,
-    pub(super) capture_slot: u16,
-    pub(super) cache_site: u16,
-    pub(super) operator: u16,
-}
-impl NativeCapturedStore {
-    pub(super) fn update(self) -> Option<super::operations::NumberBitwise> {
-        (self.operator != super::js_compiled::CAPTURED_STORE_ASSIGNMENT).then(|| {
-            super::operations::NumberBitwise::from_operator(u32::from(self.operator))
-                .expect("validated native captured-store operator")
-        })
-    }
-}
-const _: () = assert!(std::mem::align_of::<NativeBooleanRegion>() <= std::mem::align_of::<usize>());
-
 pub(crate) enum NativeJsCode {
     Linked {
         entries: &'static [NativeJsFunctionEntry],
-        guarded_calls: Option<GuardedCalls>,
     },
     Owned {
         entries: Box<[NativeJsFunctionEntry]>,
@@ -182,14 +28,6 @@ impl NativeJsCode {
             Self::Linked { entries, .. } => entries,
             Self::Owned { entries, .. } => entries,
         }
-    }
-
-    /// A copy of the binding certificate borrows only immutable image data,
-    /// so resolving a dynamic callee can update the shared weak target cache.
-    #[inline]
-    pub(super) fn guarded_calls(&self) -> Option<GuardedCalls> {
-        let Self::Linked { guarded_calls, .. } = self else { return None; };
-        *guarded_calls
     }
 
 }
@@ -228,8 +66,7 @@ impl<H: Host> NativeJsProgram<H> {
     /// # Safety
     /// `image` must be the aligned entry-table symbol for this exact program,
     /// host H and ABI. Its code and operand data must live for the process's
-    /// lifetime. The table has the ABI header, one entry per function, and
-    /// its statically generated boolean-region and captured-store records.
+    /// lifetime. The table has the ABI header and one entry per function.
     pub unsafe fn from_linked_image(
         program: ResidualProgram,
         image: *const u8,
@@ -239,16 +76,6 @@ impl<H: Host> NativeJsProgram<H> {
         }
         let header_bytes =
             crate::NATIVE_JS_IMAGE_HEADER_WORDS * std::mem::size_of::<NativeJsFunctionEntry>();
-        // SAFETY: the image contract supplies its aligned header.
-        let region_count = unsafe {
-            image.cast::<usize>().add(BOOLEAN_REGION_COUNT_WORD).read()
-        };
-        if region_count > program.function_count() {
-            return Err("native boolean region count exceeds function count".into());
-        }
-        let store_count = unsafe { image.cast::<usize>().add(CAPTURED_STORE_COUNT_WORD).read() };
-        let guarded_count = region_count.checked_add(store_count)
-            .filter(|count| *count <= program.function_count()).ok_or("invalid native guarded-call count")?;
         // SAFETY: the image contract supplies the full table. Skip the marker
         // before interpreting words as functions of the execution-entry ABI.
         let entries = unsafe {
@@ -257,65 +84,8 @@ impl<H: Host> NativeJsProgram<H> {
                 program.function_count(),
             )
         };
-        let index_offset = program.function_count()
-            .checked_mul(std::mem::size_of::<NativeJsFunctionEntry>())
-            .and_then(|bytes| header_bytes.checked_add(bytes))
-            .ok_or("native boolean region offset overflow")?;
-        let index_count = if guarded_count == 0 { 0 } else { program.function_count() };
-        let region_offset = index_count.checked_mul(std::mem::size_of::<usize>())
-            .and_then(|bytes| index_offset.checked_add(bytes))
-            .filter(|offset| *offset <= isize::MAX as usize).ok_or("native guarded index size overflow")?;
-        // SAFETY: the image contract supplies the index directly after entries.
-        let guarded_index = unsafe { std::slice::from_raw_parts(image.add(index_offset).cast::<usize>(), index_count) };
-        if region_count.checked_mul(std::mem::size_of::<NativeBooleanRegion>())
-            .is_none_or(|bytes| bytes > isize::MAX as usize)
-        {
-            return Err("native boolean region size overflow".into());
-        }
-        // SAFETY: the image contract supplies the recorded region table and its code.
-        let boolean_regions = unsafe {
-            std::slice::from_raw_parts(image.add(region_offset).cast::<NativeBooleanRegion>(), region_count)
-        };
-        if boolean_regions.iter().enumerate().any(|(index, region)| {
-            region.function as usize >= program.function_count()
-                || usize::from(region.capture_count) > region.capture_slots.len()
-                || usize::from(region.field_count) > region.field_sites.len()
-                || region.flags & !NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
-                || region.field_sources[..usize::from(region.field_count)].iter()
-                    .enumerate().any(|(index, source)| usize::from(*source) > index)
-                || (index > 0 && boolean_regions[index - 1].function >= region.function)
-        }) {
-            return Err("invalid native boolean region metadata".into());
-        }
-        // SAFETY: the image contract supplies the complete ABI header.
-        if store_count > program.function_count() {
-            return Err("native captured-store count exceeds function count".into());
-        }
-        let store_offset = region_count.checked_mul(std::mem::size_of::<NativeBooleanRegion>())
-            .and_then(|bytes| region_offset.checked_add(bytes))
-            .ok_or("native captured-store offset overflow")?;
-        if store_count.checked_mul(std::mem::size_of::<NativeCapturedStore>())
-            .and_then(|bytes| store_offset.checked_add(bytes))
-            .is_none_or(|end| end > isize::MAX as usize)
-        {
-            return Err("native captured-store size overflow".into());
-        }
-        // SAFETY: the linked image contract supplies these static records.
-        let captured_stores = unsafe {
-            std::slice::from_raw_parts(image.add(store_offset).cast::<NativeCapturedStore>(), store_count)
-        };
-        if captured_stores.iter().enumerate().any(|(index, store)| {
-            store.function as usize >= program.function_count()
-                || store.atom as usize >= program.atoms.len()
-                || (store.operator != super::js_compiled::CAPTURED_STORE_ASSIGNMENT
-                    && super::operations::NumberBitwise::from_operator(u32::from(store.operator)).is_none())
-                || (index > 0 && captured_stores[index - 1].function >= store.function)
-        }) {
-            return Err("invalid native captured-store metadata".into());
-        }
-        let guarded_calls = GuardedCalls::bind(guarded_index, boolean_regions, captured_stores)?;
         // SAFETY: the linked image is static and bound to this program and H.
-        Self::bind(program, NativeJsCode::Linked { entries, guarded_calls })
+        Self::bind(program, NativeJsCode::Linked { entries })
     }
 
     /// The canonical metadata used by host job checkpoints and source reporting.

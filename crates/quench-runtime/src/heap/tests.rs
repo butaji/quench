@@ -111,7 +111,7 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     // this root in the legacy space so those paths remain covered.
     let root = heap.alloc(Cell::Set {
         object: Box::new(plain_object()),
-        entries: children.clone().into(),
+        entries: CollectionEntries::from_hashed(children.iter().map(|&child| (child, 0))).into(),
     });
 
     heap.collect([root]);
@@ -1298,7 +1298,7 @@ fn promoted_cells_remember_their_young_children() {
         |heap| {
             heap.alloc(Cell::Set {
                 object: Box::new(plain_object()),
-                entries: Vec::<Value>::new().into(),
+                entries: Default::default(),
             })
         },
         |heap| heap.alloc(Cell::Error("young child".into())),

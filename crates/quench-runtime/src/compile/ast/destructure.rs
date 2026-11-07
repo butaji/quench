@@ -440,9 +440,7 @@ impl FunctionCompiler<'_, '_> {
                         receiver,
                     }
                 } else {
-                    let object = self.expression(&member.object);
-                    let key = self.expression(&member.expression);
-                    AssignmentReference::Index { object, key }
+                    self.computed_reference(member)
                 }
             }
             _ => {

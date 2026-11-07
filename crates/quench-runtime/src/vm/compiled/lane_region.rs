@@ -2422,21 +2422,6 @@ impl Lowering<'_, '_> {
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval() => Some(self.call(state, pc, instruction, LaneHelper::Call)),
-            Op::Call if self.completion == Completion::SourcePc && guarded_call_instruction(instruction) => {
-                let exit = self.guard_exit(state, pc32);
-                let callee = self.tagged(state, instruction.register_b());
-                let receiver = self.tagged(state, instruction.register_c());
-                let helper = self.helpers.address(self.builder.ins(), LaneHelper::GuardedCall);
-                let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
-                    std::mem::offset_of!(JsStepDispatch, program_id) as i32);
-                let program = self.builder.ins().uextend(types::I64, program);
-                let result = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, receiver]);
-                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, result, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, hit, exit);
-                state.call_effect();
-                self.set_tagged(state, instruction.result_register(), result);
-                Some(true)
-            }
             // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
             // and an untyped one is taken for an int, tested once, which leaves where it is not.
             Op::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
