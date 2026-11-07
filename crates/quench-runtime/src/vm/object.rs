@@ -2867,7 +2867,7 @@ impl<H: Host> Vm<H> {
             *existing = entry;
             return;
         }
-        if entries.len() >= INHERITED_FIELD_CACHE_WAYS {
+        if entries.len() >= ACCESSOR_FIELD_CACHE_WAYS {
             entries.remove(0);
         }
         entries.push(entry);

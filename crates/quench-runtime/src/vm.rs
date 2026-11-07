@@ -744,6 +744,11 @@ struct AccessorFieldCache {
 const INHERITED_FIELD_CACHE_WAYS: usize = 4;
 // Reusing the oldest entry unlinks it from an older-than-head predecessor.
 const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
+/// Receiver shapes one site's accessor entries remember (`Vm::record_accessor_entry`). A
+/// getter on a prototype is read from instances that differ by which fields their factory
+/// set, as Air's `Arg` kinds do (about ten shapes reading `isStack`); a site past its ways
+/// leaves the lane at each miss and evicts an entry another shape needs next.
+const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
 use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
