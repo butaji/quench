@@ -64,6 +64,7 @@ pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
+mod first_call;
 mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
@@ -819,7 +820,7 @@ impl Engine {
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
-        shape: ParsedProgramShape,
+        shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
         source_type: SourceType,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -1020,7 +1021,7 @@ impl Engine {
         module_goal: bool,
         capture_script_completion: bool,
         inherited_strict: bool,
-        expected_shape: ParsedProgramShape,
+        expected_shape: ParsedProgramShape<'_>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
@@ -1049,7 +1050,7 @@ impl Engine {
         inherited_strict: bool,
         private_name_overrides: &[(String, String)],
         annex_b_forbidden_names: &[String],
-        expected_shape: ParsedProgramShape,
+        expected_shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let compile = |lazy| {
@@ -1097,12 +1098,12 @@ impl Engine {
         inherited_strict: bool,
         private_name_overrides: &[(String, String)],
         annex_b_forbidden_names: &[String],
-        expected_shape: ParsedProgramShape,
+        expected_shape: ParsedProgramShape<'_>,
         lazy: bool,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
+        let allocator = lazy_bodies::arena(&normalized);
         let mut parsed = lazy_bodies::parse(&allocator, &normalized, source_type, lazy.then_some(0));
         #[cfg(feature = "verify-replay")]
         if !lazy {
@@ -1166,7 +1167,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords => true,
+            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -1327,7 +1328,10 @@ impl Engine {
         } else {
             None
         };
-        let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
+        let mut compiler = match expected_shape {
+            ParsedProgramShape::FirstCallChunk(window) => window.compiler(name, mode, atom_prefix, &mut parsed.program, private_name_ids, &mut private_name_labels, &mut prototype_unobservable),
+            _ => Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids),
+        };
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1338,6 +1342,7 @@ impl Engine {
         // tree changed after parsing, that their text alone does not give back. A released
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
+        compiler.first_call_roots = expected_shape.first_call_roots(compiler.replayable_source, &parsed.program, inherited_strict);
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -1354,13 +1359,7 @@ impl Engine {
         }
         let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
-            eprintln!(
-                "{{\"kind\":\"quench-oxc-memory\",\"used\":{},\"capacity\":{}}}",
-                allocator.used_bytes(),
-                allocator.capacity(),
-            );
-        }
+        program_profile::report_parse_arena(&allocator);
         // The tree is the largest structure of a compilation; the passes that finish the
         // program do not read it.
         drop(parsed);
@@ -1827,6 +1826,13 @@ enum NameSharedSites<'a> {
     Replay(&'a NameSharedSiteMap),
 }
 
+impl Default for NameSharedSites<'_> {
+    /// A load's, which has given out none yet.
+    fn default() -> Self {
+        Self::Load { sites: FxHashMap::default(), next: crate::bytecode::UNIQUE_CACHE_SITES }
+    }
+}
+
 type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
 
 struct Compiler<'a> {
@@ -1924,6 +1930,12 @@ struct Compiler<'a> {
     replay_program: Option<&'a ResidualProgram>,
     /// Whether the program's functions compile again from their text alone.
     replayable_source: bool,
+    /// The starts of the root's function declarations that may compile as first-call stubs
+    /// (`first_call::roots`).
+    first_call_roots: FxHashSet<u32>,
+    /// The source of the program whose text a first-call chunk compiles from, which the
+    /// chunk shares (`first_call::ChunkWindow`).
+    kept_source: Option<&'a crate::bytecode::ProgramSource>,
     /// The compile-cache records of the functions released during the load, when its
     /// program will be encoded (`ReleasedRecords::Encoded`).
     load_encoding: Option<crate::bytecode::LoadEncoding>,
@@ -2101,7 +2113,7 @@ struct FunctionOptions<'a> {
     super_home: bool,
     super_home_atom: Option<Atom>,
     rest_override: bool,
-    implicit_super: bool,
+    implicit_body: Option<first_call::ImplicitBody>,
     strict: bool,
     with_depth: u16,
 }
@@ -2416,10 +2428,7 @@ impl<'a> Compiler<'a> {
             functions: replay::FunctionTable::default(),
             errors: vec![],
             cache_sites: 0,
-            name_shared_sites: NameSharedSites::Load {
-                sites: FxHashMap::default(),
-                next: crate::bytecode::UNIQUE_CACHE_SITES,
-            },
+            name_shared_sites: NameSharedSites::default(),
             template_sites: 0,
             method_sites: SiteTable::default(),
             field_sites: SiteTable::default(),
@@ -2439,6 +2448,8 @@ impl<'a> Compiler<'a> {
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
             replayable_source: false,
+            first_call_roots: FxHashSet::default(),
+            kept_source: None,
             load_encoding: None,
         }
     }
@@ -2653,8 +2664,7 @@ impl<'a> Compiler<'a> {
         if let Some(body) = &function.body
             && lazy_bodies::is_stand_in(body)
         {
-            self.lazy_compiled.push(body.span.start);
-            return self.compile_lazy_function(function, context);
+            return self.compile_released_function(function, body.span.start, context);
         }
         if self.replayable_source {
             context.scopes = context.scopes.recording();
@@ -3044,7 +3054,7 @@ impl<'a> Compiler<'a> {
                     .is_some_and(|context| context.home_atom.is_some()),
                 super_home_atom: self.eval_context.and_then(|context| context.home_atom),
                 rest_override: false,
-                implicit_super: false,
+                implicit_body: None,
                 strict: self.root_strict,
                 with_depth: 0,
             },
@@ -3416,7 +3426,7 @@ impl<'a> Compiler<'a> {
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
-        let replay_atoms = (!replays.is_empty())
+        let replay_atoms = self.keeps_replay(replays.is_empty())
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let mut constants = self.constants.into_vec();
         constants.shrink_to_fit();
@@ -3439,7 +3449,7 @@ impl<'a> Compiler<'a> {
             module_imports,
             module_link_plan,
             source_name: self.source.to_owned(),
-            source: Some(crate::bytecode::ProgramSource {
+            source: Some(self.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
                 text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
                 typescript: self.source_type.is_typescript(),
                 base: 0,
@@ -3447,7 +3457,7 @@ impl<'a> Compiler<'a> {
                 column_offset: 0,
                 line_starts: Default::default(),
                 call_sites: Default::default(),
-            }),
+            })),
             atoms,
             constants,
             // Collected into a table of its own size: an in-place collect would keep the
@@ -4005,7 +4015,7 @@ impl<'a> Compiler<'a> {
             && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
-            && !options.implicit_super
+            && options.implicit_body.is_none()
             && options.with_depth == 0
             // A constructor runs its instance fields' initializers inline, where a function
             // one makes captures the constructor's frame as one its body makes would.
@@ -4109,8 +4119,8 @@ impl<'a> Compiler<'a> {
         let parameter_end_pc = function.code.len() as u32;
         function.push_body_lexical_bindings(&body_lexicals);
         function.emit_hoisted(body);
-        if options.implicit_super {
-            function.emit_implicit_super();
+        if let Some(body) = options.implicit_body {
+            function.emit_implicit_body(body);
         }
         function.function_body_statements(body);
         let result = if let Some(expression) = expression_body {

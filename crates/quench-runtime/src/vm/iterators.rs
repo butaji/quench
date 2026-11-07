@@ -2937,9 +2937,7 @@ impl<H: Host> Vm<H> {
             _ => (iterator, false),
         };
         let result = self.call_value(p, method, receiver, args)?;
-        if !self.is_object_like(result) {
-            return Err(self.type_error(p, "iterator next result is not an object".into()));
-        }
+        self.require_iterator_result(p, result)?;
         if !async_from_sync {
             return Ok(result);
         }
@@ -3092,11 +3090,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "iterator next method is not callable".into()));
                     }
                     let result = vm.call_value(p, method, this, args)?;
-                    if !vm.is_object_like(result) {
-                        return Err(
-                            vm.type_error(p, "iterator next result is not an object".into())
-                        );
-                    }
+                    vm.require_iterator_result(p, result)?;
                     return Ok(result);
                 }
             };
@@ -3187,9 +3181,7 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::AsyncFromSync {
                 let result = vm.iterator_next_with_args(p, source, args)?;
-                if !vm.is_object_like(result) {
-                    return Err(vm.type_error(p, "iterator next result is not an object".into()));
-                }
+                vm.require_iterator_result(p, result)?;
                 return vm.async_from_sync_result(p, this, result, true);
             }
             // Collection iterators skip deleted slots, so they record where they stopped.

@@ -274,7 +274,7 @@ impl<'a> VisitMut<'a> for StandIns<'_, 'a> {
 /// Arena bytes reserved per source byte for a parse: the whole program's parse reserves as
 /// much (`Compiler::specialize_with_mode_and_private_names`), and pages it does not touch
 /// cost no memory.
-const ARENA_BYTES_PER_SOURCE_BYTE: usize = 6;
+const ARENA_BYTES_PER_SOURCE_BYTE: usize = 32;
 
 /// The arena for parsing `text` again.
 pub(super) fn arena(text: &str) -> Allocator {

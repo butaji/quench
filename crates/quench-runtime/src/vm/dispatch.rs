@@ -732,6 +732,7 @@ impl<H: Host> Vm<H> {
                 let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), callee);
             }
+            Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
                 let import_meta = if let Some(value) = self.programs.import_meta(program) {
@@ -1066,11 +1067,7 @@ impl<H: Host> Vm<H> {
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
             }
-            Op::RequireIteratorResult => {
-                if !self.is_object_like(self.read(f, i.register_b())) {
-                    return Err(self.type_error(p, "iterator next result is not an object".into()));
-                }
-            }
+            Op::RequireIteratorResult => self.require_iterator_result(p, self.read(f, i.register_b()))?,
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),

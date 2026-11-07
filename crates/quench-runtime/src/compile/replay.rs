@@ -813,22 +813,15 @@ pub(crate) fn recompile(
     } else {
         SpecializationMode::Disabled
     };
+    let (line_starts, utf16_excess) = views.layout(text);
     let mut compiler = Compiler::with_layout(
         &program.source_name,
         text,
         mode,
         &atoms,
         FxHashMap::default(),
-        std::borrow::Cow::Borrowed(
-            views
-                .line_starts
-                .get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
-        ),
-        std::borrow::Cow::Borrowed(
-            views
-                .utf16_excess
-                .get_or_init(|| super::source_utf16_excess(text)),
-        ),
+        std::borrow::Cow::Borrowed(line_starts),
+        std::borrow::Cow::Borrowed(utf16_excess),
     );
     compiler.source_comments = parsed
         .program
@@ -976,7 +969,7 @@ pub(crate) fn recompile(
 }
 
 impl ShiftSpans {
-    fn shift(&self, span: &mut oxc_span::Span) {
+    pub(super) fn shift(&self, span: &mut oxc_span::Span) {
         oxc_ast_visit::VisitMut::visit_span(&mut Self(self.0), span);
     }
 }
