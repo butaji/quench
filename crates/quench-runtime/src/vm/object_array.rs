@@ -37,6 +37,43 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `shift` of a non-empty array of `length` whose every index is an ordinary own data
+    /// element or an unobserved hole (`holes_unobserved`), and whose `length` is writable,
+    /// so shifting runs no guest code: one vector removal, which moves holes as the ordered
+    /// algorithm's deletes do. Anything else leaves `None`, for that algorithm.
+    pub(super) fn shift_dense(&mut self, object: Value, length: usize) -> Option<Value> {
+        let dense = length > 0
+            && self.heap.sparse_length(object).is_none()
+            && self.heap.array(object).is_some_and(|data| {
+                data.is_extensible()
+                    && !data.is_arguments_object()
+                    && !data.has_indexed_descriptors()
+                    && data.elements().len() == length
+                    && self.holes_unobserved(object, data.elements())
+            });
+        let writable_length = self
+            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
+            .is_some_and(|attributes| attributes.writable);
+        if !dense || !writable_length {
+            return None;
+        }
+        let elements = self.heap.array_elements_mut(object).expect("dense array guard");
+        let first = super::index::mutable_array_elements(elements).remove(0);
+        Some(if first.is_deleted() { Value::UNDEFINED } else { first })
+    }
+
+    /// Whether no prototype could fill a hole of `values`, the elements of `object`, or they
+    /// hold none: the chain's proof answers in O(1) before the scan.
+    pub(super) fn holes_unobserved(&self, object: Value, values: &[Value]) -> bool {
+        self.prototypes_hold_no_index(object) || !values.iter().any(|value| value.is_deleted())
+    }
+
+    /// `shift` of an array as `shift_dense` makes it, which observes nothing.
+    pub(super) fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
+        let length = self.own_array_length(this)?;
+        self.shift_dense(this, length)
+    }
+
     /// The length of a string primitive, in UTF-16 code units: its own `length`, which no
     /// prototype can shadow.
     pub(super) fn string_length(&self, value: Value) -> Option<usize> {

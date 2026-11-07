@@ -954,7 +954,7 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
         }),
     });
     let tag = heap.alloc(Cell::WasmTag {
-        declarations: crate::WasmTypes::default(),
+        declarations: Box::default(),
         ty: 0,
     });
     let exception = heap.alloc(Cell::WasmException {

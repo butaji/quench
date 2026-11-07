@@ -100,27 +100,13 @@ const CODE_MAPPING: &str = "r-xp";
 /// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
 /// the same loader and compiler code, which a release would only refault (semver scenario
 /// 926 -> 741 ms). Collections release them only under memory-first
-/// (`release_at_collection`).
+/// (`release_at_collection`). Compile phases had released every 5 ms, and inside that when
+/// resident code passed 512 KiB, up to a tenth of a run's time: JetStream 3 refaulted its
+/// code at nearly every lazy compilation, 2-5x Node's minor faults. At this interval (no-JIT,
+/// x86_64, 2026-11-07): minor faults Air 43.6K -> 13.6K, ML 87K -> 16K, octane-code-load
+/// 36K -> 15K, Babylon 18K -> 12K; max RSS +0-2 MB (ML 12 -> 14), scores within noise.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-
-/// The first-call release interval under a policy that returns pages at collections
-/// (memory-first). Before a run's first collections its first calls run code it runs only
-/// once, and that code stayed resident until the first collection while the heap built up:
-/// the max RSS of V8-v7 DeltaBlue and RayTrace without JIT, and of RegExp in both modes, fell
-/// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
-/// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
-/// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
-/// MemoryFirst, 10 runs): V8-v7 max
-/// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
-/// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
-/// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
-/// Code generation and a kept program's release share it (`compile_release_interval`): at
-/// `LOAD_RELEASE_INTERVAL` a decode or bootstrap release just before had held back the entry
-/// compilation's, so its parser, code generator and encoder stayed resident together
-/// (`evidence/tod123-cold-entry-release-linux-2026-10-25`).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_COMPILE_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -419,7 +405,7 @@ pub fn release_read_only_code_and_data() {
 pub fn release_read_only_code_and_data() {}
 
 /// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`), each
-/// at most once per its interval (`compile_release_interval`). Code generation pages code and data out
+/// at most once per its interval (`LOAD_RELEASE_INTERVAL`). Code generation pages code and data out
 /// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
 /// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
 /// code generator, which a release would only refault, and each release reads the whole
@@ -452,7 +438,7 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
 }
 
 /// The release before a kept program loads (`Host::kept_compiled_program`), at most once per
-/// `compile_release_interval`. A bootstrap loads its builtin modules from the compile cache
+/// `LOAD_RELEASE_INTERVAL`. A bootstrap loads its builtin modules from the compile cache
 /// with no compilation boundary between them, so the code each module's set-up ran stayed
 /// resident beside the next one's: V8-v7 Richards start-up peaked at 4.0 MB, 3.2 MB with
 /// these releases and the two before the bootstrap (`execute_shared_on_worker`).
@@ -486,95 +472,6 @@ impl CompileRelease {
     #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
     const COUNT: usize = 3;
 
-    /// The releases that may come inside their interval once resident code passes the budget
-    /// (`over_budget`). A binary's first run compiles and keeps every bootstrap script back
-    /// to back, each within the interval of the last, and the compiler's and the host's code
-    /// stayed resident together: 1.95 MB of file pages beside 800 KiB of heap (V8-v7
-    /// MemoryFirst, first run with an empty compile cache, pinned, bolted static x86_64,
-    /// 3 runs, 2026-10-25: Richards 3028 -> 2336 KiB, RayTrace 2924-3048 -> 2768, DeltaBlue
-    /// 2952-3040 -> 2768-2844; warm runs within the pinned reading's 64-128 KiB modes, and
-    /// RayTrace's second run 2776 -> 2648). Encoding is left paced: a release there raised
-    /// RegExp's warm runs (5156 -> 5340).
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    fn releases_over_budget(self) -> bool {
-        match self {
-            Self::CodeGeneration | Self::Kept => true,
-            Self::Encoding => false,
-        }
-    }
-}
-
-/// How far apart each compile-phase release's runs are kept.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn compile_release_interval() -> std::time::Duration {
-    MEMORY_FIRST_COMPILE_RELEASE_INTERVAL
-}
-
-/// Under a policy that returns pages at collections, the resident file pages past which a
-/// code generation or a kept program releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
-/// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
-/// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
-/// of heap at 50-80 ms).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_RESIDENT_FILE_BUDGET: usize = 512 * 1024;
-
-/// The refaults that follow a release (`MEMORY_FIRST_COMPILE_RELEASE_INTERVAL`'s measurement).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micros(350);
-
-/// Releases over the budget cost at most this fraction of the run's time, at
-/// `RELEASE_REFAULT_COST` each: a program whose code alone passes the budget would otherwise
-/// release at nearly every first call (TypeScript's transpile 262 -> 555 ms, ESLint
-/// 248 -> 536). At a tenth (memory-first, bolted static x86_64, interleaved, 2026-10-24):
-/// V8-v7 RegExp max RSS 5792 -> 5560 KiB (15 runs), with JIT at most 5816 -> 5564, scores
-/// -2 to -4%; npm scenarios TypeScript 297 -> 296 ms, ESLint 241 -> 268, Acorn 346 -> 396
-/// at 13.6 -> 12.3 MB, Ajv 124 -> 132: a larger working set refaults more per release than
-/// the estimate.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const BUDGET_RELEASE_TIME_DIVISOR: u32 = 10;
-
-/// Releases over the budget a run may spend before its elapsed time has earned them
-/// (`BUDGET_RELEASE_TIME_DIVISOR`): its warm-up specializes the functions it first calls, and
-/// with only the time-earned budget a run 12 ms in had about three, so the specialization's
-/// code built up beside the heap and set the peak whenever no collection released it first
-/// (V8-v7 RayTrace's high runs: 1.9-2.0 MB of file pages at 12-13 ms, against about 1.3 MB
-/// at a later peak). V8-v7 without JIT, 15 interleaved runs of one bolted static binary,
-/// worst max RSS against none (x86_64 VM, 2026-10-25): RayTrace 2892 -> 2704 KiB, Crypto
-/// 3228 -> 3060, Richards 2728 -> 2464, NavierStokes 3980 -> 3928, RegExp 5512 -> 5492,
-/// DeltaBlue 2764 -> 2772; medians equal or lower, scores within noise. 16 and 24 left
-/// RayTrace and Crypto worse. The releases cost a short npm scenario the most: Acorn 138 ->
-/// 165 ms, ESLint 323 -> 341, Ajv 282 -> 305, TypeScript 410 -> 413.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_START_RELEASES: u32 = 40;
-
-/// When the first budget check ran, and the releases over the budget since.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-impl CompileRelease {
-    /// Whether a code generation or a kept program releases inside its
-    /// interval: the resident file pages passed
-    /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
-    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
-    /// (`MEMORY_FIRST_START_RELEASES`).
-    fn over_budget(self) -> bool {
-        if !self.releases_over_budget() {
-            return false;
-        }
-        let Ok(mut releases) = BUDGET_RELEASES.lock() else {
-            return false;
-        };
-        let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
-        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
-        if RELEASE_REFAULT_COST * (*count + 1) > allowed
-            || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
-        {
-            return false;
-        }
-        *count += 1;
-        true
-    }
 }
 
 /// The process's own memory counts in pages, space-separated (proc(5)).
@@ -650,9 +547,9 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
     let recent = if shares_release_clock() {
         !release_due()
     } else {
-        last.is_some_and(|last| last.elapsed() < compile_release_interval())
+        last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL)
     };
-    if recent && !release.over_budget() {
+    if recent {
         return;
     }
     *last = Some(std::time::Instant::now());
@@ -736,11 +633,11 @@ fn released_within(interval: std::time::Duration) -> bool {
     LAST_RELEASE.lock().ok().and_then(|last| *last).is_some_and(|last| last.elapsed() < interval)
 }
 
-/// Whether the process's release pace (`compile_release_interval`) has passed since the
+/// Whether the process's release pace (`LOAD_RELEASE_INTERVAL`) has passed since the
 /// read-only pages last left, by any release.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_due() -> bool {
-    !released_within(compile_release_interval())
+    !released_within(LOAD_RELEASE_INTERVAL)
 }
 
 /// Whether every paced release shares one clock, the last release of any kind
