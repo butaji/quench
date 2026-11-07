@@ -48,7 +48,7 @@ pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
 pub const GLOBAL_SCRIPT_GOAL: &str = "global-script";
 pub const GLOBAL_SCRIPT_SOURCE_NAME: &str = "<global-script>";
 mod binding_time;
-mod data_literal;
+pub(crate) mod data_literal;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
@@ -4229,7 +4229,7 @@ impl<'a> Compiler<'a> {
             name_bindings,
             binding_sites: function.binding_sites.into(),
             source_positions: function.source_positions,
-            environment_clones: environment_clones.into(),
+            environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

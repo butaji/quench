@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        self.clone_frame_environment(frame, &[slot], &[])?;
+        self.clone_frame_environment(frame, &[slot], crate::bytecode::Resets::listed(&[]))?;
         *self
             .frame_binding_mut(p, frame, usize::from(slot))
             .ok_or_else(|| JsError("invalid handler binding".into()))? = value;
@@ -1845,37 +1845,6 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: see above; the pointer was taken from the frame's current environment.
         Some(read(self, unsafe { &*slots }, root, slot))
-    }
-
-    /// A capture that can be read from an owned or shared environment slot after applying the same
-    /// functionless-layer skipping as `capture`, without projected property lookup.
-    pub(super) fn jit_owned_capture(
-        &mut self,
-        frame: usize,
-        depth: u16,
-        slot: u16,
-    ) -> Option<Value> {
-        if let Some(value) = self.cached_direct_capture(frame, depth, slot) {
-            return Some(value);
-        }
-        let env = self.capture_env(frame, depth)?;
-        let Some(Cell::Environment {
-            function,
-            scope,
-            ..
-        }) = self.heap.get(env)
-        else {
-            return None;
-        };
-        let root = *function == super::ROOT_FUNCTION_ID;
-        if root && !self.root_environment_slot_is_binding(scope.program(), slot) {
-            return None;
-        }
-        let value = self
-            .heap
-            .environment_slot(env, usize::from(slot))
-            .filter(|value| !value.is_deleted())?;
-        Some(value)
     }
 
     #[cold]

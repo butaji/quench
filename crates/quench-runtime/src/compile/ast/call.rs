@@ -555,9 +555,8 @@ impl FunctionCompiler<'_, '_> {
         } else {
             (self.reg(), None)
         };
-        let key = self.expression_outside_optional_chain(&member.expression);
         let source = self.computed_access_source_offset(member);
-        self.with_source_offset(source, |compiler| compiler.emit(Op::GetIndex, callee, receiver, key, 0));
+        self.with_source_offset(source, |compiler| compiler.computed_callee_read(callee, receiver, &member.expression));
         if let Some(end) = end {
             self.patch(end);
         }

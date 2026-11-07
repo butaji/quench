@@ -49,6 +49,7 @@ fn layout_bytes(function: &Function) -> usize {
         + function.selective_capture_slots.as_deref().map_or(0, slice_bytes::<u16>)
         + slice_bytes::<BindingSite>(&function.binding_sites)
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
+        + slice_bytes::<u16>(function.environment_clones.owned())
 }
 
 /// A compiled program's owned bytes by part: its function records and each per-function and

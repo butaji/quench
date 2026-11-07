@@ -16,94 +16,8 @@ use quench_runtime::{DescriptorFields, RootId, RootedError, ValueType};
 const MODULE_CACHE: &str = "\0builtin:readline";
 const PROMISES_CACHE: &str = "\0builtin:readline/promises";
 
-/// The symbols an interface keys its private state and internal methods with.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Slot {
-    SawReturnAt,
-    SawKeyPress,
-    PreviousKey,
-    SubstringSearch,
-    UndoStack,
-    RedoStack,
-    KillRing,
-    KillRingCursor,
-    Prompt,
-    LineBuffer,
-    Decoder,
-    LineObjectStream,
-    QuestionCallback,
-    OldPrompt,
-    QuestionReject,
-    Question,
-    QuestionCancel,
-    SetRawMode,
-    OnLine,
-    WriteToOutput,
-    AddHistory,
-    RefreshLine,
-    NormalWrite,
-    InsertString,
-    Line,
-    HistoryNext,
-    HistoryPrev,
-    GetDisplayPos,
-    MoveCursor,
-    TtyWrite,
-    DeleteLeft,
-    DeleteRight,
-    DeleteLineLeft,
-    DeleteLineRight,
-    KeypressDecoder,
-    EscapeDecoder,
-}
-
-impl Slot {
-    /// The symbol's description, which for the legacy-aliased slots is also the alias.
-    fn description(self) -> &'static str {
-        match self {
-            Self::SawReturnAt => "_sawReturnAt",
-            Self::SawKeyPress => "_sawKeyPress",
-            Self::PreviousKey => "_previousKey",
-            Self::SubstringSearch => "kSubstringSearch",
-            Self::UndoStack => "_undoStack",
-            Self::RedoStack => "_redoStack",
-            Self::KillRing => "_killRing",
-            Self::KillRingCursor => "_killRingCursor",
-            Self::Prompt => "_prompt",
-            Self::LineBuffer => "_line_buffer",
-            Self::Decoder => "_decoder",
-            Self::LineObjectStream => "line object stream",
-            Self::QuestionCallback => "_questionCallback",
-            Self::OldPrompt => "_oldPrompt",
-            Self::QuestionReject => "_questionReject",
-            Self::Question => "kQuestion",
-            Self::QuestionCancel => "kQuestionCancel",
-            Self::SetRawMode => "_setRawMode",
-            Self::OnLine => "_onLine",
-            Self::WriteToOutput => "_writeToOutput",
-            Self::AddHistory => "_addHistory",
-            Self::RefreshLine => "_refreshLine",
-            Self::NormalWrite => "_normalWrite",
-            Self::InsertString => "_insertString",
-            Self::Line => "_line",
-            Self::HistoryNext => "_historyNext",
-            Self::HistoryPrev => "_historyPrev",
-            Self::GetDisplayPos => "_getDisplayPos",
-            Self::MoveCursor => "_moveCursor",
-            Self::TtyWrite => "_ttyWrite",
-            Self::DeleteLeft => "_deleteLeft",
-            Self::DeleteRight => "_deleteRight",
-            Self::DeleteLineLeft => "_deleteLineLeft",
-            Self::DeleteLineRight => "_deleteLineRight",
-            Self::KeypressDecoder => "keypress-decoder",
-            Self::EscapeDecoder => "escape-decoder",
-        }
-    }
-
-    fn cache_key(self) -> String {
-        format!("\0readline:{}", self.description())
-    }
-}
+mod slot;
+use slot::Slot;
 
 /// The internal methods: their slot, operation and arity, in Node's class order.
 const METHODS: [(Slot, &str); 17] = [
@@ -2408,7 +2322,7 @@ fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
     c.define_data_property_rooted(question, custom, promised, true, true, true)?;
     let base_prototype = get(c, base, "prototype")?;
     for (which, _) in METHODS.iter().chain(LATE_METHODS.iter()) {
-        if matches!(which, Slot::Question | Slot::QuestionCancel) {
+        if which.is_question() {
             continue;
         }
         let name = text(c, which.description());
@@ -2424,7 +2338,7 @@ fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
         accessor(c, prototype, name, getter, Some(setter))?;
     }
     for (which, _) in METHODS.iter().chain(LATE_METHODS.iter()) {
-        if matches!(which, Slot::Question | Slot::QuestionCancel) {
+        if which.is_question() {
             continue;
         }
         let key = slot(c, *which)?;

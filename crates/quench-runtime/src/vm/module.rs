@@ -15,6 +15,13 @@ pub(crate) enum ModulePhase {
     Errored,
 }
 
+impl ModulePhase {
+    /// Whether the module's evaluation is still settling asynchronously.
+    pub(crate) fn awaits_async_evaluation(self) -> bool {
+        matches!(self, ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ModuleOutcome {
     Pending(ModulePhase),
