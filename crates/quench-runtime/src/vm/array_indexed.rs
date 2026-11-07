@@ -180,13 +180,18 @@ impl<H: Host> Vm<H> {
             }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
+        // The search value's kind decides strict equality once: a Number compares numerically,
+        // a String or BigInt by contents, and anything else only by identity.
+        let by_contents = search.as_number().is_some()
+            || self.heap.string(search).is_some()
+            || matches!(self.heap.get(search), Some(Cell::BigInt(_)));
         let elements = self.heap.array(array)?.elements();
         for (index, value) in elements.iter().enumerate().take(length).skip(start) {
             if value.is_deleted() {
                 if !self.inherited_index_absent(array, index) {
                     return None;
                 }
-            } else if self.strict_equal(*value, search) {
+            } else if if by_contents { self.strict_equal(*value, search) } else { *value == search } {
                 return Some(Value::number(index as f64));
             }
         }

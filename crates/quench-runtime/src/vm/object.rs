@@ -1549,15 +1549,19 @@ impl<H: Host> Vm<H> {
     }
 
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`, where its
-    /// shape stores it outside dictionary storage at a slot a hint can name.
-    pub(super) fn own_data_field_hint(&self, object: Value, atom: Atom) -> Option<FieldCache> {
+    /// shape stores it outside dictionary storage at a slot a hint can name; with `STORES`, only
+    /// a writable one, which a store through the hint may replace.
+    pub(super) fn own_data_field_hint<const STORES: bool>(&self, object: Value, atom: Atom) -> Option<FieldCache> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let shape = receiver.exact_shape();
         if shape != receiver.shape() {
             return None;
         }
         let slot = u16::try_from(self.shape_slot(shape, atom)?).ok()?;
-        if self.property_attributes(object, PropertyKey::string(atom)).is_none_or(|attributes| attributes.accessor) {
+        if self
+            .property_attributes(object, PropertyKey::string(atom))
+            .is_none_or(|attributes| attributes.accessor || (STORES && !attributes.writable))
+        {
             return None;
         }
         Some(FieldCache::own(shape, slot))
@@ -2886,7 +2890,7 @@ impl<H: Host> Vm<H> {
             *existing = entry;
             return;
         }
-        if entries.len() >= INHERITED_FIELD_CACHE_WAYS {
+        if entries.len() >= ACCESSOR_FIELD_CACHE_WAYS {
             entries.remove(0);
         }
         entries.push(entry);

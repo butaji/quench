@@ -2488,6 +2488,8 @@ impl<H: Host> Vm<H> {
                     // Operands of one type compare as `===` does.
                     _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    // Two distinct Symbols, as a kind tag (`x.kind == Kind.A`) compares.
+                    (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => false,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
                 },

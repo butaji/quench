@@ -719,6 +719,25 @@ impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Defaul
     }
 }
 
+impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Default> Snap for indexmap::IndexMap<K, V, S> {
+    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        writer.len(self.len());
+        self.iter().try_for_each(|(key, value)| {
+            key.snap(writer)?;
+            value.snap(writer)
+        })
+    }
+    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let len = reader.len()?;
+        let mut map = Self::with_capacity_and_hasher(len.min(1 << 20), S::default());
+        for _ in 0..len {
+            let key = K::unsnap(reader)?;
+            map.insert(key, V::unsnap(reader)?);
+        }
+        Ok(map)
+    }
+}
+
 impl<K: Snap + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Snap for std::collections::HashSet<K, S> {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
         writer.len(self.len());
