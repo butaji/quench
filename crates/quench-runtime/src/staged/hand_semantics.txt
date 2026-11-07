@@ -163,6 +163,8 @@ vm/compiled/osr_loop.rs SetIndex 15
 vm/compiled/osr_loop.rs SetThisField 3
 vm/compiled/osr_loop.rs ToNumeric 10
 vm/compiled/osr_loop.rs Unary 17
+vm/compiled/osr_loop/iteration.rs Call 1
+vm/compiled/osr_loop/iteration.rs CallArray 1
 vm/compiled/scalar_region.rs GetField 3
 vm/compiled/scalar_region.rs IncDec 2
 vm/compiled/scalar_region.rs LoadConst 2

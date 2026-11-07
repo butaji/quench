@@ -5,6 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
+mod append_buffer;
+use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
+
 /// Bytes of text made on demand since the collector last took them. A string is charged its
 /// flat bytes when allocated; text made later is charged here, so collections follow the
 /// memory programs materialize.
@@ -62,7 +65,14 @@ fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
 /// Text made on demand and not yet charged, which the caller now charges.
 #[inline(always)]
 pub(crate) fn take_materialized_text() -> MaterializedText {
-    MATERIALIZED.with(|total| total.replace(MaterializedText::default()))
+    // Most allocations made no text: they read the ledger without writing it.
+    MATERIALIZED.with(|total| {
+        let text = total.get();
+        if text != MaterializedText::default() {
+            total.set(MaterializedText::default());
+        }
+        text
+    })
 }
 
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
@@ -111,84 +121,6 @@ pub(crate) enum FlatUnits {
     /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
     /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
-}
-
-/// Storage that text built by appends grows into, as a `Vec` grows: a string holding it is
-/// its first `length` units, and an append to the string whose end is the buffer's end
-/// writes past it, in place, leaving every unit a string already holds untouched. Each
-/// append costs the units it adds, where a copy of the whole prefix (or a rope node and
-/// copied leaf) cost one allocation and up to `FLAT_PREFIX_MAX_UNITS` copied units each
-/// (SpiderMonkey's extensible strings and CPython's in-place `+=` make the same trade).
-pub(crate) struct AppendBuffer<T> {
-    units: std::ptr::NonNull<MaybeUninit<T>>,
-    capacity: usize,
-    /// Units written; only units past it are ever written again.
-    filled: std::cell::Cell<usize>,
-    /// The length of the string that made the buffer, which is charged its whole capacity
-    /// (`JsString::flat_unit_bytes`): the strings made by appends into it allocated nothing.
-    made_length: usize,
-}
-
-/// An append buffer holds this many times the units it is made for, so appends copy each
-/// unit a bounded number of times however long the text grows.
-const APPEND_BUFFER_GROWTH: usize = 2;
-
-impl<T: Copy> AppendBuffer<T> {
-    /// A buffer holding `prefix` then `tail`, with room for as many units again.
-    fn made_of(prefix: impl ExactSizeIterator<Item = T>, tail: impl ExactSizeIterator<Item = T>) -> Rc<Self> {
-        let length = prefix.len() + tail.len();
-        let mut storage = Box::<[T]>::new_uninit_slice(length * APPEND_BUFFER_GROWTH);
-        for (slot, unit) in storage.iter_mut().zip(prefix.chain(tail)) {
-            slot.write(unit);
-        }
-        let capacity = storage.len();
-        let units = std::ptr::NonNull::new(Box::into_raw(storage) as *mut MaybeUninit<T>)
-            .expect("a boxed slice is non-null");
-        Rc::new(Self { units, capacity, filled: std::cell::Cell::new(length), made_length: length })
-    }
-
-    /// The first `length` units, which are written and never written again.
-    fn prefix(&self, length: u32) -> &[T] {
-        debug_assert!(length as usize <= self.filled.get());
-        // SAFETY: units below `filled` are initialized, and appends write only past it.
-        unsafe { std::slice::from_raw_parts(self.units.as_ptr() as *const T, length as usize) }
-    }
-
-    /// Appends `tail` when a string of `length` units ends where the buffer does and the
-    /// tail fits: the length of the string that holds both, else `None`.
-    fn append(&self, length: u32, tail: impl ExactSizeIterator<Item = T>) -> Option<u32> {
-        let (filled, added) = (self.filled.get(), tail.len());
-        if filled != length as usize || self.capacity - filled < added {
-            return None;
-        }
-        for (offset, unit) in tail.enumerate() {
-            // SAFETY: `filled + offset` is below `capacity`, and no reference covers units at
-            // or past `filled` (`prefix`).
-            unsafe { self.units.as_ptr().add(filled + offset).write(MaybeUninit::new(unit)) };
-        }
-        self.filled.set(filled + added);
-        Some(stored_length(filled + added))
-    }
-
-    fn capacity_bytes(&self) -> usize {
-        self.capacity * size_of::<T>()
-    }
-
-    /// The bytes a string of `length` units holding the buffer is charged: the whole buffer
-    /// for the string that made it, nothing for those appends made in place.
-    fn charge(&self, length: u32) -> usize {
-        if length as usize == self.made_length { self.capacity_bytes() } else { 0 }
-    }
-}
-
-impl<T> Drop for AppendBuffer<T> {
-    fn drop(&mut self) {
-        // SAFETY: `units` came from `Box::into_raw` of a slice of `capacity` units, and `T`
-        // needs no drop.
-        drop(unsafe {
-            Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.units.as_ptr(), self.capacity))
-        });
-    }
 }
 
 /// The units `range` of shared `Wide` storage; never a slice of a slice.
@@ -767,10 +699,9 @@ impl JsStringInner {
 /// rope node: a node and the separate halves it keeps alive cost more than copying a short
 /// piece, and a rope's leaves then hold at least this many units each.
 const ROPE_LEAF_MAX_UNITS: usize = 512;
-/// A flat left side at most this long takes a short right side by copy, so text built by
-/// appends stays flat until it is long; past it, the text moves into an append buffer
-/// (`JsString::extended`). Each copy takes the whole prefix, so the bound is the most an
-/// append copies: from 8192,
+/// A flat string at most this long prepended to a rope joins the rope's flat left leaf by
+/// copy (`JsString::push_js_string`). Each copy takes the whole prefix, so the bound is the
+/// most a prepend copies: from 8192,
 /// pdfjs 12.67G -> 9.42G instructions with max RSS 84.8 -> 86.8 MB, and web-ssr's built
 /// text 89.8 -> 100.9 MB (Bun without its JIT: 88.8 and 124.3 MB; 512 saved 2% more on
 /// pdfjs for 3.5 MB more on web-ssr; JetStream, Linux x86_64, 2026-10-19).
@@ -982,6 +913,14 @@ impl JsString {
         Self::from_flat(self.flat().run(range))
     }
 
+    /// Number::toString(10) of `value`, written on the stack: text this short is held inline.
+    pub(crate) fn from_number(value: f64) -> Self {
+        let mut text = crate::number_to_string::Short::new();
+        crate::number_to_string::write(value, &mut text);
+        // SAFETY: `write` appends ASCII only.
+        Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(&text) }))
+    }
+
     pub(crate) fn from_str(text: &str) -> Self {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
@@ -1164,6 +1103,7 @@ impl JsString {
     }
 
     /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
+    #[inline]
     pub(crate) fn flat_unit_bytes(&self) -> usize {
         let flat = match &self.repr {
             Repr::Flat(units) => Some(units),
@@ -1264,8 +1204,8 @@ impl JsString {
                 Rc::as_ptr(&slice.units) as *const u16 as usize,
                 RC_HEADER_BYTES + std::mem::size_of_val(&*slice.units),
             ),
-            FlatUnits::AsciiPrefix(buffer, _) => (buffer.units.as_ptr() as usize, buffer.capacity_bytes()),
-            FlatUnits::WidePrefix(buffer, _) => (buffer.units.as_ptr() as usize, buffer.capacity_bytes()),
+            FlatUnits::AsciiPrefix(buffer, _) => buffer.storage(),
+            FlatUnits::WidePrefix(buffer, _) => buffer.storage(),
         };
         let host_storage = self.existing_host().map(|host| {
             (
@@ -1276,6 +1216,21 @@ impl JsString {
         (unit_storage, host_storage)
     }
 
+    /// This string then `text`. Text built by ASCII appends is made in place of the copy
+    /// `push_js_string` takes: `text` written past this string's end in its append buffer.
+    #[inline(always)]
+    pub(crate) fn concat(&self, text: &Self) -> Self {
+        if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Some(Units::Ascii(bytes))) =
+            (&self.repr, text.existing_flat().map(FlatUnits::view))
+            && let Some(length) = buffer.append(*length, bytes.iter().copied())
+        {
+            return Self { repr: Repr::Flat(FlatUnits::AsciiPrefix(buffer.clone(), length)) };
+        }
+        let mut joined = self.clone();
+        joined.push_js_string(text);
+        joined
+    }
+
     pub(crate) fn push_js_string(&mut self, text: &Self) {
         if self.len() == 0 {
             *self = text.clone();
@@ -1284,8 +1239,7 @@ impl JsString {
         if text.len() == 0 {
             return;
         }
-        if let Some(appended) = self.appended_in_place(text) {
-            *self = appended;
+        if self.append_in_place(text) {
             return;
         }
         let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
@@ -1315,18 +1269,18 @@ impl JsString {
     /// Flat `left` then flat `right`, which is short: copied into storage of their exact
     /// length while `left` is short too, else into an append buffer later appends extend.
     fn extended(left: &Self, right: &Self) -> Self {
-        if left.len() <= FLAT_PREFIX_MAX_UNITS {
+        if left.len() <= APPEND_BUFFER_MIN_UNITS {
             return Self::joined(left, right);
         }
         match (left.units(), right.units()) {
             (Units::Ascii(head), Units::Ascii(tail)) => {
                 let buffer = AppendBuffer::made_of(head.iter().copied(), tail.iter().copied());
-                let length = stored_length(buffer.filled.get());
+                let length = stored_length(buffer.filled());
                 Self::from_flat(FlatUnits::AsciiPrefix(buffer, length))
             }
             (head, tail) => {
                 let buffer = AppendBuffer::made_of(head.iter(), tail.iter());
-                let length = stored_length(buffer.filled.get());
+                let length = stored_length(buffer.filled());
                 Self::from_flat(FlatUnits::WidePrefix(buffer, length))
             }
         }
@@ -1353,24 +1307,27 @@ impl JsString {
             .expect("a copied concatenation is within the string length limit")
     }
 
-    /// This string then flat `text`, written into this string's append buffer past its end
-    /// when it ends where the buffer does and `text` fits.
-    fn appended_in_place(&self, text: &Self) -> Option<Self> {
-        let tail = text.existing_flat()?.view();
-        match (self.existing_flat()?, tail) {
-            (FlatUnits::AsciiPrefix(buffer, length), Units::Ascii(bytes)) => {
-                let length = buffer.append(*length, bytes.iter().copied())?;
-                Some(Self::from_flat(FlatUnits::AsciiPrefix(buffer.clone(), length)))
-            }
-            (FlatUnits::WidePrefix(buffer, length), tail) => {
-                let length = match tail {
-                    Units::Ascii(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
-                    Units::Wide(units) => buffer.append(*length, units.iter().copied()),
-                }?;
-                Some(Self::from_flat(FlatUnits::WidePrefix(buffer.clone(), length)))
-            }
-            _ => None,
+    /// Appends flat `text` into this string's append buffer past its end, when this string
+    /// ends where the buffer does and `text` fits: an ASCII prefix only grows its length.
+    fn append_in_place(&mut self, text: &Self) -> bool {
+        let Some(tail) = text.existing_flat().map(FlatUnits::view) else {
+            return false;
+        };
+        if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Units::Ascii(bytes)) = (&mut self.repr, tail) {
+            return buffer.append(*length, bytes.iter().copied()).map(|appended| *length = appended).is_some();
         }
+        let Some(FlatUnits::WidePrefix(buffer, length)) = self.existing_flat() else {
+            return false;
+        };
+        let appended = match tail {
+            Units::Ascii(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
+            Units::Wide(units) => buffer.append(*length, units.iter().copied()),
+        };
+        let Some(length) = appended else {
+            return false;
+        };
+        *self = Self::from_flat(FlatUnits::WidePrefix(buffer.clone(), length));
+        true
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {

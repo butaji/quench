@@ -130,6 +130,33 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// DefineOwnProperty of an index an exotic object answers outside its shape: a typed
+    /// array's element, or a String wrapper's unit, which is non-configurable and read-only,
+    /// so a definition only validates against it (ValidateAndApplyPropertyDescriptor changes
+    /// nothing). `None` for any other object or key.
+    fn define_exotic_index(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<Option<bool>, JsError> {
+        if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
+            match Self::typed_array_index_key(self.atom_name(atom)) {
+                TypedArrayIndexKey::Index(index) => {
+                    return self.define_typed_array_property(p, object, index, descriptor).map(Some);
+                }
+                TypedArrayIndexKey::Invalid => return Ok(Some(false)),
+                TypedArrayIndexKey::NotCanonical => {}
+            }
+        }
+        let Some(unit) = self.string_wrapper_unit(object, PropertyKey::string(atom)) else {
+            return Ok(None);
+        };
+        let current = PropertyDescriptorRecord::from_attributes(unit, super::string_wrapper::STRING_INDEX_ATTRIBUTES);
+        Ok(Some(descriptor.compatible_with(Some(current), true, |a, b| self.same_value(a, b))))
+    }
+
     /// `define_own_property_record` of a target that is no proxy, its values kept by the
     /// caller's call roots.
     fn define_ordinary_own_property(
@@ -145,19 +172,8 @@ impl<H: Host> Vm<H> {
             _ => unreachable!("DefineOwnProperty receives a property key"),
         };
         if let PropertyKey::String(atom) = property {
-            if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
-                match Self::typed_array_index_key(self.atom_name(atom)) {
-                    TypedArrayIndexKey::Index(index) => {
-                        return self.define_typed_array_property(
-                            p,
-                            object,
-                            index,
-                            descriptor,
-                        );
-                    }
-                    TypedArrayIndexKey::Invalid => return Ok(false),
-                    TypedArrayIndexKey::NotCanonical => {}
-                }
+            if let Some(defined) = self.define_exotic_index(p, object, atom, descriptor)? {
+                return Ok(defined);
             }
             if self.heap.array(object).is_some()
                 && atom == self.length_atom

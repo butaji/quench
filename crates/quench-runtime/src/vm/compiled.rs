@@ -78,6 +78,8 @@ pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
 mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
+mod code_heap;
+pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 #[path = "compiled/general_call.rs"]
@@ -6135,7 +6137,7 @@ impl CompiledProgram {
     pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.functions.len()).filter(|&function| self.has_function(function)) }
 
     pub(super) fn mapped_bytes(&self) -> usize {
-        self._code.length
+        self._code.length()
     }
 
     #[cfg(test)]
@@ -6247,75 +6249,6 @@ fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
         }
     }
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
-}
-
-/// Executable memory holding a program's machine code.
-pub(super) struct CodeMemory {
-    pointer: *mut u8,
-    length: usize,
-}
-
-impl CodeMemory {
-    /// The first byte of the executable mapping.
-    pub(super) fn pointer(&self) -> *mut u8 {
-        self.pointer
-    }
-
-    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
-        Self::assemble(bytes.len(), |_, code| {
-            code.copy_from_slice(bytes);
-            Ok(())
-        })
-        .ok()
-    }
-
-    /// Map `length` writable bytes, let `fill` write the code knowing its final
-    /// address, then make the mapping read-only and executable. Copy-and-patch
-    /// publication needs the address to resolve PC-relative continuations.
-    pub(super) fn assemble(
-        length: usize,
-        fill: impl FnOnce(*mut u8, &mut [u8]) -> Result<(), String>,
-    ) -> Result<Self, String> {
-        let requested = length;
-        let length = length.max(1);
-        // `mmap` rounds to whole pages. Store that rounded length explicitly
-        // so the JS tier's budget reflects its executable mappings.
-        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        let page_size = usize::try_from(page_size).map_err(|_| "page size is unavailable")?;
-        let length = length
-            .checked_next_multiple_of(page_size)
-            .ok_or("code mapping size overflow")?;
-        // SAFETY: an anonymous private mapping; the result is checked.
-        let pointer = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                length,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        if pointer == libc::MAP_FAILED {
-            return Err("code mapping failed".into());
-        }
-        let memory = Self { pointer: pointer.cast::<u8>(), length };
-        // SAFETY: the mapping is `length >= requested` writable bytes owned by `memory`.
-        let code = unsafe { std::slice::from_raw_parts_mut(memory.pointer, requested) };
-        fill(memory.pointer, code)?;
-        // SAFETY: the same mapping, now read-only and executable.
-        if unsafe { libc::mprotect(memory.pointer.cast(), length, libc::PROT_READ | libc::PROT_EXEC) } != 0 {
-            return Err("code mapping could not be made executable".into());
-        }
-        Ok(memory)
-    }
-}
-
-impl Drop for CodeMemory {
-    fn drop(&mut self) {
-        // SAFETY: the mapping this value owns.
-        unsafe { libc::munmap(self.pointer.cast(), self.length) };
-    }
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -6506,7 +6439,7 @@ fn native_dump_directory() -> Option<&'static std::path::Path> {
 /// mapping lives on stderr. A failed write leaves the run as it is.
 fn dump_native_code(directory: &std::path::Path, header: u32, code: &CodeMemory, clif: &str) {
     // SAFETY: the mapping is `code.length` readable bytes while `code` lives.
-    let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length) };
+    let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length()) };
     dump_native_bytes(directory, header, bytes, Some(code.pointer()), clif);
 }
 
@@ -8522,14 +8455,14 @@ impl CompiledJsFunction {
     pub(super) fn from_artifact(artifact: super::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;
         // SAFETY: both projections emit the shared native-entry ABI (`native_entry_signature`).
-        let shared = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
+        let shared = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
         let entry = match artifact.result {
             super::js_compiled::JsJitResultKind::SharedNumberEntry(mode, result) =>
                 CompiledJsEntry::SharedNumber { entry: shared, mode, result },
             super::js_compiled::JsJitResultKind::GeneralDispatch => CompiledJsEntry::GeneralDispatch(shared),
         };
         Some(Self {
-            mapped_bytes: code.length,
+            mapped_bytes: code.length(),
             _code: code,
             entry,
             params: artifact.params,
@@ -12598,9 +12531,9 @@ fn guard_support() -> Option<&'static GuardSupport> {
             }
             let memory = CodeMemory::new(&code)?;
             // SAFETY: the code implements `Trampoline` for this ABI.
-            let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer) };
-            let landing = memory.pointer as usize + TRAMPOLINE_LANDING;
-            let termination = memory.pointer as usize + TRAMPOLINE_TERMINATION;
+            let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer()) };
+            let landing = memory.pointer() as usize + TRAMPOLINE_LANDING;
+            let termination = memory.pointer() as usize + TRAMPOLINE_TERMINATION;
             install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV)],
                 guard_fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER)?;
             Some(GuardSupport {
@@ -13957,8 +13890,8 @@ impl<H: Host> Vm<H> {
             link(&mut bytes, offset, &call, offsets[call.callee]?)?;
         }
         let memory = CodeMemory::new(&bytes)?;
-        let mapped_bytes = memory.length;
-        let base = memory.pointer as usize;
+        let mapped_bytes = memory.length();
+        let base = memory.pointer() as usize;
         write_perf_map(base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()

@@ -184,7 +184,10 @@ impl<H: Host> Vm<H> {
         if let Some(text) = self.heap.string(primitive) {
             return Ok(text.clone());
         }
-        self.to_string(program, primitive).map(JsString::from)
+        match primitive.as_number() {
+            Some(number) => Ok(JsString::from_number(number)),
+            None => self.to_string(program, primitive).map(JsString::from),
+        }
     }
 
     /// `!value`: the negated truthiness.
@@ -487,16 +490,12 @@ pub(super) fn typeof_text(kind: crate::ValueType) -> &'static str {
 /// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
 /// may run guest code.
 pub(super) fn immediate_to_string(value: Value) -> Option<String> {
-    if value.is_undefined() || value.is_deleted() {
-        return Some("undefined".into());
+    match value.as_bool() {
+        _ if value.is_undefined() || value.is_deleted() => Some("undefined".into()),
+        _ if value.is_null() => Some("null".into()),
+        Some(value) => Some(value.to_string()),
+        None => value.as_number().map(crate::number_to_string::format),
     }
-    if value.is_null() {
-        return Some("null".into());
-    }
-    if let Some(value) = value.as_bool() {
-        return Some(value.to_string());
-    }
-    value.as_number().map(crate::number_to_string::format)
 }
 
 /// The kind of a value its bits alone decide (undefined, null, a boolean, a Number); `None`

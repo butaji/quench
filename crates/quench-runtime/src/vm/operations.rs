@@ -2190,11 +2190,10 @@ impl<H: Host> Vm<H> {
         NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
-    #[cold]
     #[inline(never)]
-    /// String concatenation for `+` once at least one operand is a string: an interned
-    /// result when the dynamic-string cache knows the pair, otherwise both operands' string
-    /// values joined and interned.
+    /// String concatenation for `+` once at least one operand is a string: the cached result
+    /// when the dynamic-string cache knows the pair, otherwise both operands' string values
+    /// joined.
     fn concatenate(
         &mut self,
         p: &ResidualProgram,
@@ -2208,9 +2207,9 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile.string_concat(false);
-        let mut text = self.coerce_js_string(p, left)?;
-        text.push_js_string(&self.coerce_js_string(p, right)?);
-        Ok(self.intern_dynamic_value(text))
+        // Not interned: hashing the result would read every unit of a growing `out += n`.
+        let text = self.coerce_js_string(p, left)?.concat(&self.coerce_js_string(p, right)?);
+        Ok(self.heap.alloc_string(text))
     }
 
     /// `+` of two operands that become strings without guest code, Numbers and strings,

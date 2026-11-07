@@ -22,7 +22,7 @@ fn osr_covers_every_opcode_natively_or_by_its_interpreter_definition() {
         );
         assert!(region.is_ok(), "{op:?} rejects its loop: {region:?}", region = region.err());
     }
-    // A loop that leaves at its header runs no native code.
+    // A loop whose every iteration leaves runs in its function's lane body.
     let always_exits = admit_region(
         vec![WideInstruction::new(Op::Construct, 1, 2, 3, 0), WideInstruction::new(Op::Jump, 0, 0, 0, 0)],
         4, &[], &[], None, None, 0, &Default::default(),
