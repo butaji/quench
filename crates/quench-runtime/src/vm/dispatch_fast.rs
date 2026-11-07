@@ -21690,7 +21690,10 @@ fn derive_lane_view<'live, H: Host>(
 /// top-level `var` capture read's of the global object (`lane_load_global_name`,
 /// `lane_store_global_name`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
-    matches!(op, Op::GetField | Op::SetField | Op::LoadCapture) || is_global_name_access(op)
+    matches!(
+        op,
+        Op::GetField | Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::LoadCapture
+    ) || is_global_name_access(op)
 }
 
 /// Whether an instruction's record is a call site a read memo may answer

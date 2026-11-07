@@ -282,7 +282,7 @@ impl WasmModuleCompile {
     /// 106.6 / 88.8, tsf 28.0 / 29.3, zlib 35.6 / 33.0 (Linux x86_64, 4 vCPU, 2026-10-27).
     pub(super) const ADAPTIVE: Self =
         Self { work: 4096, after: std::time::Duration::from_millis(20) };
-    /// Never compile whole: hot roots only (`QUENCH_WASM_JIT_SELECTIVE`, for A/B runs).
+    /// Never compile whole: hot roots only (`QUENCH_DEV=wasm-selective`, for A/B runs).
     const NEVER: Self = Self { work: u32::MAX, after: std::time::Duration::MAX };
     /// Compile at the first entry, as eager compilation does: a conformance run that
     /// exercises every module's compiled code, and tests of module-wide code.
@@ -972,7 +972,7 @@ pub(crate) struct ProgramStore {
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
-    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`;
+    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_DEV=js-general-dispatch`;
     /// the memory policy's `js_function_tiers_compile` and the entry price of a
     /// loop-free body still decide whether the tier takes a function
     /// (`general_tier_admits`).
@@ -1016,16 +1016,11 @@ impl Default for ProgramStore {
             } else {
                 WasmModuleCompile::ADAPTIVE
             },
-            general_baseline_priced: !std::env::var_os(
-                "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
-            )
-            .is_some_and(|value| value == "1"),
+            general_baseline_priced: !crate::trace::Dev::JsUnpricedGeneralDispatch.on(),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on()
                 .then(FxHashMap::default),
-            js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
-                .is_some_and(|value| value == "1"),
-            js_jit_lane_methods_enabled: std::env::var_os("QUENCH_JS_JIT_LANE_METHODS")
-                .is_some_and(|value| value == "1"),
+            js_jit_general_dispatch_enabled: crate::trace::Dev::JsGeneralDispatch.on(),
+            js_jit_lane_methods_enabled: crate::trace::Dev::JsLaneMethods.on(),
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,

@@ -56,7 +56,7 @@ console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid:
 "#;
     let run = |binary: &Path, script: Option<&Path>, configuration: Configuration| {
         let mut command = Command::new(binary);
-        command.env_clear().env("TZ", "UTC").env("QUENCH_MEMORY_POLICY", "throughput")
+        command.env_clear().env("TZ", "UTC")
             .env("QUENCH_BOOTSTRAP_TEST_MARKER", "fresh-runtime-value").current_dir(&cwd)
             .stdout(Stdio::piped()).stderr(Stdio::piped());
         if configuration != Configuration::Neutral {

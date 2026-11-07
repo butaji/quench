@@ -32,9 +32,9 @@ pub(crate) static SELECTIVE_HANDOFF_CONFIG: DiagnosticAbConfig = DiagnosticAbCon
     report_kind: "jit_wasm_selective_handoff_ab_diagnostic",
     off_engine: "quench_selective_handoff_off",
     on_engine: "quench_selective_handoff_on",
-    switch_env: "QUENCH_WASM_JIT_SELECTIVE",
-    off_value: "0",
-    on_value: "1",
+    switch_env: "QUENCH_DEV",
+    off_value: "",
+    on_value: "wasm-selective",
     fixture_name: "gcc-loops-wasm",
     minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
 };
@@ -668,10 +668,6 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
             || quench.jit_proof_command[0] != quench.executable
             || quench.jit_proof_command[1] != "--jit"
             || !quench.jit_proof.contains("--jit")
-            || quench
-                .environment
-                .keys()
-                .any(|key| key.starts_with("QUENCH_WASM_JIT_") && key != config.switch_env)
         {
             return Err(format!(
                 "{} has invalid default-JIT provenance",
@@ -701,7 +697,7 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
             .is_none_or(|value| value != config.on_value)
     {
         return Err(format!(
-            "{} must explicitly set its experiment environment to 0 and 1",
+            "{} must explicitly set its experiment switch off and on",
             config.report_kind
         ));
     }
@@ -1831,7 +1827,7 @@ mod tests {
             .find(|engine| engine.name == SELECTIVE_HANDOFF_CONFIG.on_engine)
             .unwrap()
             .environment
-            .insert(SELECTIVE_HANDOFF_CONFIG.switch_env.into(), "0".into());
+            .insert(SELECTIVE_HANDOFF_CONFIG.switch_env.into(), SELECTIVE_HANDOFF_CONFIG.off_value.into());
         assert!(validate_diagnostic_ab(&invalid_provenance, SELECTIVE_HANDOFF_CONFIG).is_err());
 
         let mut mismatched_output = diagnostic_ab_input();
@@ -1901,7 +1897,7 @@ mod tests {
         assert_eq!(selected.minimum_rounds, 3);
         assert_eq!(selected.off_engine, SELECTIVE_HANDOFF_CONFIG.off_engine);
         assert_eq!(selected.on_engine, SELECTIVE_HANDOFF_CONFIG.on_engine);
-        assert_eq!(SELECTIVE_HANDOFF_CONFIG.switch_env, "QUENCH_WASM_JIT_SELECTIVE");
+        assert_eq!(SELECTIVE_HANDOFF_CONFIG.switch_env, "QUENCH_DEV");
 
         let mut invalid_switch = diagnostic_ab_input_for(&SELECTIVE_HANDOFF_CONFIG);
         invalid_switch
@@ -1910,7 +1906,7 @@ mod tests {
             .find(|engine| engine.name == SELECTIVE_HANDOFF_CONFIG.on_engine)
             .unwrap()
             .environment
-            .insert(SELECTIVE_HANDOFF_CONFIG.switch_env.into(), "0".into());
+            .insert(SELECTIVE_HANDOFF_CONFIG.switch_env.into(), SELECTIVE_HANDOFF_CONFIG.off_value.into());
         assert!(validate_diagnostic_ab(&invalid_switch, SELECTIVE_HANDOFF_CONFIG).is_err());
     }
 

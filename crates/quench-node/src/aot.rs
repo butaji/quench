@@ -120,7 +120,7 @@ fn execute_native_with_teardown(
     let bootstrap = bootstrap.filter(|_| host.accepts_native_bootstrap());
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy(None)?);
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     let execution = match bootstrap {
         Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
         None => runtime.execute_native_deferred_jobs(program),

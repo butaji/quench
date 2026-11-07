@@ -1078,7 +1078,6 @@ impl Engine {
         // complete AST, including declarations inside functions, before execution.
         if expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)
             && !source_type.is_typescript()
-            && lazy_bodies::enabled()
             && let Ok(program) = compile(true)
         {
             return Ok(program);
