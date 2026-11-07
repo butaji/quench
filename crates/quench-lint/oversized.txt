@@ -1465,12 +1465,12 @@ file-lines crates/quench-runtime/src/vm/builtins.rs 1455
 file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 524
-file-lines crates/quench-runtime/src/vm/collections.rs 1480
+file-lines crates/quench-runtime/src/vm/collections.rs 1477
 file-lines crates/quench-runtime/src/vm/compiled.rs 19352
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 518
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5965
-file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 982
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5913
+file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 976
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7614
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
 file-lines crates/quench-runtime/src/vm/construction.rs 1487
@@ -2811,7 +2811,7 @@ function-lines crates/quench-runtime/src/vm/closure_retention_tests.rs::check_ca
 function-lines crates/quench-runtime/src/vm/coercion.rs::Vm<H>::to_string 44
 function-lines crates/quench-runtime/src/vm/coercion.rs::Vm<H>::unary 50
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::add_intact_entries 48
-function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::call_collection_native 445
+function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::call_collection_native 443
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::construct_weak_collection_native 43
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::initialize_collection_iterable 97
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::install_collection_symbols 43
@@ -2822,7 +2822,7 @@ function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::is_collection
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::apply_set_relation 132
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::fold_set_record 124
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::get_set_record 61
-function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::set_relation 45
+function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::set_relation 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::plan 151
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::transfer 381
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_entry 82
@@ -2941,9 +2941,8 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::hoist_reads 140
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::holder_read 61
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::inline_call 77
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::instruction 373
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::instruction 367
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::invariant_field_records 55
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::load_capture 59
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::loop_element_write 56
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::number_relation 43
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 55
@@ -5127,7 +5126,6 @@ magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::compile_lane
 magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::lane_body_work 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::loop_element_write 1
-magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::truncated 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::TypedLoad::width 3
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::lower 2
 magic crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 1
