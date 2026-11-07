@@ -13176,10 +13176,10 @@ script_handler! {
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
-    /// A `StoreName`'s first run: an assignment, outside a script's top level, to a name the
-    /// global object answers whenever no global lexical binding shadows it (as
-    /// `lane_load_name_first` decides for a read) takes `lane_store_global_name`; any other
-    /// store, an initializing one among them, always takes the general path.
+    /// A `StoreName`'s first run: an assignment to a name the global object answers whenever
+    /// no global lexical binding shadows it (as `lane_load_name_first` decides for a read)
+    /// takes `lane_store_global_name`; any other store, an initializing one among them,
+    /// always takes the general path.
     #[inline(never)]
     fn lane_store_name_first<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -13191,7 +13191,6 @@ script_handler! {
             .last()
             .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
         let global = i.b == 0
-            && function != super::ROOT_FUNCTION_ID
             && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
             && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
             && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function);

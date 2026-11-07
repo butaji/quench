@@ -152,37 +152,6 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(new_length as f64))
     }
 
-    /// `shift` of a non-empty array of `length` whose every index is an ordinary own data
-    /// element and whose `length` is writable, so shifting consults no prototype accessor
-    /// and runs no guest code: one vector removal. Exceptional descriptors, holes, mapped
-    /// arguments and integrity states leave `None`, for the ordered property algorithm.
-    fn shift_dense(&mut self, object: Value, length: usize) -> Option<Value> {
-        let dense = length > 0
-            && self.heap.sparse_length(object).is_none()
-            && self.heap.array(object).is_some_and(|data| {
-                let elements = data.elements();
-                data.is_extensible()
-                    && !data.is_arguments_object()
-                    && !data.has_indexed_descriptors()
-                    && elements.len() == length
-                    && elements.iter().all(|value| !value.is_deleted())
-            });
-        let writable_length = self
-            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
-            .is_some_and(|attributes| attributes.writable);
-        if !dense || !writable_length {
-            return None;
-        }
-        let elements = self.heap.array_elements_mut(object).expect("dense array guard");
-        Some(super::index::mutable_array_elements(elements).remove(0))
-    }
-
-    /// `shift` of an array as `shift_dense` makes it, which observes nothing.
-    pub(super) fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
-        let length = self.own_array_length(this)?;
-        self.shift_dense(this, length)
-    }
-
     pub(super) fn delete_array_like_property(
         &mut self,
         p: &ResidualProgram,
@@ -322,7 +291,7 @@ impl<H: Host> Vm<H> {
         let moved_present = self
             .heap
             .array_elements(this)
-            .is_some_and(|elements| elements[start..].iter().all(|value| !value.is_deleted()));
+            .is_some_and(|elements| self.holes_unobserved(this, &elements[start..]));
         let new_length = (length - delete_count)
             .checked_add(items.len())
             .filter(|length| *length <= MAX_ARRAY_LENGTH)?;

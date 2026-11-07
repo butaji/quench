@@ -1,6 +1,9 @@
 use super::*;
 
 mod legacy_parse;
+mod local_zone;
+pub use local_zone::local_timezone_changed;
+use local_zone::local_timezone;
 use crate::host::{CapabilityId, HostContext};
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Offset, TimeZone,
@@ -745,13 +748,6 @@ pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
     Utc.timestamp_millis_opt(timestamp)
         .single()
         .map(|date| date.with_timezone(&offset))
-}
-
-fn local_timezone() -> Option<chrono_tz::Tz> {
-    std::env::var("TZ")
-        .ok()
-        .map(|zone| zone.strip_prefix(':').unwrap_or(&zone).to_owned())
-        .and_then(|zone| zone.parse().ok())
 }
 
 fn local_offset_at(timestamp: i64) -> Option<i32> {

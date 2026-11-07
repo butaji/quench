@@ -16,7 +16,6 @@ pub(in crate::vm) enum PcLowering {
     Stepped = 2,
 }
 
-// The budget reads AOT lowering (`JsGeneralCallout::Address`), which only the aot feature builds.
 #[cfg(all(test, feature = "aot"))]
 mod tests {
     use super::PcLowering;

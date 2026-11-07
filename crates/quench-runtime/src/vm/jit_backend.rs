@@ -35,8 +35,8 @@ const VERIFY_IR: bool = cfg!(debug_assertions) || super::compiled::tier_policy::
 pub(super) enum CodePublication {
     #[cfg(feature = "jit")]
     ExecutableMemory,
-    /// Executable memory for a lane body (`compiled::lane_compile`), whose registers are
-    /// allocated in one pass. Lane bodies are the largest units and compile on the code
+    /// Executable memory for a large lane body (`compiled::lane_compile`, at least
+    /// `LANE_SINGLE_PASS_MIN_INSTS` instructions), whose registers are allocated in one pass. Lane bodies are the largest units and compile on the code
     /// generator thread while the interpreter runs them: JetStream 3 `--jit`, 25 tests, 6
     /// interleaved rounds (2026-11-07) measured +3.8% geomean (richards +16%, Air +11%,
     /// delta-blue +10%; earley-boyer -7%). Single-pass for every JIT unit measured -0.7%
