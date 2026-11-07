@@ -167,7 +167,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// every local binding.
     capture_scope_memo: Option<(CaptureScopeState, Rc<super::capture_scope::CaptureScope>)>,
     /// The capture base as of a local count and parameter context (`capture_base`).
-    capture_base_memo: Option<((usize, bool), Rc<FxHashMap<Atom, u16>>)>,
+    capture_base_memo: Option<((usize, bool), Rc<super::capture_scope::BaseBindings>)>,
     disposal_scopes: Vec<DisposalScope>,
 }
 
@@ -1143,13 +1143,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     scope
                         .iter()
                         .filter_map(|(atom, slot)| {
-                            let name = &self.owner.atoms[*atom as usize];
-                            (self.is_compiler_binding(*atom)
+                            let name = &self.owner.atoms[atom as usize];
+                            (self.is_compiler_binding(atom)
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
                                     .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
                                 && !name.starts_with(super::CATCH_CAPTURE_PREFIX))
-                            .then_some((*atom, *slot))
+                            .then_some((atom, slot))
                         })
                         .collect(),
                 )
@@ -1162,25 +1162,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// scopes apply: its declared names and compiler bindings with local slots. Locals are
     /// only appended (`hidden_local`), so a later base is an earlier one plus the locals added
     /// since, under the same parameter context.
-    fn capture_base(&mut self) -> Rc<FxHashMap<Atom, u16>> {
-        let key = (self.locals.len(), self.parameter_context);
-        let (mut base, first_new) = match self.capture_base_memo.take() {
-            Some(((count, parameter_context), base))
-                if parameter_context == key.1 && count <= key.0 =>
-            {
-                if count == key.0 {
-                    self.capture_base_memo = Some((key, Rc::clone(&base)));
-                    return base;
-                }
-                (Rc::unwrap_or_clone(base), count)
-            }
-            _ => (FxHashMap::default(), 0),
-        };
+    fn capture_base(&mut self) -> super::capture_scope::CaptureBase {
+        let (count, parameter_context) = (self.locals.len(), self.parameter_context);
         let arguments = self
             .parameter_arguments_slot
-            .filter(|_| self.parameter_context)
+            .filter(|_| parameter_context)
             .map(|slot| (self.owner.atom("arguments"), slot));
-        for &atom in &self.locals[first_new..] {
+        let (bindings, first_new): (Rc<super::capture_scope::BaseBindings>, _) = match self.capture_base_memo.take() {
+            Some(((memo_count, context), bindings)) if context == parameter_context && memo_count <= count => (bindings, memo_count),
+            _ => (Rc::default(), 0),
+        };
+        for index in first_new..count {
+            let atom = self.locals[index];
             let Some(&slot) = self.local_slots.get(&atom) else {
                 continue;
             };
@@ -1191,16 +1184,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // The parameter context's `arguments` binding is its own, whatever local shares
             // the name.
             let shadowed = arguments.is_some_and(|(name, _)| name == atom);
-            if (declared || self.is_compiler_binding(atom)) && visible && !shadowed {
-                base.insert(atom, slot);
+            if (declared || self.is_compiler_binding(atom))
+                && visible
+                && !shadowed
+                && !bindings.bind(atom, index as u32, slot)
+            {
+                // A name rebound to another slot: earlier positions keep what they saw; start over.
+                self.capture_base_memo = None;
+                return self.capture_base();
             }
         }
-        if let Some((name, slot)) = arguments {
-            base.insert(name, slot);
-        }
-        let base = Rc::new(base);
-        self.capture_base_memo = Some((key, Rc::clone(&base)));
-        base
+        self.capture_base_memo = Some(((count, parameter_context), Rc::clone(&bindings)));
+        super::capture_scope::CaptureBase { bindings, visible: count as u32, arguments }
     }
 
     /// The current function's bindings visible to a closure created at this position.
@@ -1218,7 +1213,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     if kind == LexicalBindingKind::PrivateName {
                         let name = self.owner.atoms[*source as usize].to_owned();
                         let label = crate::bytecode::private_identity_label(&name);
-                        let stale = scope.keys().copied().filter(|atom| {
+                        let stale = scope.keys().filter(|atom| {
                             let text: &str = self.owner.atoms[*atom as usize].as_ref();
                             let identity = text.strip_prefix(LexicalBindingKind::PrivateName.capture_prefix()).unwrap_or(text);
                             label.is_some() && crate::bytecode::private_identity_label(identity) == label

@@ -546,14 +546,12 @@ pub(crate) struct ProgramReplay {
     pub(super) source_type: oxc_span::SourceType,
     pub(super) root_strict: bool,
     pub(super) module_goal: bool,
-    /// The starts of the function bodies the load compiled from their source parsed again
-    /// (`lazy_bodies`), in order: a replay stands each in, so the code around it compiles
-    /// as the load compiled it.
+    /// The starts of the bodies the load compiled from their source parsed again (`lazy_bodies`),
+    /// in order: a replay stands each in, so the code around it compiles as the load did.
     pub(super) lazy_bodies: Box<[u32]>,
     pub(super) specialized: bool,
-    /// How many tagged template sites the program has: each evaluation of a program with
-    /// any owns distinct template objects, so a global eval of it is never cached.
-    pub(super) template_sites: u32,
+    /// Tagged template sites: a global eval of a program with any (own template objects) is never cached.
+    pub(crate) template_sites: u32,
     pub(super) atoms: ProgramAtomIndex,
     /// Where the load left the tables once each function was compiled.
     pub(super) exits: Box<[TableCursors]>,
@@ -561,8 +559,7 @@ pub(crate) struct ProgramReplay {
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
     /// The cache sites the load shared by name (`Compiler::name_shared_cache_site`).
     pub(super) name_shared_sites: super::NameSharedSiteMap,
-    /// In verifying builds, the records of functions the load released, which their replays
-    /// must equal.
+    /// In verifying builds, the records of released functions, which their replays must equal.
     #[cfg(feature = "verify-replay")]
     pub(super) released: FxHashMap<u32, crate::bytecode::Function>,
     pub(super) views: ReplayViews,
@@ -572,11 +569,6 @@ impl ProgramReplay {
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()
-    }
-
-    /// Whether the program has a tagged template.
-    pub(crate) fn has_tagged_template(&self) -> bool {
-        self.template_sites != 0
     }
 }
 
