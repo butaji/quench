@@ -160,10 +160,9 @@ fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut 
     let guarded = vm.native_guarded_call(program, dispatch.program_id, caller, instruction);
     #[cfg(not(feature = "native-execution"))]
     let guarded: Option<Value> = None;
-    let pushed = if guarded.is_none() {
-        let Some(step) = vm.try_inline_user_call(program, caller, instruction, next) else { return USER_CALL_MISSED };
-        Some(step)
-    } else { None };
+    let pushed = if guarded.is_some() { None } else {
+        Some(match vm.try_inline_user_call(program, caller, instruction, next) { Some(step) => step, None => return USER_CALL_MISSED })
+    };
     let step = match (guarded, pushed) {
         (Some(value), _) => {
             vm.frames[caller].registers[usize::from(instruction.result_register())] = value;
