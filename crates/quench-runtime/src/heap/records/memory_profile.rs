@@ -8,7 +8,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     #[cfg(any(test, target_os = "macos", target_os = "linux"))]
     fn page_coverage(&self, page_bytes: usize) -> (usize, Vec<bool>) {
         assert!(page_bytes.is_power_of_two());
-        if !self.reserved { return (0, Vec::new()); }
+        if !self.is_reserved() { return (0, Vec::new()); }
         let base = self.base.as_ptr() as usize;
         let start = base.next_multiple_of(page_bytes);
         let end = (base + self.next_id as usize * size_of::<T>()) / page_bytes * page_bytes;

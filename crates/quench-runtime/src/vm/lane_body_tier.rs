@@ -4,6 +4,17 @@
 use super::{LaneBody, LaneLeaves, LaneView, TIERS};
 use super::super::compiled::LaneExit;
 
+/// A view's lane-body record over the run, which a lifecycle edge keeps: the bodies such
+/// edges (a shape compaction, a dead native callee) dropped, and those of them no run of
+/// which completed (`LaneView::drop_body`). Each dropped body doubles the next one's warm-up,
+/// so a function whose bodies keep being discarded stops paying a compile for each;
+/// `TIERS.lane_body.max_lifetimes` dropped bodies, or `max_wasted` wasted ones, decline it.
+#[derive(Clone, Copy, Default)]
+pub(super) struct LaneBodyHistory {
+    pub(super) lifetimes: u8,
+    wasted: u8,
+}
+
 /// What a body whose leaves reached the reoptimization threshold does next.
 enum Verdict {
     /// It keeps its code, and counts on.
@@ -15,7 +26,7 @@ enum Verdict {
     Retire,
 }
 
-/// Past its last recompile, a body that completes keeps its code and one no run of which
+/// Past its last recompile, a body that completed keeps its code and one no run of which
 /// completed retires. Before it, a body that left only where its predecessors did gained
 /// nothing from their feedback: it settles where its runs complete, and retires where none
 /// did, as one that left from many places and never completed does. Any other takes the
@@ -66,21 +77,25 @@ impl LaneView {
         }
     }
 
-    /// The entries before its next body specializes: the warm-up, doubled per wasted body.
+    /// The entries before its next body specializes: the warm-up, doubled per dropped body.
     pub(super) fn warmup_entries(&self) -> u16 {
-        TIERS.lane_body.warmup_entries << self.wasted.get()
+        TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
     }
 
-    /// Whether its bodies went unused often enough that it declines another
-    /// (`TIERS.lane_body.max_wasted`).
-    pub(super) fn wasted_enough(&self) -> bool {
-        self.wasted.get() >= TIERS.lane_body.max_wasted
+    /// Whether its history affords another compile.
+    pub(super) fn affords_compile(&self) -> bool {
+        let history = self.history.get();
+        history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
     }
 
     /// A body that went at a lifecycle edge warms again from the start; one no run of which
-    /// `completed` counts as wasted (`LaneView::wasted`).
+    /// `completed` counts as wasted (`LaneBodyHistory`).
     pub(super) fn drop_body(&self, body: &mut LaneBody, completed: bool) {
-        self.wasted.set(self.wasted.get() + u8::from(!completed));
+        let history = self.history.get();
+        self.history.set(LaneBodyHistory {
+            lifetimes: history.lifetimes.saturating_add(1),
+            wasted: history.wasted + u8::from(!completed),
+        });
         *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
     }
 }
