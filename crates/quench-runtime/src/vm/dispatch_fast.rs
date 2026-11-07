@@ -8701,8 +8701,8 @@ fn lane_loop_run<H: Host>(
     }
     match outcome {
         LoopOutcome::NotEntered(widening) => {
-            if let Some(widening) = widening {
-                tier.widened.insert(widening);
+            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
+            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
                 publication.retire();
             }
             LoopContinuation::Jump
