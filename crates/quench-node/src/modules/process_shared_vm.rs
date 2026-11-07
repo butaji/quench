@@ -9,11 +9,6 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-#[cfg(unix)]
-unsafe extern "C" {
-    fn tzset();
-}
-
 pub(crate) fn collect_garbage(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2057,12 +2052,7 @@ pub(crate) fn set_env(
     // SAFETY: the shared VM serializes host environment reads and writes for
     // this process, matching Node's process.env behavior.
     unsafe { std::env::set_var(&key, &value) };
-    #[cfg(unix)]
-    if key == "TZ" {
-        // POSIX local-time conversion caches TZ; Node refreshes it when the
-        // environment variable changes so Date observes process.env.TZ.
-        unsafe { tzset() };
-    }
+    crate::modules::util_env::env_changed(&key);
     Ok(context.undefined())
 }
 
@@ -2081,10 +2071,7 @@ pub(crate) fn delete_env(
     }
     // SAFETY: see `set_env`; this is the matching process.env deletion path.
     unsafe { std::env::remove_var(&key) };
-    #[cfg(unix)]
-    if key == "TZ" {
-        unsafe { tzset() };
-    }
+    crate::modules::util_env::env_changed(&key);
     Ok(context.undefined())
 }
 
@@ -2151,10 +2138,7 @@ pub(crate) fn load_env_file(
         }
         let key = context.string_rooted(&key_text);
         let existing = context.get_property_rooted(env, key)?;
-        if !context
-            .rooted_value(existing)
-            .is_some_and(Value::is_undefined)
-        {
+        if !context.rooted_value(existing).is_some_and(Value::is_undefined) {
             continue;
         }
         let value = context.string_rooted(&value_text);
@@ -2164,6 +2148,7 @@ pub(crate) fn load_env_file(
         // SAFETY: this synchronous Node API mirrors Node's process.env update;
         // the environment is observed only at host process boundaries.
         unsafe { std::env::set_var(&key_text, &value_text) };
+        crate::modules::util_env::env_changed(&key_text);
     }
     Ok(context.undefined())
 }
