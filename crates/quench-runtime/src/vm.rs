@@ -2043,6 +2043,8 @@ pub(crate) struct Vm<H> {
     /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
     /// recorded by its first read (`lane_load_name_first`); it lives as long as the atoms.
     intrinsic_natives: Vec<(Atom, Native)>,
+    /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
+    native_families: Vec<operations::NativeFamily>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     /// The `typeof` result string of each value type, made on first use; `undefined` until
     /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
