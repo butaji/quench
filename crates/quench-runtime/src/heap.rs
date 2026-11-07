@@ -2010,6 +2010,8 @@ impl Heap {
         self.young_weak.clear();
         self.roots.clear();
         self.sparse_arrays = None;
+        // The shared unit strings name cells of the discarded heap.
+        self.ascii_unit_strings = None;
         self.collection_state = CollectionState::Idle;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
