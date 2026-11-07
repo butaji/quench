@@ -21,7 +21,7 @@ pub(super) enum ParsedProgramShape<'a> {
     KeptRecords,
     DynamicFunction { parameter_list_end: usize },
     Eval(EvalContext, Option<Span>),
-    /// The chunk of a first-call stub: a Script of one function declaration of a program's
+    /// The chunk of a first-call stub: a Script of one function of a program's
     /// text, compiled as it is called, whole.
     FirstCallChunk(super::first_call::ChunkWindow<'a>),
 }
