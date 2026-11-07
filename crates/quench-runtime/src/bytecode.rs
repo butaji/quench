@@ -1165,7 +1165,8 @@ opcodes!(
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
-
+    // A first-call stub's body: compiles and calls its function's chunk (`Vm::call_first_chunk`).
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 );
 
 const _: () = {
@@ -1855,7 +1856,6 @@ impl RegisterRoots {
         self.masks.get().map_or(0, |masks| masks.bytes())
     }
 }
-
 
 /// A function's source positions in increasing pc order, each delta-coded against the one
 /// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,

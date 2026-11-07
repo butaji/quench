@@ -30,10 +30,8 @@ mod wasm_js;
 pub(crate) use wasm_js::{js_tag_cell, js_tag_type};
 mod wasm_table;
 use crate::Value;
-use crate::bytecode::{
-    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
-    NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction,
-};
+use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
+    NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
@@ -147,6 +145,7 @@ mod fdlibm_math;
 mod field_cache;
 mod site_table;
 mod finalization;
+mod first_call_chunk;
 mod function;
 mod function_cache;
 mod gc;
