@@ -2355,7 +2355,7 @@ impl<'a> Compiler<'a> {
         let mut visible = FxHashSet::default();
         let mut bindings = Vec::new();
         for (marker, slot) in scope.iter() {
-            let text = self.atoms[*marker as usize].to_owned();
+            let text = self.atoms[marker as usize].to_owned();
             let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
                 text.strip_prefix(kind.capture_prefix())
                     .map(|name| (kind, name))
@@ -2369,7 +2369,7 @@ impl<'a> Compiler<'a> {
             let catch_marker = format!("{CATCH_CAPTURE_PREFIX}{name}");
             bindings.push(crate::bytecode::EvalBinding {
                 atom,
-                location: capture(*slot),
+                location: capture(slot),
                 with_depth: 0,
                 kind,
                 declaration: if self
@@ -2384,12 +2384,12 @@ impl<'a> Compiler<'a> {
             });
         }
         for (atom, slot) in scope.iter() {
-            if self.atoms[*atom as usize].contains('\0') || !visible.insert(*atom) {
+            if self.atoms[atom as usize].contains('\0') || !visible.insert(atom) {
                 continue;
             }
             bindings.push(crate::bytecode::EvalBinding {
-                atom: *atom,
-                location: capture(*slot),
+                atom,
+                location: capture(slot),
                 with_depth: 0,
                 kind: LexicalBindingKind::Mutable,
                 declaration: crate::bytecode::EvalBindingDeclaration::Variable,
@@ -3528,8 +3528,7 @@ impl<'a> Compiler<'a> {
                     module_goal: self.module_goal,
                     lazy_bodies: {
                         let mut starts = std::mem::take(&mut self.lazy_compiled);
-                        starts.sort_unstable();
-                        starts.dedup();
+                        starts.sort_unstable(); starts.dedup();
                         starts.into_boxed_slice()
                     },
                     specialized: self.mode == SpecializationMode::Enabled,
@@ -4320,8 +4319,8 @@ impl<'a> Compiler<'a> {
     /// `with` statement or an enclosing one), which may denote it.
     fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
         let facts = &self.function_facts;
-        // A function not yet compiled has default facts, which name no arrow.
-        facts.iter().any(|function| {
+        // Ids are reserved in pre-order, so only later ids nest in `owner`; uncompiled ones name no arrow.
+        facts.get(owner as usize + 1..).unwrap_or_default().iter().any(|function| {
             // The function levels between `function` and `owner`, along arrows alone.
             let mut distance = 0;
             let mut current = function;

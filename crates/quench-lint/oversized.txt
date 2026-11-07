@@ -515,7 +515,7 @@ complexity crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 49
 complexity crates/quench-runtime/src/compile.rs::Engine::static_module_exports 16
 complexity crates/quench-runtime/src/compile.rs::Engine::static_module_throw 13
 complexity crates/quench-runtime/src/compile/arrow.rs::Compiler<'_>::compile_arrow_function 19
-complexity crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_base 13
+complexity crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_base 12
 complexity crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::emit_hoisted 17
 complexity crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::call 12
 complexity crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::assign_pattern 12
@@ -1381,8 +1381,8 @@ file-lines crates/quench-runtime/src/bytecode/binary.rs 1804
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1540
-file-lines crates/quench-runtime/src/compile.rs 4477
-file-lines crates/quench-runtime/src/compile/ast.rs 1315
+file-lines crates/quench-runtime/src/compile.rs 4476
+file-lines crates/quench-runtime/src/compile/ast.rs 1310
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
 file-lines crates/quench-runtime/src/compile/ast/expression.rs 987
@@ -1392,7 +1392,7 @@ file-lines crates/quench-runtime/src/compile/early.rs 2031
 file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 654
 file-lines crates/quench-runtime/src/compile/liveness.rs 778
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
-file-lines crates/quench-runtime/src/compile/replay.rs 1061
+file-lines crates/quench-runtime/src/compile/replay.rs 1053
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1773
 file-lines crates/quench-runtime/src/heap.rs 4845
 file-lines crates/quench-runtime/src/heap/access.rs 910
@@ -1445,7 +1445,7 @@ file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1975
 file-lines crates/quench-runtime/src/vm/environment.rs 2760
 file-lines crates/quench-runtime/src/vm/error.rs 2794
-file-lines crates/quench-runtime/src/vm/eval.rs 1374
+file-lines crates/quench-runtime/src/vm/eval.rs 1369
 file-lines crates/quench-runtime/src/vm/gc.rs 1323
 file-lines crates/quench-runtime/src/vm/generator.rs 1845
 file-lines crates/quench-runtime/src/vm/index.rs 966
@@ -2539,7 +2539,7 @@ function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::collect_body_
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_function 344
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_plain_function 73
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_replayable_object_method 46
-function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish 259
+function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish 258
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish_early 89
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::program 274
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::promoted_local_plan 89
@@ -2555,7 +2555,6 @@ function-lines crates/quench-runtime/src/compile.rs::append_module_link_statemen
 function-lines crates/quench-runtime/src/compile.rs::module_hoisted_functions 42
 function-lines crates/quench-runtime/src/compile/annex_b_targets.rs::invalid_target 54
 function-lines crates/quench-runtime/src/compile/arrow.rs::Compiler<'_>::compile_arrow_function 226
-function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_base 44
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_scopes 42
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::current_capture_scope 44
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::emit 52
@@ -3172,7 +3171,7 @@ function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::source_call_site_re
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::thrown_value_for 49
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::capture_binding_environment 52
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::direct_eval_private_names 41
-function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 106
+function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 101
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_native_in_realm 58
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_script_source 63
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::prepare_embedding_specialized_script_retaining 85
