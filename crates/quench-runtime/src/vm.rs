@@ -1485,10 +1485,7 @@ impl ShapeAttributes {
         if self.slot_accessors() {
             return slot();
         }
-        accessors
-            .get(self.accessors as usize)
-            .copied()
-            .unwrap_or((None, None))
+        accessors.get(self.accessors as usize).copied().unwrap_or((None, None))
     }
 
     fn attributes(self, accessors: &[ShapeAccessors], slot: impl FnOnce() -> ShapeAccessors) -> PropertyAttributes {
@@ -2128,6 +2125,8 @@ pub(crate) struct Vm<H> {
     intrinsic_natives: Vec<(Atom, Native)>,
     /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
     native_families: Vec<operations::NativeFamily>,
+    /// The compiled chunk of each first-call stub, by its program and function, while both live.
+    first_chunks: first_call_chunk::FirstChunks,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     /// The `typeof` result string of each value type, made on first use; `undefined` until
     /// then. Rooted, so `typeof` neither hashes nor allocates once warm.

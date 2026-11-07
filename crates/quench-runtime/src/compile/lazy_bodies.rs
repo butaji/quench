@@ -9,6 +9,8 @@
 //! for any body. The function itself compiles from its real body. A body that fails an
 //! early check alone makes the compilation fail, and the program compiles again eagerly,
 //! so its diagnostics are the eager ones.
+mod reparse;
+pub(super) use reparse::{Nesting, arena, reparse};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, CallExpression, Expression, ExpressionStatement, Function, FunctionBody,
@@ -262,81 +264,6 @@ impl<'a> VisitMut<'a> for StandIns<'_, 'a> {
     }
 }
 
-/// Arena bytes reserved per source byte for a parse: the whole program's parse reserves as
-/// much (`Compiler::specialize_with_mode_and_private_names`), and pages it does not touch
-/// cost no memory.
-const ARENA_BYTES_PER_SOURCE_BYTE: usize = 32;
-
-/// The arena for parsing `text` again.
-pub(super) fn arena(text: &str) -> Allocator {
-    Allocator::with_capacity(text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE))
-}
-
-/// A function's text parsed again alone, with every position an offset into the program's
-/// text.
-pub(super) struct Reparsed<'a> {
-    pub(super) program: Program<'a>,
-}
-
-impl<'a> Reparsed<'a> {
-    /// The function parsed again.
-    pub(super) fn function(&self) -> Option<&Function<'a>> {
-        Self::function_of(&self.program)
-    }
-
-    fn function_of<'p>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
-        match program.body.first()? {
-            Statement::FunctionDeclaration(function) => Some(function),
-            Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-                Expression::FunctionExpression(function) => Some(function),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-/// Which bodies inside a function parsed again are released.
-pub(super) enum Nesting<'s> {
-    /// Those the parser releases (`ParseOptions::lazy_function_bodies`): a load's.
-    Parse,
-    /// Those of the given starts, in the program's text, the load released: a replay's,
-    /// which compiles as the load did whatever the parser's choices.
-    Recorded(&'s FxHashSet<u32>),
-}
-
-/// `text`, a function's source at `offset` wrapped for the context it is compiled in, parsed
-/// again with the bodies inside it released as `nesting` says; positions move by `delta`
-/// into the program's text.
-pub(super) fn reparse<'a>(
-    allocator: &'a Allocator,
-    text: &'a str,
-    offset: u32,
-    delta: u32,
-    source_type: SourceType,
-    nesting: Nesting<'_>,
-) -> Option<Reparsed<'a>> {
-    let lazy_from = matches!(nesting, Nesting::Parse).then_some(offset + 1);
-    let mut parsed = parse(allocator, text, source_type, lazy_from, None);
-    if let Nesting::Recorded(starts) = nesting {
-        // The function's own body compiles from this parse.
-        let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);
-        let inside: FxHashSet<u32> = starts
-            .iter()
-            .map(|start| start.wrapping_sub(delta))
-            .filter(|start| *start > offset && (*start as usize) < text.len() && Some(*start) != own)
-            .collect();
-        stand_in(allocator, &mut parsed.program, &inside);
-    }
-    // The early checks passed before code generation (`BodyFacts::check`); the depth of the tree
-    // is checked again here, where the function compiles.
-    if parsed.stack_exhausted || !parsed.diagnostics.is_empty() || super::stack::validate(&parsed.program).is_err() {
-        return None;
-    }
-    oxc_ast_visit::VisitMut::visit_program(&mut super::replay::ShiftSpans(delta), &mut parsed.program);
-    Some(Reparsed { program: parsed.program })
-}
-
 /// What the whole program's analysis would have found inside its lazily parsed bodies, with
 /// every position an offset into the program's text.
 #[derive(Default)]
@@ -350,6 +277,8 @@ pub(super) struct BodyFacts {
     next_private_id: u32,
     /// Some body failed an early check alone.
     pub(super) failed: bool,
+    /// Each body's free names (`first_call::free_names`).
+    pub(super) free_names: super::first_call::FreeNames,
     #[cfg(feature = "aot")]
     pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
@@ -388,6 +317,7 @@ impl BodyFacts {
         }
         self.private_name_labels.extend(super::private_name_labels(&built.semantic));
         self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(&built.semantic, program));
+        self.free_names.extend(super::first_call::free_names(program, built.semantic.scoping()));
     }
 }
 
