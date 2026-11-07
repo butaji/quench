@@ -1341,11 +1341,33 @@ pub(super) fn collect_var_names(statements: &[Statement<'_>]) -> Vec<String> {
     names
 }
 
-pub(super) fn annex_b_lexical_collisions(statements: &[Statement<'_>]) -> FxHashSet<u32> {
-    let visible = lexical_names(statements);
-    let mut collisions = FxHashSet::default();
-    collect_annex_b_collisions(statements, &visible, &mut collisions);
-    collisions
+/// The function declarations, by span start, whose names a lexical binding visible to them
+/// already takes, so Annex B does not hoist them: sorted, and usually none.
+#[derive(Clone, Debug, Default)]
+pub(super) struct AnnexBCollisions(Vec<u32>);
+
+impl AnnexBCollisions {
+    pub(super) fn contains(&self, start: u32) -> bool {
+        self.0.binary_search(&start).is_ok()
+    }
+}
+
+impl FromIterator<u32> for AnnexBCollisions {
+    fn from_iter<I: IntoIterator<Item = u32>>(starts: I) -> Self {
+        let mut starts: Vec<u32> = starts.into_iter().collect();
+        starts.sort_unstable();
+        starts.dedup();
+        Self(starts)
+    }
+}
+
+/// The collisions among `statements`' functions, and `known` ones (an eval caller's).
+pub(super) fn annex_b_lexical_collisions(statements: &[Statement<'_>], known: &AnnexBCollisions) -> AnnexBCollisions {
+    let mut visible = Vec::new();
+    push_lexical_names(statements, &mut visible);
+    let mut collisions = known.0.clone();
+    collect_annex_b_collisions(statements, &mut visible, &mut collisions);
+    collisions.into_iter().collect()
 }
 
 pub(super) fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<(u32, String)> {
@@ -1356,7 +1378,7 @@ pub(super) fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<(u32, 
             if function.r#type == oxc_ast::ast::FunctionType::FunctionDeclaration
                 && let Some(name) = annex_b_function_name(function)
             {
-                self.0.push((function.span.start, name));
+                self.0.push((function.span.start, name.to_string()));
             }
             // Nested functions own their declarations, not this variable scope.
         }
@@ -1374,142 +1396,108 @@ pub(super) fn annex_b_function_eligible(function: &oxc_ast::ast::Function<'_>) -
     !function.r#async && !function.generator && function.id.is_some()
 }
 
-fn annex_b_function_name(function: &oxc_ast::ast::Function<'_>) -> Option<String> {
+fn annex_b_function_name<'a>(function: &oxc_ast::ast::Function<'a>) -> Option<&'a str> {
     annex_b_function_eligible(function)
-        .then(|| {
-            function
-                .id
-                .as_ref()
-                .expect("eligible Annex B function has a name")
-        })
-        .map(|identifier| identifier.name.to_string())
+        .then(|| function.id.as_ref().expect("eligible Annex B function has a name").name.as_str())
 }
 
-fn block_function_names(statements: &[Statement<'_>]) -> Vec<String> {
-    statements
-        .iter()
-        .filter_map(|statement| match statement_without_labels(statement) {
-            Statement::FunctionDeclaration(function) => annex_b_function_name(function),
-            _ => None,
-        })
-        .collect()
-}
-
-fn lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
-    let mut names = FxHashSet::default();
+/// Pushes the names `statements` declare with `let`, `const` or `class` onto `names`.
+fn push_lexical_names<'a>(statements: &[Statement<'a>], names: &mut Vec<&'a str>) {
     for statement in statements {
         match statement {
-            Statement::VariableDeclaration(declaration)
-                if declaration.kind != VariableDeclarationKind::Var =>
-            {
-                for item in &declaration.declarations {
-                    collect_pattern_names(&item.id, &mut names);
-                }
+            Statement::VariableDeclaration(declaration) if declaration.kind != VariableDeclarationKind::Var => {
+                declaration.declarations.iter().for_each(|item| pattern_names(&item.id, &mut |name| names.push(name)));
             }
-            Statement::ClassDeclaration(class) => {
-                if let Some(identifier) = &class.id {
-                    names.insert(identifier.name.to_string());
-                }
-            }
+            Statement::ClassDeclaration(class) => names.extend(class.id.as_ref().map(|identifier| identifier.name.as_str())),
             _ => {}
         }
     }
-    names.into_iter().collect()
 }
 
-fn collect_annex_b_collisions(
-    statements: &[Statement<'_>],
-    visible: &[String],
-    collisions: &mut FxHashSet<u32>,
+/// Pushes the names of the Annex B functions `statements` declare directly onto `names`.
+fn push_block_function_names<'a>(statements: &[Statement<'a>], names: &mut Vec<&'a str>) {
+    names.extend(statements.iter().filter_map(|statement| match statement_without_labels(statement) {
+        Statement::FunctionDeclaration(function) => annex_b_function_name(function),
+        _ => None,
+    }));
+}
+
+/// Runs `walk` with `push`'s names visible on top of `visible`, which it leaves as found.
+fn with_names<'a>(
+    visible: &mut Vec<&'a str>,
+    push: impl FnOnce(&mut Vec<&'a str>),
+    walk: impl FnOnce(&mut Vec<&'a str>),
+) {
+    let depth = visible.len();
+    push(visible);
+    walk(visible);
+    visible.truncate(depth);
+}
+
+/// Records a function declaration whose name a lexical binding visible to it (`visible`)
+/// already takes.
+fn record_collision(function: &Function<'_>, visible: &[&str], collisions: &mut Vec<u32>) {
+    if let Some(identifier) = &function.id
+        && visible.contains(&identifier.name.as_str())
+    {
+        collisions.push(function.span.start);
+    }
+}
+
+fn collect_annex_b_collisions<'a>(
+    statements: &[Statement<'a>],
+    visible: &mut Vec<&'a str>,
+    collisions: &mut Vec<u32>,
 ) {
     for statement in statements {
         match statement {
-            Statement::BlockStatement(block) => {
-                collect_block_collisions(&block.body, visible, collisions);
-            }
-            Statement::FunctionDeclaration(function) => {
-                if let Some(identifier) = &function.id
-                    && visible.iter().any(|name| name == identifier.name.as_str())
-                {
-                    collisions.insert(function.span.start);
-                }
-            }
+            Statement::BlockStatement(block) => collect_block_collisions(&block.body, visible, collisions),
+            Statement::FunctionDeclaration(function) => record_collision(function, visible, collisions),
             Statement::IfStatement(statement) => {
                 collect_annex_b_one(&statement.consequent, visible, collisions);
                 if let Some(alternate) = &statement.alternate {
                     collect_annex_b_one(alternate, visible, collisions);
                 }
             }
-            Statement::ForStatement(statement) => {
-                let mut nested = visible.to_vec();
-                if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
-                    &statement.init
-                    && declaration.kind != VariableDeclarationKind::Var
-                {
-                    for item in &declaration.declarations {
-                        collect_pattern_names(&item.id, &mut nested);
+            Statement::ForStatement(statement) => with_names(
+                visible,
+                |names| {
+                    if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) = &statement.init
+                        && declaration.kind != VariableDeclarationKind::Var
+                    {
+                        declaration.declarations.iter().for_each(|item| pattern_names(&item.id, &mut |name| names.push(name)));
                     }
-                }
-                collect_annex_b_one(&statement.body, &nested, collisions);
-            }
+                },
+                |visible| collect_annex_b_one(&statement.body, visible, collisions),
+            ),
             Statement::ForInStatement(statement) => {
                 collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
             }
             Statement::ForOfStatement(statement) => {
                 collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
             }
-            Statement::LabeledStatement(statement) => {
-                collect_annex_b_one(&statement.body, visible, collisions);
-            }
-            Statement::WithStatement(statement) => {
-                collect_annex_b_one(&statement.body, visible, collisions);
-            }
-            Statement::WhileStatement(statement) => {
-                collect_annex_b_one(&statement.body, visible, collisions);
-            }
-            Statement::DoWhileStatement(statement) => {
-                collect_annex_b_one(&statement.body, visible, collisions);
-            }
+            Statement::LabeledStatement(statement) => collect_annex_b_one(&statement.body, visible, collisions),
+            Statement::WithStatement(statement) => collect_annex_b_one(&statement.body, visible, collisions),
+            Statement::WhileStatement(statement) => collect_annex_b_one(&statement.body, visible, collisions),
+            Statement::DoWhileStatement(statement) => collect_annex_b_one(&statement.body, visible, collisions),
             Statement::SwitchStatement(statement) => {
-                let mut own_lexicals = Vec::new();
-                for case in &statement.cases {
-                    own_lexicals.extend(lexical_names(&case.consequent));
-                }
-                let mut direct_functions = Vec::new();
-                for case in &statement.cases {
-                    direct_functions.extend(block_function_names(&case.consequent));
-                }
-                let mut function_visible = visible.to_vec();
-                function_visible.extend(own_lexicals);
-                let mut nested_visible = function_visible.clone();
-                nested_visible.extend(direct_functions);
-                for case in &statement.cases {
-                    for nested_statement in &case.consequent {
-                        let nested_statement = statement_without_labels(nested_statement);
-                        if let Statement::FunctionDeclaration(function) = nested_statement {
-                            if let Some(identifier) = &function.id
-                                && function_visible
-                                    .iter()
-                                    .any(|name| name == identifier.name.as_str())
-                            {
-                                collisions.insert(function.span.start);
-                            }
-                        } else {
-                            collect_annex_b_one(nested_statement, &nested_visible, collisions);
-                        }
-                    }
-                }
+                let cases = || statement.cases.iter().map(|case| &case.consequent[..]);
+                collect_scope_collisions(cases, visible, collisions);
             }
             Statement::TryStatement(statement) => {
                 collect_block_collisions(&statement.block.body, visible, collisions);
                 if let Some(handler) = &statement.handler {
-                    let mut nested = visible.to_vec();
-                    if let Some(parameter) = &handler.param
-                        && !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
-                    {
-                        collect_pattern_names(&parameter.pattern, &mut nested);
-                    }
-                    collect_block_collisions(&handler.body.body, &nested, collisions);
+                    with_names(
+                        visible,
+                        |names| {
+                            if let Some(parameter) = &handler.param
+                                && !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+                            {
+                                pattern_names(&parameter.pattern, &mut |name| names.push(name));
+                            }
+                        },
+                        |visible| collect_block_collisions(&handler.body.body, visible, collisions),
+                    );
                 }
                 if let Some(finalizer) = &statement.finalizer {
                     collect_block_collisions(&finalizer.body, visible, collisions);
@@ -1520,54 +1508,61 @@ fn collect_annex_b_collisions(
     }
 }
 
-fn collect_block_collisions(
-    statements: &[Statement<'_>],
-    visible: &[String],
-    collisions: &mut FxHashSet<u32>,
+fn collect_block_collisions<'a>(
+    statements: &[Statement<'a>],
+    visible: &mut Vec<&'a str>,
+    collisions: &mut Vec<u32>,
 ) {
-    let mut function_visible = visible.to_vec();
-    function_visible.extend(lexical_names(statements));
-    let mut nested_visible = function_visible.clone();
-    nested_visible.extend(block_function_names(statements));
-    for statement in statements {
-        let statement = statement_without_labels(statement);
-        if let Statement::FunctionDeclaration(function) = statement {
-            if let Some(identifier) = &function.id
-                && function_visible
-                    .iter()
-                    .any(|name| name == identifier.name.as_str())
-            {
-                collisions.insert(function.span.start);
-            }
-        } else {
-            collect_annex_b_one(statement, &nested_visible, collisions);
-        }
-    }
+    collect_scope_collisions(|| std::iter::once(statements), visible, collisions);
 }
 
-fn collect_annex_b_one(
-    statement: &Statement<'_>,
-    visible: &[String],
-    collisions: &mut FxHashSet<u32>,
-) {
+/// The collisions in one block scope, a block's statements or a switch's cases (`lists`):
+/// a function declared directly in it collides with the scope's lexical names and those
+/// visible outside; nested statements also see the scope's own Annex B functions.
+fn collect_scope_collisions<'a, 's, L: Iterator<Item = &'s [Statement<'a>]>>(
+    lists: impl Fn() -> L,
+    visible: &mut Vec<&'a str>,
+    collisions: &mut Vec<u32>,
+) where
+    'a: 's,
+{
+    with_names(
+        visible,
+        |names| lists().for_each(|statements| push_lexical_names(statements, names)),
+        |visible| {
+            let lexical = visible.len();
+            lists().for_each(|statements| push_block_function_names(statements, visible));
+            for statement in lists().flatten().map(statement_without_labels) {
+                match statement {
+                    Statement::FunctionDeclaration(function) => record_collision(function, &visible[..lexical], collisions),
+                    _ => collect_annex_b_one(statement, visible, collisions),
+                }
+            }
+        },
+    );
+}
+
+fn collect_annex_b_one<'a>(statement: &Statement<'a>, visible: &mut Vec<&'a str>, collisions: &mut Vec<u32>) {
     collect_annex_b_collisions(std::slice::from_ref(statement), visible, collisions);
 }
 
-fn collect_loop_collisions(
-    left: &oxc_ast::ast::ForStatementLeft<'_>,
-    body: &Statement<'_>,
-    visible: &[String],
-    collisions: &mut FxHashSet<u32>,
+fn collect_loop_collisions<'a>(
+    left: &oxc_ast::ast::ForStatementLeft<'a>,
+    body: &Statement<'a>,
+    visible: &mut Vec<&'a str>,
+    collisions: &mut Vec<u32>,
 ) {
-    let mut nested = visible.to_vec();
-    if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left
-        && declaration.kind != VariableDeclarationKind::Var
-    {
-        for item in &declaration.declarations {
-            collect_pattern_names(&item.id, &mut nested);
-        }
-    }
-    collect_annex_b_one(body, &nested, collisions);
+    with_names(
+        visible,
+        |names| {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left
+                && declaration.kind != VariableDeclarationKind::Var
+            {
+                declaration.declarations.iter().for_each(|item| pattern_names(&item.id, &mut |name| names.push(name)));
+            }
+        },
+        |visible| collect_annex_b_one(body, visible, collisions),
+    );
 }
 
 fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<String>) {
@@ -1653,21 +1648,16 @@ fn collect_var_declaration(
 }
 
 pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut impl Extend<String>) {
+    pattern_names(pattern, &mut |name| names.extend(std::iter::once(name.to_string())));
+}
+
+/// Calls `name` with each name `pattern` binds, borrowed from the source.
+fn pattern_names<'a>(pattern: &BindingPattern<'a>, name: &mut impl FnMut(&'a str)) {
     match pattern {
-        BindingPattern::BindingIdentifier(identifier) => {
-            names.extend(std::iter::once(identifier.name.to_string()));
-        }
-        BindingPattern::AssignmentPattern(pattern) => collect_pattern_names(&pattern.left, names),
-        BindingPattern::ArrayPattern(pattern) => {
-            for element in pattern.elements.iter().flatten() {
-                collect_pattern_names(element, names);
-            }
-        }
-        BindingPattern::ObjectPattern(pattern) => {
-            for property in &pattern.properties {
-                collect_pattern_names(&property.value, names);
-            }
-        }
+        BindingPattern::BindingIdentifier(identifier) => name(identifier.name.as_str()),
+        BindingPattern::AssignmentPattern(pattern) => pattern_names(&pattern.left, name),
+        BindingPattern::ArrayPattern(pattern) => pattern.elements.iter().flatten().for_each(|element| pattern_names(element, name)),
+        BindingPattern::ObjectPattern(pattern) => pattern.properties.iter().for_each(|property| pattern_names(&property.value, name)),
     }
 }
 

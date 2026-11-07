@@ -1442,16 +1442,6 @@ pub(super) fn inline_region<'a>(
 }
 
 impl LoopRegion {
-    /// The region's instructions, from its header.
-    pub(super) fn instructions(&self) -> &[WideInstruction] {
-        &self.instructions
-    }
-
-    /// The Number constant at `index` the region reads.
-    pub(super) fn number_constant(&self, index: usize) -> Option<f64> {
-        self.constants.get(&index).copied()
-    }
-
     fn entry_count(&self) -> usize {
         self.numbers.len() + self.tagged.len()
     }
@@ -3112,10 +3102,6 @@ pub(super) struct VerifiedRegion<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DefinitionObligation { None, NumberLoad, Int32Result, BooleanTest, TypeofTest }
-
-impl VerifiedRegion<'_> {
-    pub(super) fn region(&self) -> &LoopRegion { self.region }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TypeError {

@@ -53,7 +53,7 @@ pub(super) fn drop_unread_self_binding<'a>(
         instruction.addressed_local_slots().any(|addressed| addressed == slot)
     }) || function.handlers.iter().any(|handler| {
         matches!(handler.slot, Some(ThrownValueSlot::Local(local)) if local == slot) || handler.return_slot == Some(slot)
-    }) || function.environment_clones.iter().any(|plan| plan.fresh.contains(&slot) || plan.reset.contains(&slot))
+    }) || function.environment_clones.mentions(slot)
         || function.binding_sites.iter().any(|site| {
             site.bindings.iter().any(|binding| matches!(binding.location, EvalBindingLocation::Local(local) if local == slot))
         });
@@ -107,8 +107,7 @@ pub(super) fn promote<'a>(
                 }),
         )
         .filter(|instruction| instruction.op() == Op::CloneEnv)
-        .map(|instruction| instruction.environment_clone_index())
-        .collect::<Vec<_>>();
+        .map(|instruction| instruction.environment_clone_index());
     let named = function
         .arguments_slot
         .into_iter()
@@ -119,12 +118,7 @@ pub(super) fn promote<'a>(
                 .iter()
                 .filter_map(|handler| handler.return_slot),
         )
-        .chain(
-            cloned
-                .iter()
-                .filter_map(|&index| function.environment_clones.get(index))
-                .flat_map(|plan| plan.fresh.iter().chain(&plan.reset).copied()),
-        )
+        .chain(function.environment_clones.named_slots(cloned.into_iter()))
         .chain(function.binding_sites.iter().flat_map(|site| {
             site.bindings.iter().filter_map(|binding| match binding.location {
                 EvalBindingLocation::Local(slot) => Some(slot),
