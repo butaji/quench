@@ -1,7 +1,7 @@
 //! When a lane body compiles again, keeps its code or retires: decisions from what its runs
 //! and its predecessors' did.
 
-use super::{LaneBody, LaneLeaves, LaneView, TIERS};
+use super::{Handler, LaneBody, LaneLeaves, LaneView, TIERS};
 use super::super::compiled::LaneExit;
 
 /// A view's lane-body record over the run, which a lifecycle edge keeps: the bodies such
@@ -88,6 +88,13 @@ impl LaneView {
         history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
     }
 
+    /// A compile a lifecycle edge outran counts as a dropped body, never a wasted one: no run
+    /// of it took place.
+    pub(super) fn note_dropped_compile(&self) {
+        let history = self.history.get();
+        self.history.set(LaneBodyHistory { lifetimes: history.lifetimes.saturating_add(1), ..history });
+    }
+
     /// A body that went at a lifecycle edge warms again from the start; one no run of which
     /// `completed` counts as wasted (`LaneBodyHistory`).
     pub(super) fn drop_body(&self, body: &mut LaneBody, completed: bool) {
@@ -97,5 +104,28 @@ impl LaneView {
             wasted: history.wasted + u8::from(!completed),
         });
         *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
+    }
+
+    /// The body a just published method makes of this view.
+    pub(super) fn specialized(&self, entry: Handler, method: std::rc::Rc<super::super::compiled::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+        // A body whose entry would not pay for itself serves native callers only
+        // (`lane_body_call`, direct calls); the lane's own entries keep the records, and it
+        // has no trial to run.
+        let (tier_prologue, runs) = if method.lease().expect("a body just published is live").amortizes_entry() {
+            // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
+            (unsafe { std::mem::replace(&mut (*self.prologue.get()).handler, entry as *const ()) }, 0)
+        } else {
+            self.release_from_tier();
+            (unsafe { (*self.prologue.get()).handler }, TIERS.lane_body.trial_runs)
+        };
+        use std::cell::Cell;
+        LaneBody::Specialized { method, tier_prologue, runs: Cell::new(runs), leaves: Cell::new(0), exits: Cell::new(0),
+            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
+    }
+
+    /// Whether its body's code is compiling (`LaneBody::Compiling`).
+    pub(super) fn compiling(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Compiling { .. })
     }
 }

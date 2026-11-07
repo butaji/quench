@@ -800,6 +800,9 @@ enum LaneBody {
     /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
     /// `stuck`, at those few leaves only.
     Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
+    /// Its body's code compiling on the code generator's thread; the function runs in the
+    /// lane meanwhile, and its entries look for the code (`Vm::lane_body_work`).
+    Compiling { pending: Box<super::compiled::PendingLaneMethod>, recompiles: u8, stuck: LaneLeaves },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -834,6 +837,7 @@ impl LaneView {
         // SAFETY: as `lane_body`.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Unspecialized { .. } => "unspecialized",
+            LaneBody::Compiling { .. } => "compiling",
             LaneBody::Specialized { .. } => "specialized",
             LaneBody::Retired { .. } => "retired",
             LaneBody::Declined => "declined",
@@ -846,7 +850,7 @@ impl LaneView {
         // execution or recovery can reenter and change the view's publication.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { method, .. } => method.lease(),
-            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
+            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
         }
     }
 
@@ -854,45 +858,36 @@ impl LaneView {
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
-    fn specialize_lane_body(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) -> bool {
+    fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::compiled::LaneBodyWork) -> super::compiled::LaneBodyOutcome) -> bool {
         self.settle_retired_body();
-        // SAFETY: as `lane_body`; specializing runs no lane body.
+        // SAFETY: as `lane_body`; specializing runs no lane body, and the body is taken out
+        // of the view while the VM works on it.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Unspecialized { entries, recompiles, stuck } = body {
-            let (recompiles, stuck) = (*recompiles, *stuck);
-            *entries = entries.saturating_add(1);
-            if *entries >= self.warmup_entries() {
+        let (outcome, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
+            LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() => {
+                if !self.affords_compile() { return false; }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                *body = match self.affords_compile().then(|| specialize(&generic)).flatten() {
-                    Some(published) => {
-                        let method = published.lease().expect("a body just published is live");
-                        // A body whose entry would not pay for itself serves native callers
-                        // only (`lane_body_call`, direct calls); the lane's own entries keep
-                        // the records, and it has no trial to run.
-                        let (tier_prologue, runs) = if method.amortizes_entry() {
-                            let prologue = self.prologue.get();
-                            // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
-                            (unsafe { std::mem::replace(&mut (*prologue).handler, entry as *const ()) }, 0)
-                        } else {
-                            self.release_from_tier();
-                            (unsafe { (*self.prologue.get()).handler }, TIERS.lane_body.trial_runs)
-                        };
-                        LaneBody::Specialized {
-                            method: published,
-                            tier_prologue,
-                            runs: std::cell::Cell::new(runs),
-                            leaves: std::cell::Cell::new(0),
-                            exits: std::cell::Cell::new(0),
-                            leaves_at: std::cell::Cell::new(LaneLeaves::NONE),
-                            completed: std::cell::Cell::new(false),
-                            recompiles, stuck,
-                        }
-                    }
-                    None => LaneBody::Declined,
-                };
+                (work(super::compiled::LaneBodyWork::Start { generic: &generic }), recompiles, stuck)
             }
-        }
+            LaneBody::Unspecialized { entries, recompiles, stuck } => {
+                *body = LaneBody::Unspecialized { entries: entries + 1, recompiles, stuck };
+                return true;
+            }
+            LaneBody::Compiling { pending, recompiles, stuck } =>
+                (work(super::compiled::LaneBodyWork::Poll(pending)), recompiles, stuck),
+            settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
+        };
+        *body = match outcome {
+            super::compiled::LaneBodyOutcome::Compiling(pending) => LaneBody::Compiling { pending, recompiles, stuck },
+            super::compiled::LaneBodyOutcome::Published(published) => self.specialized(entry, published, recompiles, stuck),
+            // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
+            super::compiled::LaneBodyOutcome::Stale => {
+                self.note_dropped_compile();
+                LaneBody::Unspecialized { entries: 0, recompiles, stuck }
+            }
+            super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
+        };
         !matches!(body, LaneBody::Declined)
     }
 
@@ -924,7 +919,7 @@ impl LaneView {
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
-    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) {
+    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(super::compiled::LaneBodyWork) -> super::compiled::LaneBodyOutcome) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         // A function whose bodies lifecycle edges discarded warms as any entry does.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
@@ -960,8 +955,9 @@ impl LaneView {
     /// Whether it has no body yet and counts entries toward one, its first or a next.
     fn warming(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. })
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
     }
+
 
     /// Whether its body left too often and specializes again at its next entry.
     fn respecializes(&self) -> bool {
@@ -8450,21 +8446,21 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
-    let specialize = |generic: &[super::compiled::LaneExit]| {
+    let specialize = |work: super::compiled::LaneBodyWork| {
         // Entry warm-up leaves closed loops to their admitted regions. A region that leaves
         // for calls still lets a lane body inline those callees into its typed unit, and an
         // explicit loop OSR request already determined it needs the shared body.
-        if loop_header.is_none()
+        if matches!(work, super::compiled::LaneBodyWork::Start { .. }) && loop_header.is_none()
             && own.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some())
         {
-            return None;
+            return super::compiled::LaneBodyOutcome::Declined;
         }
-        let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-        let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header, generic);
-        if diagnostics && let Some(method) = &method {
-            own.body_stats.compiled(function, method.inlined.len());
+        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
+        let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, loop_header, work);
+        if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
+            own.body_stats.compiled(function, method.lease().map_or(0, |method| method.inlined.len()));
         }
-        method.and_then(|method| vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()))
+        outcome
     };
     if now {
         own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
@@ -8483,7 +8479,8 @@ fn lane_loop_try_body<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite)
     let entered = !vm.programs.js_jit_general_dispatch_enabled()
         && own.is_some_and(|own| {
             lane_specialize(cx, own, site.function, Some(site.header), true);
-            own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
+            // A body whose code compiles takes the loop once it publishes.
+            own.compiling() || own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
         });
     if entered {
         site.exits.set(0);
@@ -8525,7 +8522,8 @@ script_handler! {
         let Some((own, method)) = own
             .and_then(|own| own.lane_body().filter(|method| method.loop_header == Some(site.header)).map(|method| (own, method)))
         else {
-            lane_loop_retire::<H>(cx, ip, site);
+            // A body whose code still compiles takes the loop at a later backward jump.
+            if !own.is_some_and(LaneView::compiling) { lane_loop_retire::<H>(cx, ip, site); }
             next!(cx, r, header, Carried::script(cx))
         };
         if !lane_body_admits(cx, &method) {
