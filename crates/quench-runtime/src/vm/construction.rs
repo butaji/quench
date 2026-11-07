@@ -1395,7 +1395,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args, Some(new_target)),
-            Native::Date => self.date_construct_native(p, args),
+            Native::Date => self.date_construct_native(p, args, new_target),
             Native::IntlNumberFormat => self.intl_number_format_construct(p, args, new_target),
             Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
             Native::IntlPluralRules => self.intl_plural_rules_construct(p, args, new_target),

@@ -751,7 +751,11 @@ struct AccessorFieldCache {
     slot_accessor: SlotAccessor,
     /// The `prototype_layout_epoch` the chain was proved under.
     epoch: u64,
+    /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
+    next: u32,
 }
+/// A cache site without an accessor entry (`Vm::accessor_field_indices`).
+const NO_ACCESSOR_FIELD: u32 = u32::MAX;
 /// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
 /// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
 /// reaches one site with a shape per class. A further shape reuses the oldest entry.
@@ -2066,10 +2070,13 @@ pub(crate) struct Vm<H> {
     /// Per cache site, the index of its inherited entry (`Dependencies::inherited`), or
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: site_table::SiteTable<u32>,
-    /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
-    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
+    /// Per cache site, the index of its newest accessor entry in `accessor_fields`, or
+    /// `NO_ACCESSOR_FIELD`.
+    accessor_field_indices: site_table::SiteTable<u32>,
+    /// Accessor reads (`AccessorFieldCache`), each site's linked newest first through
+    /// `next`, up to `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
-    accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
+    accessor_fields: Vec<AccessorFieldCache>,
     field_add_indices: site_table::SiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
@@ -3121,6 +3128,8 @@ impl<H: Host> Vm<H> {
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
         self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.accessor_fields.clear();
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
@@ -3297,6 +3306,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.extend_empty(fields);
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
+        self.accessor_field_indices.extend_empty(fields);
         self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
         self.object_shapes.extend_empty(sites.objects);
     }
@@ -3310,7 +3320,7 @@ impl<H: Host> Vm<H> {
             self.field_add_indices.set(site, NO_FIELD_ADD_SET);
             self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
             self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
-            self.accessor_field_caches.remove(&site);
+            self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
         }
         self.method_caches[layout.method_base..layout.method_base + layout.sites.methods]
             .fill([EMPTY_METHOD_CACHE; 2]);
