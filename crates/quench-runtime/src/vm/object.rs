@@ -505,6 +505,29 @@ impl<H: Host> Vm<H> {
             .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
             .entries
     }
+    /// Moves `parent`'s lookup index to `child`, a cached transition of it the object took, as
+    /// `append_shape` moves it to a new child. Otherwise the index stays with the shape that
+    /// built it and an object retracing the chain derives one per shape from scratch: the
+    /// second wide object of one layout (a 150K-unit string's wrapper, SunSpider tagcloud)
+    /// cost time and index memory quadratic in its width.
+    fn carry_lookup_index(&mut self, parent: u32, child: u32) {
+        if self.shapes[child as usize].lookup_index.get().is_some() {
+            return;
+        }
+        let Some(index) = self.shapes[parent as usize].lookup_index.take() else {
+            return;
+        };
+        let mut steps = smallvec::SmallVec::<[ShapeTransition; 2]>::new();
+        let mut current = child;
+        while current != parent {
+            let shape = &self.shapes[current as usize];
+            steps.push(shape.transition);
+            current = shape.parent().expect("a cached transition descends from its parent");
+        }
+        if let Some(index) = steps.into_iter().rev().try_fold(index, |index, step| index.extended_by(step)) {
+            self.shapes[child as usize].lookup_index = OnceCell::from(index);
+        }
+    }
     fn append_shape(
         &mut self,
         parent: u32,
@@ -4688,6 +4711,7 @@ impl<H: Host> Vm<H> {
             if let Some(next) = next {
                 self.shapes[shape as usize].last_child.set(next);
                 self.profile.shape_transition(true);
+                self.carry_lookup_index(shape, next);
                 return next;
             }
         }
