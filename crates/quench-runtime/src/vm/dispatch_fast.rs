@@ -4974,7 +4974,11 @@ fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -
 /// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held;
 /// with the global var whose global object property answered it.
 #[inline(always)]
-fn lane_read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> (Option<Value>, Option<Atom>) {
+fn lane_read_capture_value<H: Host, const PLAIN: bool>(
+    cx: *mut LaneContext<H>,
+    depth: u16,
+    slot: u16,
+) -> (Option<Value>, Option<super::environment::RootRead>) {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
     
@@ -5017,16 +5021,29 @@ script_handler! {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
         let slot = ImmediateLayout::capture_slot(imm);
-        let (value, global_var) = lane_read_capture_value::<H, true>(cx, depth, slot);
+        let (value, source) = lane_read_capture_value::<H, true>(cx, depth, slot);
         // A global var's own data property on the global object becomes the record's hint
-        // (`lane_load_root_var`).
-        if let Some(atom) = global_var
-            && value.is_some()
-        {
+        // (`lane_load_root_var`); a retained global lexical binding's name and index in the
+        // realm's bindings do (`lane_load_root_lexical`).
+        if value.is_some() {
+            use super::environment::RootRead;
             let vm = unsafe { vm(cx) };
-            if let Some(hint) = vm.own_data_field_hint::<false>(vm.realm.globals, atom) {
-                set_field_hint(ip, hint);
-                requicken::<H>(ip, lane_load_root_var::<H>);
+            match source {
+                Some(RootRead::GlobalVar(atom)) => {
+                    if let Some(hint) = vm.own_data_field_hint::<false>(vm.realm.globals, atom) {
+                        set_field_hint(ip, hint);
+                        requicken::<H>(ip, lane_load_root_var::<H>);
+                    }
+                }
+                Some(RootRead::GlobalLexical(atom, index)) => {
+                    if let Ok(index) = u16::try_from(index)
+                        && index != NO_CALL_LINK
+                    {
+                        set_field_hint(ip, super::FieldCache::own(atom, index));
+                        requicken::<H>(ip, lane_load_root_lexical::<H>);
+                    }
+                }
+                None => {}
             }
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -5053,6 +5070,29 @@ script_handler! {
         }
         let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
             return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// A `LoadCapture` of a script's retained top-level `let`, `const` or class, whose name and
+    /// index in the active realm's global lexical bindings its record's hint holds
+    /// (`lane_load_capture_walk`): the binding at that index while it is that name's and
+    /// initialized, else the walk. Bindings are never removed from an active realm, so the
+    /// name at the index is the one a lookup of it finds.
+    fn lane_load_root_lexical<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let hint = i.field_hint();
+        let value = vm
+            .realm
+            .global_lexical_bindings
+            .get_index(usize::from(hint.slot))
+            .filter(|(atom, value)| **atom == hint.receiver && !value.is_deleted())
+            .map(|(_, value)| *value);
+        let Some(value) = value else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
