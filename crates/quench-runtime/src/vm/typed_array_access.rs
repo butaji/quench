@@ -26,15 +26,12 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer {
             bytes,
             detached,
-            mode,
+            mode: mode @ (BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. }),
             ..
         }) = self.heap.get_mut(value)
         else {
             return Err(self.type_error(&program, "Expected an ArrayBuffer".into()));
         };
-        if mode.is_shared() {
-            return Err(self.type_error(&program, "Expected an ArrayBuffer".into()));
-        }
         let resizable = &mode.is_resizable();
         if *detached || bytes.is_empty() {
             return Ok(0);

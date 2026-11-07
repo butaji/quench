@@ -1104,16 +1104,8 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, mode, detached, .. }) = self.heap.get(buffer) else {
             unreachable!("dispatched as an ArrayBuffer");
         };
-        let (shareable, shared, detached, length, max_byte_length, resizable, immutable) = (
-            bytes.shared_backing().is_some(),
-            mode.is_shared(),
-            *detached,
-            bytes.len(),
-            mode.max_byte_length(bytes.len()),
-            mode.is_resizable(),
-            mode.is_immutable(),
-        );
-        if shared {
+        let (shareable, mode, detached, length) = (bytes.shared_backing().is_some(), *mode, *detached, bytes.len());
+        if mode.is_shared() {
             if !shareable {
                 return Err(self.uncloneable_with(program, hooks, buffer));
             }
@@ -1130,19 +1122,18 @@ impl<H: Host> Vm<H> {
         if detached {
             return Err(hooks.data_clone_error(self, program, DETACHED_MESSAGE));
         }
-        if u32::try_from(length).is_err() || (resizable && u32::try_from(max_byte_length).is_err()) {
+        let (subtag, maximum) = match mode {
+            BufferMode::Resizable { max_byte_length } => (tag::RESIZABLE_ARRAY_BUFFER, Some(max_byte_length)),
+            BufferMode::Immutable => (tag::IMMUTABLE_ARRAY_BUFFER, None),
+            _ => (tag::ARRAY_BUFFER, None),
+        };
+        if u32::try_from(length).is_err() || maximum.is_some_and(|maximum| u32::try_from(maximum).is_err()) {
             return Err(self.uncloneable_with(program, hooks, buffer));
         }
-        put_tag(&output, if resizable {
-            tag::RESIZABLE_ARRAY_BUFFER
-        } else if immutable {
-            tag::IMMUTABLE_ARRAY_BUFFER
-        } else {
-            tag::ARRAY_BUFFER
-        });
+        put_tag(&output, subtag);
         put_varint(&output, length as u64);
-        if resizable {
-            put_varint(&output, max_byte_length as u64);
+        if let Some(maximum) = maximum {
+            put_varint(&output, maximum as u64);
         }
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) {
             output.borrow_mut().extend_from_slice(&bytes.read());

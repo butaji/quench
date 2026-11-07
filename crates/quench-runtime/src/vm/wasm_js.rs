@@ -738,12 +738,7 @@ impl<H: Host> Vm<H> {
         consumer: Native,
     ) -> Result<Vec<u8>, JsError> {
         let bytes = match self.heap.get(source) {
-            Some(Cell::ArrayBuffer {
-                bytes,
-                detached,
-                mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. },
-                ..
-            }) => Some(if *detached {
+            Some(Cell::ArrayBuffer { bytes, detached, mode, .. }) if !mode.is_shared() => Some(if *detached {
                 Vec::new()
             } else {
                 bytes.to_vec()

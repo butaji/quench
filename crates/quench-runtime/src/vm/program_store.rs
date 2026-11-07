@@ -7,6 +7,8 @@ use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
 mod snapshot;
+mod wasm_tier;
+pub(super) use wasm_tier::WasmTierState;
 
 #[derive(Default)]
 struct JsJitCounters {
@@ -434,40 +436,6 @@ pub(super) enum JsTierState {
     },
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
-}
-
-/// A Wasm function's selective tier: counting entries toward its one compile attempt, the
-/// attempt claimed, or its artifact. Retiring the artifact leaves it `Attempted`.
-#[derive(Clone)]
-pub(super) enum WasmTierState {
-    Counting(u8),
-    Attempted,
-    Compiled(Rc<super::compiled::CompiledProgram>),
-}
-
-impl Default for WasmTierState {
-    fn default() -> Self {
-        Self::Counting(0)
-    }
-}
-
-impl WasmTierState {
-    fn compiled(&self) -> Option<&Rc<super::compiled::CompiledProgram>> {
-        match self {
-            Self::Compiled(compiled) => Some(compiled),
-            Self::Counting(_) | Self::Attempted => None,
-        }
-    }
-
-    fn take_compiled(&mut self) -> Option<Rc<super::compiled::CompiledProgram>> {
-        match std::mem::replace(self, Self::Attempted) {
-            Self::Compiled(compiled) => Some(compiled),
-            other => {
-                *self = other;
-                None
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

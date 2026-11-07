@@ -1391,18 +1391,7 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("generator is already running".into()));
             }
             let done = record.is_completed();
-            let continuation = record.continuation.take();
-            // A suspended generator that resumes runs from here; one that has not started and
-            // receives an abrupt completion closes without running.
-            if !done
-                && continuation.as_ref().is_some_and(|continuation| {
-                    initial_error.is_none()
-                        || !matches!(continuation.completion, Completion::GeneratorStart)
-                })
-            {
-                record.state = GeneratorState::Executing;
-            }
-            (continuation, record.realm, done)
+            (record.take_for_resume(initial_error.is_some()), record.realm, done)
         };
         if done {
             if let Some(error) = initial_error {

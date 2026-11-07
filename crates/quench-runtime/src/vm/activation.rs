@@ -202,6 +202,21 @@ impl GeneratorRecord {
         self.state == GeneratorState::Completed
     }
 
+    /// The continuation a resumption runs, taken: a suspended generator executes from it,
+    /// while one that has not started and receives an `abrupt` completion closes without
+    /// running.
+    pub(crate) fn take_for_resume(&mut self, abrupt: bool) -> Option<Continuation> {
+        let continuation = self.continuation.take();
+        if self.state == GeneratorState::Suspended
+            && continuation
+                .as_ref()
+                .is_some_and(|continuation| !abrupt || !matches!(continuation.completion, Completion::GeneratorStart))
+        {
+            self.state = GeneratorState::Executing;
+        }
+        continuation
+    }
+
     /// The end of a run that did not finish the generator: executing becomes suspended, and a
     /// completed generator stays completed.
     pub(crate) fn stop(&mut self) {
