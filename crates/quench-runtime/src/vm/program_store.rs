@@ -41,14 +41,7 @@ struct JsJitCounters {
     field_cache_sites: FxHashMap<u16, (u64, u64)>,
     field_store_cache_probes: u64,
     field_store_cache_hits: u64,
-    field_return_candidate_entries: u64,
-    field_return_fixed_this_entries: u64,
-    field_return_fast_entries: u64,
-    field_increment_candidate_entries: u64,
-    field_increment_fixed_this_entries: u64,
-    field_increment_fast_entries: u64,
     captured_store_fast_entries: u64,
-    numeric_find_fast_entries: u64,
     fallback_entries: u64,
     interpreter_completions: u64,
     interpreter_inclusive_ns: u64,
@@ -2685,84 +2678,12 @@ impl ProgramStore {
         }
     }
 
-    pub(super) fn record_js_jit_field_return_candidate(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        fixed_this: bool,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_return_candidate_entries =
-                counters.field_return_candidate_entries.saturating_add(1);
-            counters.field_return_fixed_this_entries = counters
-                .field_return_fixed_this_entries
-                .saturating_add(u64::from(fixed_this));
-        }
-    }
-
-    pub(super) fn record_js_jit_field_return_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_return_fast_entries =
-                counters.field_return_fast_entries.saturating_add(1);
-        }
-    }
-
-    pub(super) fn record_js_jit_field_increment_candidate(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        fixed_this: bool,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_increment_candidate_entries =
-                counters.field_increment_candidate_entries.saturating_add(1);
-            counters.field_increment_fixed_this_entries = counters
-                .field_increment_fixed_this_entries
-                .saturating_add(u64::from(fixed_this));
-        }
-    }
-
-    pub(super) fn record_js_jit_field_increment_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_increment_fast_entries =
-                counters.field_increment_fast_entries.saturating_add(1);
-        }
-    }
-
     pub(super) fn record_js_jit_captured_store_entry(&mut self, id: ProgramId, function: u32) {
         self.record_js_jit_entry(id, function, false, 0);
         if let Some(counters) = self.js_jit_diagnostics.as_mut()
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.captured_store_fast_entries = counters.captured_store_fast_entries.saturating_add(1);
-        }
-    }
-
-    pub(super) fn record_js_jit_numeric_find_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.numeric_find_fast_entries = counters
-                .numeric_find_fast_entries
-                .saturating_add(1);
         }
     }
 
@@ -3485,7 +3406,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"captured_store_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"captured_store_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3506,14 +3427,7 @@ impl Drop for ProgramStore {
                 counters.field_cache_hits,
                 counters.field_store_cache_probes,
                 counters.field_store_cache_hits,
-                counters.field_return_candidate_entries,
-                counters.field_return_fixed_this_entries,
-                counters.field_return_fast_entries,
-                counters.field_increment_candidate_entries,
-                counters.field_increment_fixed_this_entries,
-                counters.field_increment_fast_entries,
                 counters.captured_store_fast_entries,
-                counters.numeric_find_fast_entries,
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,

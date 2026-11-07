@@ -56,7 +56,7 @@ fn specific_literals(tokens: &impl ToTokens) -> usize {
 
 impl<'ast> Visit<'ast> for Tests {
     fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
-        if matches!(binary.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_)) {
+        if crate::is_equality(&binary.op) {
             let (left, right) = (&*binary.left, &*binary.right);
             let tested = (reads_guest_name(left) && specific_literals(right) > 0)
                 || (reads_guest_name(right) && specific_literals(left) > 0);

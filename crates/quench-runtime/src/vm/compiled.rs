@@ -1015,12 +1015,6 @@ pub(super) fn lower_js_numeric_region(
     Some(native)
 }
 
-/// Compile a general JavaScript native dispatch loop. It carries the validated
-/// bytecode PC in native code and calls the VM's shared `step` implementation
-/// for each operation. This complete-semantics bridge lets us move pure
-/// denotations into Cranelift without creating a second interpreter.
-/// A numeric find takes the key, the bucket index and the key's hash.
-const NUMERIC_FIND_PARAMETERS: u16 = 3;
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
 /// General-dispatch return statuses encode the terminal bytecode PC without
 /// colliding with the shared entry's small stop, resume, or trap statuses.
@@ -7137,19 +7131,6 @@ enum CompiledJsEntry {
     NumberInterruptible(
         unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
     ),
-    StringHashLoop(
-        unsafe extern "C" fn(
-            *const u8,
-            *const usize,
-            u32,
-            *const std::sync::atomic::AtomicBool,
-            *mut u32,
-        ) -> f64,
-    ),
-    StringTransform {
-        entry: unsafe extern "C" fn(*const u8, usize, u32) -> u32,
-        transform: super::js_compiled::JsJitStringTransform,
-    },
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
     Boolean(unsafe extern "C" fn(*const f64) -> u32),
     FieldReject {
@@ -7174,7 +7155,6 @@ pub(super) enum CompiledJsResult {
         resume_register: crate::bytecode::Register,
         resume_value: Value,
     },
-    StringTransform(super::js_compiled::JsJitStringTransform, bool),
 }
 
 enum CompiledJsCallResult {
@@ -7189,11 +7169,6 @@ enum JsNativeCallInput<'a> {
         interrupt: &'a std::sync::atomic::AtomicBool,
     },
     CaptureNumber(f64),
-    StringHashLoop {
-        units: crate::vm::wtf16::Units<'a>,
-        interrupt: &'a std::sync::atomic::AtomicBool,
-    },
-    StringTransform(crate::vm::wtf16::Units<'a>),
 }
 
 struct JsNativeCall<'a> {
@@ -9172,36 +9147,6 @@ impl CompiledJsFunction {
                     None,
                 )
             }
-            super::js_compiled::JsJitResultKind::StringHashLoop => {
-                // SAFETY: the string hash loop compiler emits the matching
-                // code-unit pointer, length, interrupt, and status ABI.
-                let entry = unsafe {
-                    std::mem::transmute::<
-                        *mut u8,
-                        unsafe extern "C" fn(
-                            *const u8,
-                            *const usize,
-                            u32,
-                            *const std::sync::atomic::AtomicBool,
-                            *mut u32,
-                        ) -> f64,
-                    >(code.pointer())
-                };
-                (CompiledJsEntry::StringHashLoop(entry), Vec::new(), None)
-            }
-            super::js_compiled::JsJitResultKind::StringTransform(transform) => {
-                // SAFETY: the string transform compiler emits the matching code-unit ABI.
-                let entry = unsafe {
-                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u8, usize, u32) -> u32>(
-                        code.pointer(),
-                    )
-                };
-                (
-                    CompiledJsEntry::StringTransform { entry, transform },
-                    Vec::new(),
-                    None,
-                )
-            }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
                 let entry = unsafe {
@@ -9286,8 +9231,6 @@ impl CompiledJsFunction {
             && self.numeric_field_inputs().is_empty()
             && !self.is_capture_number()
             && self.capture_arguments().is_empty()
-            && !self.is_string_transform()
-            && !self.is_string_hash_loop()
             && !self.is_field_reject()
     }
 
@@ -9477,13 +9420,9 @@ impl CompiledJsFunction {
         match self.entry {
             CompiledJsEntry::SharedNumber { mode, .. } => mode,
             CompiledJsEntry::GeneralDispatch(_)
-            | CompiledJsEntry::NumberInterruptible(_)
-            | CompiledJsEntry::StringHashLoop(_) => {
-                NativeEntryMode::Resumable
-            }
+            | CompiledJsEntry::NumberInterruptible(_) => NativeEntryMode::Resumable,
             CompiledJsEntry::Int32Identity { .. }
             | CompiledJsEntry::CaptureNumber(_)
-            | CompiledJsEntry::StringTransform { .. }
             | CompiledJsEntry::StringReturnPc(_)
             | CompiledJsEntry::Boolean(_)
             | CompiledJsEntry::FieldReject { .. } => NativeEntryMode::Leaf,
@@ -9495,39 +9434,14 @@ impl CompiledJsFunction {
         self.native_entry_mode() == NativeEntryMode::Leaf
     }
 
-    fn call_string_hash_loop(
-        &self,
-        units: crate::vm::wtf16::Units<'_>,
-        interrupt: &std::sync::atomic::AtomicBool,
-        poll_page: Option<(usize, usize)>,
-    ) -> Option<CompiledJsResult> {
-        self.call_through_shared_entry(
-            JsNativeCallInput::StringHashLoop { units, interrupt },
-            poll_page,
-        )
-    }
-
-    fn call_string_transform(
-        &self,
-        units: crate::vm::wtf16::Units<'_>,
-        poll_page: Option<(usize, usize)>,
-    ) -> Option<CompiledJsResult> {
-        self.call_through_shared_entry(JsNativeCallInput::StringTransform(units), poll_page)
-    }
-
     fn call_through_shared_entry(
         &self,
         input: JsNativeCallInput<'_>,
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
         let interrupt = match &input {
-            JsNativeCallInput::Arguments { interrupt, .. }
-            | JsNativeCallInput::StringHashLoop { interrupt, .. } => {
-                std::ptr::from_ref(*interrupt)
-            }
-            JsNativeCallInput::CaptureNumber(_) | JsNativeCallInput::StringTransform(_) => {
-                std::ptr::null()
-            }
+            JsNativeCallInput::Arguments { interrupt, .. } => std::ptr::from_ref(*interrupt),
+            JsNativeCallInput::CaptureNumber(_) => std::ptr::null(),
         };
         let mut call = JsNativeCall {
             function: self,
@@ -9583,39 +9497,6 @@ impl CompiledJsFunction {
                 (completed != 0).then(|| CompiledJsResult::Number(Value::number(result)))
             }
             (
-                CompiledJsEntry::StringHashLoop(entry),
-                JsNativeCallInput::StringHashLoop { units, interrupt },
-            ) => {
-                let mut completed = 0_u32;
-                let (units_ptr, length, ascii) = match units {
-                    crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
-                    crate::vm::wtf16::Units::Wide(units) => {
-                        (units.as_ptr().cast::<u8>(), units.len(), 0)
-                    }
-                };
-                // SAFETY: `units` stays borrowed while generated code reads it.
-                let interrupt = poll_page.map_or_else(
-                    || std::ptr::from_ref(interrupt),
-                    |(start, _)| start as *const std::sync::atomic::AtomicBool,
-                );
-                let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
-                (completed != 0).then(|| CompiledJsResult::Number(Value::number(result)))
-            }
-            (
-                CompiledJsEntry::StringTransform { entry, transform },
-                JsNativeCallInput::StringTransform(units),
-            ) => {
-                let (units_ptr, length, ascii) = match units {
-                    crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
-                    crate::vm::wtf16::Units::Wide(units) => {
-                        (units.as_ptr().cast::<u8>(), units.len(), 0)
-                    }
-                };
-                // SAFETY: `units` remains borrowed while generated code reads it.
-                let transformed = unsafe { entry(units_ptr, length, ascii) } != 0;
-                Some(CompiledJsResult::StringTransform(transform, transformed))
-            }
-            (
                 CompiledJsEntry::StringReturnPc(entry),
                 JsNativeCallInput::Arguments { values, .. },
             ) => {
@@ -9651,23 +9532,8 @@ impl CompiledJsFunction {
         }
     }
 
-    fn is_string_hash_loop(&self) -> bool {
-        matches!(self.entry, CompiledJsEntry::StringHashLoop(_))
-    }
-
-    fn is_string_transform(&self) -> bool {
-        matches!(self.entry, CompiledJsEntry::StringTransform { .. })
-    }
-
     fn is_field_reject(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::FieldReject { .. })
-    }
-
-    fn string_transform_kind(&self) -> Option<super::js_compiled::JsJitStringTransform> {
-        match self.entry {
-            CompiledJsEntry::StringTransform { transform, .. } => Some(transform),
-            _ => None,
-        }
     }
 
     pub(super) fn string_constant_for_return(&self, return_pc: u32) -> Option<u32> {
@@ -14044,7 +13910,6 @@ impl<H: Host> Vm<H> {
             this,
             parameters: parameters.iter().copied().collect(),
             captures: TierCaptures::Environment(env),
-            allocates: false,
             facts: self.programs.js_entry_facts(id, function)?,
         };
         let mut specialized_guard_miss = false;
@@ -14309,14 +14174,6 @@ impl<H: Host> Vm<H> {
         self.cached_number_field_update(program, receiver, atom, site, value, update)
     }
 
-    /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
-    fn tier_owned_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
-        match captures {
-            TierCaptures::Frame(frame) => self.jit_owned_capture(frame, depth, slot),
-            TierCaptures::Environment(_) => self.tier_capture(captures, depth, slot),
-        }
-    }
-
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
     /// wherever a frame is entered: the general loop, and the lane's in-place frame calls
     /// (`lane_frame_call`). With the native result written to its return register, the PC
@@ -14365,7 +14222,6 @@ impl<H: Host> Vm<H> {
                 this: record.fixed_this.then_some(record.this),
                 parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
                 captures: TierCaptures::Frame(frame),
-                allocates: true,
                 facts: Rc::clone(&facts),
             })
         });
@@ -14527,93 +14383,6 @@ impl<H: Host> Vm<H> {
         }).flatten()
     }
 
-    /// Run a narrow numeric linked-entry search using guarded VM field and
-    /// array probes, plus the already-promoted numeric equality artifact.
-    /// Every failure leaves the frame untouched for interpreter execution.
-    /// A numeric find hit counts as a numeric entry of its function.
-    fn record_numeric_find_hit(&mut self, program_id: ProgramId, function_id: u32) {
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_entry(program_id, function_id, true, NUMERIC_FIND_PARAMETERS);
-            self.programs.record_js_jit_numeric_find_entry(program_id, function_id);
-        }
-    }
-
-    fn js_jit_numeric_find_at_entry(
-        &mut self,
-        program: &ResidualProgram,
-        activation: &TierEntry,
-        candidate: super::js_compiled::JsJitNumericFind,
-    ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        const MAX_STEPS: usize = 256;
-        /// Steps between polls of the execution interrupt.
-        const INTERRUPT_POLL_STEPS: usize = 32;
-        let (program_id, function_id) = (activation.program, activation.function);
-        let receiver = activation.this?;
-        let (key_value, index_value, hash_value) = {
-            let arguments = activation.parameters.get(..usize::from(NUMERIC_FIND_PARAMETERS))?;
-            (arguments[0], arguments[1], arguments[2])
-        };
-        if key_value.as_number().is_none() || index_value.as_int().is_none() {
-            return None;
-        }
-        let key_hash = hash_value.as_number()?;
-        let array = self.cached_field_hit(program, receiver, candidate.list_cache).hit()?;
-        let mut entry = self.direct_array_index_data(array, index_value)?;
-        let mut cached_equals_function = None;
-        let mut equal_arguments = [Value::UNDEFINED; 2];
-        equal_arguments[0] = key_value;
-
-        for step in 0..MAX_STEPS {
-            if step % INTERRUPT_POLL_STEPS == 0
-                && self
-                    .execution_interrupt
-                    .atomic_flag()
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                return None;
-            }
-            if !self.truthy(entry) {
-                self.record_numeric_find_hit(program_id, function_id);
-                return Some((candidate.return_pc, candidate.return_register, entry));
-            }
-            self.heap.object(entry)?;
-            let entry_hash = self.cached_field_hit(program, entry, candidate.hash_cache).hit()?.as_number()?;
-            if entry_hash == key_hash {
-                let equals_function = if let Some(equals_function) = cached_equals_function {
-                    equals_function
-                } else {
-                    let equals = self.tier_owned_capture(
-                        activation.captures,
-                        candidate.equals_depth,
-                        candidate.equals_slot,
-                    )?;
-                    let (equals_program, equals_function, _) =
-                        self.in_loop_call_target(program, equals)?;
-                    if equals_program != program_id {
-                        return None;
-                    }
-                    equals_function
-                };
-                cached_equals_function = Some(equals_function);
-                let entry_key = self.cached_field_hit(program, entry, candidate.key_cache).hit()?;
-                entry_key.as_number()?;
-                equal_arguments[1] = entry_key;
-                let equal =
-                    self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
-                let equal = equal?;
-                if equal == Value::TRUE {
-                    self.record_numeric_find_hit(program_id, function_id);
-                    return Some((candidate.return_pc, candidate.return_register, entry));
-                }
-                if equal != Value::FALSE {
-                    return None;
-                }
-            }
-            entry = self.cached_field_hit(program, entry, candidate.next_cache).hit()?;
-        }
-        None
-    }
-
     /// Try the per-function JavaScript tier at an already-initialized frame's
     /// entry. A guard miss leaves the frame untouched so the interpreter can
     /// run from the same bytecode PC.
@@ -14644,81 +14413,6 @@ impl<H: Host> Vm<H> {
                 self.programs.record_js_jit_captured_store_entry(program_id, function_id);
             }
             return Some((function.code.len() - 1, store.return_register, Value::UNDEFINED));
-        }
-        let numeric_find_candidate = facts.numeric_find;
-        if let Some(candidate) = numeric_find_candidate
-            && let Some(result) = self.js_jit_numeric_find_at_entry(program, entry, candidate)
-        {
-            return Some(result);
-        }
-        let field_increment_candidate = facts.field_increment;
-        let mut field_increment_diagnostic_entry_recorded = false;
-        if let Some(candidate) = field_increment_candidate {
-            let fixed_this = entry.this.is_some();
-            if self.programs.js_jit_diagnostics_enabled() {
-                self.programs.record_js_jit_entry(
-                    program_id,
-                    function_id,
-                    false,
-                    function.params,
-                );
-                self.programs.record_js_jit_field_increment_candidate(
-                    program_id,
-                    function_id,
-                    fixed_this,
-                );
-                field_increment_diagnostic_entry_recorded = true;
-            }
-            if let Some(receiver) = entry.this
-                && self.cached_field_increment_hit(
-                    program,
-                    receiver,
-                    candidate.atom,
-                    candidate.read_cache_site,
-                    candidate.write_cache_site,
-                    candidate.decrement,
-                )
-            {
-                if self.programs.js_jit_diagnostics_enabled() {
-                    self.programs
-                        .record_js_jit_field_increment_entry(program_id, function_id);
-                }
-                return Some((
-                    candidate.return_pc,
-                    candidate.return_register,
-                    Value::UNDEFINED,
-                ));
-            }
-        }
-        let field_return_candidate =
-            facts.field_return;
-        let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
-        if let Some(candidate) = field_return_candidate {
-            let fixed_this = entry.this.is_some();
-            if self.programs.js_jit_diagnostics_enabled() {
-                self.programs.record_js_jit_entry(
-                    program_id,
-                    function_id,
-                    false,
-                    function.params,
-                );
-                self.programs.record_js_jit_field_return_candidate(
-                    program_id,
-                    function_id,
-                    fixed_this,
-                );
-                field_return_diagnostic_entry_recorded = true;
-            }
-            if let Some(receiver) = entry.this
-                && let super::object::FieldCacheProbe::Hit(value) =
-                    self.cached_field_hit(program, receiver, candidate.cache_site)
-                {
-                    if self.programs.js_jit_diagnostics_enabled() {
-                        self.programs
-                            .record_js_jit_field_return_entry(program_id, function_id);
-                    }
-                    return Some((candidate.return_pc, candidate.return_register, value));
-                }
         }
         let tier = self.programs.js_tier(program_id, function_id);
         let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
@@ -14891,38 +14585,8 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .all(|value| facts::is_int32_number(*value));
         }
-        let string_hash_candidate = match compiled_tier {
-            Some(compiled) => compiled.is_string_hash_loop(),
-            None => facts.string_hash_loop,
-        } && params == 1
-            && self.js_jit_string_hash_guard()
-            && first_argument.is_some_and(|value| self.heap.is_string(value));
-        let string_hash_units = if string_hash_candidate {
-            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
-            else {
-                unreachable!("guarded JIT string argument changed")
-            };
-            Some(string.units())
-        } else {
-            None
-        };
-        let string_transform_kind = match compiled_tier {
-            Some(compiled) => compiled.string_transform_kind(),
-            None => facts.string_transform,
-        };
-        // Its result allocates a string, which no lane activation may (`TierEntry::allocates`).
-        let string_transform = string_transform_kind
-            .filter(|_| entry.allocates)
-            .filter(|kind| self.js_jit_string_transform_guard(*kind))
-            .filter(|_| {
-                first_argument.is_some_and(|value| self.heap.is_string(value))
-            });
-        let string_transform_units = string_transform.and_then(|_| {
-            let string = first_argument.and_then(|value| self.heap.string(value))?;
-            Some(string.units())
-        });
         if let Some((entries, reason)) = rejected_entry {
-            if !field_return_diagnostic_entry_recorded {
+            {
                 self.programs
                     .record_js_jit_entry(program_id, function_id, numeric, function.params);
             }
@@ -14942,7 +14606,7 @@ impl<H: Host> Vm<H> {
             if let Some(entries) = report_entries
                 && self.programs.js_jit_diagnostics_enabled()
             {
-                if !field_return_diagnostic_entry_recorded {
+                {
                     self.programs.record_js_jit_entry(
                         program_id,
                         function_id,
@@ -14962,19 +14626,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        if self.programs.js_jit_diagnostics_enabled()
-            && !field_return_diagnostic_entry_recorded
-        {
+        if self.programs.js_jit_diagnostics_enabled() {
             self.programs
                 .record_js_jit_entry(program_id, function_id, numeric, function.params);
         }
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                if (!numeric && !compiled.is_string_hash_loop() && !compiled.is_string_transform())
-                    && !(compiled.is_field_reject() && arguments.len() == 1)
-                    || (compiled.is_string_hash_loop() && string_hash_units.is_none())
-                    || (compiled.is_string_transform() && string_transform_units.is_none())
+                if !numeric && !(compiled.is_field_reject() && arguments.len() == 1)
                     || (compiled.is_capture_number() && capture_number.is_none())
                 {
                     if !compiled.is_general_dispatch() {
@@ -15006,14 +14665,10 @@ impl<H: Host> Vm<H> {
                         || int32_identity_candidate
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
-                        || (!capture_arguments.is_empty() && captures_numeric)
-                        || string_hash_units.is_some()
-                        || string_transform_units.is_some(),
+                        || (!capture_arguments.is_empty() && captures_numeric),
                     general_candidate,
                 ) || (!numeric
-                    && !(field_reject_candidate && arguments.len() == 1)
-                    && string_hash_units.is_none()
-                    && string_transform_units.is_none())
+                    && !(field_reject_candidate && arguments.len() == 1))
                 {
                     return None;
                 }
@@ -15107,14 +14762,6 @@ impl<H: Host> Vm<H> {
         let poll_page = self.compiled_poll_page();
         let result = if compiled.is_capture_number() {
             compiled.call_capture_number(capture_number?, poll_page)?
-        } else if compiled.is_string_hash_loop() {
-            compiled.call_string_hash_loop(
-                string_hash_units?,
-                self.execution_interrupt.atomic_flag(),
-                poll_page,
-            )?
-        } else if compiled.is_string_transform() {
-            compiled.call_string_transform(string_transform_units?, poll_page)?
         } else {
             compiled.call(
                 &arguments,
@@ -15167,61 +14814,7 @@ impl<H: Host> Vm<H> {
                 resume_register,
                 resume_value,
             } => fast_path.then_some((resume_pc, resume_register, resume_value)),
-            CompiledJsResult::StringTransform(transform, matched) => {
-                let last_pc = function.code.len().checked_sub(1)?;
-                let terminal = function.code.get(last_pc)?.as_wide();
-                if terminal.op() != Op::Return {
-                    return None;
-                }
-                let value = if !matched {
-                    first_argument?
-                } else {
-                    let string = first_argument
-                        .and_then(|value| self.heap.string(value))
-                        .cloned()?;
-                    let units = string.units();
-                    match transform {
-                        super::js_compiled::JsJitStringTransform::PrefixUnderscore => {
-                            let mut output = Vec::with_capacity(units.len() + 1);
-                            output.push(u16::from(b'_'));
-                            output.extend(units.iter());
-                            self.string_from_units(&output).ok()?
-                        }
-                        super::js_compiled::JsJitStringTransform::RemoveLeadingUnderscore => self
-                            .string_substring(&string, 1..units.len())
-                            .ok()?,
-                    }
-                };
-                Some((last_pc, terminal.register_a(), value))
-            }
         }
-    }
-
-    fn js_jit_string_hash_guard(&self) -> bool {
-        let Some(atom) = self.lookup_atom("charCodeAt") else {
-            return false;
-        };
-        let Some(method) = self.own_property(self.string_proto, atom) else {
-            return false;
-        };
-        self.is_current_realm_native(method, Native::StringCharCodeAt)
-    }
-
-    fn js_jit_string_transform_guard(
-        &self,
-        transform: super::js_compiled::JsJitStringTransform,
-    ) -> bool {
-        if !self.js_jit_string_hash_guard() {
-            return false;
-        }
-        if transform == super::js_compiled::JsJitStringTransform::PrefixUnderscore {
-            return true;
-        }
-        let Some(atom) = self.lookup_atom("substr") else {
-            return false;
-        };
-        self.own_property(self.string_proto, atom)
-            .is_some_and(|method| self.is_current_realm_native(method, Native::StringSubstr))
     }
 
     /// The JavaScript tier's direct entry of a plain call of a same-program user function,
@@ -16488,8 +16081,6 @@ pub(super) struct TierEntry {
     /// The activation's parameter registers.
     parameters: smallvec::SmallVec<[Value; 8]>,
     captures: TierCaptures,
-    /// Whether a native result may allocate: not in a lane activation, where nothing collects.
-    allocates: bool,
     /// The function's entry facts, looked up once per entry (`ProgramStore::js_entry_facts`).
     facts: Rc<super::js_compiled::JsEntryFacts>,
 }

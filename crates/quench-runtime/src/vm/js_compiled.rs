@@ -61,43 +61,6 @@ pub(super) enum JsJitFieldReceiver {
     },
 }
 
-/// A field getter that can return a cached data-property value without
-/// interpreting its `GetField` and `Return` instructions.
-#[derive(Clone, Copy)]
-pub(super) struct JsJitFieldReturn {
-    pub(super) cache_site: u16,
-    pub(super) return_pc: usize,
-    pub(super) return_register: crate::bytecode::Register,
-}
-
-/// A strict postfix numeric update of one own field on `this`, followed by
-/// an undefined return. The VM guard handles ordinary writable data fields;
-/// all coercion, accessor, proxy, and strict-write cases stay interpreted.
-#[derive(Clone, Copy)]
-pub(super) struct JsJitThisFieldIncrement {
-    pub(super) atom: crate::bytecode::Atom,
-    pub(super) read_cache_site: u16,
-    pub(super) write_cache_site: u16,
-    pub(super) decrement: bool,
-    pub(super) return_pc: usize,
-    pub(super) return_register: crate::bytecode::Register,
-}
-
-/// A bounded numeric-only lowering of a linked entry lookup loop. Heap reads
-/// remain guarded by VM field caches and present own dense or sparse array
-/// data; any miss leaves the original frame at bytecode zero.
-#[derive(Clone, Copy)]
-pub(super) struct JsJitNumericFind {
-    pub(super) list_cache: u16,
-    pub(super) hash_cache: u16,
-    pub(super) key_cache: u16,
-    pub(super) next_cache: u16,
-    pub(super) equals_depth: u16,
-    pub(super) equals_slot: u16,
-    pub(super) return_pc: usize,
-    pub(super) return_register: crate::bytecode::Register,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct JsJitCaptureArgument {
     pub(super) depth: u16,
@@ -114,8 +77,6 @@ pub(super) enum JsJitResultKind {
     Int32Identity(u32),
     CaptureNumber(JsJitCaptureArgument),
     NumberInterruptible,
-    StringHashLoop,
-    StringTransform(JsJitStringTransform),
     StringReturnPc(Vec<(u32, u32)>),
     Boolean,
     /// Return to the interpreter at a proven early-return continuation unless
@@ -133,15 +94,11 @@ pub(super) enum JsJitResumeValue {
     Boolean(bool),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum JsJitStringTransform {
-    PrefixUnderscore,
-    RemoveLeadingUnderscore,
-}
-
 // Keep straight-line native regions short so an interpreter interrupt cannot
 // be delayed by a large, uninterruptible compiled body.
 const MAX_INSTRUCTIONS: usize = 256;
+/// Where every function's execution starts.
+const ENTRY_PC: usize = 0;
 const MAX_REGISTERS: usize = 256;
 pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
@@ -167,16 +124,10 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     {
         return Some(artifact);
     }
-    if string_hash_loop_candidate(program, function) {
-        return compile_string_hash_loop(program, function_id, function);
-    }
     if let Some(field) = cached_field_argument_candidate(function)
         && let Some(artifact) = compile_field_reject(program, function_id, function, field)
     {
         return Some(artifact);
-    }
-    if let Some(transform) = string_transform_candidate(program, function) {
-        return compile_string_transform(program, function_id, function, transform);
     }
     if function.code.iter().any(|packed| {
         !packed.is_wide()
@@ -237,7 +188,7 @@ pub(super) fn int32_identity_return_candidate(
             || check.binary_operator_field() != BinaryOperator::Equality as u32
             || !operands_are(check.operand_b(), check.operand_c(), fast.result_register(), 0)
             || ret.op() != Op::Return
-            || ret.register_a() != 0
+            || !is_parameter_register(ret.register_a(), 0)
             || usize::try_from(check.jump_target()).ok() != Some(target + 3)
         {
             continue;
@@ -320,7 +271,7 @@ fn number_type_dispatch_reaches(
                 if pc == 0
                     && instruction.unary_operator()
                         == oxc_ast::ast::UnaryOperator::Typeof as u32
-                    && instruction.register_b() == 0 =>
+                    && is_parameter_register(instruction.register_b(), 0) =>
             {
                 *registers
                     .get_mut(usize::from(instruction.result_register()))
@@ -329,7 +280,7 @@ fn number_type_dispatch_reaches(
             Op::Unary
                 if pc == 0
                     && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
-                    && instruction.register_b() == 0 =>
+                    && is_parameter_register(instruction.register_b(), 0) =>
             {
                 let number = crate::bytecode::typeof_name_index("number").expect("a typeof name") as f64;
                 *registers.get_mut(usize::from(instruction.result_register()))? =
@@ -434,8 +385,14 @@ fn number_type_dispatch_reaches(
     Some(false)
 }
 
-fn operand_is_parameter(operand: Operand, register: u16) -> bool {
-    operand.kind() == Some(OperandKind::Register) && operand.register_index() == Some(register)
+/// Whether `register` holds parameter `index` at entry: parameters arrive in the first
+/// registers, in order.
+fn is_parameter_register(register: crate::bytecode::Register, index: u16) -> bool {
+    register == index
+}
+
+fn operand_is_parameter(operand: Operand, index: u16) -> bool {
+    operand.kind() == Some(OperandKind::Register) && operand.register_index().is_some_and(|register| is_parameter_register(register, index))
 }
 
 fn operands_are(left: Operand, right: Operand, one: u16, two: u16) -> bool {
@@ -560,23 +517,25 @@ pub(super) fn numeric_capture_candidate(
 /// A pure captured numeric value can be specialized to a native identity entry.
 /// The VM reloads the capture for every call, so lexical mutation stays visible.
 pub(super) fn number_capture_candidate(function: &Function) -> Option<JsJitCaptureArgument> {
+    // The entry loads the capture and its fallthrough returns it; a Number result resumes at
+    // the function's final `Return`, which must return the same register.
+    let (entry, next) = (function_instruction(function, ENTRY_PC)?, function_instruction(function, ENTRY_PC + 1)?);
     if function.params != 0
-        || function.code.len() < 2
         || !function.wide.is_empty()
         || !function.handlers.is_empty()
         || function.is_async
         || function.is_generator
         || function.is_class_constructor
         || function.derived_constructor
-        || function.code[0].as_wide().op() != Op::LoadCapture
-        || function.code[1].as_wide().op() != Op::Return
-        || function.code[0].as_wide().result_register() != function.code[1].as_wide().register_a()
+        || entry.op() != Op::LoadCapture
+        || next.op() != Op::Return
+        || entry.result_register() != next.register_a()
         || function.code.last()?.as_wide().op() != Op::Return
-        || function.code.last()?.as_wide().register_a() != function.code[1].as_wide().register_a()
+        || function.code.last()?.as_wide().register_a() != next.register_a()
     {
         return None;
     }
-    let capture = function.code[0].as_wide();
+    let capture = entry;
     Some(JsJitCaptureArgument {
         depth: capture.capture_depth(),
         slot: capture.capture_slot(),
@@ -760,22 +719,16 @@ pub(super) fn candidate_rejection_reason(
     "unsupported-lowering-shape-or-codegen-failure"
 }
 
-pub(super) fn has_string_hash_loop_candidate(
-    program: &ResidualProgram,
-    function: &Function,
-) -> bool {
-    string_hash_loop_candidate(program, function)
-}
-
 pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJitFieldArgument> {
     if function.params != 1 {
         return None;
     }
-    let first = function_instruction(function, 0)?;
+    let first = function_instruction(function, ENTRY_PC)?;
     let (entry_pc, instruction) = match first.op() {
-        Op::GetField => (0, first),
-        Op::JumpFalse if first.register_a() == 0 => {
-            let field = function_instruction(function, 1)?;
+        Op::GetField => (ENTRY_PC, first),
+        // A falsy parameter leaves; the read is the test's fallthrough.
+        Op::JumpFalse if is_parameter_register(first.register_a(), 0) => {
+            let field = function_instruction(function, ENTRY_PC + 1)?;
             if field.op() != Op::GetField {
                 return None;
             }
@@ -999,380 +952,102 @@ pub(super) struct CapturedFieldStore {
 #[cfg(feature = "native-execution")]
 pub(super) const CAPTURED_STORE_ASSIGNMENT: u16 = u16::MAX;
 
-/// A captured-value assignment or bitwise update followed by an undefined return. The
-/// activation and all implicit bindings must be plain before it can be elided.
-pub(super) fn captured_field_store_candidate(
-    program: &ResidualProgram,
-    function: &Function,
-) -> Option<CapturedFieldStore> {
-    const STORE_BODY_RECORDS: usize = 4;
-    const UPDATE_BODY_RECORDS: usize = STORE_BODY_RECORDS + 2;
-    if !matches!(function.code.len(), STORE_BODY_RECORDS | UPDATE_BODY_RECORDS) || function.params != 0
-        || !function.plain_activation(program) || !eligible(function, program) {
-        return None;
-    }
-    let instructions = function.instructions().collect::<smallvec::SmallVec<[_; UPDATE_BODY_RECORDS]>>();
-    let (capture, store, undefined, ret, source, update) = match instructions.as_slice() {
-        [capture, store, undefined, ret] if capture.op() == Op::LoadCapture =>
-            (capture, store, undefined, ret, capture.result_register(), None),
-        [read, capture, binary, store, undefined, ret] => {
-            if read.op() != Op::GetField || capture.op() != Op::LoadCapture || binary.op() != Op::Binary { return None; }
-            let FieldLookup::Atom { atom, base: FieldBase::THIS, .. } = read.field_lookup()? else { return None; };
-            if read.result_flags() != 0 || binary.result_flags() != 0
-                || capture.result_register() == read.result_register()
-                || binary.operand_b().register_index() != Some(read.result_register())
-                || binary.operand_c().register_index() != Some(capture.result_register())
-                || !store.stores_to_this()
-                || atom != store.atom_index()
-            { return None; }
-            let operation = super::operations::NumberBitwise::from_js_instruction(binary.op(), binary.binary_operator())?;
-            (capture, store, undefined, ret, binary.result_register(), Some(operation))
+/// What a register of a captured-store body holds, as its straight-line code computes it.
+#[derive(Clone, Copy, PartialEq)]
+enum StoreValue {
+    Unknown,
+    Field(crate::bytecode::Atom),
+    Capture(u16),
+    Update(crate::bytecode::Atom, u16, super::operations::NumberBitwise),
+    Undefined,
+}
+
+/// The value an instruction of a captured-store body computes, other than its store and
+/// return; `None` for any other instruction.
+fn store_value(program: &ResidualProgram, instruction: WideInstruction, values: &[StoreValue]) -> Option<StoreValue> {
+    let value = |register: crate::bytecode::Register| values.get(usize::from(register)).copied();
+    Some(match instruction.op() {
+        Op::LoadCapture if instruction.capture_depth() == 0 => StoreValue::Capture(instruction.capture_slot()),
+        Op::LoadConst => match program.constants.get(instruction.constant_index()) {
+            Some(crate::bytecode::Constant::Undefined) => StoreValue::Undefined,
+            _ => return None,
+        },
+        Op::GetField => match instruction.field_lookup()? {
+            FieldLookup::Atom { atom, base: FieldBase::THIS, .. } => StoreValue::Field(atom),
+            _ => return None,
+        },
+        Op::Binary => {
+            let operation = super::operations::NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator())?;
+            match (value(instruction.operand_b().register_index()?)?, value(instruction.operand_c().register_index()?)?) {
+                (StoreValue::Field(atom), StoreValue::Capture(slot)) => StoreValue::Update(atom, slot, operation),
+                _ => return None,
+            }
         }
         _ => return None,
+    })
+}
+
+/// The store a body that returns `result` from `register` makes, once it has made `stored`.
+fn finished_store(
+    (source, store): (StoreValue, WideInstruction),
+    result: StoreValue,
+    register: crate::bytecode::Register,
+) -> Option<CapturedFieldStore> {
+    let (capture_slot, update) = match (source, result) {
+        (StoreValue::Capture(slot), StoreValue::Undefined) => (slot, None),
+        (StoreValue::Update(_, slot, operation), StoreValue::Undefined) => (slot, Some(operation)),
+        _ => return None,
     };
-    if capture.result_flags() != 0
-        || capture.capture_depth() != 0
-        || !store.stores_to_this()
-        || store.result_flags() != 0 || store.register_a() != source
-        || undefined.op() != Op::LoadConst || undefined.result_flags() != 0
-        || !matches!(program.constants.get(undefined.constant_index()), Some(crate::bytecode::Constant::Undefined))
-        || ret.op() != Op::Return || ret.result_flags() != 0
-        || ret.register_a() != undefined.result_register()
-    {
-        return None;
-    }
     Some(CapturedFieldStore {
-        atom: store.atom_index(), capture_slot: capture.capture_slot(),
-        cache_site: store.cache_site_index(), return_register: ret.register_a(),
+        atom: store.atom_index(), capture_slot,
+        cache_site: store.cache_site_index(), return_register: register,
         update,
     })
 }
 
-/// Recognize a direct field getter. The first instruction is an unconditional
-/// frame-returning `GetField`; accessors, proxies, and misses use the VM.
-pub(super) fn cached_this_field_return_candidate(
-    function: &Function,
-) -> Option<JsJitFieldReturn> {
-    if function.params != 0
-        || !(2..=4).contains(&function.code.len())
-        || !function.handlers.is_empty()
-    {
-        return None;
-    }
-    let get = function_instruction(function, 0)?;
-    if get.op() != Op::GetField
-        || !get.returns_from_frame()
-        || get.writes_current_this()
-    {
-        return None;
-    }
-    let FieldLookup::Atom {
-        base: FieldBase::THIS,
-        cache_site,
-        ..
-    } = get.field_lookup()?
-    else {
-        return None;
-    };
-    let (return_pc, ret) = (1..function.code.len()).find_map(|pc| {
-        let instruction = function_instruction(function, pc)?;
-        (instruction.op() == Op::Return).then_some((pc, instruction))
-    })?;
-    Some(JsJitFieldReturn {
-        cache_site,
-        return_pc,
-        return_register: ret.register_a(),
-    })
-}
-
-pub(super) fn cached_this_field_increment_candidate(
+/// A body that assigns a captured value, or a bitwise update of a field of `this` by one, to
+/// that field of `this`, and returns undefined: found by evaluating its straight-line code
+/// symbolically, whatever registers and order the compiler chose. The activation and all
+/// implicit bindings must be plain before it can be elided.
+pub(super) fn captured_field_store_candidate(
     program: &ResidualProgram,
     function: &Function,
-) -> Option<JsJitThisFieldIncrement> {
-    if function.params != 0
-        || function.code.len() != 6
-        || !function.handlers.is_empty()
-        || !eligible(function, program)
-    {
+) -> Option<CapturedFieldStore> {
+    if function.params != 0 || !function.plain_activation(program) || !eligible(function, program) {
         return None;
     }
-    let load_this = function_instruction(function, 0)?;
-    let get = function_instruction(function, 1)?;
-    let update = function_instruction(function, 2)?;
-    let set = function_instruction(function, 3)?;
-    let load_undefined = function_instruction(function, 4)?;
-    let ret = function_instruction(function, 5)?;
-    if load_this.op() != Op::LoadThis
-        || get.op() != Op::GetField
-        || get.returns_from_frame()
-        || get.writes_current_this()
-        || get.result_flags() != 0
-        || update.op() != Op::IncDec
-        || update.returns_from_frame()
-        || update.result_flags() != 0
-        || update.register_b() != get.result_register()
-        || set.op() != Op::SetThisFieldStrict
-        || set.register_a() != update.result_register()
-        || load_undefined.op() != Op::LoadConst
-        || load_undefined.returns_from_frame()
-        || load_undefined.result_flags() != 0
-        || ret.op() != Op::Return
-        || ret.result_flags() != 0
-        || ret.register_a() != load_undefined.result_register()
-        || !matches!(program.constants.get(load_undefined.constant_index()), Some(Constant::Undefined))
-    {
-        return None;
-    }
-    let FieldLookup::Atom {
-        atom,
-        base,
-        cache_site: read_cache_site,
-    } = get.field_lookup()?
-    else {
-        return None;
-    };
-    if base.register_index() != Some(load_this.result_register()) || set.atom_index() != atom {
-        return None;
-    }
-    Some(JsJitThisFieldIncrement {
-        atom,
-        read_cache_site,
-        write_cache_site: set.cache_site_index(),
-        decrement: update.boolean_flag()?,
-        return_pc: 5,
-        return_register: ret.register_a(),
-    })
-}
-
-/// Match a narrow linked-list lookup loop. The runtime path further guards
-/// numeric operands and every heap read, and falls back before observable work.
-pub(super) fn numeric_find_candidate(function: &Function) -> Option<JsJitNumericFind> {
-    if function.params != 3
-        || function.code.len() != 23
-        || !function.handlers.is_empty()
-        || function.is_async
-        || function.is_generator
-        || function.is_class_constructor
-        || function.derived_constructor
-        || function.rest
-        || !function.simple_parameters
-    {
-        return None;
-    }
-    let field_site = |pc: usize, expected_base: FieldBase, expected_result| {
-        let instruction = function_instruction(function, pc)?;
-        if instruction.op() != Op::GetField
-            || instruction.result_register() != expected_result
-            || instruction.result_flags() != 0
-            || instruction.writes_current_this()
-        {
+    let mut values = [StoreValue::Unknown; MAX_REGISTERS];
+    let mut stored: Option<(StoreValue, WideInstruction)> = None;
+    let mut reads = 0_usize;
+    for instruction in function.instructions() {
+        // The elided body performs the one store, preceded by at most the one field read its
+        // update needs; past the store only the undefined result remains to be made.
+        let settled = stored.is_some() && !matches!(instruction.op(), Op::LoadConst | Op::Return);
+        reads += usize::from(instruction.op() == Op::GetField);
+        if instruction.result_flags() != 0 || settled || reads > 1 {
             return None;
         }
-        let FieldLookup::Atom {
-            base,
-            cache_site,
-            ..
-        } = instruction.field_lookup()?
-        else {
-            return None;
+        let value = |register: crate::bytecode::Register| values.get(usize::from(register)).copied();
+        let result = match instruction.op() {
+            _ if instruction.stores_to_this() && stored.is_none() => {
+                let source = value(instruction.register_a())?;
+                let fits = match source {
+                    StoreValue::Capture(_) => reads == 0,
+                    StoreValue::Update(atom, ..) => atom == instruction.atom_index(),
+                    _ => false,
+                };
+                if !fits {
+                    return None;
+                }
+                stored = Some((source, instruction));
+                continue;
+            }
+            Op::Return => return finished_store(stored?, value(instruction.register_a())?, instruction.register_a()),
+            _ => store_value(program, instruction, &values)?,
         };
-        (base == expected_base).then_some(cache_site)
-    };
-    let is_register = |operand: Operand, register| operand.register_index() == Some(register);
-
-    let list_cache = field_site(0, FieldBase::THIS, 5)?;
-    let get_index = function_instruction(function, 1)?;
-    if get_index.op() != Op::GetIndex
-        || get_index.result_register() != 6
-        || !is_register(get_index.operand_b(), 5)
-        || !is_register(get_index.operand_c(), 1)
-    {
-        return None;
+        *values.get_mut(usize::from(instruction.result_register()))? = result;
     }
-    let moves = [function_instruction(function, 2)?, function_instruction(function, 3)?];
-    if moves[0].op() != Op::Move
-        || moves[0].register_a() != 3
-        || moves[0].register_b() != 6
-        || moves[1].op() != Op::Move
-        || moves[1].register_a() != 5
-        || moves[1].register_b() != 3
-    {
-        return None;
-    }
-    let empty_test = function_instruction(function, 4)?;
-    if empty_test.op() != Op::JumpFalse
-        || empty_test.register_a() != 3
-        || empty_test.jump_target() != 16
-    {
-        return None;
-    }
-    let hash_cache = field_site(5, FieldBase::register(3), 6)?;
-    let hash_compare = function_instruction(function, 6)?;
-    if hash_compare.op() != Op::Binary
-        || hash_compare.register_a() != 7
-        || hash_compare.binary_operator() != BinaryOperator::Inequality as u32
-        || !is_register(hash_compare.operand_b(), 6)
-        || !is_register(hash_compare.operand_c(), 2)
-    {
-        return None;
-    }
-    let move_hash = function_instruction(function, 7)?;
-    let hash_branch = function_instruction(function, 8)?;
-    if move_hash.op() != Op::Move
-        || move_hash.register_a() != 8
-        || move_hash.register_b() != 7
-        || hash_branch.op() != Op::JumpTrue
-        || hash_branch.register_a() != 7
-        || hash_branch.jump_target() != 15
-    {
-        return None;
-    }
-    let equals = function_instruction(function, 9)?;
-    if equals.op() != Op::LoadCapture || equals.register_a() != 9 {
-        return None;
-    }
-    let key_cache = field_site(10, FieldBase::register(3), 10)?;
-    let move_key = function_instruction(function, 11)?;
-    if move_key.op() != Op::Move || move_key.register_a() != 11 || move_key.register_b() != 0 {
-        return None;
-    }
-    let move_key_field = function_instruction(function, 12)?;
-    if move_key_field.op() != Op::Move
-        || move_key_field.register_a() != 12
-        || move_key_field.register_b() != 10
-    {
-        return None;
-    }
-    let call = function_instruction(function, 13)?;
-    let call_window = call.call_window();
-    if call.op() != Op::Call
-        || call.register_a() != 13
-        || call.register_b() != 9
-        || call.returns_from_frame()
-        || call.direct_eval()
-        || call.parameter_eval()
-        || call_window.base != 11
-        || call_window.count != 2
-    {
-        return None;
-    }
-    let invert = function_instruction(function, 14)?;
-    let move_result = function_instruction(function, 15)?;
-    let key_branch = function_instruction(function, 16)?;
-    if invert.op() != Op::Unary
-        || invert.register_a() != 8
-        || invert.register_b() != 13
-        || invert.unary_operator() != oxc_ast::ast::UnaryOperator::LogicalNot as u32
-        || move_result.op() != Op::Move
-        || move_result.register_a() != 5
-        || move_result.register_b() != 8
-        || key_branch.op() != Op::JumpFalse
-        || key_branch.register_a() != 5
-        || key_branch.jump_target() != 20
-    {
-        return None;
-    }
-    let next_cache = field_site(17, FieldBase::register(3), 15)?;
-    let next_move = function_instruction(function, 18)?;
-    let back_edge = function_instruction(function, 19)?;
-    let ret = function_instruction(function, 20)?;
-    if next_move.op() != Op::Move || next_move.register_a() != 3 || next_move.register_b() != 15 {
-        return None;
-    }
-    if back_edge.op() != Op::Jump
-        || back_edge.jump_target() != 3
-        || ret.op() != Op::Return
-        || ret.register_a() != 3
-    {
-        return None;
-    }
-    Some(JsJitNumericFind {
-        list_cache,
-        hash_cache,
-        key_cache,
-        next_cache,
-        equals_depth: equals.capture_depth(),
-        equals_slot: equals.capture_slot(),
-        return_pc: 20,
-        return_register: ret.register_a(),
-    })
-}
-
-pub(super) fn string_transform_candidate(
-    program: &ResidualProgram,
-    function: &Function,
-) -> Option<JsJitStringTransform> {
-    if function.params != 1 || !function.wide.is_empty() {
-        return None;
-    }
-    let name = function.name.or(function.inferred_name)?;
-    match &program.atoms[name as usize] {
-        "escapeLeadingUnderscores"
-            if function.code.len() == 14
-                && function.code.iter().map(|i| i.as_wide().op()).eq([
-                    Op::GetField,
-                    Op::JumpBinaryFalse,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::JumpBinaryFalse,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::JumpBinaryFalse,
-                    Op::Binary,
-                    Op::Return,
-                    Op::LoadConst,
-                    Op::Return,
-                ])
-                && field_name(program, function, 0) == Some("length")
-                && field_name(program, function, 2) == Some("charCodeAt")
-                && field_name(program, function, 6) == Some("charCodeAt")
-                && function.code[10].as_wide().binary_operator()
-                    == oxc_ast::ast::BinaryOperator::Addition as u32 =>
-        {
-            Some(JsJitStringTransform::PrefixUnderscore)
-        }
-        "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
-                && field_name(program, function, 1) == Some("length")
-                && field_name(program, function, 4) == Some("charCodeAt")
-                && field_name(program, function, 9) == Some("charCodeAt")
-                && field_name(program, function, 14) == Some("charCodeAt")
-                && field_name(program, function, 19) == Some("substr") =>
-        {
-            Some(JsJitStringTransform::RemoveLeadingUnderscore)
-        }
-        _ => None,
-    }
-}
-
-/// `unescapeLeadingUnderscores`'s instructions, with its parameter read and written either
-/// through a frame slot or through the register frame-register promotion gave it (`Move`s),
-/// and its final `return id` either reloading the parameter or naming its register.
-fn unescape_leading_underscores_shape(function: &Function) -> bool {
-    use Op::{Call, GetField, JumpBinaryFalse, LoadConst, Move, Return};
-    // Each `&&` operand of the test is its own compare-and-branch (`FunctionCompiler::condition`).
-    const BODY: [Op; 22] = [
-        Move, GetField, JumpBinaryFalse,
-        Move, GetField, LoadConst, Call, JumpBinaryFalse,
-        Move, GetField, LoadConst, Call, JumpBinaryFalse,
-        Move, GetField, LoadConst, Call, JumpBinaryFalse,
-        Move, GetField, LoadConst, Call,
-    ];
-    let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
-        Op::StoreLocalPlain | Op::LoadLocalPlain => Move,
-        op => op,
-    });
-    let reloaded = BODY.iter().copied().chain([Move, Return, LoadConst, Return]);
-    let named = BODY.iter().copied().chain([Return, LoadConst, Return]);
-    ops.clone().eq(reloaded) || ops.eq(named)
-}
-
-fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) -> Option<&'a str> {
-    let FieldLookup::Atom { atom, .. } = function_instruction(function, pc)?.field_lookup()? else {
-        return None;
-    };
-    ((atom as usize) < program.atoms.len()).then(|| &program.atoms[atom as usize])
+    None
 }
 
 fn function_instruction(function: &Function, pc: usize) -> Option<WideInstruction> {
@@ -1382,208 +1057,6 @@ fn function_instruction(function: &Function, pc: usize) -> Option<WideInstructio
     } else {
         Some(packed.as_wide())
     }
-}
-
-/// Where a hash-loop local lives: its frame slot, or the register frame-register promotion
-/// moved it into (`compile::frame_registers`). A register local is read and written either
-/// through `Move`s or, once copy coalescing removed them, by instructions naming the
-/// register itself.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LoopLocal {
-    Slot(u16),
-    Register(crate::bytecode::Register),
-}
-
-/// Reads a function's instructions in order for `string_hash_loop_candidate`, matching each
-/// local access in any of its forms.
-struct LoopReader<'a> {
-    function: &'a Function,
-    pc: usize,
-}
-
-impl LoopReader<'_> {
-    fn peek(&self) -> Option<crate::bytecode::WideInstruction> {
-        Some(self.function.code.get(self.pc)?.as_wide())
-    }
-
-    fn next(&mut self) -> Option<crate::bytecode::WideInstruction> {
-        let instruction = self.peek()?;
-        self.pc += 1;
-        Some(instruction)
-    }
-
-    fn next_op(&mut self, op: Op) -> Option<crate::bytecode::WideInstruction> {
-        let instruction = self.next()?;
-        (instruction.op() == op).then_some(instruction)
-    }
-
-    /// The local `source` initializes: a slot or register it is stored into, else `source`
-    /// itself, which then holds the local.
-    fn store(&mut self, source: crate::bytecode::Register) -> LoopLocal {
-        let stored = self.peek().and_then(|instruction| match instruction.op() {
-            Op::StoreLocalPlain if instruction.register_a() == source => {
-                Some(LoopLocal::Slot(instruction.local_slot() as u16))
-            }
-            Op::Move if instruction.register_b() == source => {
-                Some(LoopLocal::Register(instruction.result_register()))
-            }
-            _ => None,
-        });
-        if stored.is_some() {
-            self.pc += 1;
-        }
-        stored.unwrap_or(LoopLocal::Register(source))
-    }
-
-    /// The register holding `local`'s value: a load's result, or a register local itself
-    /// when no copy precedes its use.
-    fn load(&mut self, local: LoopLocal) -> Option<crate::bytecode::Register> {
-        let instruction = self.peek()?;
-        match (instruction.op(), local) {
-            (Op::LoadLocalPlain, LoopLocal::Slot(slot)) if instruction.local_slot() as u16 == slot => {
-                self.pc += 1;
-                Some(instruction.result_register())
-            }
-            (Op::Move, LoopLocal::Register(register)) if instruction.register_b() == register => {
-                self.pc += 1;
-                Some(instruction.result_register())
-            }
-            (_, LoopLocal::Register(register)) => Some(register),
-            _ => None,
-        }
-    }
-
-    /// A `Binary` whose result goes to `local`: fused into its numeric local target, written
-    /// to the local's register, or followed by a store of its result.
-    fn binary_into(&mut self, local: LoopLocal) -> Option<crate::bytecode::WideInstruction> {
-        let binary = self.next_op(Op::Binary)?;
-        match (binary.numeric_local_target(), local) {
-            (Some(target), LoopLocal::Slot(slot)) if target == slot => Some(binary),
-            (None, LoopLocal::Register(register)) if binary.result_register() == register => {
-                Some(binary)
-            }
-            (None, LoopLocal::Register(_)) => {
-                (self.store(binary.result_register()) == local).then_some(binary)
-            }
-            _ => None,
-        }
-    }
-}
-
-fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
-    function.params == 1 && function.wide.is_empty() && string_hash_loop_shape(program, function).is_some()
-}
-
-/// The guarded hash loop `compile_string_hash_loop` emits, matched over the whole function
-/// by data flow rather than by instruction positions, so it holds whether its two locals stay
-/// in frame slots or were promoted to registers.
-fn string_hash_loop_shape(program: &ResidualProgram, function: &Function) -> Option<()> {
-    let number = |index: usize| match program.constants.get(index) {
-        Some(Constant::Number(value)) => Some(*value),
-        _ => None,
-    };
-    let operand_constant = |operand: crate::bytecode::Operand| {
-        (operand.kind() == Some(OperandKind::Constant))
-            .then(|| number(usize::from(operand.payload())))
-            .flatten()
-    };
-    let field_is = |instruction: crate::bytecode::WideInstruction, name: &str| {
-        instruction.op() == Op::GetField
-            && matches!(
-                instruction.field_lookup(),
-                Some(FieldLookup::Atom {
-                    atom,
-                    base: FieldBase(0),
-                    ..
-                }) if (atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == name
-            )
-    };
-    let operator_is = |instruction: crate::bytecode::WideInstruction, operator: BinaryOperator| {
-        instruction_binary_operator(instruction) == Some(operator as u32)
-    };
-    let check = |condition: bool| condition.then_some(());
-    let mut code = LoopReader { function, pc: 0 };
-
-    // let hash = 5381; let index = str.length;
-    let seed = code.next_op(Op::LoadConst)?;
-    check(number(seed.constant_index()) == Some(5381.0))?;
-    let hash = code.store(seed.result_register());
-    let length = code.next()?;
-    check(field_is(length, "length"))?;
-    let index = code.store(length.result_register());
-    check(hash != index)?;
-
-    // while (index > 0)
-    let head = code.pc;
-    let tested = code.load(index)?;
-    let exit = code.next_op(Op::JumpBinaryFalse)?;
-    check(
-        super::operations::NumberRelation::from_operator(exit.binary_operator_field())
-            == Some(super::operations::NumberRelation::GreaterThan)
-            && operand_register(exit.operand_b()) == Some(tested)
-            && operand_constant(exit.operand_c()) == Some(0.0),
-    )?;
-
-    // hash = hash * 33 ^ (str.charCodeAt(index) | 0);
-    let current = code.load(hash)?;
-    let scaled = code.next_op(Op::Binary)?;
-    check(
-        operator_is(scaled, BinaryOperator::Multiplication)
-            && operand_register(scaled.operand_b()) == Some(current)
-            && operand_constant(scaled.operand_c()) == Some(33.0),
-    )?;
-    let method = code.next()?;
-    check(field_is(method, "charCodeAt"))?;
-    let argument = code.load(index)?;
-    let call = code.next_op(Op::Call)?;
-    check(
-        call.register_b() == method.result_register()
-            && call.call_window().base == argument
-            && call.call_window().count == 1,
-    )?;
-    let unit = code.next_op(Op::Binary)?;
-    check(
-        operator_is(unit, BinaryOperator::BitwiseOR)
-            && operand_register(unit.operand_b()) == Some(call.result_register())
-            && operand_constant(unit.operand_c()) == Some(0.0),
-    )?;
-    let mixed = code.binary_into(hash)?;
-    check(
-        operator_is(mixed, BinaryOperator::BitwiseXOR)
-            && operand_register(mixed.operand_b()) == Some(scaled.result_register())
-            && operand_register(mixed.operand_c()) == Some(unit.result_register()),
-    )?;
-
-    // index -= 919;
-    let counted = code.load(index)?;
-    let step = code.binary_into(index)?;
-    check(
-        operator_is(step, BinaryOperator::Subtraction)
-            && operand_register(step.operand_b()) == Some(counted)
-            && operand_constant(step.operand_c()) == Some(919.0),
-    )?;
-    let back = code.next_op(Op::Jump)?;
-    check(back.jump_target() as usize == head)?;
-
-    // return hash | 0;
-    check(exit.jump_target() as usize == code.pc)?;
-    let result = code.load(hash)?;
-    let returned = code.next_op(Op::Binary)?;
-    check(
-        returned.returns_from_frame()
-            && operator_is(returned, BinaryOperator::BitwiseOR)
-            && operand_register(returned.operand_b()) == Some(result)
-            && operand_constant(returned.operand_c()) == Some(0.0),
-    )?;
-    // The implicit `return undefined` after it.
-    let undefined = code.next_op(Op::LoadConst)?;
-    check(undefined.constant_index() < program.constants.len())?;
-    let tail = code.next_op(Op::Return)?;
-    check(tail.register_a() == undefined.result_register() && code.pc == function.code.len())
-}
-
-fn operand_register(operand: crate::bytecode::Operand) -> Option<u16> {
-    (operand.kind() == Some(OperandKind::Register)).then_some(operand.payload())
 }
 
 fn instruction_binary_operator(instruction: crate::bytecode::WideInstruction) -> Option<u32> {
@@ -1598,211 +1071,6 @@ fn instruction_binary_operator(instruction: crate::bytecode::WideInstruction) ->
     }
 }
 
-fn compile_string_hash_loop(
-    program: &ResidualProgram,
-    function_id: u32,
-    function: &Function,
-) -> Option<JsJitArtifact> {
-    if !function_candidate(function, program) {
-        // The string-hash matcher has already checked the bytecode shape; the
-        // regular candidate guard still enforces activation and size limits.
-        return None;
-    }
-    let isa = super::jit_backend::target_isa()?;
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.params.push(AbiParam::new(types::I32));
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.returns.push(AbiParam::new(types::F64));
-    let mut native =
-        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
-    let mut builder_context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let units = builder.block_params(entry)[0];
-    let length = builder.block_params(entry)[1];
-    let ascii = builder.block_params(entry)[2];
-    let interrupt = builder.block_params(entry)[3];
-    let status = builder.block_params(entry)[4];
-    let length = builder
-        .ins()
-        .load(isa.pointer_type(), ir::MemFlagsData::trusted(), length, 0);
-    let length = builder.ins().fcvt_from_uint(types::F64, length);
-    let index_variable = builder.declare_var(types::F64);
-    builder.def_var(index_variable, length);
-    let hash_variable = builder.declare_var(types::I32);
-    let hash = builder.ins().iconst(types::I32, 5381);
-    builder.def_var(hash_variable, hash);
-    let counter_variable = builder.declare_var(types::I32);
-    let zero = builder.ins().iconst(types::I32, 0);
-    builder.def_var(counter_variable, zero);
-    let header = builder.create_block();
-    let body = builder.create_block();
-    let load_character = builder.create_block();
-    let load_ascii_character = builder.create_block();
-    let load_wide_character = builder.create_block();
-    let zero_character = builder.create_block();
-    let join_character = builder.create_block();
-    let character = builder.append_block_param(join_character, types::I32);
-    let normal_exit = builder.create_block();
-    let interrupt_exit = builder.create_block();
-    let interrupt_status = builder.append_block_param(interrupt_exit, isa.pointer_type());
-    builder.ins().jump(header, &[]);
-
-    builder.switch_to_block(header);
-    let index = builder.use_var(index_variable);
-    let zero_number = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
-    let more = builder.ins().fcmp(FloatCC::GreaterThan, index, zero_number);
-    builder.ins().brif(more, body, &[], normal_exit, &[]);
-
-    builder.switch_to_block(body);
-    let index = builder.use_var(index_variable);
-    let in_range = builder.ins().fcmp(FloatCC::LessThan, index, length);
-    builder
-        .ins()
-        .brif(in_range, load_character, &[], zero_character, &[]);
-
-    builder.switch_to_block(load_character);
-    let index = builder.use_var(index_variable);
-    let index = builder.ins().fcvt_to_sint_sat(isa.pointer_type(), index);
-    let is_ascii =
-        builder
-            .ins()
-            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, ascii, 1);
-    builder.ins().brif(
-        is_ascii,
-        load_ascii_character,
-        &[],
-        load_wide_character,
-        &[],
-    );
-
-    builder.switch_to_block(load_ascii_character);
-    let address = builder.ins().iadd(units, index);
-    let code_unit = builder
-        .ins()
-        .load(types::I8, ir::MemFlagsData::trusted(), address, 0);
-    let code_unit = builder.ins().uextend(types::I32, code_unit);
-    builder
-        .ins()
-        .jump(join_character, &[ir::BlockArg::Value(code_unit)]);
-
-    builder.switch_to_block(load_wide_character);
-    let index = builder.use_var(index_variable);
-    let index = builder.ins().fcvt_to_sint_sat(isa.pointer_type(), index);
-    let byte_offset = builder.ins().ishl_imm_u(index, 1);
-    let address = builder.ins().iadd(units, byte_offset);
-    let code_unit = builder
-        .ins()
-        .load(types::I16, ir::MemFlagsData::trusted(), address, 0);
-    let code_unit = builder.ins().uextend(types::I32, code_unit);
-    builder
-        .ins()
-        .jump(join_character, &[ir::BlockArg::Value(code_unit)]);
-
-    builder.switch_to_block(zero_character);
-    let zero_character = builder.ins().iconst(types::I32, 0);
-    builder
-        .ins()
-        .jump(join_character, &[ir::BlockArg::Value(zero_character)]);
-
-    builder.switch_to_block(join_character);
-    let hash = builder.use_var(hash_variable);
-    let multiplier = builder.ins().iconst(types::I32, 33);
-    let hash = builder.ins().imul(hash, multiplier);
-    let hash = builder.ins().bxor(hash, character);
-    builder.def_var(hash_variable, hash);
-    let index = builder.use_var(index_variable);
-    let stride = builder
-        .ins()
-        .f64const(Ieee64::with_bits(919.0f64.to_bits()));
-    let index = builder.ins().fsub(index, stride);
-    builder.def_var(index_variable, index);
-    let counter = builder.use_var(counter_variable);
-    let counter = builder.ins().iadd_imm_s(counter, 1);
-    builder.def_var(counter_variable, counter);
-    let interval = builder.ins().band_imm_u(counter, 1023);
-    let should_poll =
-        builder
-            .ins()
-            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, interval, 0);
-    let poll = builder.create_block();
-    let continue_loop = builder.create_block();
-    builder
-        .ins()
-        .brif(should_poll, poll, &[], continue_loop, &[]);
-    builder.switch_to_block(poll);
-    let requested = builder
-        .ins()
-        .atomic_load(types::I8, ir::MemFlagsData::trusted(), interrupt);
-    let cancelled = builder.ins().icmp_imm_u(
-        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
-        requested,
-        0,
-    );
-    let return_loop = builder.create_block();
-    builder.ins().brif(
-        cancelled,
-        interrupt_exit,
-        &[ir::BlockArg::Value(status)],
-        return_loop,
-        &[],
-    );
-    builder.switch_to_block(return_loop);
-    builder.ins().jump(continue_loop, &[]);
-    builder.switch_to_block(continue_loop);
-    builder.ins().jump(header, &[]);
-
-    builder.switch_to_block(normal_exit);
-    let hash = builder.use_var(hash_variable);
-    let result = builder.ins().fcvt_from_sint(types::F64, hash);
-    let complete = builder.ins().iconst(types::I32, 1);
-    builder
-        .ins()
-        .store(ir::MemFlagsData::trusted(), complete, status, 0);
-    builder.ins().return_(&[result]);
-    builder.switch_to_block(interrupt_exit);
-    let interrupted = builder.ins().iconst(types::I32, 0);
-    builder.ins().store(
-        ir::MemFlagsData::trusted(),
-        interrupted,
-        interrupt_status,
-        0,
-    );
-    let no_result = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
-    builder.ins().return_(&[no_result]);
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    Some(JsJitArtifact {
-        code,
-        params: 1,
-        requires_signed_int32_arguments: false,
-        result: JsJitResultKind::StringHashLoop,
-        field_argument: None,
-        numeric_field_inputs: Vec::new(),
-        capture_arguments: Vec::new(),
-        general_dispatch_native_pcs: Vec::new(),
-    })
-}
-
 pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, instruction)| {
         if instruction.is_wide() {
@@ -1810,108 +1078,6 @@ pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
         }
         let instruction = instruction.as_wide();
         instruction.op().is_js_jump() && usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc)
-    })
-}
-
-fn compile_string_transform(
-    _program: &ResidualProgram,
-    function_id: u32,
-    _function: &Function,
-    transform: JsJitStringTransform,
-) -> Option<JsJitArtifact> {
-    let needed: usize = match transform {
-        JsJitStringTransform::PrefixUnderscore => 2,
-        JsJitStringTransform::RemoveLeadingUnderscore => 3,
-    };
-    let isa = super::jit_backend::target_isa()?;
-    let pointer = isa.pointer_type();
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(pointer));
-    signature.params.push(AbiParam::new(pointer));
-    signature.params.push(AbiParam::new(types::I32));
-    signature.returns.push(AbiParam::new(types::I32));
-    let mut native =
-        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
-    let mut context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    let dispatch = builder.create_block();
-    let ascii_block = builder.create_block();
-    let wide_block = builder.create_block();
-    let no_match = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let args = builder.block_params(entry);
-    let units = args[0];
-    let length = args[1];
-    let ascii = args[2];
-    let enough = builder.ins().icmp_imm_u(
-        cranelift_codegen::ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
-        length,
-        i64::try_from(needed).ok()?,
-    );
-    builder.ins().brif(enough, dispatch, &[], no_match, &[]);
-
-    builder.switch_to_block(no_match);
-    let no = builder.ins().iconst(types::I32, 0);
-    builder.ins().return_(&[no]);
-
-    builder.switch_to_block(dispatch);
-    let is_ascii =
-        builder
-            .ins()
-            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, ascii, 1);
-    builder
-        .ins()
-        .brif(is_ascii, ascii_block, &[], wide_block, &[]);
-    for (block, width) in [(ascii_block, 1_u32), (wide_block, 2_u32)] {
-        builder.switch_to_block(block);
-        let mut matches = None;
-        for index in 0..needed {
-            let offset = i64::try_from(index.checked_mul(width as usize)?).ok()?;
-            let address = builder.ins().iadd_imm_u(units, offset);
-            let unit_type = if width == 1 { types::I8 } else { types::I16 };
-            let unit = builder
-                .ins()
-                .load(unit_type, ir::MemFlagsData::trusted(), address, 0);
-            let unit = builder.ins().uextend(types::I32, unit);
-            let matches_underscore =
-                builder
-                    .ins()
-                    .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, unit, 95);
-            matches = Some(match matches {
-                Some(previous) => builder.ins().band(previous, matches_underscore),
-                None => matches_underscore,
-            });
-        }
-        let result = builder.ins().uextend(types::I32, matches?);
-        builder.ins().return_(&[result]);
-    }
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    Some(JsJitArtifact {
-        code,
-        params: 1,
-        requires_signed_int32_arguments: false,
-        result: JsJitResultKind::StringTransform(transform),
-        field_argument: None,
-        numeric_field_inputs: Vec::new(),
-        capture_arguments: Vec::new(),
-        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -4438,9 +3604,6 @@ fn activation_is_irrelevant(function: &Function) -> bool {
 #[derive(Default)]
 pub(super) struct JsEntryFacts {
     pub(super) captured_store: Option<CapturedFieldStore>,
-    pub(super) numeric_find: Option<JsJitNumericFind>,
-    pub(super) field_increment: Option<JsJitThisFieldIncrement>,
-    pub(super) field_return: Option<JsJitFieldReturn>,
     pub(super) numeric_loop: bool,
     pub(super) int32_bitwise: bool,
     pub(super) int32_identity: bool,
@@ -4451,8 +3614,6 @@ pub(super) struct JsEntryFacts {
     pub(super) numeric_field_inputs:
         Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>>,
     pub(super) field_reject: bool,
-    pub(super) string_hash_loop: bool,
-    pub(super) string_transform: Option<JsJitStringTransform>,
     /// Whether an entry may run native code (`Vm::js_jit_at_entry`): the function is a tier
     /// candidate, or one of the entry patterns that run without a tier matched it.
     pub(super) enters: bool,
@@ -4475,16 +3636,13 @@ impl JsEntryFacts {
     }
 
     pub(super) fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
-        let numeric_find = numeric_find_candidate(function);
-        let field_increment = cached_this_field_increment_candidate(program, function);
-        let field_return = cached_this_field_return_candidate(function);
         let captured_store = captured_field_store_candidate(program, function);
         let has_calls = function.instructions().any(|instruction|
             instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
         let candidate = function_candidate(function, program) && (!priced || has_calls || super::compiled::pays_native_entry(function));
         let shape = super::compiled::js_general_dispatch_shape(function);
         let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
-        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some() || captured_store.is_some();
+        let enters = candidate || captured_store.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
             return Self { candidate, has_calls, general, general_acyclic, ..Self::default() };
@@ -4496,9 +3654,6 @@ impl JsEntryFacts {
             has_calls,
             general,
             general_acyclic,
-            numeric_find,
-            field_increment,
-            field_return,
             numeric_loop: has_numeric_loop_candidate(function),
             int32_bitwise: has_int32_bitwise_candidate(program, function),
             int32_identity: int32_identity_return_candidate(program, function).is_some(),
@@ -4508,8 +3663,6 @@ impl JsEntryFacts {
             numeric_field_argument: cached_numeric_field_argument_candidate(function),
             numeric_field_inputs: cached_numeric_field_inputs_candidate(function),
             field_reject: is_field_reject_candidate(function),
-            string_hash_loop: has_string_hash_loop_candidate(program, function),
-            string_transform: string_transform_candidate(program, function),
         }
     }
 }

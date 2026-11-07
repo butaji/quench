@@ -42,7 +42,7 @@ fn direct_call_numbers(
         CompiledJsResult::StringReturnPc(return_pc) => {
             compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
         }
-        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
+        CompiledJsResult::FieldReject { .. } => None,
     }
 }
 
