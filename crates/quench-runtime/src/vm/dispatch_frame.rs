@@ -2620,13 +2620,8 @@ impl<H: Host> Vm<H> {
                     }
                 },
                 Ok(StepResult::Continue) => {}
-                Ok(StepResult::PushFrame {
-                    destination,
-                    call_guard,
-                    completion,
-                }) => {
-                    // A callee of another program became active when its frame was pushed;
-                    // the loop executes that program until the callee returns.
+                Ok(StepResult::PushFrame { destination, call_guard, completion }) => {
+                    // A callee of another program became active; the loop runs it until it returns.
                     let callee_program = self.frames[frame + 1].program;
                     let caller_program = if callee_program == executing_program {
                         None
@@ -2663,6 +2658,8 @@ impl<H: Host> Vm<H> {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                    // An entry is a safepoint: else a due collection waits for a loop, every call a frame.
+                    self.maybe_collect(unsafe { &*executing_residual });
                 }
                 Ok(StepResult::ResumeFrames(recovered)) => {
                     pending_calls.extend(recovered.calls);
