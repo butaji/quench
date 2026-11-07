@@ -1465,7 +1465,7 @@ file-lines crates/quench-runtime/src/vm/builtins.rs 1455
 file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 524
-file-lines crates/quench-runtime/src/vm/collections.rs 1480
+file-lines crates/quench-runtime/src/vm/collections.rs 1477
 file-lines crates/quench-runtime/src/vm/compiled.rs 19352
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 518
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
@@ -1478,7 +1478,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1955
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23526
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23477
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -2811,7 +2811,7 @@ function-lines crates/quench-runtime/src/vm/closure_retention_tests.rs::check_ca
 function-lines crates/quench-runtime/src/vm/coercion.rs::Vm<H>::to_string 44
 function-lines crates/quench-runtime/src/vm/coercion.rs::Vm<H>::unary 50
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::add_intact_entries 48
-function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::call_collection_native 445
+function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::call_collection_native 443
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::construct_weak_collection_native 43
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::initialize_collection_iterable 97
 function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::install_collection_symbols 43
@@ -2822,7 +2822,7 @@ function-lines crates/quench-runtime/src/vm/collections.rs::Vm<H>::is_collection
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::apply_set_relation 132
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::fold_set_record 124
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::get_set_record 61
-function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::set_relation 45
+function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::set_relation 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::plan 151
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::transfer 381
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_entry 82
@@ -4198,7 +4198,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::ActivationState::of 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::InstructionSet::new 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneStack::default 11
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::osr_diagnostics 3
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_lane_body 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::ScriptTargets::with_len 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 3
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 2
