@@ -2047,17 +2047,8 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
     let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
-    // The activation the instruction's exact step pushes (`Vm::push_in_loop_activation`): a
-    // getter's of its read (`general_getter`), a construction's or a call's.
-    let getter = instruction.op() == Op::GetField;
-    let callee = if getter { entry.callee } else { vm.read(caller, instruction.register_b()) };
-    let construction = (instruction.op() == Op::Construct).then(|| instruction.construct_arguments());
-    let (window, receiver, completion) = match construction {
-        Some(crate::bytecode::ConstructArguments::Registers(window)) => (window, entry.this, super::CallCompletion::Constructor(entry.this)),
-        Some(crate::bytecode::ConstructArguments::Array(_)) => unreachable!("a frameless construction passes registers"),
-        None if getter => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
-        None => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
-    };
+    // The activation the instruction's step pushes (`Vm::pushed_frame`).
+    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
     let target = (vm.frames[caller].program, entry.function, env);

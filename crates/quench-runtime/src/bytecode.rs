@@ -3840,6 +3840,8 @@ pub struct ResidualProgram {
     pub(crate) superinstructions: Vec<Superinstruction>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
+    pub(crate) first_call_scopes: crate::compile::first_call::FirstCallStubs,
     /// The records a decoded program keeps encoded until their functions' first read.
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
@@ -4094,14 +4096,9 @@ impl ResidualProgram {
             .register_roots
             .masks
             .get_or_init(|| {
-                crate::compile::liveness::analyze(
-                    function,
-                    self,
-                    &self.field_sites,
-                    &self.superinstructions,
-                )
-                .map(|masks| std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks)))
-                .expect("a covered function's liveness is derivable")
+                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                    .map(std::rc::Rc::new)
+                    .expect("a covered function's liveness is derivable")
             });
         Some(masks)
     }
@@ -4129,18 +4126,6 @@ impl ResidualProgram {
         }
         Some(position)
     }
-
-    pub const FORMAT_VERSION: u8 = 136;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = {
-        const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
-        const FORMAT_VERSION_SHIFT: u32 = 16;
-        const DERIVED_FACT_COUNT_SHIFT: u32 = u8::BITS;
-        assert!(DERIVED_FACT_COUNT <= u8::MAX as u32);
-        assert!(CALL_PLAN_FLAG_COUNT <= u8::MAX as u32);
-        ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
-            | ((DERIVED_FACT_COUNT as u64) << DERIVED_FACT_COUNT_SHIFT)
-            | CALL_PLAN_FLAG_COUNT as u64
-    };
 
     /// Whether the entry uses module semantics, including an import-only bootstrap.
     pub fn is_module(&self) -> bool {
