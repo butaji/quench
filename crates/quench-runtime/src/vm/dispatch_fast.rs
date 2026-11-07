@@ -12164,9 +12164,16 @@ script_handler! {
             }
             None => {
                 r.set(done_read.a, Value::TRUE);
-                // SAFETY: the exit records the distance to its validated target.
+                // SAFETY: the step's records end at its `value` read, past the exit.
                 let exit = unsafe { ip.add(form.exit()) };
-                next!(cx, r, unsafe { exit.byte_offset((*exit).jump()) }, Carried::script(cx))
+                if THREADED {
+                    // SAFETY: the threaded test records the distance to its validated target.
+                    next!(cx, r, unsafe { exit.byte_offset((*exit).jump()) }, Carried::script(cx))
+                }
+                // An emitted exit is a `Jump` record, which reads no register: it runs itself,
+                // since a jump fused with the move at its target (`JumpFusions::THROUGH`) makes
+                // that move before landing past it (babel-wtb's callee after a for-in loop).
+                next!(cx, r, exit, Carried::script(cx))
             }
         }
     }
