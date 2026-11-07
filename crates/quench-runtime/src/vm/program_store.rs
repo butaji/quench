@@ -1443,13 +1443,13 @@ impl ProgramStore {
 
     /// Whether a by-name load the compiler left unresolved in `function` of the program can
     /// only denote a global binding, given that the function's names resolve statically: a
-    /// module's environment holds only bindings the compiler resolved, at its root as in its
-    /// functions; a global-scope program's root body may still meet bindings its own
-    /// declarations add, so only its nested functions qualify.
+    /// module's environment holds only bindings the compiler resolved; a script's root reaches
+    /// even its vars by name (`frame_var`); an eval's root may meet bindings it adds.
     pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
-        self.entry(id).is_some_and(|entry| {
-            entry.residual.kind == crate::bytecode::ProgramKind::Module
-                || (function != super::ROOT_FUNCTION_ID && self.runs_in_global_scope(id))
+        self.entry(id).is_some_and(|entry| match entry.residual.kind {
+            crate::bytecode::ProgramKind::Module => true,
+            crate::bytecode::ProgramKind::Eval if function == super::ROOT_FUNCTION_ID => false,
+            _ => self.runs_in_global_scope(id),
         })
     }
 

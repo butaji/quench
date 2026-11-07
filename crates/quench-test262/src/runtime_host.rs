@@ -409,7 +409,7 @@ impl Test262RuntimeHost {
                 #[cfg(not(feature = "aot"))]
                 { return Err("quench AOT code generation requires the aot feature".into()); }
             } else { match kind {
-                SourceKind::Script => Engine::specialize_unspecialized(source, name),
+                SourceKind::Script => Engine::specialize(source, name),
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
