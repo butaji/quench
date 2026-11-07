@@ -177,3 +177,12 @@ impl Host for TestHost {
         self.module_source.is_some_and(|module_source| module_source(module))
     }
 }
+
+/// Runs `run` on a thread with the stack the runtime is made for (`WORKER_STACK_SIZE`): the
+/// default test thread's 2 MiB overflows on unoptimized frames before the stack guard fires.
+pub(crate) fn on_worker_stack<R: Send>(run: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE);
+        worker.spawn_scoped(scope, run).unwrap().join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}

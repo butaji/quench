@@ -1,6 +1,7 @@
 //! Module type facts retain recursive group boundaries and source index order.
 //! Executable signatures are projections, not replacements for declarations.
 
+mod ancestry;
 mod fingerprint;
 
 use rustc_hash::FxHashSet;
@@ -22,6 +23,9 @@ struct Declarations {
     members: Box<[(u32, u32)]>,
     /// Each group's shapes, hashed once (`fingerprint`).
     shapes: Box<[u64]>,
+    /// Each declaration's canonical index and parent, found once (`ancestry`).
+    canonical: Box<[u32]>,
+    parents: Box<[u32]>,
 }
 
 impl PartialEq for WasmTypes {
@@ -37,7 +41,8 @@ impl WasmTypes {
 
     fn of(groups: Box<[Vec<SubType>]>) -> Self {
         let members = groups.iter().enumerate().flat_map(|(group, types)| (0..types.len()).map(move |member| (group as u32, member as u32))).collect();
-        Self(Rc::new(Declarations { shapes: groups.iter().map(|group| fingerprint::group_shapes(group)).collect(), groups, members }))
+        let shapes = groups.iter().map(|group| fingerprint::group_shapes(group)).collect();
+        Self(Rc::new(Declarations { shapes, groups, members, ..Declarations::default() })).with_ancestry()
     }
 
     /// Embedding inputs without a binary type section declare singleton,
@@ -117,8 +122,8 @@ impl WasmTypes {
         if member != other_member {
             return false;
         }
-        if index == other_index && Rc::ptr_eq(&self.0, &other.0) {
-            return true;
+        if Rc::ptr_eq(&self.0, &other.0) && let Some(same) = self.same_class(index, other_index) {
+            return same;
         }
         let mut comparison = Equivalence {
             tables: [self, other],
@@ -144,6 +149,9 @@ impl WasmTypes {
     /// Defined-type subtyping follows declared ancestry, never an accidental
     /// structural match between unrelated declarations.
     pub fn is_subtype(&self, mut index: usize, other: &Self, other_index: usize) -> bool {
+        if Rc::ptr_eq(&self.0, &other.0) && let Some(subtype) = self.ancestry_subtype(index, other_index) {
+            return subtype;
+        }
         let declarations = self.0.members.len();
         // Validated ancestry is acyclic. The declaration count also bounds
         // malformed embedding input without inventing a runtime type-depth cap.
@@ -165,30 +173,6 @@ impl WasmTypes {
             }
         }
         false
-    }
-
-    fn edge(&self, index: UnpackedIndex, origin: usize) -> Option<Edge> {
-        let (group, _) = self.locate(origin)?;
-        match index {
-            UnpackedIndex::RecGroup(member) => {
-                let member = member as usize;
-                (member < group.len()).then_some(Edge::Local(member))
-            }
-            UnpackedIndex::Module(index) => {
-                let index = index as usize;
-                if index >= origin {
-                    let member = index - origin;
-                    return (member < group.len()).then_some(Edge::Local(member));
-                }
-                let (_, member) = self.locate(index)?;
-                Some(Edge::External {
-                    origin: index - member,
-                    member,
-                })
-            }
-            // Allocator-specific IDs are not indices in this declaration table.
-            UnpackedIndex::Id(_) => None,
-        }
     }
 
     /// Callable ABI facts retain defined reference kinds and exactness in this
