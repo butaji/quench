@@ -31,7 +31,8 @@ pub(super) fn lower_shortcut(
     if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact) {
         return Some(true);
     }
-    if lower_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
+    if lower_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact)
+        || lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
         return Some(false);
     }
     (instruction.op() == Op::SetIndex
@@ -69,6 +70,25 @@ fn lower_call(
         destination, framed).is_none() { builder.ins().jump(framed, &[]); }
     builder.switch_to_block(framed);
     emit_user_call(builder, (pc, next, fallback), payload, exact);
+    true
+}
+
+/// Lowers the plain `new` at `pc` frameless, the exact step taking any miss.
+fn lower_construct(
+    builder: &mut FunctionBuilder<'_>,
+    (pc, instruction, next): (usize, WideInstruction, ir::Block),
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    if instruction.op() != Op::Construct || instruction.result_flags() != 0 || instruction.returns_from_frame() {
+        return false;
+    }
+    let Some(destination) = register_offset(instruction.result_register()) else { return false };
+    let framed = builder.create_block();
+    if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
+        destination, framed).is_none() { return false; }
+    exact.emit(builder, framed);
     true
 }
 

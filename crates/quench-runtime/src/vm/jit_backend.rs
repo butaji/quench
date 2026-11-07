@@ -21,11 +21,12 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
 /// Reuse immutable host target configuration across JS function tiers and
 /// Wasm module compilation, one per optimization level.
-/// Whether Cranelift verifies the IR of every compile: in debug builds, where tests check
-/// each lowering, and not in release, where the verifier cost about a quarter of every JIT
-/// compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
+/// Whether Cranelift verifies the IR of every compile, and regalloc2 checks every allocation
+/// it makes: in debug builds, where tests check each lowering, and in the tier-stress build,
+/// which compiles everything it can; not in release, where the verifier cost about a quarter
+/// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
 #[cfg(any(feature = "jit", feature = "aot"))]
-const VERIFY_IR: bool = cfg!(debug_assertions);
+const VERIFY_IR: bool = cfg!(debug_assertions) || super::compiled::tier_policy::STRESS;
 
 /// Publication determines relocation policy and code-generation effort, not language
 /// semantics or lowering.
@@ -34,8 +35,8 @@ const VERIFY_IR: bool = cfg!(debug_assertions);
 pub(super) enum CodePublication {
     #[cfg(feature = "jit")]
     ExecutableMemory,
-    /// Executable memory for a lane body (`compiled::lane_compile`), whose registers are
-    /// allocated in one pass. Lane bodies are the largest units and compile on the code
+    /// Executable memory for a large lane body (`compiled::lane_compile`, at least
+    /// `LANE_SINGLE_PASS_MIN_INSTS` instructions), whose registers are allocated in one pass. Lane bodies are the largest units and compile on the code
     /// generator thread while the interpreter runs them: JetStream 3 `--jit`, 25 tests, 6
     /// interleaved rounds (2026-11-07) measured +3.8% geomean (richards +16%, Air +11%,
     /// delta-blue +10%; earley-boyer -7%). Single-pass for every JIT unit measured -0.7%
@@ -115,9 +116,9 @@ pub(super) fn target_isa_for(
     for (name, value) in publication.settings() {
         flags.set(name, value).ok()?;
     }
-    flags
-        .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })
-        .ok()?;
+    for check in ["enable_verifier", "regalloc_checker"] {
+        flags.set(check, if VERIFY_IR { "true" } else { "false" }).ok()?;
+    }
     let isa = cranelift_native::builder()
         .ok()?
         .finish(settings::Flags::new(flags))

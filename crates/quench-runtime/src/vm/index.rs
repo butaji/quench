@@ -1,4 +1,5 @@
 use super::*;
+mod keys;
 
 const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
 #[cfg(feature = "profile-aggregate")]
@@ -558,32 +559,6 @@ impl<H: Host> Vm<H> {
         self.set_property_with_program_mode(p, object, atom, value, strict)
     }
 
-    /// `key`, or the integer naming the same property when `key` is a flat string holding
-    /// an array index in canonical decimal form (`object_static::array_index`), so the
-    /// integer-keyed element reads answer `base["0"]` as they answer `base[0]`.
-    #[inline(always)]
-    pub(super) fn canonical_index_key(&self, key: Value) -> Value {
-        let Some(text) = self.heap.string(key) else {
-            return key;
-        };
-        let leads_with_digit =
-            text.existing_flat().and_then(|units| units.unit(0)).is_some_and(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(&unit));
-        if !leads_with_digit {
-            return key;
-        }
-        super::object_static::array_index(text.host_string())
-            .and_then(|index| i32::try_from(index).ok())
-            .map_or(key, Value::integer)
-    }
-
-    pub(super) fn array_index_key(&self, key: Value) -> Option<u32> {
-        if let Some(index) = key.as_int() {
-            return u32::try_from(index).ok();
-        }
-        let key = self.heap.string(key)?;
-        super::object_static::array_index(key.host_string())
-    }
-
     /// The stores of index `index` needing no [[Set]] step past a plain array's own elements:
     /// replacing a present one, appending at the dense length, or filling a hole no prototype
     /// claims (`set_index_mode`, `general_elements`); `false` before any effect.
@@ -940,3 +915,4 @@ mod tests {
         assert_ne!(template.as_ptr(), elements.as_ptr());
     }
 }
+

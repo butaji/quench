@@ -45,11 +45,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// `next()` of `generator`, a suspended synchronous generator of this realm and program
-    /// that `method` (this realm's `%GeneratorPrototype%.next`, `steps_as_generator`) steps,
-    /// called with no arguments from frame `f`'s call record that resumes at `pc`: its frame
-    /// pushed in place as an in-loop call pushes a callee's (`resume_generator_in_place`), and
-    /// the pending call completes with the step's result (`finish_in_loop_generator_step`).
-    /// `None` leaves any other step to the native call.
+    /// that `method` (`steps_as_generator`) steps, called with no arguments from frame `f`'s
+    /// call record that resumes at `pc`: its frame pushed in place (`resume_generator_in_place`),
+    /// the pending call completing with the step's result (`finish_in_loop_generator_step`).
+    /// `None` leaves any other step, and a call returning its result from the frame (the A
+    /// field `destination` says so), to the native call.
     pub(super) fn try_in_loop_generator_step(
         &mut self,
         f: usize,
@@ -59,12 +59,12 @@ impl<H: Host> Vm<H> {
         destination: crate::bytecode::Register,
         reuses_result: bool,
     ) -> Option<Result<StepResult, JsError>> {
-        if !self.generator_resumes_in_place(generator) {
+        if destination & crate::bytecode::RETURN_REGISTER != 0 || !self.generator_resumes_in_place(generator) {
             return None;
         }
         let resumed = self.resume_generator_in_place(f, pc, method, generator, reuses_result)?;
         Some(resumed.map(|(call_guard, resume)| StepResult::PushFrame {
-            destination,
+            destination: destination & crate::bytecode::REGISTER_MASK,
             call_guard,
             completion: CallCompletion::Generator(resume),
         }))

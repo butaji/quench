@@ -300,7 +300,7 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = lexical.unwrap_or(atom);
         if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
-            && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
+            && (self.frame_var(atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             if let Some(register) = self.local_register(atom) {
@@ -400,7 +400,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
-            && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
+            && (self.frame_var(atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             if let Some(register) = self.local_register(atom) {

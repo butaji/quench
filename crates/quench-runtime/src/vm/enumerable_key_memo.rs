@@ -1,7 +1,9 @@
 //! Memoized enumerable string keys of a shape: what `Vm::shape_enumerable_keys` reads from a
 //! non-dictionary shape, with each key's slot, for objects whose attributes the shape alone
 //! decides (no side-table descriptors). Such a shape never changes, so the answer holds
-//! until a collection, which can renumber shapes and so clears every entry.
+//! for the shape's life, as V8's enum cache lives on its map: only shape compaction, which
+//! renumbers shapes, clears the entries (`Vm::invalidate_field_caches`). Its keys are string
+//! atoms, which outlive every collection.
 
 use super::Atom;
 use std::cell::RefCell;

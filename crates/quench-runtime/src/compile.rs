@@ -1368,7 +1368,7 @@ impl Engine {
         // tree changed after parsing, that their text alone does not give back. A released
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
-        compiler.first_call.roots = expected_shape.first_call_roots(compiler.replayable_source, &parsed.program, inherited_strict);
+        compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, std::mem::take(&mut facts.free_names));
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -2575,7 +2575,7 @@ impl<'a> Compiler<'a> {
             .is_some_and(|span| self.invoked_functions.remove(&span.start));
         if self.replay_target.is_none()
             && self.replayable_source
-            && !invoked
+            && !invoked && !self.encloses_nested_stub(id, self.function_exits[id as usize].functions)
             && private_names == (self.private_name_references, self.private_name_ids.len())
         {
             self.replay_calls.insert(id, (entry, call));
@@ -2680,6 +2680,7 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        self.take_outer_scopes(function.span.start, &mut context);
         // A released body holds its stand-in wherever the function is compiled, and a node
         // may be compiled more than once (the right operand of `??`); the function parsed
         // again holds its own statements.
@@ -2694,10 +2695,7 @@ impl<'a> Compiler<'a> {
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let params = FunctionCompiler::params_from_formals(&function.params, self);
-        let body = function
-            .body
-            .as_ref()
-            .map_or(&[][..], |body| body.statements.as_slice());
+        let body = function.body.as_ref().map_or(&[][..], |body| body.statements.as_slice());
         let name = function
             .id
             .as_ref()
@@ -2781,7 +2779,7 @@ impl<'a> Compiler<'a> {
         let nesting = if self.replay_target.is_some() {
             lazy_bodies::Nesting::Recorded(&self.lazy_bodies)
         } else {
-            lazy_bodies::Nesting::Parse
+            lazy_bodies::Nesting::Parse(&mut self.first_call.free_names)
         };
         let reparsed = lazy_bodies::reparse(
             allocator,
@@ -3296,10 +3294,7 @@ impl<'a> Compiler<'a> {
         // A function finished during the load has only its header left; the passes below
         // finish the others.
         let mut released = FxHashMap::default();
-        let mut functions: Vec<Option<BcFunction>> = std::mem::take(&mut self.functions)
-            .into_entries()
-            .into_iter()
-            .enumerate()
+        let mut functions: Vec<Option<BcFunction>> = std::mem::take(&mut self.functions).into_entries().into_iter().enumerate()
             .map(|(id, entry)| match entry {
                 replay::FunctionEntry::Compiled(function) => Some(*function),
                 replay::FunctionEntry::Released(function) => {
@@ -3448,7 +3443,7 @@ impl<'a> Compiler<'a> {
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
-        let replay_atoms = first_call::keeps_replay(&self.first_call.roots, replays.is_empty())
+        let replay_atoms = self.first_call.keep_replay(replays.is_empty())
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let mut constants = self.constants.into_vec();
         constants.shrink_to_fit();
@@ -3522,6 +3517,7 @@ impl<'a> Compiler<'a> {
                         NameSharedSites::Replay(sites) => (*sites).clone(),
                     },
                     functions: replays,
+                    first_calls: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
                     #[cfg(feature = "verify-replay")]
                     released: released
                         .iter()

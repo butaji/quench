@@ -68,28 +68,3 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
         _ => lane_native_call::<H>,
     }
 }
-
-script_handler! {
-    /// `ForInNext` whose key at the cursor belongs to the snapshot of its object's current
-    /// shape (`Vm::for_in_snapshot_current`), so it is still an own enumerable property: that
-    /// key, with no lookup. Past the last key, the jump. Any other step takes the general
-    /// path, which looks the key up.
-    fn lane_for_in_next<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let state = r.get(i.b);
-        let Some((object, keys, key, cursor)) = vm.for_in_peek(state) else {
-            resume!(cx, lane_jump::<H>(r, ip, false, Carried::script(cx), None));
-        };
-        if !vm.for_in_snapshot_current(object, keys) {
-            return exit(ip);
-        }
-        vm.for_in_advance(state, cursor);
-        r.set(i.a, key);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-/// The handler of `ForInNext` (`lane_for_in_next`).
-pub(super) const fn for_in_next_handler<H: Host>() -> Handler {
-    lane_for_in_next::<H>
-}

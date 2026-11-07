@@ -275,7 +275,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                     .and_then(|index| u32::try_from(index).ok())
                     .ok_or("native fallback symbol count exceeds u32")?;
                 match super::compiled::lower_js_general_dispatch(
-                    program, function_id, false, &*isa,
+                    program, function_id, &*isa,
                     super::compiled::JsGeneralCallout::Relocatable { fallback },
                     &scalar_regions.iter().enumerate().map(|(offset, region)| {
                         super::compiled::StaticRegionEntry {
