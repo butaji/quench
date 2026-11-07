@@ -960,7 +960,6 @@ complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_loo
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 18
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_load 17
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 20
-complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::set_plain_key_property 12
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 21
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_get_prototype_of 11
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_integrity_level 12
@@ -1450,9 +1449,9 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 5057
+file-lines crates/quench-runtime/src/vm/object.rs 5055
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 990
-file-lines crates/quench-runtime/src/vm/object_get.rs 1518
+file-lines crates/quench-runtime/src/vm/object_get.rs 1462
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
 file-lines crates/quench-runtime/src/vm/object_static.rs 925
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
