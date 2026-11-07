@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
             types.push(ty);
         }
         let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(types, [])]);
-        Ok(self.heap.alloc(Cell::WasmTag { declarations, ty: 0 }))
+        Ok(self.heap.alloc(Cell::WasmTag { declarations: Box::new(declarations), ty: 0 }))
     }
 }
 
@@ -130,7 +130,7 @@ pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
 /// `WebAssembly.JSTag`'s cell (`js_tag_type`).
 pub(crate) fn js_tag_cell() -> Cell {
     let (declarations, ty) = js_tag_type();
-    Cell::WasmTag { declarations, ty }
+    Cell::WasmTag { declarations: Box::new(declarations), ty }
 }
 
 #[cfg(test)]
@@ -161,7 +161,7 @@ mod tests {
             [],
         )]);
         let tag = vm.heap.alloc(Cell::WasmTag {
-            declarations,
+            declarations: Box::new(declarations),
             ty: 0,
         });
         let bits = vm.heap.alloc(Cell::WasmBits64(0x7ffc_1234_5678_9abc));
