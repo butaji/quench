@@ -23,6 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+use super::tier_policy::{self, TIERS};
 use super::*;
 use crate::bytecode::{
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
@@ -7010,37 +7011,12 @@ pub(super) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
-/// The Cranelift optimization level the loop tier compiles regions at under each memory
-/// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
-/// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and
-/// the code pages of the compiler and of the region.
-///
-/// Memory-first compiles no loop region, on the owner's direction of 2026-10-24 (TOD-123:
-/// memory-first may trade Score for memory under `--jit`). The per-function tier, which this
-/// leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below their interpreted
-/// peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988 interpreted, Crypto at
-/// 4000 and 3128 (static BOLT x86_64, memory-first, median of 5, 2026-10-24). Compiling at
-/// `none`, without the e-graph pass, saved only 576 KiB on Crypto and 648 on NavierStokes
-/// (`tod137-loop-tier-opt-level-…`). Throughput compiles at `speed`.
-const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
-
-/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_opt_level`).
 pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
-    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
+    tier_policy::by_policy(policy).loop_opt_level.is_some()
 }
 
-/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
-/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
-/// order). Memory-first compiles
-/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
-/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
-/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
-/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
-/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
-/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
-const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
-
-/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+/// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     #[cfg(feature = "gc-tuning")]
     {
@@ -7054,7 +7030,7 @@ pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
             return false;
         }
     }
-    JS_FUNCTION_TIERS[policy as usize]
+    tier_policy::by_policy(policy).js_function_tiers
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -7069,7 +7045,7 @@ pub(super) fn compile_osr_region(
     if loop_tier_region_budget_spent() {
         return None;
     }
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
+    let isa = super::jit_backend::target_isa(tier_policy::by_policy(policy).loop_opt_level?)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -7124,7 +7100,7 @@ fn process_peak_rss_kib() -> i64 {
 /// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
 /// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
 /// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`LOOP_TIER_OPT_LEVELS`).
+/// (`PolicyTiers::loop_opt_level`).
 #[cfg(feature = "gc-tuning")]
 fn loop_tier_region_budget_spent() -> bool {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7489,13 +7465,6 @@ struct JsStepDispatch {
     outcome: Option<JsNativeStep>,
 }
 
-/// A general-dispatch body specialized for frameless lane activations
-/// (`GeneralDispatchMode::Lane`): it runs on the activation's own registers, so they stay
-/// the interpreter's exact state, and leaves at the PC of any instruction it does not run.
-/// The length below which a lane body without loops or inlined calls declines
-/// (`Vm::compile_lane_method`).
-const LANE_BODY_MIN_INSTRUCTIONS: usize = 24;
-
 pub(super) struct LaneMethod {
     pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
     /// The Stable facts its code folded, each a dependency its publication takes.
@@ -7545,7 +7514,7 @@ impl LaneMethod {
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
+    /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.first_entry && self.amortizes
     }
@@ -8085,7 +8054,7 @@ impl<H: Host> Vm<H> {
                 instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
                     && (instruction.imm() as usize) <= pc
             });
-            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
+            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions;
             let code = CodeMemory::new(&region.code)?;
             if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
                 dump_native_code(directory, function, &code, clif);
@@ -14903,7 +14872,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the JavaScript function tiers run: compiled execution under a memory policy
-    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// that compiles them (`PolicyTiers::js_function_tiers`), in a build whose profiles do not count
     /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
         !cfg!(quench_profiled)
