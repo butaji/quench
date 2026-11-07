@@ -17,6 +17,7 @@ use crate::bytecode::{Op, ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
 use std::collections::BTreeMap;
+mod function_sites;
 
 /// What `CallPrinter` prints for an operand it does not render.
 const INTERMEDIATE_VALUE: &str = "(intermediate value)";
@@ -96,9 +97,8 @@ impl<H: Host> Vm<H> {
             .and_then(|position| {
                 let source = program.source.as_ref()?;
                 let offset = source.byte_offset(position)?;
-                let sites = frozen_call_sites(source)?;
-                sites.binary_search_by_key(&(offset, construct), |site| (site.offset, site.construct))
-                    .ok().map(|index| sites[index].callee.clone())
+                let span = program.functions[function].header().source_span;
+                function_sites::call_site_callee(source, span, (offset, construct))
             })
             .unwrap_or_else(|| self.default_call_site(value));
         Some(rendered + template)

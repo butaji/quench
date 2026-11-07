@@ -1,5 +1,6 @@
-//! First-call stubs: a top-level function declaration whose body was parsed lazily and that
-//! nothing at load calls compiles as a stub, which compiles the function's source as a
+//! First-call stubs: a top-level function declaration, or an anonymous function expression
+//! of a top-level statement, whose body was parsed lazily and that nothing at load calls
+//! compiles as a stub, which compiles the function's source as a
 //! program of its own on the function's first call (`Op::CallFirstChunk`). The load then
 //! checks the body's syntax and nothing more, as V8's preparser does.
 //!
@@ -10,6 +11,7 @@
 //! a chunk costs its function's text, not the program's.
 use super::*;
 use program_shape::ParsedProgramShape;
+use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
 
 impl ReplayViews {
@@ -105,7 +107,17 @@ impl Engine {
         };
         let views = ReplayViews::default();
         let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
-        let window = ChunkWindow { source, start: span.start, line_starts, utf16_excess };
+        // A stub's function without a name is an expression (`first_call_roots`), which
+        // parses alone in parentheses, one character before its place.
+        let anonymous = snippet.strip_prefix("function").is_some_and(|rest| rest.trim_start().starts_with('('));
+        let wrapped;
+        let (snippet, start) = if anonymous && span.start > 0 {
+            wrapped = format!("({snippet})");
+            (wrapped.as_str(), span.start - 1)
+        } else {
+            (snippet, span.start)
+        };
+        let window = ChunkWindow { source, start, line_starts, utf16_excess };
         Self::specialize_script_shaped(snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
 }
@@ -127,11 +139,44 @@ impl ParsedProgramShape<'_> {
         if !replayable || !matches!(self, Self::Eval(..)) || strict || lexical {
             return FxHashSet::default();
         }
-        program.body.iter().filter_map(|statement| match statement {
-            Statement::FunctionDeclaration(function) => Some(function.span.start),
-            _ => None,
-        }).collect()
+        TopLevelFunctions::of(program)
     }
+}
+
+/// The anonymous function expressions of a top-level statement's expressions, outside every
+/// function and class: their free names are the root's, all global. Anonymous, a chunk tells
+/// one from a declaration by its text (`specialize_first_call_chunk`).
+struct TopLevelFunctions(FxHashSet<u32>);
+
+impl TopLevelFunctions {
+    /// The starts of `program`'s named function declarations and of the anonymous function
+    /// expressions of its expression statements and variable initializers.
+    fn of(program: &Program<'_>) -> FxHashSet<u32> {
+        let mut roots = Self(FxHashSet::default());
+        for statement in &program.body {
+            match statement {
+                Statement::FunctionDeclaration(function) if function.id.is_some() => {
+                    roots.0.insert(function.span.start);
+                }
+                Statement::ExpressionStatement(statement) => roots.visit_expression(&statement.expression),
+                Statement::VariableDeclaration(declaration) => roots.visit_variable_declaration(declaration),
+                _ => {}
+            }
+        }
+        roots.0
+    }
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for TopLevelFunctions {
+    fn visit_function(&mut self, function: &oxc_ast::ast::Function<'a>, _: oxc_syntax::scope::ScopeFlags) {
+        if function.is_expression() && function.id.is_none() {
+            self.0.insert(function.span.start);
+        }
+    }
+
+    fn visit_arrow_function_expression(&mut self, _: &oxc_ast::ast::ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {}
 }
 
 /// What a compilation knows of first-call stubs (`Compiler::first_call`).
@@ -166,8 +211,7 @@ impl Compiler<'_> {
             && self.replay_target.is_none()
             && !function.r#async
             && !function.generator
-            && function.id.is_some()
-            && !function.body.as_ref().is_some_and(|body| self.invoked_functions.contains(&body.span.start))
+            && !self.invoked_functions.contains(&function.span.start)
     }
 
     /// `function` compiled as its first-call stub: a function of its name, length,
