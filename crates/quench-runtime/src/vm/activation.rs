@@ -148,6 +148,10 @@ pub(crate) struct Continuation {
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
+    /// The registers live at the suspension, when liveness covers the function and every
+    /// other register was cleared there (`Vm::suspend_activation`): only these can name a
+    /// cell, so the GC traces them alone. `None` traces every register.
+    pub(super) live_registers: Option<crate::compile::liveness::RegisterSet>,
 }
 
 impl std::fmt::Debug for Continuation {
@@ -205,7 +209,7 @@ impl Continuation {
         promise: Value,
     ) -> Self {
         frame.js_jit_interpreter_started = None;
-        Self { frame, completion, resume_register, promise }
+        Self { frame, completion, resume_register, promise, live_registers: None }
     }
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
@@ -229,17 +233,32 @@ impl Continuation {
         self.frame.program
     }
 
-    /// Its edges, appended to `out` a slice at a time: the GC traces every suspended frame
-    /// this way, where a chained iterator pushes value by value.
+    /// Its edges, appended to `out`: the GC traces every suspended frame this way. Locals and
+    /// registers contribute only their heap values, and registers only the live ones where
+    /// the suspension knows them (`live_registers`): each other one would cost the mark a
+    /// push and a pop to find it names no cell.
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
         let frame = &self.frame;
         out.extend(frame.context.callee());
         out.extend_from_slice(&frame.original_arguments);
         out.extend_from_slice(&frame.with_objects);
         out.extend([frame.env, frame.this]);
-        out.extend_from_slice(&frame.locals);
+        Value::extend_heap_values(out, &frame.locals);
         out.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-        out.extend_from_slice(&frame.registers);
+        match self.live_registers {
+            Some(mut live) => {
+                while live != 0 {
+                    let register = live.trailing_zeros() as usize;
+                    live &= live - 1;
+                    if let Some(&value) = frame.registers.get(register)
+                        && value.is_heap()
+                    {
+                        out.push(value);
+                    }
+                }
+            }
+            None => Value::extend_heap_values(out, &frame.registers),
+        }
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
@@ -314,6 +333,7 @@ impl Snap for Continuation {
             completion,
             resume_register: Snap::unsnap(reader)?,
             promise: Snap::unsnap(reader)?,
+            live_registers: None,
         })
     }
 }

@@ -693,6 +693,23 @@ impl Value {
         (self.0 & TAG_MASK) == TAG_HEAP
     }
 
+    /// Appends the heap values of `values` to `out`, in order: a branch-free compaction that
+    /// writes every value into reserved space and advances past the heap ones only.
+    #[inline(always)]
+    pub(crate) fn extend_heap_values(out: &mut Vec<Value>, values: &[Value]) {
+        out.reserve(values.len());
+        let start = out.len();
+        let mut kept = 0;
+        for &value in values {
+            // SAFETY: `kept` never passes the values read so far, so every write lands
+            // within the `values.len()` slots reserved past `start`.
+            unsafe { out.as_mut_ptr().add(start + kept).write(value) };
+            kept += usize::from(value.is_heap());
+        }
+        // SAFETY: the first `kept` slots past `start` were written above.
+        unsafe { out.set_len(start + kept) };
+    }
+
     pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
     }

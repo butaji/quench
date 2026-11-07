@@ -1102,8 +1102,9 @@ pub(super) struct AggregateRecord {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// A combinator element function's place in its aggregate. The aggregate itself is the
+/// function's environment, which keeps it alive exactly as long as the function.
 pub(super) struct AggregateJob {
-    pub(super) aggregate: Value,
     pub(super) index: usize,
     pub(super) rejected: bool,
 }
@@ -1171,7 +1172,6 @@ impl PromiseRuntime {
                 .chain(record.values.iter().copied())
                 .chain(record.keys.iter().flatten().copied())
         });
-        edges!(self.aggregate_jobs, |job| [job.aggregate]);
         edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
     }
 }

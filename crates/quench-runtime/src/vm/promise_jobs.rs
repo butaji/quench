@@ -343,11 +343,12 @@ impl<H: Host> Vm<H> {
             .get(&job)
             .copied()
             .ok_or_else(|| JsError("stale Promise aggregate job".into()))?;
+        let aggregate = self.heap.function(job).map_or(Value::UNDEFINED, |function| function.env);
         let Some((mode, resolve, reject)) = self
             .realm
             .promise
             .aggregates
-            .get(&aggregate_job.aggregate)
+            .get(&aggregate)
             .map(|record| (record.mode, record.resolve, record.reject))
         else {
             return Ok(Value::UNDEFINED);
@@ -378,7 +379,7 @@ impl<H: Host> Vm<H> {
                         .realm
                         .promise
                         .aggregates
-                        .get_mut(&aggregate_job.aggregate)
+                        .get_mut(&aggregate)
                         .unwrap();
                     match record.called.get_mut(index) {
                         Some(called) if !*called => {
@@ -418,7 +419,7 @@ impl<H: Host> Vm<H> {
                         .realm
                         .promise
                         .aggregates
-                        .get_mut(&aggregate_job.aggregate)
+                        .get_mut(&aggregate)
                         .unwrap();
                     record.values[index] = result;
                     record.remaining = record.remaining.saturating_sub(1);
