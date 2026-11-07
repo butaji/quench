@@ -1152,8 +1152,8 @@ impl<H: Host> Vm<H> {
         view: Value,
     ) -> Result<(), JsError> {
         let (subtag, offset, byte_length, length_tracking, buffer) = match self.heap.get(view) {
-            Some(Cell::TypedArray { kind, object, buffer, length, length_tracking }) => {
-                let (kind, offset, length, length_tracking, buffer) = (*kind, object.offset, *length, *length_tracking, *buffer);
+            Some(Cell::TypedArray { kind, object, buffer, length }) => {
+                let (kind, offset, length, buffer) = (*kind, object.offset, *length, *buffer);
                 // Only views on live resizable buffers can be out of bounds (V8's
                 // `IsOutOfBounds`).
                 let out_of_bounds = !self.array_buffer_detached(buffer)
@@ -1165,16 +1165,16 @@ impl<H: Host> Vm<H> {
                 }
                 let subtag = VIEW_TAGS.iter().find(|(candidate, _)| *candidate == kind).map(|(_, tag)| *tag).unwrap();
                 // Length-tracking views carry no fixed length.
-                let byte_length = if length_tracking { 0 } else { length * kind.width() };
-                (subtag, offset, byte_length, length_tracking, buffer)
+                let byte_length = length.get().map_or(0, |length| length * kind.width());
+                (subtag, offset, byte_length, length.is_tracking(), buffer)
             }
-            Some(Cell::DataView { object, buffer, length, length_tracking }) => {
-                let (offset, length, length_tracking, buffer) = (object.offset, *length, *length_tracking, *buffer);
-                let required = if length_tracking { 0 } else { length };
+            Some(Cell::DataView { object, buffer, length }) => {
+                let (offset, length, buffer) = (object.offset, *length, *buffer);
+                let required = length.get().unwrap_or(0);
                 if self.array_buffer_resizable(buffer) && self.array_buffer_out_of_bounds(buffer, offset, required) {
                     return Err(self.uncloneable_with(program, hooks, view));
                 }
-                (DATA_VIEW_TAG, offset, required, length_tracking, buffer)
+                (DATA_VIEW_TAG, offset, required, length.is_tracking(), buffer)
             }
             _ => unreachable!("dispatched as a view"),
         };
@@ -1650,8 +1650,7 @@ impl<H: Host> Vm<H> {
             self.heap.alloc(Cell::DataView {
                 object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
-                length: byte_length,
-                length_tracking,
+                length: crate::heap::ViewLength::new(byte_length, length_tracking),
             })
         } else {
             let kind = valid(VIEW_TAGS.iter().find(|(_, tag)| *tag == subtag).map(|(kind, _)| *kind))?;
@@ -1663,8 +1662,7 @@ impl<H: Host> Vm<H> {
                 kind,
                 object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
-                length: byte_length / kind.width(),
-                length_tracking,
+                length: crate::heap::ViewLength::new(byte_length / kind.width(), length_tracking),
             })
         };
         self.wire_add_object(deserializer, id, view);

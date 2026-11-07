@@ -249,11 +249,6 @@ const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 /// many (`WASM_JIT_BACKEDGES_PER_ENTRY`). Wasm signatures and bytecode are fixed, so this is
 /// a hotness gate.
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
-/// The Wasm tier state's `hotness` byte: the entries observed, and whether the one compile
-/// attempt was claimed. `WASM_JIT_PROMOTION_ENTRIES` fits the count.
-const WASM_TIER_ATTEMPTED: u8 = 1 << (u8::BITS - 1);
-const WASM_TIER_ENTRIES: u8 = !WASM_TIER_ATTEMPTED;
-const _: () = assert!(WASM_JIT_PROMOTION_ENTRIES <= WASM_TIER_ENTRIES);
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 /// The backward jumps a lane run of a Wasm function counts as one interpreter entry toward
 /// `WASM_JIT_PROMOTION_ENTRIES`: a loop of this many iterations does at least the work of an
@@ -441,12 +436,38 @@ pub(super) enum JsTierState {
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
 
-#[derive(Default)]
-struct WasmTierState {
-    /// The high bit records a one-shot promotion attempt; low bits hold the
-    /// number of interpreter entries observed before that attempt.
-    hotness: u8,
-    compiled: Option<Rc<super::compiled::CompiledProgram>>,
+/// A Wasm function's selective tier: counting entries toward its one compile attempt, the
+/// attempt claimed, or its artifact. Retiring the artifact leaves it `Attempted`.
+#[derive(Clone)]
+pub(super) enum WasmTierState {
+    Counting(u8),
+    Attempted,
+    Compiled(Rc<super::compiled::CompiledProgram>),
+}
+
+impl Default for WasmTierState {
+    fn default() -> Self {
+        Self::Counting(0)
+    }
+}
+
+impl WasmTierState {
+    fn compiled(&self) -> Option<&Rc<super::compiled::CompiledProgram>> {
+        match self {
+            Self::Compiled(compiled) => Some(compiled),
+            Self::Counting(_) | Self::Attempted => None,
+        }
+    }
+
+    fn take_compiled(&mut self) -> Option<Rc<super::compiled::CompiledProgram>> {
+        match std::mem::replace(self, Self::Attempted) {
+            Self::Compiled(compiled) => Some(compiled),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -594,19 +615,17 @@ impl JitTierManager {
         let Some(state) = self.wasm_mut_or_default(function) else {
             return false;
         };
-        if state.compiled.is_some() || state.hotness & WASM_TIER_ATTEMPTED != 0 {
+        let WasmTierState::Counting(count) = *state else {
             return false;
-        }
-        let count = state.hotness & WASM_TIER_ENTRIES;
-        if lane_handoff && count.saturating_add(1) >= WASM_JIT_PROMOTION_ENTRIES {
-            return true;
-        }
+        };
         let count = count.saturating_add(1);
-        state.hotness = count;
         if count < WASM_JIT_PROMOTION_ENTRIES {
+            *state = WasmTierState::Counting(count);
             return false;
         }
-        state.hotness |= WASM_TIER_ATTEMPTED;
+        if !lane_handoff {
+            *state = WasmTierState::Attempted;
+        }
         true
     }
 
@@ -616,11 +635,9 @@ impl JitTierManager {
         let Some(state) = self.wasm_mut_or_default(function) else {
             return;
         };
-        if state.compiled.is_some() || state.hotness & WASM_TIER_ATTEMPTED != 0 {
-            return;
+        if let WasmTierState::Counting(count) = state {
+            *count = count.saturating_add(1).min(WASM_JIT_PROMOTION_ENTRIES - 1);
         }
-        let count = state.hotness & WASM_TIER_ENTRIES;
-        state.hotness = count.saturating_add(1).min(WASM_JIT_PROMOTION_ENTRIES - 1);
     }
 
     fn js(&self, function: u32) -> Option<&JsTierState> {
@@ -752,7 +769,7 @@ impl JitTierManager {
         let retired = tiers
             .functions
             .values_mut()
-            .filter_map(|state| state.compiled.take())
+            .filter_map(WasmTierState::take_compiled)
             .fold((0, 0), |(count, bytes), compiled| (count + 1, bytes + compiled.mapped_bytes()));
         Some(retired)
     }
@@ -1255,13 +1272,13 @@ impl ProgramStore {
             reclaimed_wasm_tiers.1 += entry
                 .jit_tiers
                 .wasm_values()
-                .filter_map(|state| state.compiled.as_ref())
+                .filter_map(WasmTierState::compiled)
                 .map(|compiled| compiled.mapped_bytes())
                 .sum::<usize>();
             reclaimed_wasm_tiers.0 += entry
                 .jit_tiers
                 .wasm_values()
-                .filter(|state| state.compiled.is_some())
+                .filter(|state| state.compiled().is_some())
                 .count();
             if let Some(compiled) = entry.compiled.as_ref().and_then(Option::as_ref) {
                 reclaimed_wasm_baselines.0 += 1;
@@ -1422,7 +1439,7 @@ impl ProgramStore {
                 compiled.clear_indirect_call_caches();
             }
             for state in entry.jit_tiers.wasm_values() {
-                if let Some(compiled) = &state.compiled {
+                if let Some(compiled) = state.compiled() {
                     compiled.clear_indirect_call_caches();
                 }
             }
@@ -1892,11 +1909,10 @@ impl ProgramStore {
         };
         tiers
             .wasm(function as u32)
-            .is_some_and(|state| state.compiled.is_some())
+            .is_some_and(|state| state.compiled().is_some())
             || tiers.wasm_values().any(|state| {
                 state
-                    .compiled
-                    .as_ref()
+                    .compiled()
                     .is_some_and(|compiled| compiled.has_function(function))
             })
     }
@@ -2056,8 +2072,8 @@ impl ProgramStore {
         self.entry(id)?
             .jit_tiers
             .wasm(function)?
-            .compiled
-            .clone()
+            .compiled()
+            .cloned()
     }
 
     /// Find a root artifact whose static closure includes this function.
@@ -2069,11 +2085,11 @@ impl ProgramStore {
         let tiers = &self.entry(id)?.jit_tiers;
         tiers
             .wasm(function)
-            .and_then(|state| state.compiled.clone())
+            .and_then(|state| state.compiled().cloned())
             .or_else(|| {
                 tiers
                     .wasm_values()
-                    .filter_map(|state| state.compiled.as_ref())
+                    .filter_map(WasmTierState::compiled)
                     .find(|compiled| compiled.has_function(function as usize))
                     .cloned()
             })
@@ -2092,7 +2108,7 @@ impl ProgramStore {
         self.entry(id)?
             .jit_tiers
             .wasm_values()
-            .filter_map(|state| state.compiled.as_ref())
+            .filter_map(WasmTierState::compiled)
             .find(|compiled| {
                 std::ptr::eq(Rc::as_ptr(compiled), artifact) && compiled.has_function(function)
             })
@@ -2126,7 +2142,7 @@ impl ProgramStore {
         if entry
             .jit_tiers
             .wasm(root)
-            .is_some_and(|state| state.compiled.is_some())
+            .is_some_and(|state| state.compiled().is_some())
         {
             return true;
         }
@@ -2147,22 +2163,13 @@ impl ProgramStore {
                 .release(JitArtifactKind::WasmTierRoot, 1, bytes);
             return false;
         };
-        state.compiled = Some(compiled);
+        *state = WasmTierState::Compiled(compiled);
         true
     }
 
     #[cfg(test)]
-    pub(super) fn wasm_tier_entry_count(&self, id: ProgramId, function: u32) -> Option<u8> {
-        self.entry(id)
-            .and_then(|entry| entry.jit_tiers.wasm(function))
-            .map(|state| state.hotness & WASM_TIER_ENTRIES)
-    }
-
-    #[cfg(test)]
-    pub(super) fn wasm_tier_attempted(&self, id: ProgramId, function: u32) -> Option<bool> {
-        self.entry(id)
-            .and_then(|entry| entry.jit_tiers.wasm(function))
-            .map(|state| state.hotness & WASM_TIER_ATTEMPTED != 0)
+    pub(super) fn wasm_tier_state(&self, id: ProgramId, function: u32) -> Option<WasmTierState> {
+        self.entry(id).and_then(|entry| entry.jit_tiers.wasm(function)).cloned()
     }
 
     pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
@@ -4279,10 +4286,10 @@ mod jit_code_cache_tests {
         }
         assert!(wasm_tiers.note_wasm_entry(2, false));
         assert!(!wasm_tiers.note_wasm_entry(2, false));
-        assert_eq!(
-            wasm_tiers.wasm(2).map(|state| state.hotness & super::WASM_TIER_ENTRIES),
-            Some(super::WASM_JIT_PROMOTION_ENTRIES)
-        );
+        assert!(matches!(
+            wasm_tiers.wasm(2),
+            Some(super::WasmTierState::Attempted)
+        ));
     }
 }
 

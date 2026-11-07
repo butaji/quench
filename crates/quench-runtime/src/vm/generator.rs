@@ -1,5 +1,5 @@
 use super::activation::{
-    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord,
+    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, GeneratorState,
 };
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
@@ -38,8 +38,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         ext.generator.as_deref().is_some_and(|record| {
-            !record.running
-                && !record.done
+            record.state == GeneratorState::Suspended
                 && record.realm == self.realm.globals
                 && record.continuation.as_ref().is_some_and(|continuation| continuation.program() == self.active_program)
         })
@@ -89,7 +88,7 @@ impl<H: Host> Vm<H> {
             return Some(Err(error));
         }
         let record = self.generator_record_mut(generator)?;
-        record.running = true;
+        record.state = GeneratorState::Executing;
         let continuation = record.continuation.take()?;
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
@@ -126,7 +125,7 @@ impl<H: Host> Vm<H> {
             InLoopGeneratorStop::Yielded { destination, delegated_result } => {
                 frame.with_objects = self.with_stack.split_off(frame.with_base);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
+                    record.stop();
                     record.continuation =
                         Some(Continuation::suspend(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED));
                 }
@@ -139,8 +138,7 @@ impl<H: Host> Vm<H> {
                 self.finish_frame_scopes(&frame);
                 self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
-                    record.done = true;
+                    record.state = GeneratorState::Completed;
                 }
                 true
             }
@@ -158,8 +156,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn abandon_in_loop_generator_step(&mut self, _resume: GeneratorResume) {
         let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = false;
-            record.done = true;
+            record.state = GeneratorState::Completed;
         }
     }
     pub(super) fn generator_prototype_method(
@@ -174,7 +171,7 @@ impl<H: Host> Vm<H> {
                 kind: IteratorKind::Generator,
                 ext,
                 ..
-            }) => ext.generator.as_ref().map(|record| record.running),
+            }) => ext.generator.as_ref().map(|record| record.is_executing()),
             _ => None,
         };
         let Some(is_running) = is_running else {
@@ -345,14 +342,7 @@ impl<H: Host> Vm<H> {
             },
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         });
         if let Some(IteratorRecord { source, .. }) = self.heap.iterator_mut(generator) {
             *source = generator;
@@ -363,18 +353,10 @@ impl<H: Host> Vm<H> {
                 "generator allocation lost its iterator cell".into(),
             ));
         };
-        ext.generator = Some(Box::new(GeneratorRecord {
-            continuation: Some(Continuation::suspend(
-                frame,
-                Completion::GeneratorStart,
-                None,
-                Value::UNDEFINED,
-            )),
+        ext.generator = Some(Box::new(GeneratorRecord::new(
+            Continuation::suspend(frame, Completion::GeneratorStart, None, Value::UNDEFINED),
             realm,
-            done: false,
-            running: false,
-            requests: std::collections::VecDeque::new(),
-        }));
+        )));
         Ok(generator)
     }
 
@@ -391,7 +373,7 @@ impl<H: Host> Vm<H> {
             let running = self
                 .generator_record_mut(generator)
                 .ok_or_else(|| JsError("async generator receiver is invalid".into()))?
-                .running;
+                .is_executing();
             if running {
                 self.generator_record_mut(generator)
                     .expect("async generator record exists")
@@ -418,13 +400,13 @@ impl<H: Host> Vm<H> {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
-            if record.running {
+            if record.is_executing() {
                 return Err(JsError("generator is already running".into()));
             }
-            if record.done {
+            if record.is_completed() {
                 None
             } else {
-                record.done = true;
+                record.state = GeneratorState::Completed;
                 record.continuation.take()
             }
         };
@@ -487,7 +469,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.with_call_roots([generator, value, promise], |vm| {
             if let Some(record) = vm.generator_record_mut(generator) {
-                record.running = true;
+                record.state = GeneratorState::Executing;
             }
             let awaited = match vm.promise_for_value(p, value) {
                 Ok(promise) => promise,
@@ -496,7 +478,7 @@ impl<H: Host> Vm<H> {
                         .thrown_value()
                         .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
                     if let Some(record) = vm.generator_record_mut(generator) {
-                        record.running = false;
+                        record.stop();
                     }
                     vm.async_generator_throw_ready(p, generator, reason, promise)?;
                     vm.resume_async_generator_queue(p, generator)?;
@@ -536,8 +518,8 @@ impl<H: Host> Vm<H> {
             let record = self
                 .generator_record_mut(generator)
                 .ok_or_else(|| JsError("async generator receiver is invalid".into()))?;
-            record.running = false;
-            !record.done
+            record.stop();
+            !record.is_completed()
                 && record.continuation.as_ref().is_some_and(|continuation| {
                     !matches!(continuation.completion, Completion::GeneratorStart)
                 })
@@ -559,7 +541,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if let Some(record) = self.generator_record_mut(generator) {
-            record.done = true;
+            record.state = GeneratorState::Completed;
         }
         let result = self.iterator_result(value, true)?;
         self.promise_settle(p, promise, PromiseState::Fulfilled, result)?;
@@ -583,7 +565,7 @@ impl<H: Host> Vm<H> {
         };
         let (generator, promise) = (*generator, *promise);
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = false;
+            record.stop();
         }
         self.async_generator_throw_ready(
             p,
@@ -739,10 +721,10 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.generator_record_mut(generator) else {
             return Err(JsError("generator receiver is invalid".into()));
         };
-        if record.running {
+        if record.is_executing() {
             return Err(JsError("generator is already running".into()));
         }
-        if record.done {
+        if record.is_completed() {
             return self.iterator_result(value, true);
         }
         if self.prepare_generator_return(generator, value)? {
@@ -939,7 +921,7 @@ impl<H: Host> Vm<H> {
                 let promise = self.promise_object()?;
                 let (running, done) = self
                     .generator_record_mut(generator)
-                    .map(|record| (record.running, record.done))
+                    .map(|record| (record.is_executing(), record.is_completed()))
                     .ok_or_else(|| JsError("async generator receiver is invalid".into()))?;
                 if running {
                     self.generator_record_mut(generator)
@@ -1044,9 +1026,7 @@ impl<H: Host> Vm<H> {
                         let _ = self.call_value(p, return_method, receiver, &[])?;
                     }
                     if let Some(record) = self.generator_record_mut(generator) {
-                        record.running = false;
-                        record.done = true;
-                        record.continuation = None;
+                        record.complete();
                     }
                     return Err(self.type_error(p, "delegated iterator has no throw method".into()));
                 }
@@ -1095,9 +1075,7 @@ impl<H: Host> Vm<H> {
             Err(error) => {
                 if async_from_sync {
                     if let Some(record) = self.generator_record_mut(generator) {
-                        record.running = false;
-                        record.done = true;
-                        record.continuation = None;
+                        record.complete();
                     }
                     let reason = error
                         .thrown_value()
@@ -1220,9 +1198,7 @@ impl<H: Host> Vm<H> {
         error: JsError,
     ) -> Result<Value, JsError> {
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = false;
-            record.done = true;
-            record.continuation = None;
+            record.complete();
         }
         Err(error)
     }
@@ -1238,8 +1214,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
         let continuation = match self.generator_record_mut(generator) {
             Some(record) => {
-                record.running = true;
-                record.done = false;
+                record.state = GeneratorState::Executing;
                 record.continuation.take()
             }
             None => None,
@@ -1368,11 +1343,10 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.generator_record_mut(generator) else {
             return Err(JsError("generator receiver is invalid".into()));
         };
-        if record.running {
+        if record.is_executing() {
             return Err(JsError("generator is already running".into()));
         }
-        record.done = true;
-        record.continuation = None;
+        record.complete();
         Ok(())
     }
 
@@ -1413,18 +1387,22 @@ impl<H: Host> Vm<H> {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
-            if record.running {
+            if record.is_executing() {
                 return Err(JsError("generator is already running".into()));
             }
+            let done = record.is_completed();
             let continuation = record.continuation.take();
             // A suspended generator that resumes runs from here; one that has not started and
             // receives an abrupt completion closes without running.
-            record.running = !record.done
+            if !done
                 && continuation.as_ref().is_some_and(|continuation| {
                     initial_error.is_none()
                         || !matches!(continuation.completion, Completion::GeneratorStart)
-                });
-            (continuation, record.realm, record.done)
+                })
+            {
+                record.state = GeneratorState::Executing;
+            }
+            (continuation, record.realm, done)
         };
         if done {
             if let Some(error) = initial_error {
@@ -1442,7 +1420,7 @@ impl<H: Host> Vm<H> {
         }
         let Some(execution_program) = self.programs.get(continuation.frame.program) else {
             if let Some(record) = self.generator_record_mut(generator) {
-                record.running = false;
+                record.stop();
             }
             return Err(JsError("generator continuation program is unavailable".into()));
         };
@@ -1454,8 +1432,7 @@ impl<H: Host> Vm<H> {
             if register as usize >= frame.registers.len() {
                 self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
-                    record.done = true;
+                    record.state = GeneratorState::Completed;
                 }
                 return Err(JsError("invalid generator resume register".into()));
             }
@@ -1478,8 +1455,7 @@ impl<H: Host> Vm<H> {
             Err(error) => {
                 self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
-                    record.done = true;
+                    record.state = GeneratorState::Completed;
                 }
                 return Err(error);
             }
@@ -1494,7 +1470,7 @@ impl<H: Host> Vm<H> {
                 let continuation =
                     self.suspend_activation(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
+                    record.stop();
                     record.continuation = Some(continuation);
                 }
                 Ok(match delegated_result {
@@ -1505,16 +1481,14 @@ impl<H: Host> Vm<H> {
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
-                    record.done = true;
+                    record.state = GeneratorState::Completed;
                 }
                 Ok(GeneratorStep::Done(value))
             }
             FrameOutcome::Await { .. } => {
                 self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
-                    record.done = true;
+                    record.state = GeneratorState::Completed;
                 }
                 Err(JsError(
                     "await is not supported in a synchronous generator".into(),
@@ -1555,7 +1529,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         loop {
             let request = match self.generator_record_mut(generator) {
-                Some(record) if !record.running => record.requests.pop_front(),
+                Some(record) if !record.is_executing() => record.requests.pop_front(),
                 _ => None,
             };
             let Some(request) = request else {
@@ -1585,7 +1559,7 @@ impl<H: Host> Vm<H> {
             }
             if self
                 .generator_record_mut(generator)
-                .is_some_and(|record| record.running)
+                .is_some_and(|record| record.is_executing())
             {
                 return Ok(());
             }
@@ -1602,10 +1576,10 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.generator_record_mut(generator) else {
             return Err(JsError("async generator receiver is invalid".into()));
         };
-        if record.done {
+        if record.is_completed() {
             return self.promise_settle(p, promise, PromiseState::Rejected, value);
         }
-        if record.running {
+        if record.is_executing() {
             record.requests.push_back(AsyncGeneratorRequest {
                 operation: AsyncGeneratorOperation::Throw,
                 promise,
@@ -1641,7 +1615,7 @@ impl<H: Host> Vm<H> {
                 let Some(record) = vm.generator_record_mut(generator) else {
                     return Err(JsError("async generator receiver is invalid".into()));
                 };
-                if record.running {
+                if record.is_executing() {
                     record.requests.push_back(AsyncGeneratorRequest {
                         operation: AsyncGeneratorOperation::Next,
                         promise,
@@ -1649,16 +1623,16 @@ impl<H: Host> Vm<H> {
                     });
                     return Ok(promise);
                 }
-                if record.done {
+                if record.is_completed() {
                     let result = vm.iterator_result(Value::UNDEFINED, true)?;
                     vm.promise_resolve_value(p, promise, result)?;
                     return Ok(promise);
                 }
                 let Some(continuation) = record.continuation.take() else {
-                    record.running = false;
+                    record.stop();
                     return Err(JsError("async generator is suspended".into()));
                 };
-                record.running = true;
+                record.state = GeneratorState::Executing;
                 (continuation, record.realm)
             };
             if matches!(continuation.completion, Completion::GeneratorStart)
@@ -1718,7 +1692,7 @@ impl<H: Host> Vm<H> {
                     FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. },
                 ) => {
                     vm.pool_frame(frame);
-                    vm.finish_async_generator(p, generator, promise, value, true)?;
+                    vm.finish_async_generator(p, generator, promise, value)?;
                 }
                 Ok(FrameOutcome::Yield {
                     value,
@@ -1778,7 +1752,7 @@ impl<H: Host> Vm<H> {
             Value::UNDEFINED,
         );
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = !delegated;
+            record.state = if delegated { GeneratorState::Suspended } else { GeneratorState::Executing };
             record.continuation = Some(continuation);
         }
         if delegated {
@@ -1796,14 +1770,11 @@ impl<H: Host> Vm<H> {
         generator: Value,
         promise: Value,
         value: Value,
-        done: bool,
     ) -> Result<(), JsError> {
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = false;
-            record.done = done;
-            record.continuation = None;
+            record.complete();
         }
-        let result = self.iterator_result(value, done)?;
+        let result = self.iterator_result(value, true)?;
         self.promise_resolve_value(p, promise, result)
     }
 
@@ -1815,9 +1786,7 @@ impl<H: Host> Vm<H> {
         error: JsError,
     ) -> Result<(), JsError> {
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = false;
-            record.done = true;
-            record.continuation = None;
+            record.complete();
         }
         let reason = error
             .thrown_value()
