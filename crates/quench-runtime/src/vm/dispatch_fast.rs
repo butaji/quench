@@ -18076,6 +18076,7 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
         Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
+        Some(Completion::Constructs) => lane_return_from::<H, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         _ => None,
     };
     if common.is_some() {
@@ -18092,7 +18093,7 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
 /// activation the same way (`lane_complete_cross_activation`).
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, false>(cx, value)
+    lane_return_from::<H, false, false, false>(cx, value)
 }
 
 /// `lane_return_plain` into a running lane body's call (`lane_body_call`): a returning
@@ -18100,7 +18101,7 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
 fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, true>(cx, value)
+    lane_return_from::<H, false, true, false>(cx, value)
 }
 
 /// `lane_complete_plain_activation` of an activation of another program than its caller's
@@ -18109,26 +18110,25 @@ fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option
 /// carries none of the program switch.
 #[inline(always)]
 fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let (registers, next) = lane_return_from::<H, true, false>(cx, value)?;
+    let (registers, next) = lane_return_from::<H, true, false, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
 /// `lane_return_plain` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
-/// (`Completion::Cross`), which enters the caller's program first. `INTO_BODY` admits a
-/// returning call too (`lane_return_to_body`).
+/// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
+/// `new` of its program (`Completion::Constructs`). `INTO_BODY` admits a returning call too.
 #[inline(always)]
-fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const CONSTRUCTS: bool>(cx: *mut LaneContext<H>, mut value: Value) -> Option<(Registers, Ip)> {
     debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a leaf's own returns complete it");
     let vm = unsafe { vm(cx) };
+    // A construction yields its receiver, the activation's `this`, for a non-object result.
+    if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).this }; }
     let stack = &mut vm.lane_stack;
     let top = stack.activations.last()?;
-    let ActivationKind::Script(script) = &top.kind else {
-        return None;
-    };
-    if script.completion != if CROSSES { Completion::Cross } else { Completion::Plain } {
-        return None;
-    }
+    let expected = if CROSSES { Completion::Cross } else if CONSTRUCTS { Completion::Constructs } else { Completion::Plain };
+    let ActivationKind::Script(script) = &top.kind else { return None };
+    if script.completion != expected { return None; }
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
     if !INTO_BODY && destination & crate::bytecode::RETURN_REGISTER != 0 {
@@ -18141,8 +18141,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool>(cx: *mu
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its window starts within the values.
     unsafe {
-        let len = stack.activations.len();
-        stack.activations.set_len(len - 1);
+        stack.activations.set_len(stack.activations.len() - 1);
         stack.values.set_len(window);
     }
     // The caller's memory view reads its program's records (`MemoryView::script`), which an

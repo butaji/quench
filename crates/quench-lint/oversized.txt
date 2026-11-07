@@ -527,7 +527,7 @@ complexity crates/quench-runtime/src/compile/ast/iteration.rs::FunctionCompiler<
 complexity crates/quench-runtime/src/compile/ast/object.rs::FunctionCompiler<'_,'_>::object_expression 41
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::statement_at_current_position 46
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::switch_statement 11
-complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 14
+complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 13
 complexity crates/quench-runtime/src/compile/capture_layout.rs::activation_is_private 11
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::emit_instance_fields 18
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::lower_class 90
@@ -1375,11 +1375,11 @@ file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1540
 file-lines crates/quench-runtime/src/compile.rs 4473
-file-lines crates/quench-runtime/src/compile/ast.rs 1310
+file-lines crates/quench-runtime/src/compile/ast.rs 1306
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
 file-lines crates/quench-runtime/src/compile/ast/expression.rs 980
-file-lines crates/quench-runtime/src/compile/ast/statement.rs 857
+file-lines crates/quench-runtime/src/compile/ast/statement.rs 854
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2031
 file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 644
@@ -1430,8 +1430,8 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23957
-file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3035
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23956
+file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1975
@@ -2578,7 +2578,7 @@ function-lines crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompi
 function-lines crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::for_statement_labeled 66
 function-lines crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::statement_at_current_position 131
 function-lines crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::switch_statement 86
-function-lines crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 56
+function-lines crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 53
 function-lines crates/quench-runtime/src/compile/ast/try_statement.rs::FunctionCompiler<'_,'_>::emit_abrupt_paths 56
 function-lines crates/quench-runtime/src/compile/ast/try_statement.rs::FunctionCompiler<'_,'_>::try_catch_finally_statement 99
 function-lines crates/quench-runtime/src/compile/ast/try_statement.rs::FunctionCompiler<'_,'_>::try_finally_statement 48
@@ -3075,7 +3075,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_pure_native 1
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 138
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_read_capture_value 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_generator_frame 44
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 49
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script_frame 70
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 48
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_step_array_iteration_in_place 42
@@ -3105,7 +3105,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::promote_fr
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame 59
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame_with_registers 41
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_frame_from_lane 48
-function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 1076
+function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 1073
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::unwind_general_loop 83
 function-lines crates/quench-runtime/src/vm/dispatch_wasm.rs::Vm<H>::step_wasm 956
 function-lines crates/quench-runtime/src/vm/disposal.rs::Vm<H>::async_iterator_dispose 54
