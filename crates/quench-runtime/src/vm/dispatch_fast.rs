@@ -4220,6 +4220,13 @@ unsafe fn lane_returning_binary_value<H: Host>(
     unsafe { lane_binary_value(cx, r, i) }
 }
 
+/// An operator of operands not both Numbers the lane computes in place: a concatenation of
+/// strings for `+`, or BigInt arithmetic; `None` leaves it to the general path.
+fn lane_other_operator_value<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
+    let concatenated = (operator == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right));
+    concatenated.flatten().or_else(|| lane_bigint_value(cx, operator, left, right))
+}
+
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
 /// allocates the result; `None` leaves the operation, and any error, to the general path.
 #[inline(never)]
@@ -4635,13 +4642,7 @@ script_handler! {
     /// BigInt arithmetic in place; anything else takes the general path.
     #[inline(never)]
     fn lane_operator_other<OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        let value = if OP == super::operations::ADDITION {
-            lane_concatenation(cx, left, right).or_else(|| lane_bigint_value(cx, OP, left, right))
-        } else {
-            lane_bigint_value(cx, OP, left, right)
-        };
-        let Some(value) = value else {
+        let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -4733,7 +4734,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_constant_numbers` and `lane_operator_constant_concatenation` of
+    /// `lane_operator_constant_numbers` and `lane_operator_constant_other` of
     /// `lane_operator_integer_constant`'s integer, out of line.
     #[inline(never)]
     fn lane_operator_integer_constant_numbers<OP: u32>(cx, r, ip, i, view) {
@@ -4750,16 +4751,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_numbers` with a constant right operand; a concatenation takes
-    /// `lane_operator_constant_concatenation`, out of line.
+    /// `lane_operator_numbers` with a constant right operand; other operands take
+    /// `lane_operator_constant_other`, out of line.
     #[inline(never)]
     fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant())
         else {
-            if OP == super::operations::ADDITION {
-                sibling!(lane_operator_constant_concatenation::<H>, r, ip, Carried::script(cx))
-            }
-            return exit(ip);
+            sibling!(lane_operator_constant_other::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4820,10 +4818,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_constant_numbers` of an addition that concatenates.
+    /// `lane_operator_other` of `lane_operator_constant_numbers`, whose right operand is the
+    /// record's constant.
     #[inline(never)]
-    fn lane_operator_constant_concatenation<>(cx, r, ip, i, view) {
-        let Some(value) = lane_concatenation(cx, r.get(i.b), i.constant()) else {
+    fn lane_operator_constant_other<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), i.constant()) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -12631,7 +12630,6 @@ macro_rules! lane_plain_activation {
         if argc > target.params
             || argc > FIXED_ARGUMENT_COPIES
             || !lane_activation_room(vm, target)
-            || lane_crosses::<H, false>(cx, target)
         {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
@@ -13074,7 +13072,6 @@ script_handler! {
                 || !lane_activation_room(vm, target)
                 || (returns && !lane_returning_call_admitted(cx))
                 || vm.with_scope_entered
-                || lane_crosses::<H, false>(cx, target)
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
@@ -13180,7 +13177,6 @@ script_handler! {
         if ImmediateLayout::argument_count(i.imm()) > target.params
             || (returns && !lane_returning_call_admitted(cx))
             || vm.with_scope_entered
-            || lane_crosses::<H, false>(cx, &target)
             || vm.host.observes_promise_lifecycle()
         {
             return exit(ip);
@@ -16244,18 +16240,19 @@ fn lane_script_target_in<H: Host>(
     // activate callees of the running program alone. Another program's callee, once
     // resolved, is held apart (`cross_call_entry`) for the callers that activate across
     // programs; resolving it again would only find it so.
-    // The cached entry is tested and used in place.
-    let active = vm.active_program;
-    let admits = move |target: &ScriptCallTarget| target.program == active && lane_admits_activation(target);
+    // The cached entry is tested and used in place; `script_call_holds` admitted it for the
+    // active program already.
     if let Some(entry) = vm.script_call_entry(callee) {
         // SAFETY: the entry is read before anything else touches the cache.
         let target = unsafe { &*entry };
-        return admits(target).then_some(target);
+        return lane_admits_activation(target).then_some(target);
     }
     if vm.cross_call_entry(callee).is_some() {
         return None;
     }
-    *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(admits);
+    let active = vm.active_program;
+    *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
+        .filter(|target| target.program == active && lane_admits_activation(target));
     resolved.as_ref()
 }
 
@@ -16943,7 +16940,6 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     if !target.entry.activates()
         || argc > target.params.min(FIXED_ARGUMENT_COPIES)
         || !lane_activation_room(vm, target)
-        || lane_crosses::<H, false>(cx, target)
     {
         return LANE_CALL_MISSED;
     }
@@ -17016,7 +17012,6 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         || argc > target.params
         || argc > FIXED_ARGUMENT_COPIES
         || !lane_activation_room(vm, &target)
-        || lane_crosses::<H, false>(cx, &target)
     {
         return LANE_CALL_MISSED;
     }
@@ -17177,17 +17172,13 @@ fn lane_body_left<H: Host>(
     }
 }
 
-/// Whether activating `target` leaves the running program. Every activation tests it, so an
-/// instantiation whose callers route only same-program targets to it (`MAY_CROSS` false)
-/// still activates a cross-program target exactly, on its cold branch: a routing mistake
-/// costs speed, not the program tables the callee runs with.
+/// Whether activating `target` leaves the running program. A target from
+/// `LaneStack::script_targets` never does: `Vm::script_call_holds` admitted it for the VM's
+/// active program, which is the lane's (`lane_enter_program` sets both), so the fast call
+/// forms take that fact as proven (`MAY_CROSS` false) and only the general activation asks.
 #[inline(always)]
 fn lane_crosses<H: Host, const MAY_CROSS: bool>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
-    let cross = target.program != unsafe { (*cx).program };
-    if !MAY_CROSS && cross {
-        std::hint::cold_path();
-    }
-    cross
+    MAY_CROSS && target.program != unsafe { (*cx).program }
 }
 
 /// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
@@ -17265,8 +17256,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
-    debug_assert!(GENERAL || !lane_crosses::<H, true>(cx, target));
-    let cross = GENERAL && lane_crosses::<H, true>(cx, target);
+    let cross = lane_crosses::<H, GENERAL>(cx, target);
     let activation = Activation {
         function: target.function,
         call: ip,
@@ -17771,8 +17761,8 @@ fn lane_planned_receiver<H: Host>(
 /// activation or frame kept: the activation's registers and the callee's first record, or
 /// the record to continue at when the call takes the general path. Out of line, so the
 /// common activation keeps its code. Without `MAY_CROSS` its callers route the running
-/// program's targets, as every path but a plain call's makes them (`lane_script_target`);
-/// a cross target takes the cold branch of `lane_crosses`.
+/// program's targets, as every path but a plain call's makes them (`lane_script_target`),
+/// so it takes that fact as proven.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
