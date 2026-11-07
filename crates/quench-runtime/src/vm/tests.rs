@@ -13982,7 +13982,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         .unwrap();
 
     // Each policy compiles the loop at its own optimization level, or not at all
-    // (`PolicyTiers::loop_opt_level`); the result is the same either way.
+    // (`PolicyTiers::loop_tier`); the result is the same either way.
     for policy in crate::MemoryPolicy::ALL {
         let compiled_output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));

@@ -142,7 +142,7 @@ mod tests {
     /// prove).
     #[test]
     fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
-        let isa = super::super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
         let mut heap = Heap::new();
         let objects = objects_of_every_form(&mut heap);
         for form in [Form::Packed, Form::Arena, Form::Either] {

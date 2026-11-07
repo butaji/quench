@@ -1242,7 +1242,7 @@ pub(super) fn lower_body(
     loop_entry: Option<usize>,
     allow_first_entry: bool,
 ) -> Option<LoweredLane> {
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
         vm, generic, direct, frame_captures, None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense));
     let first_entry = osr.is_none();
@@ -5288,7 +5288,7 @@ mod tests {
         ).unwrap();
         let id = program.functions.iter().position(|body| body.header().name
             .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, 0)
             .into_iter().next().expect("typed loop region");
         cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
@@ -5316,7 +5316,7 @@ mod tests {
 
     #[test]
     fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         for callback_returns_to_loop in [false, true] {
             let mut function = ir::Function::new();
             let mut context = FunctionBuilderContext::new();
@@ -5379,7 +5379,7 @@ mod tests {
                     && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
             assert_eq!(captures.len(), if polymorphic { 0 } else { 2 }, "{source}\n{}", program.disassemble());
             if polymorphic { continue; }
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = (*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize);
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
                 &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
@@ -5469,7 +5469,7 @@ mod tests {
                     .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0);
             assert!(!regions.is_empty(), "selected caller header must publish");
             let mut integer_add = false;
@@ -5514,7 +5514,7 @@ mod tests {
         let divisor = unit.instructions.iter().find(|instruction| instruction.op().js_denotation() == JsDenotation::NumericBinary
             && super::super::super::operations::NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())
                 == Some(super::super::super::operations::NumberArithmetic::Divide)).unwrap().operand_c().register_index().unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
         let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(),
             &[], None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense).expect("inductive native loop");
@@ -5690,7 +5690,7 @@ mod tests {
                 // Exercise the linked unit/inliner path too: execution through
                 // the dynamic VM alone need not select the same region entries.
                 let module = crate::lower_native_js_module(&program, "capture_entry").unwrap();
-                let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+                let isa = super::super::super::jit_backend::target_isa().unwrap();
                 for function in module.functions {
                     if let super::super::super::native_object::NativeFunction::Definition { function, .. } = function {
                         super::super::super::jit_backend::compile_function(function, &*isa, None, |_, _| Ok(())).unwrap();
@@ -5725,7 +5725,7 @@ mod tests {
             "function predicate(x){let result;if(x<0)result=x===-1;else result=x===1;if(result)return 7;return 9;}",
             "boolean-join.js").unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
@@ -5772,7 +5772,7 @@ mod tests {
             (target <= pc).then_some(target)
         }).unwrap();
         assert_ne!(header, 0);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
         let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None,
             &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense).unwrap();
@@ -5801,7 +5801,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "function words(x){x=x|0;return x|0;}", "unboxed-word-input.js").unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
@@ -5859,7 +5859,7 @@ mod tests {
             "missing-poll.js").unwrap();
         let function = program.function(1);
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
         let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
@@ -5893,7 +5893,7 @@ mod tests {
                 ty: Type::INT32, target_shape: None, inherited: None,
             }])).collect();
         assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
@@ -5923,7 +5923,7 @@ mod tests {
                 Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, target_shape: None, inherited: None }]))
             } else { None }
         }).collect();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeSet::new(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
@@ -5953,7 +5953,7 @@ mod tests {
                     ty: Type::ANY, inherited: None }]))
             } else { None }
         }).collect();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeSet::new(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
@@ -5979,7 +5979,7 @@ mod tests {
         ).unwrap();
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
