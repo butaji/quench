@@ -13174,11 +13174,9 @@ fn lane_native_value<H: Host>(
     // Each shortcut answers its native's common case; a miss falls through to the one call of
     // `lane_string_or_native_call` below.
     match native {
-        // The JIT-mode DataView lane (`js_jit_dataview_float64_enabled`); a miss takes the
-        // native, which coerces and throws.
+        // The JIT-mode DataView lane; a miss takes the native, which coerces and throws.
         Native::DataViewGetFloat64 | Native::DataViewSetFloat64
-            if vm.execution_mode == super::ExecutionMode::Compiled
-                && vm.programs.js_jit_dataview_float64_enabled() =>
+            if vm.execution_mode == super::ExecutionMode::Compiled =>
         {
             let value = vm.lane_data_view_float64(native, receiver, args);
             if value.is_some() {

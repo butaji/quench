@@ -24,15 +24,6 @@ const MEMCPY_RAW_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
 const MEMCPY_EARLY_OFF: &str = "quench_memcpy_early_import_off";
 const MEMCPY_EARLY_ON: &str = "quench_memcpy_early_import_on";
 const MEMCPY_EARLY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
-const DIRECT_COMPARE_BRANCHES_OFF: &str = "quench_direct_compare_branches_off";
-const DIRECT_COMPARE_BRANCHES_ON: &str = "quench_direct_compare_branches_on";
-const DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
-const AFFINE_PAIR_OFF: &str = "quench_affine_pair_off";
-const AFFINE_PAIR_ON: &str = "quench_affine_pair_on";
-const AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
-const REFERENCE_BODY_CACHE_OFF: &str = "quench_reference_body_cache_off";
-const REFERENCE_BODY_CACHE_ON: &str = "quench_reference_body_cache_on";
-const REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
 const MEMCPY_LEAF_OFF: &str = "quench_memcpy_native_leaf_off";
 const MEMCPY_LEAF_ON: &str = "quench_memcpy_native_leaf_on";
 const MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
@@ -45,9 +36,6 @@ enum DiagnosticAbMode {
     DirectMemcpy,
     RawI32Memcpy,
     EarlyImportMemcpy,
-    DirectCompareBranches,
-    AffinePair,
-    ReferenceBodyCache,
     NativeMemcpyLeaf,
     SelectiveHandoff,
 }
@@ -113,51 +101,6 @@ static MEMCPY_EARLY_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
     minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
 };
 
-static DIRECT_COMPARE_BRANCHES_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
-    mode: DiagnosticAbMode::DirectCompareBranches,
-    report_kind: "jit_wasm_compare_branch_ab_diagnostic",
-    off_engine: DIRECT_COMPARE_BRANCHES_OFF,
-    on_engine: DIRECT_COMPARE_BRANCHES_ON,
-    switch_env: DIRECT_COMPARE_BRANCHES_ENV,
-    off_value: "0",
-    on_value: "1",
-    fixed_env: None,
-    fixed_env2: None,
-    fixed_env3: None,
-    fixture_name: "quicksort-wasm",
-    minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
-};
-
-static AFFINE_PAIR_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
-    mode: DiagnosticAbMode::AffinePair,
-    report_kind: "jit_wasm_affine_pair_ab_diagnostic",
-    off_engine: AFFINE_PAIR_OFF,
-    on_engine: AFFINE_PAIR_ON,
-    switch_env: AFFINE_PAIR_ENV,
-    off_value: "0",
-    on_value: "1",
-    fixed_env: None,
-    fixed_env2: None,
-    fixed_env3: None,
-    fixture_name: "gcc-loops-wasm",
-    minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
-};
-
-static REFERENCE_BODY_CACHE_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
-    mode: DiagnosticAbMode::ReferenceBodyCache,
-    report_kind: "jit_wasm_reference_body_cache_ab_diagnostic",
-    off_engine: REFERENCE_BODY_CACHE_OFF,
-    on_engine: REFERENCE_BODY_CACHE_ON,
-    switch_env: REFERENCE_BODY_CACHE_ENV,
-    off_value: "0",
-    on_value: "1",
-    fixed_env: None,
-    fixed_env2: None,
-    fixed_env3: None,
-    fixture_name: "tsf-wasm",
-    minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
-};
-
 static MEMCPY_LEAF_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
     mode: DiagnosticAbMode::NativeMemcpyLeaf,
     report_kind: "jit_wasm_memcpy_native_leaf_ab_diagnostic",
@@ -195,20 +138,14 @@ fn diagnostic_ab_engines(config: DiagnosticAbConfig) -> [&'static str; 4] {
 fn selected_diagnostic_ab_config(
     direct_copy: bool,
     raw_i32: bool,
-    compare_branches: bool,
     early_import: bool,
-    affine_pair: bool,
-    reference_body_cache: bool,
     memcpy_leaf: bool,
     selective_handoff: bool,
 ) -> Result<DiagnosticAbConfig, String> {
     if [
         direct_copy,
         raw_i32,
-        compare_branches,
         early_import,
-        affine_pair,
-        reference_body_cache,
         memcpy_leaf,
         selective_handoff,
     ]
@@ -220,10 +157,7 @@ fn selected_diagnostic_ab_config(
         return Err(
             if direct_copy
                 || raw_i32
-                || compare_branches
                 || early_import
-                || affine_pair
-                || reference_body_cache
                 || memcpy_leaf
                 || selective_handoff
             {
@@ -237,14 +171,8 @@ fn selected_diagnostic_ab_config(
         MEMCPY_DIRECT_CONFIG
     } else if raw_i32 {
         MEMCPY_RAW_CONFIG
-    } else if compare_branches {
-        DIRECT_COMPARE_BRANCHES_CONFIG
     } else if early_import {
         MEMCPY_EARLY_CONFIG
-    } else if affine_pair {
-        AFFINE_PAIR_CONFIG
-    } else if reference_body_cache {
-        REFERENCE_BODY_CACHE_CONFIG
     } else if memcpy_leaf {
         MEMCPY_LEAF_CONFIG
     } else {
@@ -275,12 +203,6 @@ struct SuiteInput {
     jit_wasm_memcpy_raw_ab: bool,
     #[serde(default)]
     jit_wasm_memcpy_early_ab: bool,
-    #[serde(default)]
-    jit_wasm_compare_branch_ab: bool,
-    #[serde(default)]
-    jit_wasm_affine_pair_ab: bool,
-    #[serde(default)]
-    jit_wasm_reference_body_cache_ab: bool,
     #[serde(default)]
     jit_wasm_memcpy_leaf_ab: bool,
     #[serde(default)]
@@ -520,30 +442,16 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     if input.jit_wasm_memcpy_ab
         || input.jit_wasm_memcpy_raw_ab
         || input.jit_wasm_memcpy_early_ab
-        || input.jit_wasm_compare_branch_ab
-        || input.jit_wasm_affine_pair_ab
-        || input.jit_wasm_reference_body_cache_ab
         || input.jit_wasm_memcpy_leaf_ab
         || input.jit_wasm_selective_ab
     {
-        let mut config = selected_diagnostic_ab_config(
+        let config = selected_diagnostic_ab_config(
             input.jit_wasm_memcpy_ab,
             input.jit_wasm_memcpy_raw_ab,
-            input.jit_wasm_compare_branch_ab,
             input.jit_wasm_memcpy_early_ab,
-            input.jit_wasm_affine_pair_ab,
-            input.jit_wasm_reference_body_cache_ab,
             input.jit_wasm_memcpy_leaf_ab,
             input.jit_wasm_selective_ab,
         )?;
-        if input.jit_wasm_reference_body_cache_ab
-            && input.fixtures.len() == 1
-            && input.fixtures.keys().next().is_some_and(|path| {
-                path.ends_with("/sqlite3-wasm")
-            })
-        {
-            config.fixture_name = "sqlite3-wasm";
-        }
         validate_diagnostic_ab(&input, config)?;
         return run_diagnostic_ab_analysis(&input, &input_path, output_path.as_deref(), config);
     }
@@ -812,16 +720,10 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
     let memcpy_leaf = config.mode == DiagnosticAbMode::NativeMemcpyLeaf;
     let raw_i32_enabled = raw_i32 || early_import || memcpy_leaf;
     let early_import_enabled = early_import || memcpy_leaf;
-    let compare_branches = config.mode == DiagnosticAbMode::DirectCompareBranches;
-    let affine_pair = config.mode == DiagnosticAbMode::AffinePair;
-    let reference_body_cache = config.mode == DiagnosticAbMode::ReferenceBodyCache;
     let selective_handoff = config.mode == DiagnosticAbMode::SelectiveHandoff;
     if input.jit_wasm_memcpy_ab != direct_copy
         || input.jit_wasm_memcpy_raw_ab != raw_i32
         || input.jit_wasm_memcpy_early_ab != early_import
-        || input.jit_wasm_compare_branch_ab != compare_branches
-        || input.jit_wasm_affine_pair_ab != affine_pair
-        || input.jit_wasm_reference_body_cache_ab != reference_body_cache
         || input.jit_wasm_memcpy_leaf_ab != memcpy_leaf
         || input.jit_wasm_selective_ab != selective_handoff
         || input.jit_diagnostics
@@ -939,7 +841,6 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
                 .any(|key| key.starts_with("QUENCH_WASM_JIT_") && key != config.switch_env)
             || (!raw_i32_enabled && quench.environment.contains_key(MEMCPY_RAW_ENV))
             || (!early_import_enabled && quench.environment.contains_key(MEMCPY_EARLY_ENV))
-            || (compare_branches && quench.environment.contains_key(MEMCPY_DIRECT_ENV))
         {
             return Err(format!(
                 "{} has invalid default-JIT provenance",
@@ -1260,19 +1161,11 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
     if input.jit_wasm_memcpy_ab
         || input.jit_wasm_memcpy_raw_ab
         || input.jit_wasm_memcpy_early_ab
-        || input.jit_wasm_affine_pair_ab
-        || input.jit_wasm_reference_body_cache_ab
         || input.jit_wasm_memcpy_leaf_ab
         || input.jit_wasm_selective_ab
     {
         return Err(
             "Wasm JIT A/B diagnostic reports cannot be used for qualification analysis".into(),
-        );
-    }
-    if input.jit_wasm_compare_branch_ab {
-        return Err(
-            "Wasm compare-branch A/B diagnostic reports cannot be used for qualification analysis"
-                .into(),
         );
     }
     if !input.qualification_ready || !input.complete {
@@ -1724,15 +1617,12 @@ impl XorShift64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AFFINE_PAIR_CONFIG, AFFINE_PAIR_ENV, AFFINE_PAIR_OFF, AFFINE_PAIR_ON, ArtifactInput,
-        CorpusInput, DIRECT_COMPARE_BRANCHES_CONFIG, DIRECT_COMPARE_BRANCHES_ENV,
-        DIRECT_COMPARE_BRANCHES_OFF, DIRECT_COMPARE_BRANCHES_ON, DiagnosticAbConfig,
+        ArtifactInput, CorpusInput, DiagnosticAbConfig,
         DiagnosticAbMode, EngineInput, FixtureInput, HostInput, MEMCPY_DIRECT_CONFIG,
         MEMCPY_DIRECT_ENV, MEMCPY_DIRECT_OFF, MEMCPY_DIRECT_ON, MEMCPY_EARLY_CONFIG,
         MEMCPY_EARLY_ENV, MEMCPY_EARLY_OFF, MEMCPY_EARLY_ON, MEMCPY_LEAF_CONFIG, MEMCPY_LEAF_ENV,
         MEMCPY_LEAF_OFF, MEMCPY_LEAF_ON, MEMCPY_RAW_CONFIG, MEMCPY_RAW_ENV,
-        REFERENCE_BODY_CACHE_CONFIG, REFERENCE_BODY_CACHE_ENV, REFERENCE_BODY_CACHE_OFF,
-        REFERENCE_BODY_CACHE_ON, RoundInput, SELECTIVE_HANDOFF_CONFIG, SELECTIVE_HANDOFF_ENV,
+        RoundInput, SELECTIVE_HANDOFF_CONFIG, SELECTIVE_HANDOFF_ENV,
         SELECTIVE_HANDOFF_OFF, SELECTIVE_HANDOFF_ON, SampleInput, SuiteInput,
         analyze_diagnostic_ab_fixture, median, median_log_ratio,
         maximum_rss_ratio, paired_bootstrap_log_ratio_interval, rss_ratio_qualifies,
@@ -1910,9 +1800,6 @@ mod tests {
             jit_wasm_memcpy_ab: config.mode == DiagnosticAbMode::DirectMemcpy,
             jit_wasm_memcpy_raw_ab: config.mode == DiagnosticAbMode::RawI32Memcpy,
             jit_wasm_memcpy_early_ab: config.mode == DiagnosticAbMode::EarlyImportMemcpy,
-            jit_wasm_compare_branch_ab: config.mode == DiagnosticAbMode::DirectCompareBranches,
-            jit_wasm_affine_pair_ab: config.mode == DiagnosticAbMode::AffinePair,
-            jit_wasm_reference_body_cache_ab: config.mode == DiagnosticAbMode::ReferenceBodyCache,
             jit_wasm_memcpy_leaf_ab: config.mode == DiagnosticAbMode::NativeMemcpyLeaf,
             jit_wasm_selective_ab: config.mode == DiagnosticAbMode::SelectiveHandoff,
             rounds_requested: config.minimum_rounds,
@@ -1987,9 +1874,6 @@ mod tests {
             jit_wasm_memcpy_ab: false,
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
-            jit_wasm_compare_branch_ab: false,
-            jit_wasm_affine_pair_ab: false,
-            jit_wasm_reference_body_cache_ab: false,
             jit_wasm_memcpy_leaf_ab: false,
             jit_wasm_selective_ab: false,
             rounds_requested: 11,
@@ -2038,9 +1922,6 @@ mod tests {
             jit_wasm_memcpy_ab: false,
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
-            jit_wasm_compare_branch_ab: false,
-            jit_wasm_affine_pair_ab: false,
-            jit_wasm_reference_body_cache_ab: false,
             jit_wasm_memcpy_leaf_ab: false,
             jit_wasm_selective_ab: false,
             rounds_requested: 11,
@@ -2089,9 +1970,6 @@ mod tests {
             jit_wasm_memcpy_ab: true,
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
-            jit_wasm_compare_branch_ab: false,
-            jit_wasm_affine_pair_ab: false,
-            jit_wasm_reference_body_cache_ab: false,
             jit_wasm_memcpy_leaf_ab: false,
             jit_wasm_selective_ab: false,
             rounds_requested: 11,
@@ -2238,11 +2116,11 @@ mod tests {
         assert!(validate_diagnostic_ab(&invalid_provenance, MEMCPY_RAW_CONFIG).is_err());
 
         let config =
-            selected_diagnostic_ab_config(false, true, false, false, false, false, false, false)
+            selected_diagnostic_ab_config(false, true, false, false, false)
                 .expect("raw mode selected");
         assert_eq!(config.mode, DiagnosticAbMode::RawI32Memcpy);
         assert!(
-            selected_diagnostic_ab_config(true, true, false, false, false, false, false, false)
+            selected_diagnostic_ab_config(true, true, false, false, false)
                 .is_err()
         );
         assert_eq!(MEMCPY_RAW_ENV, "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32");
@@ -2290,7 +2168,7 @@ mod tests {
         assert!(validate_diagnostic_ab(&invalid_provenance, MEMCPY_EARLY_CONFIG).is_err());
 
         let config =
-            selected_diagnostic_ab_config(false, false, false, true, false, false, false, false)
+            selected_diagnostic_ab_config(false, false, true, false, false)
                 .expect("early-import mode selected");
         assert_eq!(config.mode, DiagnosticAbMode::EarlyImportMemcpy);
         assert_eq!(config.off_engine, MEMCPY_EARLY_OFF);
@@ -2301,233 +2179,9 @@ mod tests {
             "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT"
         );
         assert!(
-            selected_diagnostic_ab_config(false, true, false, true, false, false, false, false)
+            selected_diagnostic_ab_config(false, true, true, false, false)
                 .is_err()
         );
-    }
-
-    #[test]
-    fn compare_branch_ab_accepts_three_rounds_and_reports_paired_nonqualifying_ratios() {
-        let input = memcpy_ab_input_for(&DIRECT_COMPARE_BRANCHES_CONFIG);
-        validate_diagnostic_ab(&input, DIRECT_COMPARE_BRANCHES_CONFIG)
-            .expect("three-round quicksort direct-branch provenance");
-        assert!(validate_suite(&input).is_err());
-        let fixture = input
-            .fixtures
-            .values()
-            .next()
-            .expect("one QuickSort fixture");
-        let analysis = analyze_diagnostic_ab_fixture(
-            "quench-bench/jetstream/quicksort-wasm",
-            fixture,
-            3,
-            DIRECT_COMPARE_BRANCHES_CONFIG,
-        )
-        .expect("paired compare-branch screen analysis");
-
-        assert!(!analysis.qualified);
-        assert_eq!(analysis.paired_rounds, 3);
-        let on_vs_off = analysis
-            .comparisons
-            .get("quench_direct_compare_branches_on_vs_quench_direct_compare_branches_off")
-            .expect("direct compare-branches on/off comparison");
-        assert!((on_vs_off.score.median_ratio - 1.1).abs() < 1e-12);
-        assert!((on_vs_off.max_rss.median_ratio - 0.9).abs() < 1e-12);
-        assert!(
-            analysis
-                .comparisons
-                .contains_key("quench_direct_compare_branches_on_vs_bun")
-        );
-        assert!(
-            analysis
-                .comparisons
-                .contains_key("quench_direct_compare_branches_on_vs_node")
-        );
-
-        let mut invalid_switch = memcpy_ab_input_for(&DIRECT_COMPARE_BRANCHES_CONFIG);
-        invalid_switch
-            .engines
-            .iter_mut()
-            .find(|engine| engine.name == DIRECT_COMPARE_BRANCHES_ON)
-            .unwrap()
-            .environment
-            .insert(DIRECT_COMPARE_BRANCHES_ENV.into(), "0".into());
-        assert!(validate_diagnostic_ab(&invalid_switch, DIRECT_COMPARE_BRANCHES_CONFIG).is_err());
-
-        let mut mismatched_output = memcpy_ab_input_for(&DIRECT_COMPARE_BRANCHES_CONFIG);
-        mismatched_output
-            .fixtures
-            .values_mut()
-            .next()
-            .unwrap()
-            .rounds[0]
-            .samples
-            .get_mut("bun")
-            .unwrap()
-            .stdout = "different QuickSort output\n".into();
-        assert!(
-            analyze_diagnostic_ab_fixture(
-                "quench-bench/jetstream/quicksort-wasm",
-                mismatched_output.fixtures.values().next().unwrap(),
-                3,
-                DIRECT_COMPARE_BRANCHES_CONFIG,
-            )
-            .is_err()
-        );
-
-        let selected =
-            selected_diagnostic_ab_config(false, false, true, false, false, false, false, false)
-                .expect("compare-branch mode selected");
-        assert_eq!(
-            selected.report_kind,
-            "jit_wasm_compare_branch_ab_diagnostic"
-        );
-        assert_eq!(selected.minimum_rounds, 3);
-        assert_eq!(selected.off_engine, DIRECT_COMPARE_BRANCHES_OFF);
-        assert_eq!(selected.on_engine, DIRECT_COMPARE_BRANCHES_ON);
-        assert!(
-            selected_diagnostic_ab_config(true, false, true, false, false, false, false, false)
-                .is_err()
-        );
-
-        let mut different_binary = memcpy_ab_input_for(&DIRECT_COMPARE_BRANCHES_CONFIG);
-        different_binary
-            .engines
-            .iter_mut()
-            .find(|engine| engine.name == DIRECT_COMPARE_BRANCHES_ON)
-            .unwrap()
-            .executable = "/different-quench-node".into();
-        assert!(validate_diagnostic_ab(&different_binary, DIRECT_COMPARE_BRANCHES_CONFIG).is_err());
-    }
-
-    #[test]
-    fn affine_pair_ab_accepts_three_round_screen_and_reports_nonqualifying_ratios() {
-        let input = memcpy_ab_input_for(&AFFINE_PAIR_CONFIG);
-        validate_diagnostic_ab(&input, AFFINE_PAIR_CONFIG)
-            .expect("three-round GCC-Wasm affine-pair provenance");
-        assert!(validate_suite(&input).is_err());
-        let fixture = input
-            .fixtures
-            .values()
-            .next()
-            .expect("one GCC-Wasm fixture");
-        let analysis = analyze_diagnostic_ab_fixture(
-            "quench-bench/jetstream/gcc-loops-wasm",
-            fixture,
-            3,
-            AFFINE_PAIR_CONFIG,
-        )
-        .expect("paired affine-pair screen analysis");
-
-        assert!(!analysis.qualified);
-        assert_eq!(analysis.paired_rounds, 3);
-        let on_vs_off = analysis
-            .comparisons
-            .get("quench_affine_pair_on_vs_quench_affine_pair_off")
-            .expect("affine-pair on/off comparison");
-        assert!((on_vs_off.score.median_ratio - 1.1).abs() < 1e-12);
-        assert!((on_vs_off.max_rss.median_ratio - 0.9).abs() < 1e-12);
-        assert!(
-            analysis
-                .comparisons
-                .contains_key("quench_affine_pair_on_vs_bun")
-        );
-        assert!(
-            analysis
-                .comparisons
-                .contains_key("quench_affine_pair_on_vs_node")
-        );
-
-        let selected =
-            selected_diagnostic_ab_config(false, false, false, false, true, false, false, false)
-                .expect("affine-pair mode selected");
-        assert_eq!(selected.report_kind, "jit_wasm_affine_pair_ab_diagnostic");
-        assert_eq!(selected.minimum_rounds, 3);
-        assert_eq!(selected.off_engine, AFFINE_PAIR_OFF);
-        assert_eq!(selected.on_engine, AFFINE_PAIR_ON);
-        assert_eq!(AFFINE_PAIR_ENV, "QUENCH_WASM_JIT_AFFINE_PAIR");
-        assert!(
-            selected_diagnostic_ab_config(true, false, false, false, true, false, false, false)
-                .is_err()
-        );
-
-        let mut invalid_switch = memcpy_ab_input_for(&AFFINE_PAIR_CONFIG);
-        invalid_switch
-            .engines
-            .iter_mut()
-            .find(|engine| engine.name == AFFINE_PAIR_ON)
-            .unwrap()
-            .environment
-            .insert(AFFINE_PAIR_ENV.into(), "0".into());
-        assert!(validate_diagnostic_ab(&invalid_switch, AFFINE_PAIR_CONFIG).is_err());
-    }
-
-    #[test]
-    fn reference_body_cache_ab_accepts_tsf_screen_and_reports_nonqualifying_ratios() {
-        let input = memcpy_ab_input_for(&REFERENCE_BODY_CACHE_CONFIG);
-        validate_diagnostic_ab(&input, REFERENCE_BODY_CACHE_CONFIG)
-            .expect("three-round TSF-Wasm reference-cache provenance");
-        assert!(validate_suite(&input).is_err());
-        let fixture = input
-            .fixtures
-            .values()
-            .next()
-            .expect("one TSF-Wasm fixture");
-        let analysis = analyze_diagnostic_ab_fixture(
-            "quench-bench/jetstream/tsf-wasm",
-            fixture,
-            3,
-            REFERENCE_BODY_CACHE_CONFIG,
-        )
-        .expect("paired reference-body screen analysis");
-
-        assert!(!analysis.qualified);
-        assert_eq!(analysis.paired_rounds, 3);
-        let on_vs_off = analysis
-            .comparisons
-            .get("quench_reference_body_cache_on_vs_quench_reference_body_cache_off")
-            .expect("reference-body cache on/off comparison");
-        assert!((on_vs_off.score.median_ratio - 1.1).abs() < 1e-12);
-        assert!((on_vs_off.max_rss.median_ratio - 0.9).abs() < 1e-12);
-        assert!(
-            analysis
-                .comparisons
-                .contains_key("quench_reference_body_cache_on_vs_bun")
-        );
-        assert!(
-            analysis
-                .comparisons
-                .contains_key("quench_reference_body_cache_on_vs_node")
-        );
-
-        let selected =
-            selected_diagnostic_ab_config(false, false, false, false, false, true, false, false)
-                .expect("reference-body cache mode selected");
-        assert_eq!(
-            selected.report_kind,
-            "jit_wasm_reference_body_cache_ab_diagnostic"
-        );
-        assert_eq!(selected.minimum_rounds, 3);
-        assert_eq!(selected.off_engine, REFERENCE_BODY_CACHE_OFF);
-        assert_eq!(selected.on_engine, REFERENCE_BODY_CACHE_ON);
-        assert_eq!(
-            REFERENCE_BODY_CACHE_ENV,
-            "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE"
-        );
-        assert!(
-            selected_diagnostic_ab_config(true, false, false, false, false, true, false, false)
-                .is_err()
-        );
-
-        let mut invalid_switch = memcpy_ab_input_for(&REFERENCE_BODY_CACHE_CONFIG);
-        invalid_switch
-            .engines
-            .iter_mut()
-            .find(|engine| engine.name == REFERENCE_BODY_CACHE_ON)
-            .unwrap()
-            .environment
-            .insert(REFERENCE_BODY_CACHE_ENV.into(), "0".into());
-        assert!(validate_diagnostic_ab(&invalid_switch, REFERENCE_BODY_CACHE_CONFIG).is_err());
     }
 
     #[test]
@@ -2569,7 +2223,7 @@ mod tests {
         );
 
         let selected =
-            selected_diagnostic_ab_config(false, false, false, false, false, false, true, false)
+            selected_diagnostic_ab_config(false, false, false, true, false)
                 .expect("native memcpy-leaf A/B mode selected");
         assert_eq!(
             selected.report_kind,
@@ -2580,7 +2234,7 @@ mod tests {
         assert_eq!(selected.on_engine, MEMCPY_LEAF_ON);
         assert_eq!(MEMCPY_LEAF_ENV, "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF");
         assert!(
-            selected_diagnostic_ab_config(true, false, false, false, false, false, true, false)
+            selected_diagnostic_ab_config(true, false, false, true, false)
                 .is_err()
         );
 
@@ -2653,7 +2307,7 @@ mod tests {
         );
 
         let selected =
-            selected_diagnostic_ab_config(false, false, false, false, false, false, false, true)
+            selected_diagnostic_ab_config(false, false, false, false, true)
                 .expect("selective-handoff A/B mode selected");
         assert_eq!(
             selected.report_kind,
@@ -2664,7 +2318,7 @@ mod tests {
         assert_eq!(selected.on_engine, SELECTIVE_HANDOFF_ON);
         assert_eq!(SELECTIVE_HANDOFF_ENV, "QUENCH_WASM_JIT_SELECTIVE");
         assert!(
-            selected_diagnostic_ab_config(false, false, false, false, false, false, true, true,)
+            selected_diagnostic_ab_config(false, false, false, true, true)
                 .is_err()
         );
 
