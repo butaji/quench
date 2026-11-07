@@ -1480,10 +1480,10 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let collection = if map {
                     let prototype = self.intrinsic_builtin_prototype(Native::Map);
-                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
+                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Default::default() })
                 } else {
                     let prototype = self.intrinsic_builtin_prototype(Native::Set);
-                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
+                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Default::default() })
                 };
                 let root = self.wire_add_object(deserializer, id, collection);
                 let end = if map { tag::END_JS_MAP } else { tag::END_JS_SET };

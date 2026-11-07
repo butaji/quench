@@ -145,14 +145,14 @@ impl<H: Host> Vm<H> {
                 let proto = self.intrinsic_builtin_prototype(Native::Map);
                 self.heap.alloc(Cell::Map {
                     object: Box::new(Self::empty_object(proto)),
-                    entries: Box::default(),
+                    entries: Default::default(),
                 })
             }
             Node::Set(_) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Set);
                 self.heap.alloc(Cell::Set {
                     object: Box::new(Self::empty_object(proto)),
-                    entries: Box::default(),
+                    entries: Default::default(),
                 })
             }
             Node::Date(n) => {
