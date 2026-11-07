@@ -9,6 +9,7 @@
 pub mod aot;
 pub mod esm_imports;
 pub mod host;
+mod io_transient;
 pub mod modules;
 pub mod shared_run;
 

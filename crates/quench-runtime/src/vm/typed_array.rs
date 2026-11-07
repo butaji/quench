@@ -827,7 +827,7 @@ impl<H: Host> Vm<H> {
                 index
             };
             let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            let converted = if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
+            let converted = if kind.is_bigint()
             {
                 let value = self.to_bigint(p, value)?;
                 self.heap.alloc(Cell::bigint(value))

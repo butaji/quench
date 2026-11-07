@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !matches!(i.op(), Op::Call | Op::CallArray)
+        if !i.op().is_ordinary_call()
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
@@ -75,7 +75,7 @@ impl<H: Host> Vm<H> {
         if i.op() == Op::Call && i.call_window().count == 0 {
             let generator = self.read(f, i.register_c());
             if self.steps_as_generator(generator, callee) {
-                return self.try_in_loop_generator_step(f, pc, callee, generator, i.result_register(), false);
+                return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
             }
         }
         let entry = self.in_loop_call_entry(p, callee)?;
@@ -182,11 +182,29 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         f: usize,
         pc: usize,
+        target: (ProgramId, u32, Value),
+        callee: Value,
+        this: Value,
+        arguments: &[Value],
+        destination: crate::bytecode::Register,
+    ) -> Option<Result<StepResult, JsError>> {
+        self.push_in_loop_activation(p, f, pc, target, callee, this, arguments, destination, CallCompletion::Value)
+    }
+
+    /// `push_in_loop_call` completing as `completion`: a construction's (`Constructor`) is
+    /// pushed with its target bound (`construct_target`), as [[Construct]] enters its body.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_in_loop_activation(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
         (program, id, env): (ProgramId, u32, Value),
         callee: Value,
         this: Value,
         arguments: &[Value],
         destination: crate::bytecode::Register,
+        completion: CallCompletion,
     ) -> Option<Result<StepResult, JsError>> {
         let caller_program = self.active_program;
         let callee_residual = if program == caller_program {
@@ -199,22 +217,15 @@ impl<H: Host> Vm<H> {
         if callee_residual.is_some() {
             self.set_active_program(program);
         }
-        let call_guard = self.push_general_user_frame(
-            callee_residual.as_deref().unwrap_or(p),
-            id,
-            env,
-            this,
-            arguments,
-            CallContext::user_function(id, callee),
-        );
+        let constructs = matches!(completion, CallCompletion::Constructor(_));
+        if constructs { self.construct_target = Some(ConstructionTarget { callee, new_target: callee }); }
+        let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
+            CallContext::user_function(id, callee));
+        if constructs { self.construct_target = None; }
         if call_guard.is_err() {
             self.set_active_program(caller_program);
         }
-        Some(call_guard.map(|call_guard| StepResult::PushFrame {
-            destination,
-            call_guard,
-            completion: CallCompletion::Value,
-        }))
+        Some(call_guard.map(|call_guard| StepResult::PushFrame { destination, call_guard, completion }))
     }
 
     /// The program, function and environment of `callee` when it is a user function of a
@@ -521,9 +532,9 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                let plan = &p.function(self.frames[f].function as usize).environment_clones
-                    [i.environment_clone_index()];
-                self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
+                let clones = &p.function(self.frames[f].function as usize).environment_clones;
+                let plan = &clones[i.environment_clone_index()];
+                self.clone_frame_environment(f, &plan.fresh, clones.resets(plan))?;
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
@@ -1721,39 +1732,11 @@ impl<H: Host> Vm<H> {
                     let callee = self.read(f, i.register_b());
                     if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
-                        self.frames[f].pc = *pc;
-                        self.frames[f].pc_is_resume = true;
-                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
-                        // A constructor of another program is pushed in its own, as
-                        // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
-                        // restores the caller's.
-                        let caller_program = self.active_program;
-                        let callee_residual = if program == caller_program {
-                            None
-                        } else {
-                            self.programs.get(program)
-                        };
-                        if callee_residual.is_some() {
-                            self.set_active_program(program);
-                        }
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                        let pushed = self.push_general_user_frame(
-                            callee_residual.as_deref().unwrap_or(p),
-                            id,
-                            env,
-                            this,
-                            unsafe { &*arguments },
-                            CallContext::user_function(id, callee),
-                        );
-                        self.construct_target = None;
-                        if pushed.is_err() && callee_residual.is_some() {
-                            self.set_active_program(caller_program);
+                        if let Some(step) = self.push_in_loop_activation(p, f, *pc, (program, id, env), callee, this,
+                            unsafe { &*arguments }, i.result_register(), CallCompletion::Constructor(this)) {
+                            return step;
                         }
-                        return Ok(StepResult::PushFrame {
-                            destination: i.result_register(),
-                            call_guard: pushed?,
-                            completion: CallCompletion::Constructor(this),
-                        });
                     }
                 }
                 let args = match i.construct_arguments() {

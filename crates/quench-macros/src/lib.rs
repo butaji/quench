@@ -98,10 +98,9 @@ fn derive_native_exports(
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_LANE_HELPERS_SYMBOL: &str = #lane_helpers;
-        /// The header contains the ABI marker, boolean-region count and captured-store count.
-        /// Nonempty plan tables are preceded by a function-indexed lookup array.
+        /// The header contains the ABI marker.
         #[cfg(feature = "native-execution")]
-        pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 3;
+        pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 1;
 
         /// Export the derived semantic helpers for one host in an executable.
         /// Invoke once, using a host type path and a module name for the exports.

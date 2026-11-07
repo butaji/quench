@@ -208,7 +208,7 @@ impl Offsets {
 /// Compile `source` in `global`'s realm as a Script placed at `offsets`. Compile errors
 /// carry no source position to decorate their stacks with.
 fn compile(c: &mut Context<'_>, global: RootId, source: &str, filename: &str, offsets: Offsets) -> Result<CompiledScript, RootedError> {
-    let text = offsets.padding() + source;
+    let text = match offsets.padding() { padding if padding.is_empty() => std::borrow::Cow::Borrowed(source), padding => (padding + source).into() };
     let (line, column) = offsets.origin();
     c.compile_script_in_realm_with_origin(global, &text, filename, line, column)
 }

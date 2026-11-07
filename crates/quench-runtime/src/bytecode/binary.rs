@@ -976,15 +976,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for binding in &name_bindings {
             write_eval_binding(out, binding);
         }
-        out.u32(function.environment_clones.len() as u32);
-        for clone in &function.environment_clones {
-            for slots in [&clone.fresh, &clone.reset] {
-                out.u32(slots.len() as u32);
-                for slot in slots {
-                    out.u16(*slot);
-                }
-            }
-        }
+        function.environment_clones.write(out);
         match &function.selective_capture_slots {
             Some(slots) => {
                 out.u8(1);
@@ -1202,12 +1194,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let environment_atoms = input.list(|input| input.atom())?;
         let mut name_bindings = input.list(read_eval_binding)?;
         input.restore_atom_order(&mut name_bindings);
-        let environment_clones = input.list(|input| {
-            Ok(crate::bytecode::EnvironmentClone {
-                fresh: input.list(|input| input.u16())?,
-                reset: input.list(|input| input.u16())?,
-            })
-        })?;
+        let environment_clones = crate::bytecode::EnvironmentClones::read(input)?;
         let selective_capture_slots = match input.u8()? {
             0 => None,
             1 => Some(input.u16s()?.into()),
@@ -1343,7 +1330,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_atoms: environment_atoms.into(),
             selective_capture_slots,
             inherited_with_scope,
-            environment_clones: environment_clones.into(),
+            environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
             global_declarations: super::GlobalDeclarations {

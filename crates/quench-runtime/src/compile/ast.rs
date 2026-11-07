@@ -68,8 +68,8 @@ struct LexicalScope {
     pub(super) with_depth: u16,
     /// Its capture layer as of the unslotted epoch (`capture::CaptureMemos`).
     capture_layer: Option<(u32, Rc<super::capture_scope::CaptureLayer>)>,
-    /// Its bindings' local slots, sorted, as of the same epoch (`lexical_slots`).
-    slots: Option<(u32, Rc<[u16]>)>,
+    /// Its bindings' local slots as of the same epoch (`ClonePlans::scope_slots`).
+    slots: Option<(u32, u32)>,
 }
 
 pub(super) struct FinallyContext {
@@ -192,13 +192,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if locals.len() > usize::from(u16::MAX) {
             owner.reject(Span::default(), "function exceeds the local-slot limit");
         }
-        let local_slots = Rc::new(
-            locals
-                .iter()
-                .enumerate()
-                .map(|(slot, atom)| (*atom, slot as u16))
-                .collect(),
-        );
+        let local_slots = Rc::new(locals.iter().enumerate().map(|(slot, atom)| (*atom, slot as u16)).collect());
         let mut local_registers = vec![None; locals.len()];
         for (register, slot) in promoted_local_slots.iter().copied().enumerate() {
             let Some(location) = local_registers.get_mut(usize::from(slot)) else {
@@ -306,10 +300,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn local_register(&self, atom: Atom) -> Option<Register> {
         let slot = self.local_slots.get(&atom)?;
-        self.local_registers
-            .get(usize::from(*slot))
-            .copied()
-            .flatten()
+        self.local_registers.get(usize::from(*slot)).copied().flatten()
     }
 
     /// Whether `atom` is a promoted local some expression writes (`clobbered_locals`).
@@ -821,6 +812,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.active_lexical_binding(atom).unwrap_or(atom)
     }
 
+    /// Whether `atom` is a var of this function's frame. A script's root keeps none: its vars
+    /// are the global object's, which a root whose names resolve statically reaches by name, as
+    /// its functions do (`lane_load_global_name`).
+    pub(super) fn frame_var(&self, atom: Atom) -> bool {
+        self.function_scope.contains(&atom)
+            && (self.function_id != 0 || self.owner.module_goal || self.owner.eval_context.is_some() || self.owner.dynamic_binding_scopes != 0)
+    }
+
     fn is_compiler_binding(&self, atom: Atom) -> bool {
         self.owner.atoms[atom as usize].starts_with('\0')
     }
@@ -926,7 +925,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     fn lexical_scope_slots(&mut self) -> Vec<u16> {
         match self.lexical_scopes.len().checked_sub(1) {
-            Some(innermost) => self.lexical_slots(innermost).to_vec(),
+            Some(innermost) => self.lexical_scope_slots_of(innermost).to_vec(),
             None => Vec::new(),
         }
     }

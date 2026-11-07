@@ -41,7 +41,7 @@ impl Lowering<'_, '_> {
         let operand = |operand| super::super::facts::operand_type(&self.program.constants, operand, |register|
             state.values.get(usize::from(register)).map_or(Type::ANY, |fact| fact.value.ty));
         super::super::facts::heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))
-            .filter(|_| instruction.op() == Op::Binary)
+            .filter(|_| super::super::facts::generic_operator(instruction))
     }
 
     /// A binary operator a string or BigInt operand takes, by the interpreter's definition
@@ -100,10 +100,12 @@ impl Lowering<'_, '_> {
     }
 }
 
-/// Whether the loop at `header` calls: from it to the last backward jump to it.
-pub(super) fn loop_calls(unit: &super::super::lane_unit::Unit, header: usize) -> bool {
-    let back = unit.instructions.iter().rposition(|instruction| instruction.op() == Op::Jump && instruction.jump_target() as usize == header);
-    unit.instructions[header..=back.unwrap_or(header)].iter().any(|instruction| matches!(instruction.op(), Op::Call | Op::CallArray | Op::Construct))
+/// Whether the loop at `header` runs an instruction `op` selects: from it to the last
+/// backward jump to it.
+pub(super) fn loop_runs(unit: &super::super::lane_unit::Unit, header: usize, op: impl Fn(Op) -> bool) -> bool {
+    let jump = |instruction: &WideInstruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::Jump;
+    let back = unit.instructions.iter().rposition(|instruction| jump(instruction) && instruction.jump_target() as usize == header);
+    unit.instructions[header..=back.unwrap_or(header)].iter().any(|instruction| op(instruction.op()))
 }
 
 /// The binary operators a string or BigInt takes (`facts::heap_primitive_binary`) by the facts
@@ -112,7 +114,7 @@ pub(super) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &
     constants: &[crate::bytecode::Constant], native_calls: bool) -> CompoundBitSet {
     let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, &[]);
     let mut pcs = CompoundBitSet::with_capacity(instructions.len());
-    for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| instruction.op() == Op::Binary && facts.reached(*pc)) {
+    for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::generic_operator(**instruction) && facts.reached(*pc)) {
         let operand = |operand| super::super::facts::operand_type(constants, operand, |register|
             facts.before(pc, register, instructions, leaders, constants, &writes, native_calls));
         if super::super::facts::heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c())).is_some() {

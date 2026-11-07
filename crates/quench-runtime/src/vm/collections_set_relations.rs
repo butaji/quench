@@ -81,10 +81,9 @@ impl<H: Host> Vm<H> {
                     Ok(if value { Value::TRUE } else { Value::FALSE })
                 }
                 Ok(SetRelationResult::Set) => {
-                    let set = self.heap.alloc(Cell::Set {
-                        object: Box::new(Self::empty_object(self.set_proto)),
-                        entries: values.into(),
-                    });
+                    let entries = values.into_iter().map(|value| (value, self.same_value_zero_hash(value)));
+                    let entries = crate::heap::CollectionEntries::from_hashed(entries).into();
+                    let set = self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(self.set_proto)), entries });
                     Ok(set)
                 }
                 Err(error) => Err(error),

@@ -193,3 +193,19 @@ pub(crate) fn validate_startup_env_files(
     }
     Ok(warnings)
 }
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn tzset();
+}
+
+/// Date observes a change of `TZ` to the environment, as in Node: the runtime and POSIX
+/// local-time conversion each cache the zone.
+pub(crate) fn env_changed(key: &str) {
+    if key == "TZ" {
+        quench_runtime::local_timezone_changed();
+        #[cfg(unix)]
+        // SAFETY: the shared VM serializes host environment reads and writes (`set_env`).
+        unsafe { tzset() };
+    }
+}

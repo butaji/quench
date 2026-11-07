@@ -11,7 +11,7 @@ impl<H: Host> Vm<H> {
             .is_some_and(|body| body.names_resolve_statically(program))
             && self.programs.unresolved_names_are_global(self.active_program, function);
         unit.instructions.iter().enumerate()
-            .filter(|(_, instruction)| matches!(instruction.op(), Op::LoadName | Op::LoadNameCall))
+            .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
             .filter(|(pc, instruction)| {
                 let atom = instruction.atom_index();
                 let function = match unit.origins[*pc] {

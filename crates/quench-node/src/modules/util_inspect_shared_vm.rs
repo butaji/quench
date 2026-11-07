@@ -186,7 +186,7 @@ fn number_of(c: &Context<'_>, value: RootId) -> Option<f64> {
 }
 
 fn is_nullish(c: &Context<'_>, value: RootId) -> bool {
-    matches!(type_of(c, value), ValueType::Undefined | ValueType::Null)
+    type_of(c, value).is_nullish()
 }
 
 /// The formatter's captured originals and the inspect tables (`UtilIntrinsics::primordials`).

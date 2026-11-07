@@ -2,7 +2,7 @@
 //! definition, any other proves its operands Numbers or leaves.
 
 use super::{Flow, boolean_binary, constant_number, operand_type, prove_number, set};
-use crate::bytecode::{Constant, Op, Register, WideInstruction};
+use crate::bytecode::{Constant, Register, WideInstruction};
 use crate::typed_ir::Type;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
@@ -26,8 +26,14 @@ fn primitive_result(operator: u32, left: Type, right: Type) -> Type {
 
 /// Whether two BigInts give a BigInt by `operator`: arithmetic and bitwise ones but `>>>`.
 fn bigint_operator(operator: u32) -> bool {
-    (NumberArithmetic::from_js_instruction(Op::Binary, operator).is_some() || NumberBitwise::from_js_instruction(Op::Binary, operator).is_some())
+    (NumberArithmetic::from_operator(operator).is_some() || NumberBitwise::from_operator(operator).is_some())
         && operator != oxc_ast::ast::BinaryOperator::ShiftRightZeroFill as u32
+}
+
+/// Whether `instruction` takes its operator as data (`Binary`), so any operand type, rather
+/// than one fixed Number operator (`NumericAdd`).
+pub(in crate::vm) fn generic_operator(instruction: WideInstruction) -> bool {
+    instruction.op().immediate_role() == crate::bytecode::ImmediateRole::BinaryOperator
 }
 
 /// `transfer` of a numeric binary operator.
@@ -35,7 +41,7 @@ pub(super) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, c
     written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Flow {
     let operand = |operand| operand_type(constants, operand, |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
     let heap = heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))
-        .filter(|_| instruction.op() == Op::Binary && !instruction.returns_from_frame());
+        .filter(|_| generic_operator(instruction) && !instruction.returns_from_frame());
     let result = heap.or_else(|| number_result(types, instruction, constants, written));
     if instruction.returns_from_frame() { return Flow::Leaves; }
     if let Some(result) = result { set(types, instruction.result_register(), result); }
