@@ -1,11 +1,15 @@
 use crate::bytecode::{
-    ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
+    FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
     ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
 /// A set of registers, one bit each: the uses, definitions and live registers liveness
 /// derives, and the root masks a collection reads.
 pub(crate) type RegisterSet = u128;
+
+mod solve;
+pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers};
+use solve::LiveMask;
 
 /// A function's live registers before each instruction (`analyze`), held at the width they
 /// need: most functions use fewer than 64 registers, so their masks take half the space
@@ -126,13 +130,29 @@ pub(crate) fn register_roots(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> crate::bytecode::RegisterRoots {
-    match transfers(function, methods, fields, superinstructions) {
-        Some(transfers) => {
-            let live = analyze_transfers(function, &transfers);
-            crate::bytecode::RegisterRoots::with_dead_call_results(true, dead_call_results(function, &live))
-        }
-        None => crate::bytecode::RegisterRoots::new(false),
+    if function.registers > ROOT_MAP_REGISTERS {
+        return crate::bytecode::RegisterRoots::new(false);
     }
+    let dead = if u32::from(function.registers) <= u64::BITS {
+        dead_call_results(function, &live_masks::<u64>(function, methods, fields, superinstructions))
+    } else {
+        dead_call_results(function, &live_masks::<RegisterSet>(function, methods, fields, superinstructions))
+    };
+    crate::bytecode::RegisterRoots::with_dead_call_results(true, dead)
+}
+
+/// `function`'s live registers before each instruction, solved at the width `M`, which holds
+/// every one of its registers.
+fn live_masks<M: LiveMask>(
+    function: &Function,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> Vec<M> {
+    let narrow = |(read, written): (RegisterSet, RegisterSet)| (M::narrow(read), M::narrow(written));
+    let transfers: Vec<_> =
+        function.instructions().map(|instruction| narrow(transfer(instruction, methods, fields, superinstructions))).collect();
+    analyze_transfers(function, &transfers)
 }
 
 /// The pcs, in order, of `function`'s `Call`s that write their result to a register (no
@@ -140,7 +160,7 @@ pub(crate) fn register_roots(
 /// skip building a result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
 /// A lane derived each from the per-pc masks on its first run, 3-6% of the instructions of
 /// cached npm runs (axios, schema-utils, ajv-formats), which a compile-cache hit now keeps.
-fn dead_call_results(function: &Function, live: &[RegisterSet]) -> crate::heap::ThinBoxSlice<u32> {
+fn dead_call_results<M: LiveMask>(function: &Function, live: &[M]) -> crate::heap::ThinBoxSlice<u32> {
     function
         .instructions()
         .enumerate()
@@ -148,7 +168,7 @@ fn dead_call_results(function: &Function, live: &[RegisterSet]) -> crate::heap::
             instruction.op() == crate::bytecode::Op::Call
                 && instruction.result_flags() == 0
                 && live.get(pc + 1).is_some_and(|&after| {
-                    register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
+                    register_dead(after.into(), usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
                 })
         })
         .map(|(pc, _)| u32::try_from(pc).expect("a function's pcs fit u32"))
@@ -201,66 +221,6 @@ pub(crate) fn transfer(
 /// successors all follow it, so only code with a backward successor iterates to a fixed point.
 /// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
 /// + 1]]`, which every pass then reads.
-pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, RegisterSet)]) -> Vec<RegisterSet> {
-    let length = function.code.len();
-    // Legacy f.arguments can observe promoted parameters without a bytecode read.
-    // Keep them even at terminal/exception PCs; consumers include GC and native recovery.
-    // Without binding-name tables, conservatively retain every promoted parameter
-    // of a function that permits legacy reflection.
-    let observable = if function.has_restricted_legacy_caller_access() {
-        0
-    } else {
-        function.local_registers.iter().filter(|entry| entry.local < function.params)
-            .fold(0, |mask, entry| mask | register_bit(entry.register))
-    };
-    let mut starts = Vec::with_capacity(length + 1);
-    let mut successors = Vec::with_capacity(length);
-    for (pc, instruction) in function.instructions().enumerate() {
-        starts.push(successors.len());
-        function.for_each_successor(pc, instruction, |successor, _| {
-            successors.push(successor);
-        });
-    }
-    starts.push(successors.len());
-    let mut live = analyze_graph(transfers, &starts, &successors, |_| observable);
-    add_suspended_exception_roots(function, &mut live);
-    live
-}
-
-/// Solve shared instruction transfers with per-PC recovery requirements.
-/// `starts` indexes a compact successor table; the final requirement describes
-/// falling off the graph. Rewritten native units add their recovery floors here.
-pub(crate) fn analyze_graph(
-    transfers: &[(RegisterSet, RegisterSet)], starts: &[usize], successors: &[usize],
-    required: impl Fn(usize) -> RegisterSet,
-) -> Vec<RegisterSet> {
-    let length = transfers.len();
-    assert_eq!(starts.len(), length + 1);
-    let has_backward_successor = (0..length).any(|pc|
-        successors[starts[pc]..starts[pc + 1]].iter().any(|successor| *successor <= pc));
-    let mut live: Vec<_> = (0..=length).map(&required).collect();
-    loop {
-        let mut changed = false;
-        for pc in (0..length).rev() {
-            let output = successors[starts[pc]..starts[pc + 1]]
-                .iter()
-                .fold(0, |output, &successor| {
-                    output | live.get(successor).copied().unwrap_or(0)
-                });
-            let (read, written) = transfers[pc];
-            let next = required(pc) | read | (output & !written);
-            if live[pc] != next {
-                live[pc] = next;
-                changed = true;
-            }
-        }
-        if !changed || !has_backward_successor {
-            break;
-        }
-    }
-    live
-}
-
 pub(super) fn live_out(
     function: &Function,
     live: &[RegisterSet],
@@ -272,30 +232,6 @@ pub(super) fn live_out(
         output |= live.get(successor).copied().unwrap_or(0);
     });
     output
-}
-
-/// Whether a frame paused at `op` can resume with an abrupt completion that enters the
-/// enclosing handler: a call that throws, or a suspension point (an awaited rejection, a
-/// generator's `throw` or `return`).
-fn resumes_into_handler(op: Op) -> bool {
-    op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
-}
-
-pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
-    // Most functions have no handler for an abrupt resumption to enter.
-    if function.handlers.is_empty() {
-        return;
-    }
-    for (pc, instruction) in function.instructions().enumerate() {
-        if !resumes_into_handler(instruction.op()) {
-            continue;
-        }
-        for handler in &function.handlers {
-            if pc as u32 >= handler.start && (pc as u32) < handler.end {
-                live[pc + 1] |= live[handler.target as usize];
-            }
-        }
-    }
 }
 
 /// The transfer of an op whose field layout alone decides it: each of A, B and C a register
