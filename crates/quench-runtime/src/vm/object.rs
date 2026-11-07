@@ -448,15 +448,8 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
-            .iter()
             .map(|(key, _)| *key)
             .collect()
-    }
-    pub(super) fn shape_entries(&self, shape: u32) -> &[(PropertyKey, u32)] {
-        &self.shapes[shape as usize]
-            .lookup_index
-            .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
-            .entries
     }
     /// Moves `parent`'s lookup index to `child`, a cached transition of it the object took, as
     /// `append_shape` moves it to a new child. Otherwise the index stays with the shape that
@@ -4850,7 +4843,7 @@ impl<H: Host> Vm<H> {
         shape: u32,
         transition: ShapeTransition,
     ) -> u32 {
-        let key = transition.cache_key();
+        let key = self.transition_cache_key(shape, transition);
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();
             let next = if last != NO_LAST_CHILD
@@ -4961,7 +4954,7 @@ impl<H: Host> Vm<H> {
         // than hold properties: its storage is then mostly holes, and add-and-delete churn
         // (an object used as a map) would otherwise grow its shape chain without bound.
         let storage_len = self.shapes[next_id as usize].storage_len();
-        let vacated = storage_len - self.shape_entries(next_id).len();
+        let vacated = storage_len - self.shape_entry_count(next_id);
         let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none()
             && vacated > storage_len - vacated
         {

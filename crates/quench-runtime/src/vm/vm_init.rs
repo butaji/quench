@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
             accessor_field_indices: Default::default(),
             accessor_fields: Vec::new(),
             field_add_indices: Default::default(),
-            field_add_sets: vec![],
+            field_add_sets: vec![], json_parse_cache: Default::default(),
             keyed_adds: Box::new([FieldAddCache::EMPTY; KEYED_ADD_ENTRIES]),
             megamorphic_field_indices: Default::default(),
             field_cache_writes: Some(Vec::new()),

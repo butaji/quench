@@ -3735,37 +3735,6 @@ fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
 }
 
 #[test]
-fn moved_shape_lookup_index_matches_the_derived_index() {
-    // A wide object built key by key, with non-default attributes and redefinitions, keeps
-    // its lookup index moving to each new shape; every index must match the one derived
-    // from that shape's whole chain.
-    let source = r#"
-      var wide = {};
-      for (var i = 0; i < 300; i++) {
-        wide["k" + i] = i;
-        if (i % 7 === 0) wide["k" + i];
-        if (i % 5 === 0) Object.defineProperty(wide, "k" + i, { enumerable: false });
-        if (i % 11 === 0) Object.defineProperty(wide, "g" + i, { get() { return i; } });
-      }
-      var keys = Object.keys(wide).length;
-    "#;
-    let mut vm = Vm::new(TestHost::default());
-    let program = Engine::specialize(source, "wide.js").unwrap();
-    vm.execute(&program).unwrap();
-    let mut compared = 0;
-    for shape in 0..vm.shapes.len() {
-        let Some(index) = vm.shapes[shape].lookup_index.get() else {
-            continue;
-        };
-        let derived = super::object::derive_shape_lookup_index(&vm.shapes, shape as u32);
-        assert!(index.entries == derived.entries, "shape {shape} entries");
-        assert!(index.attributes == derived.attributes, "shape {shape} attributes");
-        compared += 1;
-    }
-    assert!(compared > 0, "the wide object's shapes keep an index");
-}
-
-#[test]
 fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
     let source = r#"
       var first = { a: 1, b: 2, c: 3 };
@@ -15069,9 +15038,10 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn shared_osr_reports_captured_environment_store_rejection_by_site() {
+fn shared_osr_leaves_at_a_captured_environment_store_for_the_interpreter() {
     // A nested closure retains the mutable binding, so the loop reads and updates it through
-    // the environment. Guarded reads are supported; stores still reject before native entry.
+    // the environment. Guarded reads run natively; the store leaves at its exact PC and the
+    // interpreter runs it, instead of rejecting the loop.
     let source = r#"
       function run() {
         let total = 0;
@@ -15083,97 +15053,22 @@ fn shared_osr_reports_captured_environment_store_rejection_by_site() {
       for (let repeat = 0; repeat < 48; repeat++) result = run();
       print(result);
     "#;
-    let program = Engine::specialize(source, "osr-captured-env-store-rejection.js").unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .is_some_and(|name| &program.atoms[name as usize] == "run")
-        })
+    let program = Engine::specialize(source, "osr-captured-env-store-exit.js").unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
         .unwrap();
-
-    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
-    Vm::new(TestHost::writing_to(interpreted_output.clone()))
-        .execute(&program)
-        .unwrap();
-
-    let compiled_output = Rc::new(RefCell::new(Vec::new()));
-    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
-    assert_eq!(
-        compiled_output.borrow().as_slice(),
-        interpreted_output.borrow().as_slice()
-    );
-    assert_eq!(compiled_output.borrow().as_slice(), ["4000"]);
-
-    let views = compiled
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .unwrap();
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("captured loop lane view");
-    let osr = view.osr_diagnostics();
-    assert_eq!(
-        osr.sites.len(),
-        1,
-        "one source loop should produce one attributed OSR site: {osr:?}"
-    );
-    let site = &osr.sites[0];
-    assert_eq!(osr.admitted_sites, 0, "rejected candidates are not admitted OSR sites: {osr:?}");
-    assert!(
-        !site.admitted,
-        "StoreEnvLocal region must reject before native admission: {site:?}"
-    );
-    assert!(matches!(
-        site.analysis_rejection,
-        Some(super::compiled::RegionRejection::UnsupportedInstruction(
-            crate::bytecode::Op::StoreEnvLocal
-        ))
-    ), "StoreEnvLocal should be the first blocking operation: {site:?}");
-    assert_eq!(site.compile_attempts, 0);
-    assert_eq!(site.native_region_runs, 0);
-    assert!(
-        site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.threshold),
-        "the diagnostic fixture must execute the rejected loop: {site:?}"
-    );
-
-    let body = program.function_get(function_id).unwrap();
-    let environment_store_pcs = body
-        .code
-        .iter()
-        .enumerate()
-        .filter_map(|(pc, packed)| {
-            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-            (instruction.op() == crate::bytecode::Op::StoreEnvLocal
-                && site.header_pc as usize <= pc
-                && pc < site.backedge_pc as usize)
-                .then_some(pc as u32)
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        !environment_store_pcs.is_empty(),
-        "the rejected bytecode range must contain StoreEnvLocal: {site:?}"
-    );
-    assert!(
-        site.failure.is_some_and(|failure| environment_store_pcs.contains(&failure.pc)),
-        "the reported rejection PC must identify the blocking StoreEnvLocal: {site:?}"
-    );
-    assert_eq!(
-        super::dispatch_fast::decoded_instruction(body, body.code[site.backedge_pc as usize]).op(),
-        crate::bytecode::Op::Jump
-    );
-    compiled.programs.record_js_jit_lane_entry(
-        super::program_store::ProgramId::MAIN,
-        function_id as u32,
-    );
+    assert_eq!(output.borrow().as_slice(), ["4000"]);
+    let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view").osr_diagnostics();
+    let [site] = osr.sites.as_slice() else { panic!("one source loop, one OSR site: {osr:?}") };
+    assert!(site.admitted, "StoreEnvLocal leaves to the interpreter, not rejects: {site:?}");
+    assert!(site.native_region_runs > 0 && site.exits > 0, "the reads run natively, the store leaves: {site:?}");
 }
 
 #[test]

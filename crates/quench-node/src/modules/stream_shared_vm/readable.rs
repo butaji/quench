@@ -4,7 +4,7 @@ use super::destroy::{self, error_or_destroy};
 use super::errors::{self, StreamError};
 use super::state::{self, bits, change, readable::*};
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsics, is_null,
+    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsic, is_null,
     is_nullish, is_string, is_undefined, listener_count, next_tick, number, on, once, put, put_bool, put_number,
     remove_listener, tick, Class, Context, Key, Outcome, Slot, Tick,
 };
@@ -53,7 +53,7 @@ pub(crate) fn needs_new(c: &mut Context<'_>, this: RootId, class: Class) -> Resu
     if c.new_target_rooted().is_some() {
         return Ok(None);
     }
-    let constructor = intrinsics(c)?.class(class);
+    let constructor = intrinsic(c, |i| i.class(class))?;
     if c.is_object_rooted(this)? && c.instance_of_rooted(this, constructor)? {
         return Ok(None);
     }
@@ -76,7 +76,7 @@ pub(crate) fn constructor(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
             super::utils::add_abort_signal(c, signal, this)?;
         }
     }
-    let stream = intrinsics(c)?.class(Class::Stream);
+    let stream = intrinsic(c, |i| i.class(Class::Stream))?;
     c.call_rooted(stream, this, &[options])?;
     destroy::construct_if_defined(c, this)?;
     Ok(c.undefined())
@@ -126,7 +126,7 @@ pub(crate) fn is_buffer(c: &mut Context<'_>, value: RootId) -> Result<bool, Root
     if !c.is_object_rooted(value)? {
         return Ok(false);
     }
-    let buffer = intrinsics(c)?.class(Class::Buffer);
+    let buffer = intrinsic(c, |i| i.class(Class::Buffer))?;
     c.instance_of_rooted(value, buffer)
 }
 
@@ -139,7 +139,7 @@ pub(crate) fn view_to_buffer(c: &mut Context<'_>, view: RootId) -> Outcome {
     let buffer = get(c, view, "buffer")?;
     let offset = get(c, view, "byteOffset")?;
     let length = get(c, view, "byteLength")?;
-    let class = intrinsics(c)?.class(Class::Buffer);
+    let class = intrinsic(c, |i| i.class(Class::Buffer))?;
     c.construct_rooted(class, class, &[buffer, offset, length])
 }
 
@@ -149,7 +149,7 @@ fn buffer_window(c: &mut Context<'_>, chunk: RootId, start: f64, length: f64) ->
     let offset = number(c, chunk, "byteOffset")?;
     let offset = c.number(offset + start);
     let length = c.number(length);
-    let class = intrinsics(c)?.class(Class::Buffer);
+    let class = intrinsic(c, |i| i.class(Class::Buffer))?;
     c.construct_rooted(class, class, &[buffer, offset, length])
 }
 
@@ -1060,7 +1060,7 @@ fn event_is(c: &mut Context<'_>, event: RootId, name: &str) -> Result<bool, Root
 
 /// `Stream.prototype[method]`, the EventEmitter member a readable override extends.
 fn emitter_member(c: &mut Context<'_>, method: &str) -> Outcome {
-    let stream = intrinsics(c)?.class(Class::Stream);
+    let stream = intrinsic(c, |i| i.class(Class::Stream))?;
     let prototype = get(c, stream, "prototype")?;
     get(c, prototype, method)
 }
@@ -1359,7 +1359,7 @@ pub(crate) fn wrap_static(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     }
     let destroy = closure(c, "streamWrapDestroy", "destroy", &[source])?;
     put(c, settings, "destroy", destroy)?;
-    let readable = intrinsics(c)?.class(Class::Readable);
+    let readable = intrinsic(c, |i| i.class(Class::Readable))?;
     let wrapper = c.construct_rooted(readable, readable, &[settings])?;
     call_method(c, wrapper, "wrap", &[source])
 }

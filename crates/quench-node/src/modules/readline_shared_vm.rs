@@ -861,7 +861,7 @@ fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<(), 
     put_number(c, this, "escapeCodeTimeout", ESCAPE_CODE_TIMEOUT)?;
     put_number(c, this, "tabSize", TAB_SIZE)?;
     super::stream_shared_vm::module(c)?;
-    let emitter = super::stream_shared_vm::intrinsics(c)?.class(Class::Emitter);
+    let emitter = super::stream_shared_vm::intrinsic(c, |i| i.class(Class::Emitter))?;
     c.call_rooted(emitter, this, &[])?;
     let undefined = c.undefined();
     let (mut history, mut history_size, mut remove_duplicates, mut crlf_delay, mut signal) =
@@ -1910,7 +1910,7 @@ pub(crate) fn async_iterator(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
         put(c, iterator, name, method)?;
     }
     let itself = c.host_function_named(crate::host::shared_vm::operation!("readlineIteratorSelf"), "[Symbol.asyncIterator]")?;
-    let key = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::AsyncIterator);
+    let key = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::AsyncIterator))?;
     c.set_property_rooted(iterator, key, itself, iterator)?;
     put_slot(c, this, Slot::LineObjectStream, iterator)?;
     Ok(iterator)
@@ -2363,7 +2363,7 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
         return Ok(class);
     }
     super::stream_shared_vm::module(c)?;
-    let emitter = super::stream_shared_vm::intrinsics(c)?.class(Class::Emitter);
+    let emitter = super::stream_shared_vm::intrinsic(c, |i| i.class(Class::Emitter))?;
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "InterfaceConstructor")?;
     inherit(c, constructor, emitter)?;
     let class = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "Interface")?;
@@ -2386,9 +2386,9 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
     for (which, operation) in LATE_METHODS {
         slot_method(c, prototype, which, operation)?;
     }
-    let iterator = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::AsyncIterator);
+    let iterator = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::AsyncIterator))?;
     method(c, prototype, iterator, "readlineAsyncIterator", "[Symbol.asyncIterator]", false)?;
-    let dispose = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::Dispose);
+    let dispose = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::Dispose))?;
     method(c, prototype, dispose, "readlineDispose", "[Symbol.dispose]", true)?;
     let retained = c.retain(class)?;
     shared.borrow_mut().builtin_cache.insert(cache.to_owned(), retained);

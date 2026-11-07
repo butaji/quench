@@ -595,6 +595,8 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
+mod construct_plan;
+use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
@@ -1961,58 +1963,6 @@ impl std::ops::Index<usize> for ScriptTargets {
 const FUNCTION_TARGETS: usize = 64;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
 
-/// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
-/// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
-/// that prototype alone determine, ends at `shape`, its fields the arguments for
-/// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
-/// While the prototype layout keeps `epoch` (`prototype_layout_epoch`), which every
-/// collection advances, those adds would hit again with the same transitions, so the object
-/// can be allocated finished.
-#[derive(Clone, Copy)]
-struct ConstructPlan {
-    callee: Value,
-    epoch: u64,
-    /// The callee's own layout that fixes where its `prototype` lives
-    /// (`Vm::function_prototype_layout`), which a construct reads it through.
-    callee_layout: (u32, usize),
-    prototype: Value,
-    shape: u32,
-    /// The receiver's header (`ConstructPlan::derive_header`): of inline storage when its
-    /// fields fit the inline slots, else of an arena run.
-    header: InlineObjectHeader,
-    kind: ConstructPlanKind,
-    fields: u8,
-    parameters: [u16; CONSTRUCT_PLAN_FIELDS],
-    /// Fields whose store defaults a falsy argument (`InitializerStore::fallback`), one bit
-    /// per field index, each taking `fallbacks` at its index then.
-    defaulted: u8,
-    /// Fields whose store writes a constant (`InitializerValue::Constant`), one bit per field
-    /// index, each taking `fallbacks` at its index whatever is passed.
-    constant: u8,
-    fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
-    /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
-    forwarded: Option<ForwardedResolution>,
-    /// For a class whose constructor only constructs its parent (`lane_super_construction`),
-    /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
-    /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
-    super_parent: Value,
-}
-
-/// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ConstructPlanKind {
-    /// An initializer constructor's plan (`lane_initialize_fields`) whose fields are the
-    /// arguments as passed.
-    Passed,
-    /// An initializer constructor's plan with defaulted fields (`ConstructPlan::defaulted`).
-    Defaulted,
-    /// A forwarding constructor's plan (`lane_planned_receiver`), which holds only with its
-    /// forwarding (`lane_forwarded_fields`).
-    Forwarding,
-}
-
 /// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
 /// a construct plan (`ConstructPlan::forwarded`). While the plan holds, the prototype layout
 /// epoch is unchanged, so the plan's prototype keeps the method's data slot and the method's
@@ -2044,110 +1994,6 @@ const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
 const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
-
-impl ConstructPlan {
-    /// This plan, holding from the current prototype layout epoch, with its receiver
-    /// header derived from its prototype and shape.
-    fn finish(self) -> Self {
-        Self {
-            epoch: crate::heap::prototype_layout_epoch(),
-            ..self.derive_header()
-        }
-    }
-
-    /// This plan with the header its receiver starts with, of its prototype and shape: inline
-    /// storage when its fields fit the inline slots, else an arena run.
-    fn derive_header(self) -> Self {
-        let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
-            InlineObjectHeader::of(self.prototype, self.shape)
-        } else {
-            InlineObjectHeader::of_run(self.prototype, self.shape)
-        };
-        Self { header, ..self }
-    }
-
-    /// The value of a field of a plan whose stores default nothing (`ConstructPlanKind::Passed`):
-    /// a constant field's constant, else the argument its parameter names.
-    #[inline(always)]
-    fn passed_value(&self, field: usize, argument: impl Fn(u16) -> Value) -> Value {
-        if self.constant & (1 << field) != 0 { self.fallbacks[field] } else { argument(self.parameters[field]) }
-    }
-
-    /// This plan's field values in order, `undefined` past them: the argument each field's
-    /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
-    /// value, or a constant field's constant, as its store computes it.
-    fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
-        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
-            if self.constant & (1 << field) != 0 {
-                *value = self.fallbacks[field];
-                continue;
-            }
-            let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
-            *value = initializer_value(vm, argument(self.parameters[field]), fallback);
-        }
-        values
-    }
-
-    /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
-    /// past them, which is how unused inline slots start: gathered into the receiver's inline
-    /// slots where they fit, else into the arena run's values.
-    #[inline(always)]
-    fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
-        let fields = usize::from(self.fields);
-        if fields <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            for (index, slot) in inline.iter_mut().enumerate().take(fields) {
-                *slot = field(index);
-            }
-            return heap.alloc_object_from_header(self.header, self.prototype, inline);
-        }
-        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        for (index, value) in values.iter_mut().enumerate().take(fields) {
-            *value = field(index);
-        }
-        heap.alloc_object_from_run_header(self.header, self.prototype, &values, fields)
-    }
-
-    /// This plan extended by the field `store` adds, `None` once it names all it can.
-    fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
-        let field = usize::from(self.fields);
-        let slot = self.parameters.get_mut(field)?;
-        match store.value {
-            crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
-                *slot = parameter;
-                if let Some(fallback) = fallback {
-                    self.kind = ConstructPlanKind::Defaulted;
-                    self.defaulted |= 1 << field;
-                    self.fallbacks[field] = Value::number(fallback);
-                }
-            }
-            crate::bytecode::InitializerValue::Constant(_) => {
-                self.constant |= 1 << field;
-                self.fallbacks[field] = value;
-            }
-        }
-        self.fields += 1;
-        Some(self)
-    }
-}
-
-const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
-    callee: Value::UNDEFINED,
-    epoch: NO_CONSTRUCT_PLAN_EPOCH,
-    callee_layout: (0, 0),
-    prototype: Value::UNDEFINED,
-    shape: 0,
-    header: InlineObjectHeader::EMPTY,
-    kind: ConstructPlanKind::Passed,
-    fields: 0,
-    parameters: [0; CONSTRUCT_PLAN_FIELDS],
-    defaulted: 0,
-    constant: 0,
-    fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
-    forwarded: None,
-    super_parent: Value::UNDEFINED,
-};
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -3666,7 +3512,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray) {
+    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::ForInStart | Op::IteratorClose | Op::AppendArray) {
         return Resumed::Exit(exit(ip));
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
@@ -3743,6 +3589,7 @@ const fn lane_steps_in_place(op: Op) -> bool {
             | Op::ToPropertyKey
             | Op::CopyDataProperties
             | Op::GetIterator
+            | Op::ForInStart
             | Op::RequireIteratorResult
             | Op::IteratorClose
             | Op::IteratorCleanupPush
@@ -8854,8 +8701,8 @@ fn lane_loop_run<H: Host>(
     }
     match outcome {
         LoopOutcome::NotEntered(widening) => {
-            if let Some(widening) = widening {
-                tier.widened.insert(widening);
+            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
+            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
                 publication.retire();
             }
             LoopContinuation::Jump
@@ -12110,11 +11957,7 @@ impl<H: Host> Vm<H> {
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
-    fn resolve_script_call_target(
-        &mut self,
-        code: &ResidualProgram,
-        callee: Value,
-    ) -> Option<ScriptCallTarget> {
+    fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         #[cfg(feature = "profile-lane-exits")]
@@ -12248,7 +12091,6 @@ impl<H: Host> Vm<H> {
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
-        // Only a function the JS tier never claims (`LaneView::claim_for_tier`) runs as a leaf.
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
@@ -12279,7 +12121,8 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    .filter(|_| !tier_may_claim)
+                    // A leaf runs records the tier may claim after this first resolution.
+                    .filter(|_| !self.js_tier_runs())
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }
@@ -14114,72 +13957,8 @@ fn lane_native_value<H: Host>(
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
 }
 
-/// `charCodeAt` of a flat string at an integer index: the unit there, or NaN outside the
-/// string. `None` for any other receiver or index, which the native coerces, and for a
-/// rope, which it flattens.
-#[inline(always)]
-fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
-    let (units, index) = (vm.heap.string(receiver)?.existing_flat()?, index.as_int()?);
-    Some(
-        usize::try_from(index)
-            .ok()
-            .and_then(|index| units.unit(index))
-            .map_or(Value::NAN, |unit| Value::integer(i32::from(unit))),
-    )
-}
-
-/// `charAt` of a flat string at an integer index of an ASCII unit: the unit's shared string
-/// (`Vm::ascii_unit_string`). Any other receiver, index or unit takes the native.
-fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
-    let index = usize::try_from(index.as_int()?).ok()?;
-    let unit = vm.heap.string(receiver)?.existing_flat()?.unit(index)?;
-    vm.ascii_unit_string(unit)
-}
-
-script_handler! {
-    /// A `Call` site whose callee was `String.prototype.charCodeAt` (`lane_script_call_resolve`):
-    /// that call of a string at an integer index in place (`string_char_code_at`). Any other
-    /// callee, receiver or index, or a call returning its result, takes `lane_native_call`.
-    fn lane_call_char_code_at<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let is_char_code_at = matches!(
-            vm.heap.function(r.get(i.b)),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::StringCharCodeAt), .. })
-        );
-        // SAFETY: the call's window is registers of the running function.
-        let index = unsafe { lane_call_window(r, i) }.first().copied();
-        let Some(value) = index
-            .filter(|_| is_char_code_at && i.a & crate::bytecode::RETURN_REGISTER == 0)
-            .and_then(|index| string_char_code_at(vm, r.get(i.c), index))
-        else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-/// The handler a `Call` site whose callee resolved to `native` takes from then on
-/// (`lane_script_call_resolve`): a native whose common case the lane makes in place has its
-/// own handler, which tests the callee's identity once and hands any other call to
-/// `lane_native_call`, the handler of every other native. A call returning its result
-/// completes its caller, which only `lane_native_call` makes. An array callback method's site
-/// whose result nothing reads (`result_dead`, asked only there) takes the form that may
-/// discard it (`lane_call_array_callback`'s `DISCARDS`).
-fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return lane_native_call::<H>;
-    }
-    match native {
-        Native::StringCharCodeAt => lane_call_char_code_at::<H>,
-        Native::ArrayPush => lane_call_array_push::<H>,
-        Native::ArrayPop => lane_call_array_pop::<H>,
-        native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
-        native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,
-        native if native.is_array_callback() => lane_call_array_callback::<H, false>,
-        _ => lane_native_call::<H>,
-    }
-}
+mod native_calls;
+use native_calls::{for_in_next_handler, native_call_handler, string_char_at_ascii, string_char_code_at};
 
 /// Whether liveness proves the result register of the running function's call record `i`
 /// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
@@ -14745,8 +14524,8 @@ fn lane_promise_native<H: Host>(
 /// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), for-in's per-key
-/// check (`Vm::plain_for_in_key_is_enumerable`), `Object.hasOwn`, `Object.is`, `Symbol.for`
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
+/// `Object.is`, `Symbol.for`
 /// of a string, and the Map and Set mutators on their own collections
 /// (`Vm::plain_collection_mutation`), a DataView element get or set that raises nothing
 /// (`Vm::plain_data_view_access`), and a Date getter of a Date (`Vm::plain_date_get`). `None` leaves any other call to `lane_call_native`.
@@ -14782,7 +14561,6 @@ fn lane_pure_native<H: Host>(
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         native if super::date::date_reads(*native) => vm.plain_date_get(*native, receiver),
-        Native::ForInKeyIsEnumerable => vm.plain_for_in_key_is_enumerable(code, *args.first()?, *args.get(1)?),
         Native::ObjectHasOwn => vm.plain_own_property_query(
             code,
             Native::ObjectPrototypeHasOwnProperty,
@@ -15504,7 +15282,7 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     {
         return None;
     }
-    let values = plan.values(vm, argument);
+    let values = plan.values(vm, argument)?;
     Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -15537,6 +15315,8 @@ fn lane_record_forwarded_fields<H: Host>(
         parameters: fields.parameters,
         defaulted: fields.defaulted,
         constant: fields.constant,
+        computed: fields.computed,
+        operators: fields.operators,
         fallbacks: fields.fallbacks,
         forwarded: Some(ForwardedResolution {
             initializer: Some(initializer),
@@ -17381,17 +17161,8 @@ fn lane_add_initializer_fields<H: Host>(
         return false;
     };
     for store in stores {
-        let value = match store.value {
-            crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
-                initializer_value(vm, argument(parameter), fallback.map(Value::number))
-            }
-            // The running program is `code` (`Vm::active_constant`).
-            crate::bytecode::InitializerValue::Constant(constant) => {
-                match constant.value(|index| vm.active_constant(index)) {
-                    Some(value) => value,
-                    None => return false,
-                }
-            }
+        let Some(value) = initializer_store_value(vm, store, &argument) else {
+            return false;
         };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
             return false;
@@ -17399,16 +17170,6 @@ fn lane_add_initializer_fields<H: Host>(
         each(store, value);
     }
     true
-}
-
-/// The value an initializer store (`InitializerStore`) gives its field from the parameter's
-/// `passed` value: `fallback` in place of a falsy one where the store has it, else as passed.
-#[inline(always)]
-fn initializer_value<H: Host>(vm: &Vm<H>, passed: Value, fallback: Option<Value>) -> Value {
-    match fallback {
-        Some(fallback) if !vm.truthy(passed) => fallback,
-        _ => passed,
-    }
 }
 
 /// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
@@ -17469,7 +17230,7 @@ fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: 
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, argument);
+    let values = plan.values(vm, argument)?;
     Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -19778,10 +19539,28 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     })
 }
 
+/// The handlers of the jumps (`other_handler`): their direction decides whether they run a
+/// safepoint.
+const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
+    match op {
+        Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
+        Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
+        Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
+        Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
+        Op::ForInNext => Some(for_in_next_handler::<H>()),
+        Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
+        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
+        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
+        _ => None,
+    }
+}
+
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
+        Op::JumpBinaryFalse | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::ForInNext | Op::WasmBranchTable | Op::WasmJumpI32Zero
+        | Op::WasmJumpI32NonZero => jump_handler::<H, BACKWARD, ACC>(op),
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreName => Some(lane_store_name_first::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
@@ -19813,19 +19592,12 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
-        Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
         Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
-        Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
-        Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
-        Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Op::Unary => Some(lane_unary::<H>),
         Op::StoreCapture => Some(lane_store_capture::<H>),
-        Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
-        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmSimd => Some(lane_wasm_simd::<H>),
@@ -20440,10 +20212,10 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && kind == crate::bytecode::ProgramKind::Wasm {
-                // A Wasm run makes no frameless script call (`LaneContext::script_calls`), so
-                // its import calls take the general path, and the JavaScript call handler,
-                // which reads the context a JavaScript view carries, never runs in Wasm.
+            } else if wasm && matches!(op, Op::Call | Op::StoreCapture) {
+                // Their handlers read the context a JavaScript view carries where a Wasm view
+                // carries its memory; Wasm makes no frameless script call (`script_calls`), and
+                // stores a capture only for the rare `data.drop` and `elem.drop`.
                 None
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)]
