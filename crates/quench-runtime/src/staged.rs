@@ -152,16 +152,7 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
     let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
     let extras = stage.eq_imm(tag, OBJECT.extras_tag);
     if stage.known(extras) == Some(true) {
-        // The payload word points at the extras, which hold the inline values wide or the
-        // run's start (`Object::extras_storage_start`).
-        let pointer = stage.and_imm(payload, !OBJECT.extras_tag_mask);
-        let slots = if stage.known(inline) == Some(true) {
-            Slots::Flat(stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64))
-        } else {
-            let start = stage.load_u32(pointer, OBJECT.extras_arena_start_offset as i32);
-            Slots::Flat(arena_run(stage, start))
-        };
-        return Some(Layout { slots, storage_len });
+        return Some(Layout { slots: extras_slots(stage, payload, inline), storage_len });
     }
     let plain = stage.ne_imm(tag, OBJECT.extras_tag);
     stage.guard(plain, miss)?;
@@ -169,6 +160,25 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
         PackedAccess::Snapshot => Packed::Snapshot(payload),
         PackedAccess::Reload => Packed::Record(record),
     };
+    Some(Layout { slots: plain_slots(stage, payload, packed, inline, form, miss)?, storage_len })
+}
+
+/// The slots of an object whose payload word points at its extras, which hold the inline
+/// values wide or the run's start (`Object::extras_storage_start`).
+fn extras_slots<S: Stage>(stage: &mut S, payload: S::Word, inline: S::Cond) -> Slots<S::Word, S::Cond> {
+    let pointer = stage.and_imm(payload, !OBJECT.extras_tag_mask);
+    if stage.known(inline) == Some(true) {
+        Slots::Flat(stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64))
+    } else {
+        let start = stage.load_u32(pointer, OBJECT.extras_arena_start_offset as i32);
+        Slots::Flat(arena_run(stage, start))
+    }
+}
+
+/// The slots of a plain object in `form`: packed in its payload or a run in the arena, the
+/// inline flag decided by the stage, guarded, or left to the read.
+fn plain_slots<S: Stage>(stage: &mut S, payload: S::Word, packed: Packed<S::Word>, inline: S::Cond,
+    form: Form, miss: S::Miss) -> Option<Slots<S::Word, S::Cond>> {
     let flat = match stage.known(inline) {
         Some(inline) => !inline,
         None => match form {
@@ -181,12 +191,11 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
             Form::Either => {
                 // The run is addressed on the flat side of the flag only.
                 let flat = stage.choose(inline, |stage| stage.constant(0), |stage| arena_run(stage, payload));
-                return Some(Layout { slots: Slots::Either { packed, inline, flat }, storage_len });
+                return Some(Slots::Either { packed, inline, flat });
             }
         },
     };
-    let slots = if flat { Slots::Flat(arena_run(stage, payload)) } else { Slots::Packed(packed) };
-    Some(Layout { slots, storage_len })
+    Some(if flat { Slots::Flat(arena_run(stage, payload)) } else { Slots::Packed(packed) })
 }
 
 /// Value `slot` of an object of `layout`, which holds it.
