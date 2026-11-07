@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod modes;
 mod snapshot;
-pub(crate) use modes::{BufferMode, ElementFacts, HelperPhase, ObjectBrand, ViewLength};
+pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -3847,9 +3847,11 @@ pub(crate) enum Cell {
     ArrayBuffer {
         object: Box<Object>,
         bytes: super::BufferBytes,
-        mode: BufferMode,
-        /// Only an unshared, mutable buffer detaches (`BufferMode::detaches`).
+        shared: bool,
         detached: bool,
+        max_byte_length: usize,
+        resizable: bool,
+        immutable: bool,
     },
     TypedArray {
         kind: TypedArrayKind,

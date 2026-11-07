@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(Cell::ArrayBuffer {
             bytes,
-            mode: BufferMode::Shared | BufferMode::GrowableShared { .. },
+            shared: true,
             ..
         }) = self.heap.get(v)
             && let Some(backing) = bytes.shared_backing() {
@@ -44,12 +44,19 @@ impl<H: Host> Vm<H> {
                     meta.flags.text(),
                 ))
             }
-            Some(Cell::ArrayBuffer { bytes, mode, detached, .. }) => Some(Metadata::Buffer {
+            Some(Cell::ArrayBuffer {
+                bytes,
+                shared,
+                detached,
+                max_byte_length,
+                resizable,
+                ..
+            }) => Some(Metadata::Buffer {
                 bytes: bytes.to_vec(),
-                shared: mode.is_shared(),
+                shared: *shared,
                 detached: *detached,
-                maximum: mode.max_byte_length(bytes.len()),
-                resizable: mode.is_resizable(),
+                maximum: *max_byte_length,
+                resizable: *resizable,
             }),
             Some(Cell::TypedArray {
                 kind,
@@ -111,8 +118,11 @@ impl<H: Host> Vm<H> {
                 self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(proto)),
                     bytes: crate::heap::BufferBytes::from_shared(backing.clone()),
-                    mode: BufferMode::new(true, backing.growable(), false, backing.maximum()),
+                    shared: true,
                     detached: false,
+                    max_byte_length: backing.maximum(),
+                    resizable: backing.growable(),
+                    immutable: false,
                 })
             }
             Node::Object(_) => self
@@ -175,8 +185,11 @@ impl<H: Host> Vm<H> {
                 self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(proto)),
                     bytes: bytes.clone().into(),
-                    mode: BufferMode::new(false, *resizable, false, *maximum),
+                    shared: false,
                     detached: false,
+                    max_byte_length: *maximum,
+                    resizable: *resizable,
+                    immutable: false,
                 })
             }
             Node::View {
@@ -190,14 +203,14 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::ArrayBuffer {
                     bytes,
                     detached,
-                    mode,
+                    resizable,
                     ..
                 }) = self.heap.get(buffer)
                 else {
                     return Err(self.type_error(&p, "Owned view needs ArrayBuffer".into()));
                 };
                 let bytes_len = bytes.len();
-                if *detached || (*tracking && !mode.is_resizable()) {
+                if *detached || (*tracking && !*resizable) {
                     return Err(self.type_error(&p, "Invalid owned view backing".into()));
                 }
                 if kind == "DataView" {
@@ -211,7 +224,7 @@ impl<H: Host> Vm<H> {
                             offset: *offset,
                         }),
                         buffer,
-                        length: ViewLength::new(*length, *tracking),
+                        length: crate::heap::ViewLength::new(*length, *tracking),
                     })
                 } else {
                     let kind = match kind.as_str() {
@@ -249,7 +262,7 @@ impl<H: Host> Vm<H> {
                             offset: *offset,
                         }),
                         buffer,
-                        length: ViewLength::new(*length, *tracking),
+                        length: crate::heap::ViewLength::new(*length, *tracking),
                     })
                 }
             }

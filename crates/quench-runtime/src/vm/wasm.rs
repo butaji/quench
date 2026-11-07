@@ -311,8 +311,11 @@ impl<H: Host> Vm<H> {
             values.push(self.heap.alloc(Cell::ArrayBuffer {
                 object: Box::new(Self::empty_object(Value::NULL)),
                 bytes: segment.bytes.clone().into(),
-                mode: BufferMode::Immutable,
+                shared: false,
                 detached: false,
+                max_byte_length: segment.bytes.len(),
+                resizable: false,
+                immutable: true,
             }));
         }
         for (table, imported) in module.tables.iter().zip(tables) {
@@ -1331,8 +1334,11 @@ impl<H: Host> Vm<H> {
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(if shared { self.shared_array_buffer_proto } else { self.array_buffer_proto })),
             bytes: view,
-            mode: BufferMode::new(shared, false, false, byte_length),
+            shared,
             detached: false,
+            max_byte_length: byte_length,
+            resizable: false,
+            immutable: false,
         });
         if let Some(Cell::WasmMemory {
             buffer: current, ..
@@ -1350,7 +1356,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         let previous = std::mem::replace(buffer, Value::UNDEFINED);
-        if matches!(self.heap.get(previous), Some(Cell::ArrayBuffer { mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. }, .. })) {
+        if matches!(self.heap.get(previous), Some(Cell::ArrayBuffer { shared: false, .. })) {
             self.detach_array_buffer(previous);
         }
     }

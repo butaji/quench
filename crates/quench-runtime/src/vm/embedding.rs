@@ -344,8 +344,8 @@ impl<H: Host> Vm<H> {
             B::WeakMap => matches!(cell, Some(Cell::WeakMap { .. })),
             B::WeakSet => matches!(cell, Some(Cell::WeakSet { .. })),
             B::Proxy => matches!(cell, Some(Cell::Proxy { .. })),
-            B::ArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. }, .. })),
-            B::SharedArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. })),
+            B::ArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { shared: false, .. })),
+            B::SharedArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { shared: true, .. })),
             B::AnyArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { .. })),
             B::DataView => matches!(cell, Some(Cell::DataView { .. })),
             B::TypedArray => matches!(cell, Some(Cell::TypedArray { .. })),
@@ -654,11 +654,11 @@ impl<H: Host> Vm<H> {
             },
             Some(Cell::ArrayBuffer {
                 bytes,
-                mode,
+                shared,
                 detached,
                 ..
             }) => D::Bytes {
-                brand: if mode.is_shared() {
+                brand: if *shared {
                     B::SharedArrayBuffer
                 } else {
                     B::ArrayBuffer
@@ -972,7 +972,7 @@ impl<H: Host> Vm<H> {
     fn diagnostic_class_name(cell: &Cell) -> &'static str {
         match cell {
             Cell::Array { .. } => "Array",
-            Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. } => "SharedArrayBuffer",
+            Cell::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
             Cell::ArrayBuffer { .. } => "ArrayBuffer",
             Cell::TypedArray { kind, .. } => match kind {
                 TypedArrayKind::Uint8 => "Uint8Array",

@@ -27,7 +27,7 @@ impl<H: Host> Vm<H> {
         let immutable = matches!(
             self.heap.get(*buffer),
             Some(Cell::ArrayBuffer {
-                mode: BufferMode::Immutable,
+                immutable: true,
                 ..
             })
         );
@@ -127,13 +127,13 @@ impl<H: Host> Vm<H> {
                     let Some(Cell::ArrayBuffer {
                         bytes,
                         detached,
-                        mode,
+                        resizable,
                         ..
                     }) = self.heap.get(source)
                     else {
                         unreachable!("typed array buffer source remains live")
                     };
-                    let resizable = mode.is_resizable();
+                    let resizable = *resizable;
                     let buffer_length = bytes.len();
                     if *detached {
                         return Err(
@@ -174,7 +174,7 @@ impl<H: Host> Vm<H> {
                             offset,
                         }),
                         buffer: source,
-                        length: ViewLength::new(length, resizable && requested_length.is_none()),
+                        length: crate::heap::ViewLength::new(length, resizable && requested_length.is_none()),
                     }));
                 }
 
@@ -214,7 +214,7 @@ impl<H: Host> Vm<H> {
                         offset: 0,
                     }),
                     buffer: self.heap.root_value(buffer_root).unwrap(),
-                    length: ViewLength::fixed(length),
+                    length: crate::heap::ViewLength::fixed(length),
                 });
                 let target_root = self.heap.root(typed_array);
                 target = Some(target_root);

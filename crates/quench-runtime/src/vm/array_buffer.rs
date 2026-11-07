@@ -11,7 +11,7 @@ impl<H: Host> Vm<H> {
     /// Object identity and shared data-block identity are distinct facts.
     pub(super) fn array_buffers_share_data_block(&self,left:Value,right:Value)->bool{
         if left==right{return true}
-        let backing=|v|match self.heap.get(v){Some(Cell::ArrayBuffer{ bytes, mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. })=>bytes.shared_backing(),_=>None};
+        let backing=|v|match self.heap.get(v){Some(Cell::ArrayBuffer{bytes,shared:true,..})=>bytes.shared_backing(),_=>None};
         match(backing(left),backing(right)){(Some(a),Some(b))=>a.shares_data_block(&b),_=>false}
     }
 
@@ -193,11 +193,11 @@ impl<H: Host> Vm<H> {
         let buffer = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (shared, detached, wasm_view) = match self.heap.get(buffer) {
             Some(Cell::ArrayBuffer {
-                mode,
+                shared,
                 bytes,
                 detached,
                 ..
-            }) => (mode.is_shared(), *detached, bytes.is_wasm_view()),
+            }) => (*shared, *detached, bytes.is_wasm_view()),
             _ => {
                 return Err(self.type_error(p, "detachArrayBuffer requires an ArrayBuffer".into()));
             }
@@ -372,7 +372,7 @@ impl<H: Host> Vm<H> {
         matches!(
             self.heap.get(buffer),
             Some(Cell::ArrayBuffer {
-                mode: BufferMode::Resizable { .. } | BufferMode::GrowableShared { .. },
+                resizable: true,
                 ..
             })
         )
@@ -384,13 +384,21 @@ impl<H: Host> Vm<H> {
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
-        let Some(Cell::ArrayBuffer { bytes, mode, detached, .. }) = self.heap.get(this) else {
+        let Some(Cell::ArrayBuffer {
+            bytes,
+            shared,
+            detached,
+            max_byte_length,
+            resizable,
+            immutable,
+            ..
+        }) = self.heap.get(this)
+        else {
             return Err(self.type_error(
                 p,
                 "ArrayBuffer accessor called on incompatible receiver".into(),
             ));
         };
-        let (shared, resizable, immutable) = (&mode.is_shared(), &mode.is_resizable(), &mode.is_immutable());
         let result = match native {
             Native::ArrayBufferByteLengthGetter if !*shared => {
                 Value::number(if *detached { 0.0 } else { bytes.len() as f64 })
@@ -414,11 +422,17 @@ impl<H: Host> Vm<H> {
             }
             Native::ArrayBufferMaxByteLengthGetter if !*shared => Value::number(if *detached {
                 0.0
+            } else if *resizable {
+                *max_byte_length as f64
             } else {
-                mode.max_byte_length(bytes.len()) as f64
+                bytes.len() as f64
             }),
             Native::SharedArrayBufferMaxByteLengthGetter if *shared => {
-                Value::number(mode.max_byte_length(bytes.len()) as f64)
+                Value::number(if *resizable {
+                    *max_byte_length as f64
+                } else {
+                    bytes.len() as f64
+                })
             }
             Native::ArrayBufferResizableGetter if !*shared => {
                 if *resizable {
@@ -492,8 +506,11 @@ impl<H: Host> Vm<H> {
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes,
-            mode: BufferMode::new(shared, resizable, false, max_byte_length),
+            shared,
             detached: false,
+            max_byte_length,
+            resizable,
+            immutable: false,
         });
         self.intern_atom("byteLength");
         Ok(buffer)
@@ -563,8 +580,11 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes,
-            mode: BufferMode::new(shared, false, false, length),
+            shared,
             detached: false,
+            max_byte_length: length,
+            resizable: false,
+            immutable: false,
         })
     }
 
@@ -578,10 +598,10 @@ impl<H: Host> Vm<H> {
         let length = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
-                mode,
+                shared: receiver_shared,
                 detached,
                 ..
-            }) if mode.is_shared() == shared && !detached => bytes.len(),
+            }) if *receiver_shared == shared && !detached => bytes.len(),
             _ => {
                 let name = if shared {
                     "SharedArrayBuffer"
@@ -635,9 +655,13 @@ impl<H: Host> Vm<H> {
         };
         let (result_bytes, result_shared, result_detached, result_immutable) =
             match self.heap.get(result) {
-                Some(Cell::ArrayBuffer { bytes, mode, detached, .. }) => {
-                    (bytes.clone(), mode.is_shared(), *detached, mode.is_immutable())
-                }
+                Some(Cell::ArrayBuffer {
+                    bytes,
+                    shared,
+                    detached,
+                    immutable,
+                    ..
+                }) => (bytes.clone(), *shared, *detached, *immutable),
                 _ => {
                     return Err(
                         self.type_error(p, "ArrayBuffer species must return an ArrayBuffer".into())
@@ -684,15 +708,19 @@ impl<H: Host> Vm<H> {
         preserve_resizability: bool,
         immutable_result: bool,
     ) -> Result<Value, JsError> {
-        let (bytes, mode) = match self.heap.get(this) {
-            Some(Cell::ArrayBuffer { bytes, mode, .. }) => (bytes.clone(), *mode),
+        let (bytes, shared, max_byte_length, resizable) = match self.heap.get(this) {
+            Some(Cell::ArrayBuffer {
+                bytes,
+                shared,
+                max_byte_length,
+                resizable,
+                ..
+            }) => (bytes.clone(), *shared, *max_byte_length, *resizable),
             _ => return Err(self.type_error(p, "ArrayBuffer.transfer receiver is invalid".into())),
         };
-        if mode.is_shared() {
+        if shared {
             return Err(self.type_error(p, "ArrayBuffer transfer requires an ArrayBuffer".into()));
         }
-        let resizable = mode.is_resizable();
-        let max_byte_length = mode.max_byte_length(bytes.len());
         let length = args
             .first()
             .copied()
@@ -701,7 +729,12 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(bytes.len());
         let (detached, immutable, bytes) = match self.heap.get(this) {
-            Some(Cell::ArrayBuffer { bytes, detached, mode, .. }) => (*detached, mode.is_immutable(), bytes.clone()),
+            Some(Cell::ArrayBuffer {
+                bytes,
+                detached,
+                immutable,
+                ..
+            }) => (*detached, *immutable, bytes.clone()),
             _ => (true, true, Default::default()),
         };
         if self
@@ -736,8 +769,11 @@ impl<H: Host> Vm<H> {
                 self.array_buffer_intrinsic_prototype(false),
             )),
             bytes: copied_bytes.into(),
-            mode: BufferMode::new(false, preserve_resizability && resizable, immutable_result, result_max_byte_length),
+            shared: false,
             detached: false,
+            max_byte_length: result_max_byte_length,
+            resizable: preserve_resizability && resizable,
+            immutable: immutable_result,
         });
         self.detach_array_buffer(this);
         Ok(result)
@@ -745,8 +781,10 @@ impl<H: Host> Vm<H> {
 
     /// DetachArrayBuffer once the caller has checked the detach key: releases the bytes.
     pub(super) fn detach_array_buffer(&mut self, buffer: Value) {
-        if let Some(Cell::ArrayBuffer { bytes, detached, mode, .. }) = self.heap.get_mut(buffer) {
-            debug_assert!(mode.detaches(), "only an unshared, mutable buffer detaches");
+        if let Some(Cell::ArrayBuffer {
+            bytes, detached, ..
+        }) = self.heap.get_mut(buffer)
+        {
             let before = std::mem::take(bytes).capacity();
             *detached = true;
             self.heap.adjust_external_bytes(before, 0);
@@ -793,19 +831,23 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (mode, detached) = match self.heap.get(this) {
-            Some(Cell::ArrayBuffer { mode, detached, .. }) => (*mode, *detached),
+        let (immutable, detached, shared, resizable, max_byte_length) = match self.heap.get(this) {
+            Some(Cell::ArrayBuffer {
+                immutable,
+                detached,
+                shared,
+                resizable,
+                max_byte_length,
+                ..
+            }) => (*immutable, *detached, *shared, *resizable, *max_byte_length),
             _ => return Err(self.type_error(p, "ArrayBuffer.resize receiver is invalid".into())),
         };
-        if mode.is_immutable() {
+        if immutable {
             return Err(self.type_error(p, "cannot resize an immutable ArrayBuffer".into()));
         }
         let requested =
             self.array_buffer_to_index(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let BufferMode::Resizable { max_byte_length } = mode else {
-            return Err(self.type_error(p, "ArrayBuffer is not resizable".into()));
-        };
-        if detached {
+        if shared || detached || !resizable {
             return Err(self.type_error(p, "ArrayBuffer is not resizable".into()));
         }
         if requested > max_byte_length {
@@ -814,8 +856,11 @@ impl<H: Host> Vm<H> {
         let can_resize = matches!(
             self.heap.get(this),
             Some(Cell::ArrayBuffer {
-                mode: BufferMode::Resizable { max_byte_length },
+                shared: false,
                 detached: false,
+                immutable: false,
+                resizable: true,
+                max_byte_length,
                 ..
             }) if requested <= *max_byte_length
         );
@@ -847,16 +892,26 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let requested =
             self.array_buffer_to_index(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let (current_length, mode, detached) = match self.heap.get(this) {
-            Some(Cell::ArrayBuffer { bytes, mode, detached, .. }) => (bytes.len(), *mode, *detached),
+        let (current_length, max_length, shared, detached, resizable) = match self.heap.get(this) {
+            Some(Cell::ArrayBuffer {
+                bytes,
+                shared,
+                detached,
+                max_byte_length,
+                resizable,
+                ..
+            }) => (
+                bytes.len(),
+                *max_byte_length,
+                *shared,
+                *detached,
+                *resizable,
+            ),
             _ => {
                 return Err(self.type_error(p, "SharedArrayBuffer.grow receiver is invalid".into()));
             }
         };
-        let BufferMode::GrowableShared { max_byte_length: max_length } = mode else {
-            return Err(self.type_error(p, "SharedArrayBuffer is not growable".into()));
-        };
-        if detached {
+        if !shared || detached || !resizable {
             return Err(self.type_error(p, "SharedArrayBuffer is not growable".into()));
         }
         if requested < current_length || requested > max_length {
@@ -890,8 +945,8 @@ impl<H: Host> Vm<H> {
         let source_length = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
+                shared: false,
                 detached: false,
-                mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. },
                 ..
             }) => bytes.len(),
             _ => {
@@ -935,8 +990,11 @@ impl<H: Host> Vm<H> {
                 self.array_buffer_intrinsic_prototype(false),
             )),
             bytes: bytes.into(),
-            mode: BufferMode::Immutable,
+            shared: false,
             detached: false,
+            max_byte_length: count,
+            resizable: false,
+            immutable: true,
         }))
     }
 

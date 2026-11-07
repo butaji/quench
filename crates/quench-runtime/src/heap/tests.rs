@@ -454,8 +454,11 @@ fn array_buffer_backing_is_accounted_until_owner_collection() {
     let buffer = heap.alloc(Cell::ArrayBuffer {
         object: Box::new(plain_object()),
         bytes: vec![0; 16].into(),
-        mode: crate::heap::BufferMode::Fixed,
+        shared: false,
         detached: false,
+        max_byte_length: 16,
+        resizable: false,
+        immutable: false,
     });
     assert_eq!(heap.stats().5, 16);
     heap.collect([buffer]);

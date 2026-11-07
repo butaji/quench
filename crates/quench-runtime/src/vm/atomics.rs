@@ -409,7 +409,7 @@ impl<H: Host> Vm<H> {
             && matches!(
                 self.heap.get(*buffer),
                 Some(Cell::ArrayBuffer {
-                    mode: BufferMode::Immutable,
+                    immutable: true,
                     ..
                 })
             )
@@ -643,7 +643,7 @@ impl<H: Host> Vm<H> {
         };
         let Some(Cell::ArrayBuffer {
             bytes,
-            mode: BufferMode::Shared | BufferMode::GrowableShared { .. },
+            shared: true,
             ..
         }) = self.heap.get(*buffer)
         else {

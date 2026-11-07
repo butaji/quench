@@ -35,8 +35,8 @@ use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    BufferMode, CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, ViewLength,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
+    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};

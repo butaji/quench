@@ -26,13 +26,13 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer {
             bytes,
             detached,
-            mode: mode @ (BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. }),
+            shared: false,
+            resizable,
             ..
         }) = self.heap.get_mut(value)
         else {
             return Err(self.type_error(&program, "Expected an ArrayBuffer".into()));
         };
-        let resizable = &mode.is_resizable();
         if *detached || bytes.is_empty() {
             return Ok(0);
         }
@@ -65,8 +65,8 @@ impl<H: Host> Vm<H> {
             .root_value(root)
             .ok_or_else(|| self.type_error(&program, "buffer root expired".into()))?;
         let (kind, buffer, byte_offset, byte_length, length) = match self.heap.get(value) {
-            Some(Cell::ArrayBuffer { mode, .. }) => {
-                let kind = if mode.is_shared() {
+            Some(Cell::ArrayBuffer { shared, .. }) => {
+                let kind = if *shared {
                     B::SharedArrayBuffer
                 } else {
                     B::ArrayBuffer
@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
         // A naked pointer cannot carry the synchronized shared store's guard.
         // Reject this host boundary explicitly rather than copy or expose bytes
         // while other runtimes may access them concurrently.
-        if matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{ bytes, mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. }) if bytes.shared_backing().is_some())
+        if matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{bytes,shared:true,..}) if bytes.shared_backing().is_some())
         {
             return Err(self.type_error(&program,"Raw pointer access to synchronized shared backing requires a native lifetime protocol".into()));
         }
@@ -110,11 +110,11 @@ impl<H: Host> Vm<H> {
             Some(Cell::ArrayBuffer {
                 bytes,
                 detached: false,
-                mode,
+                resizable,
                 ..
             }) if !bytes.is_empty() => {
                 let before = bytes.capacity();
-                let address = if mode.is_resizable() {
+                let address = if *resizable {
                     bytes.as_ptr_bytes() as usize
                 } else {
                     bytes.pin_address()
@@ -187,7 +187,7 @@ impl<H: Host> Vm<H> {
                 offset: 0,
             }),
             buffer: self.heap.root_value(buffer_root).unwrap(),
-            length: ViewLength::fixed(length),
+            length: crate::heap::ViewLength::fixed(length),
         });
         self.heap.release_root(buffer_root);
         Ok(view)
@@ -243,7 +243,7 @@ impl<H: Host> Vm<H> {
     /// another value, or a detached or immutable buffer, which accept no writes.
     pub(crate) fn embedding_with_buffer_bytes_mut<T>(&mut self, value: Value, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
         let (buffer, range) = self.embedding_buffer_range(value)?;
-        let Cell::ArrayBuffer { bytes, detached: false, mode: BufferMode::Fixed | BufferMode::Resizable { .. } | BufferMode::Shared | BufferMode::GrowableShared { .. }, .. } = self.heap.buffer_bytes_mut(buffer)? else {
+        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.buffer_bytes_mut(buffer)? else {
             return None;
         };
         let mut bytes = bytes.make_mut();
@@ -421,7 +421,11 @@ impl<H: Host> Vm<H> {
         };
         matches!(
             self.heap.get(*buffer),
-            Some(Cell::ArrayBuffer { mode, .. }) if mode.is_resizable() && (!mode.is_shared() || length.is_tracking())
+            Some(Cell::ArrayBuffer {
+                shared,
+                resizable: true,
+                ..
+            }) if !shared || length.is_tracking()
         )
     }
 
@@ -450,7 +454,7 @@ impl<H: Host> Vm<H> {
             _ => return None,
         };
         match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { mode, .. }) => Some(mode.is_shared()),
+            Some(Cell::ArrayBuffer { shared, .. }) => Some(*shared),
             _ => None,
         }
     }
@@ -717,7 +721,7 @@ impl<H: Host> Vm<H> {
         let encoded = Self::typed_array_element_bytes(kind, value);
         let Some(Cell::ArrayBuffer {
             bytes,
-            mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. },
+            shared: false,
             ..
         }) = self.heap.get_mut(buffer)
         else {
@@ -924,7 +928,7 @@ struct TypedArrayView {
     kind: TypedArrayKind,
     buffer: Value,
     offset: usize,
-    length: ViewLength,
+    length: crate::heap::ViewLength,
 }
 
 impl TypedArrayView {

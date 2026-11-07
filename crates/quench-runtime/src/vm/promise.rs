@@ -2267,8 +2267,11 @@ impl<H: Host> Vm<H> {
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(self.array_buffer_proto)),
                     bytes: bytes.into(),
-                    mode: BufferMode::Immutable,
+                    shared: false,
                     detached: false,
+                    max_byte_length: length,
+                    resizable: false,
+                    immutable: true,
                 });
                 let value = self.heap.alloc(Cell::TypedArray {
                     kind,
@@ -2277,7 +2280,7 @@ impl<H: Host> Vm<H> {
                         offset: 0,
                     }),
                     buffer,
-                    length: ViewLength::fixed(length),
+                    length: crate::heap::ViewLength::fixed(length),
                 });
                 self.module_namespace_default(value)
             }

@@ -50,62 +50,6 @@ impl ElementFacts {
     }
 }
 
-/// What kind of buffer an ArrayBuffer cell is, set at creation: whether it is shared, how
-/// it may grow, and the bound it grows to. A fixed buffer's maximum is its length.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BufferMode {
-    Fixed,
-    /// `ArrayBuffer.prototype.transferToImmutable` and immutable host data: never written,
-    /// resized or detached.
-    Immutable,
-    Resizable { max_byte_length: usize },
-    Shared,
-    /// A growable SharedArrayBuffer.
-    GrowableShared { max_byte_length: usize },
-}
-
-impl BufferMode {
-    /// The mode the separate shared, resizable and immutable facts of a wire format or host
-    /// record name. A resizable buffer's `max_byte_length` is its bound; others ignore it.
-    pub(crate) fn new(shared: bool, resizable: bool, immutable: bool, max_byte_length: usize) -> Self {
-        match (shared, resizable, immutable) {
-            (true, true, _) => Self::GrowableShared { max_byte_length },
-            (true, false, _) => Self::Shared,
-            (false, true, _) => Self::Resizable { max_byte_length },
-            (false, false, true) => Self::Immutable,
-            (false, false, false) => Self::Fixed,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_shared(self) -> bool {
-        matches!(self, Self::Shared | Self::GrowableShared { .. })
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_resizable(self) -> bool {
-        matches!(self, Self::Resizable { .. } | Self::GrowableShared { .. })
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_immutable(self) -> bool {
-        self == Self::Immutable
-    }
-
-    /// Whether a buffer of this mode can be detached (transferred, or by the host).
-    pub(crate) fn detaches(self) -> bool {
-        matches!(self, Self::Fixed | Self::Resizable { .. })
-    }
-
-    /// `maxByteLength` of an attached buffer of `byte_length` bytes.
-    pub(crate) fn max_byte_length(self, byte_length: usize) -> usize {
-        match self {
-            Self::Resizable { max_byte_length } | Self::GrowableShared { max_byte_length } => max_byte_length,
-            Self::Fixed | Self::Immutable | Self::Shared => byte_length,
-        }
-    }
-}
-
 /// A buffer view's length: fixed (elements of a typed array, bytes of a DataView), or
 /// tracking its resizable buffer past the view's offset, which derives it from the buffer at
 /// each access. One word: the tracking case is a value no fixed length reaches.
