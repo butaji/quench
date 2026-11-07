@@ -51,6 +51,10 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+#[path = "compiled/code_memory.rs"]
+mod code_memory;
+pub(in crate::vm) use code_memory::CodeMemory;
+use code_memory::FUNCTION_ALIGNMENT;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
@@ -6736,10 +6740,10 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
-/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
+/// With `QUENCH_TRACE=perf-map` set, names each compiled function's code (`kind-index`) for
+/// `perf` (`/tmp/perf-PID.map`) and writes the published code to `/tmp/quench-jit-PID-BASE.bin`
 /// for disassembly at `BASE` (diagnostics only).
-fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
     if !crate::trace::Channel::PerfMap.on() {
         return;
     }
@@ -6751,79 +6755,10 @@ fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
         .open(format!("/tmp/perf-{pid}.map"))
     {
         for &(offset, len, index) in spans {
-            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+            let _ = writeln!(map, "{:x} {len:x} {kind}-{index}", base + offset);
         }
     }
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
-}
-
-/// Executable memory holding a program's machine code.
-pub(super) struct CodeMemory {
-    pointer: *mut u8,
-    length: usize,
-}
-
-impl CodeMemory {
-    /// The first byte of the executable mapping.
-    pub(super) fn pointer(&self) -> *mut u8 {
-        self.pointer
-    }
-
-    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
-        Self::assemble(bytes.len(), |_, code| {
-            code.copy_from_slice(bytes);
-            Ok(())
-        })
-        .ok()
-    }
-
-    /// Map `length` writable bytes, let `fill` write the code knowing its final
-    /// address, then make the mapping read-only and executable. Copy-and-patch
-    /// publication needs the address to resolve PC-relative continuations.
-    pub(super) fn assemble(
-        length: usize,
-        fill: impl FnOnce(*mut u8, &mut [u8]) -> Result<(), String>,
-    ) -> Result<Self, String> {
-        let requested = length;
-        let length = length.max(1);
-        // `mmap` rounds to whole pages. Store that rounded length explicitly
-        // so the JS tier's budget reflects its executable mappings.
-        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        let page_size = usize::try_from(page_size).map_err(|_| "page size is unavailable")?;
-        let length = length
-            .checked_next_multiple_of(page_size)
-            .ok_or("code mapping size overflow")?;
-        // SAFETY: an anonymous private mapping; the result is checked.
-        let pointer = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                length,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        if pointer == libc::MAP_FAILED {
-            return Err("code mapping failed".into());
-        }
-        let memory = Self { pointer: pointer.cast::<u8>(), length };
-        // SAFETY: the mapping is `length >= requested` writable bytes owned by `memory`.
-        let code = unsafe { std::slice::from_raw_parts_mut(memory.pointer, requested) };
-        fill(memory.pointer, code)?;
-        // SAFETY: the same mapping, now read-only and executable.
-        if unsafe { libc::mprotect(memory.pointer.cast(), length, libc::PROT_READ | libc::PROT_EXEC) } != 0 {
-            return Err("code mapping could not be made executable".into());
-        }
-        Ok(memory)
-    }
-}
-
-impl Drop for CodeMemory {
-    fn drop(&mut self) {
-        // SAFETY: the mapping this value owns.
-        unsafe { libc::munmap(self.pointer.cast(), self.length) };
-    }
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -7047,6 +6982,7 @@ fn compile_and_publish_entry(
 ) -> Option<(CodeMemory, Entry)> {
     compile_native_function(function, isa, max_code_bytes, |code| {
         let memory = CodeMemory::new(code)?;
+        write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
         // SAFETY: callers lower the function with `native_entry_signature`.
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
         Some((memory, entry))
@@ -9183,19 +9119,19 @@ impl CompiledJsFunction {
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::SharedNumberEntry(mode, result) => {
                 // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
-                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
+                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
                 (CompiledJsEntry::SharedNumber { entry, mode, result }, Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::GeneralDispatch => {
                 // SAFETY: the general JS dispatcher emits the shared native-entry ABI.
-                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
+                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
                 (CompiledJsEntry::GeneralDispatch(entry), Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::Int32Identity(return_pc) => {
                 // SAFETY: the guarded integer identity compiler emits the Number ABI.
                 let entry = unsafe {
                     std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(
-                        code.pointer,
+                        code.pointer(),
                     )
                 };
                 (
@@ -9207,7 +9143,7 @@ impl CompiledJsFunction {
             super::js_compiled::JsJitResultKind::CaptureNumber(capture) => {
                 // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
                 let entry = unsafe {
-                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(f64) -> f64>(code.pointer)
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(f64) -> f64>(code.pointer())
                 };
                 (
                     CompiledJsEntry::CaptureNumber(entry),
@@ -9226,7 +9162,7 @@ impl CompiledJsFunction {
                             *const std::sync::atomic::AtomicBool,
                             *mut u32,
                         ) -> f64,
-                    >(code.pointer)
+                    >(code.pointer())
                 };
                 (
                     CompiledJsEntry::NumberInterruptible(entry),
@@ -9247,7 +9183,7 @@ impl CompiledJsFunction {
                             *const std::sync::atomic::AtomicBool,
                             *mut u32,
                         ) -> f64,
-                    >(code.pointer)
+                    >(code.pointer())
                 };
                 (CompiledJsEntry::StringHashLoop(entry), Vec::new(), None)
             }
@@ -9255,7 +9191,7 @@ impl CompiledJsFunction {
                 // SAFETY: the string transform compiler emits the matching code-unit ABI.
                 let entry = unsafe {
                     std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u8, usize, u32) -> u32>(
-                        code.pointer,
+                        code.pointer(),
                     )
                 };
                 (
@@ -9268,7 +9204,7 @@ impl CompiledJsFunction {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
                 let entry = unsafe {
                     std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
-                        code.pointer,
+                        code.pointer(),
                     )
                 };
                 (
@@ -9281,7 +9217,7 @@ impl CompiledJsFunction {
                 // SAFETY: the boolean compiler emits `fn(*const f64) -> u32`.
                 let entry = unsafe {
                     std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
-                        code.pointer,
+                        code.pointer(),
                     )
                 };
                 (CompiledJsEntry::Boolean(entry), Vec::new(), None)
@@ -9295,7 +9231,7 @@ impl CompiledJsFunction {
                 // `fn(*const f64) -> u32`, where zero resumes the interpreter.
                 let entry = unsafe {
                     std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
-                        code.pointer,
+                        code.pointer(),
                     )
                 };
                 (
@@ -13667,9 +13603,9 @@ fn guard_support() -> Option<&'static GuardSupport> {
             }
             let memory = CodeMemory::new(&code)?;
             // SAFETY: the code implements `Trampoline` for this ABI.
-            let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer) };
-            let landing = memory.pointer as usize + TRAMPOLINE_LANDING;
-            let termination = memory.pointer as usize + TRAMPOLINE_TERMINATION;
+            let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer()) };
+            let landing = memory.pointer() as usize + TRAMPOLINE_LANDING;
+            let termination = memory.pointer() as usize + TRAMPOLINE_TERMINATION;
             install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV)],
                 guard_fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER)?;
             Some(GuardSupport {
@@ -13941,9 +13877,6 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
     }
     Some(())
 }
-
-/// Code alignment for each compiled function.
-const FUNCTION_ALIGNMENT: usize = 64;
 
 impl<H: Host> Vm<H> {
     /// Invalidate artifact-local indirect-call certificates when VM state that
@@ -15796,8 +15729,8 @@ impl<H: Host> Vm<H> {
         }
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length;
-        let base = memory.pointer as usize;
-        write_perf_map(base, &bytes, &spans);
+        let base = memory.pointer() as usize;
+        write_perf_map("wasm-function", base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))

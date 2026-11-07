@@ -572,3 +572,61 @@
  ;; Constant fold bswap of a constant.
  (rule (simplify (bswap $I16 (iconst ty (u64_from_imm64 n))))
        (subsume (iconst $I16 (imm64 (u64_bswap16 n)))))
+--- a/cranelift-codegen/src/isa/x64/abi.rs
++++ b/cranelift-codegen/src/isa/x64/abi.rs
+@@ -798,8 +798,10 @@ impl ABIMachineSpec for X64ABIMachineSpec {
+             + frame_layout.clobber_size
+             + frame_layout.outgoing_args_size;
+ 
+-        // Adjust RSP back upward.
+-        if stack_size > 0 {
++        // Adjust RSP back upward. Quench: every x64 frame has a setup area, and
++        // the frame restore that follows (`mov %rbp, %rsp`) resets RSP itself,
++        // so the adjustment is dead there.
++        if stack_size > 0 && frame_layout.setup_area_size == 0 {
+             let rsp = Writable::from_reg(regs::rsp());
+             let stack_size = i32::try_from(stack_size)
+                 .expect("`stack_size` is too large to fit in a 32-bit immediate");
+--- a/cranelift-codegen/src/isa/x64/lower.isle
++++ b/cranelift-codegen/src/isa/x64/lower.isle
+@@ -261,6 +261,17 @@
+ (rule 4 (lower inst @ (smul_overflow _ x y @ (value_type $I64)))
+       (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rm_raw x (gpr_mem_64_for_ty $I64 y)))))
+ 
++;; Quench: a constant factor is the three-operand form's immediate (imm8 when it
++;; fits), not a constant-pool load per product. OF has the same meaning.
++(rule 6 (lower inst @ (smul_overflow $I32 x (i32_from_iconst (i8_from_i32 y))))
++      (overflow_op inst (CC.O) (asm_produce_flags (x64_imull_rmi_sxb_raw (gpr_mem_32_for_ty $I32 x) y))))
++(rule 5 (lower inst @ (smul_overflow $I32 x (i32_from_iconst y)))
++      (overflow_op inst (CC.O) (asm_produce_flags (x64_imull_rmi_raw (gpr_mem_32_for_ty $I32 x) (i32_cast_unsigned y)))))
++(rule 6 (lower inst @ (smul_overflow $I64 x (i32_from_iconst (i8_from_i32 y))))
++      (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rmi_sxb_raw (gpr_mem_64_for_ty $I64 x) y))))
++(rule 5 (lower inst @ (smul_overflow $I64 x (i32_from_iconst y)))
++      (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rmi_sxl_raw (gpr_mem_64_for_ty $I64 x) y))))
++
+ ;;;; Rules for `sadd_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 
+ (rule (lower (sadd_sat (multi_lane 8 16) x y))
+--- a/cranelift-codegen/src/opts/icmp.isle
++++ b/cranelift-codegen/src/opts/icmp.isle
+@@ -58,6 +58,20 @@
+                       (iconst_u _ 0)))
+       (subsume inner))
+ 
++;; Quench: eq(fcmp(ty, cc, x, y), 0) == fcmp(ty, cc_complement, x, y). The
++;; complement keeps NaN on the other side (lt <-> uge), and a branch on the
++;; fcmp lowers to ucomisd + jcc instead of ucomisd + setcc + test + jcc.
++(rule (simplify (eq ty
++                      (uextend_maybe _ (fcmp ty cc x y))
++                      (iconst_u _ 0)))
++      (subsume (fcmp ty (floatcc_complement cc) x y)))
++
++;; Quench: ne(fcmp(ty, cc, x, y), 1) == fcmp(ty, cc_complement, x, y).
++(rule (simplify (ne ty
++                      (uextend_maybe _ (fcmp ty cc x y))
++                      (iconst_u _ 1)))
++      (subsume (fcmp ty (floatcc_complement cc) x y)))
++
+ ;; eq(icmp(ty, cc, x, y), 0) == icmp(ty, cc_complement, x, y)
+ ;; e.g. eq(ugt(x, y), 0) == ule(x, y)
+ (rule (simplify (eq ty
