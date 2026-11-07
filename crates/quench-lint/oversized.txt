@@ -707,7 +707,7 @@ complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::definition 20
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::exact_range 21
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::held_registers 11
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::inline_region 68
-complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 43
+complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 39
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::representations 32
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::tagged_registers_with_failure 36
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::value_reads 16
@@ -1510,7 +1510,7 @@ file-lines crates/quench-runtime/src/vm/compiled/facts.rs 523
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5985
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 984
-file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7656
+file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7628
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 599
 file-lines crates/quench-runtime/src/vm/compiled/wavefront.rs 1445
 file-lines crates/quench-runtime/src/vm/construction.rs 1487
@@ -3046,7 +3046,7 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::entry_bounds 5
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::exact_range 66
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::held_registers 61
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::inline_region 426
-function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 182
+function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 152
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::lower_verified 44
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::renamed 62
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::representations 141
