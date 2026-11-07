@@ -2318,8 +2318,8 @@ impl<H: Host> Vm<H> {
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
                 // `this.x = v` is the same cached write with an authoritative `this`.
-                op if op.is_field_store()
-                    && let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
+                crate::bytecode::field_store_op!()
+                    if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
                         p,
