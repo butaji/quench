@@ -15,6 +15,18 @@ pub(crate) struct FieldStore {
     pub(crate) strict: bool,
 }
 
+/// The pattern of every named field store opcode, for a `match` arm that must stay a jump
+/// table entry; `Op::field_store` says what each one means.
+macro_rules! field_store_op {
+    () => {
+        $crate::bytecode::Op::SetField
+            | $crate::bytecode::Op::SetFieldStrict
+            | $crate::bytecode::Op::SetThisField
+            | $crate::bytecode::Op::SetThisFieldStrict
+    };
+}
+pub(crate) use field_store_op;
+
 impl Op {
     pub(crate) const fn field_store(self) -> Option<FieldStore> {
         let (receiver, strict) = match self {
