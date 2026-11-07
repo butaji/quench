@@ -782,14 +782,14 @@ impl Cell {
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
                 let live = reader.len()?;
                 let iterators = reader.values()?;
-                Self::Map { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
             }
             tag::SET => {
                 let object = boxed_object(reader)?;
                 let slots = reader.values()?;
                 let live = reader.len()?;
                 let iterators = reader.values()?;
-                Self::Set { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
             }
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,

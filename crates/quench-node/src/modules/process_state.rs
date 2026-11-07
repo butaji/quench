@@ -108,7 +108,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
 }
 
 pub(crate) fn platform() -> String {
-    std::env::var("QUENCH_PLATFORM").unwrap_or_else(|_| current_platform().into())
+    current_platform().into()
 }
 
 pub(crate) fn architecture() -> &'static str {

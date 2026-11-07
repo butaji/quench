@@ -29,20 +29,22 @@ impl Case {
         Self { root }
     }
 
-    fn cache(&self) -> PathBuf {
-        self.root.join("cache/compile")
-    }
-
-    /// Runs the entry with the default snapshot policy and only this case's cache.
-    fn run(&self, snapshot: Option<&str>) -> Output {
+    /// The entry's command under only this case's cache home.
+    fn command(&self) -> Command {
         let mut command = Command::new(QUENCH);
         command
             .arg(self.root.join("app/main.cjs"))
             .env_remove("NODE_OPTIONS")
-            .env_remove("QUENCH_STARTUP_SNAPSHOT")
-            .env("QUENCH_COMPILE_CACHE", self.cache());
-        if let Some(value) = snapshot {
-            command.env("QUENCH_STARTUP_SNAPSHOT", value);
+            .env_remove("QUENCH_TRACE")
+            .env("XDG_CACHE_HOME", self.root.join("cache"));
+        command
+    }
+
+    /// Runs the entry; `trace` reports whether a snapshot was restored.
+    fn run(&self, trace: bool) -> Output {
+        let mut command = self.command();
+        if trace {
+            command.env("QUENCH_TRACE", "startup-snapshot");
         }
         command.output().unwrap()
     }
@@ -60,7 +62,7 @@ impl Case {
             }
         }
         let mut files = Vec::new();
-        walk(&self.root.join("cache/snapshot"), &mut files);
+        walk(&self.root.join("cache/quench/snapshot"), &mut files);
         files
     }
 
@@ -95,15 +97,7 @@ fn assert_ran(output: &Output) {
 fn concurrent_first_runs_build_one_snapshot_that_later_runs_restore() {
     let case = Case::new("race");
     let runs: Vec<_> = (0..RACING_RUNS)
-        .map(|_| {
-            let mut command = Command::new(QUENCH);
-            command
-                .arg(case.root.join("app/main.cjs"))
-                .env_remove("NODE_OPTIONS")
-                .env_remove("QUENCH_STARTUP_SNAPSHOT")
-                .env("QUENCH_COMPILE_CACHE", case.cache());
-            command.stdout(std::process::Stdio::piped()).spawn().unwrap()
-        })
+        .map(|_| case.command().stdout(std::process::Stdio::piped()).spawn().unwrap())
         .collect();
     for run in runs {
         assert_ran(&run.wait_with_output().unwrap());
@@ -112,39 +106,31 @@ fn concurrent_first_runs_build_one_snapshot_that_later_runs_restore() {
     // with no lock or unfinished write beside it.
     let snapshot = case.await_built();
     assert!(snapshot.to_string_lossy().ends_with(".preloaded.qss"), "{snapshot:?}");
-    let restored = case.run(Some("trace"));
+    let restored = case.run(true);
     assert_ran(&restored);
     assert!(
         String::from_utf8_lossy(&restored.stderr).contains("startup snapshot restored (preloaded)"),
         "{}",
         String::from_utf8_lossy(&restored.stderr)
     );
-    assert_ran(&case.run(None));
+    assert_ran(&case.run(false));
     assert_eq!(case.snapshot_files(), vec![snapshot]);
 }
 
 #[test]
 fn a_snapshot_that_does_not_restore_boots_the_process_without_one() {
     let case = Case::new("corrupt");
-    assert_ran(&case.run(None));
+    assert_ran(&case.run(false));
     let snapshot = case.await_built();
     std::fs::write(&snapshot, b"not a snapshot").unwrap();
-    let fallback = case.run(Some("trace"));
+    let fallback = case.run(true);
     assert_ran(&fallback);
     assert!(
         String::from_utf8_lossy(&fallback.stderr).contains("not restored"),
         "{}",
         String::from_utf8_lossy(&fallback.stderr)
     );
-    assert_ran(&case.run(None));
-}
-
-#[test]
-fn off_never_schedules_a_snapshot() {
-    let case = Case::new("off");
-    assert_ran(&case.run(Some("off")));
-    std::thread::sleep(POLL * 10);
-    assert_eq!(case.snapshot_files(), Vec::<PathBuf>::new());
+    assert_ran(&case.run(false));
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -161,14 +147,14 @@ fn small_entries_restore_bootstrap_and_fall_back_after_corruption() {
             assert_eq!(output.stdout, expected.as_bytes());
             output
         };
-        assert_output(case.run(None));
+        assert_output(case.run(false));
         let snapshot = case.await_built();
         assert!(snapshot.to_string_lossy().ends_with(".bootstrap.qss"));
-        let restored = assert_output(case.run(Some("trace")));
+        let restored = assert_output(case.run(true));
         assert!(String::from_utf8_lossy(&restored.stderr).contains("startup snapshot restored (bootstrap)"));
-        assert_output(case.run(None));
+        assert_output(case.run(false));
         std::fs::write(&snapshot, b"not a snapshot").unwrap();
-        let fallback = assert_output(case.run(Some("trace")));
+        let fallback = assert_output(case.run(true));
         assert!(String::from_utf8_lossy(&fallback.stderr).contains("not restored"));
     }
 }
