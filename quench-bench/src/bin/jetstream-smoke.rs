@@ -28,8 +28,9 @@ const SMOKE_DRIVER_ARGUMENTS: &[&str] = &["--iteration-count=2", "--worst-case-c
 /// A test that takes longer has hung, not slowed: each runs in seconds on the gate's host.
 const TEST_TIMEOUT: Duration = Duration::from_secs(240);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-/// The engine environment that makes a run cold: no compile cache, no startup snapshot.
-const COLD_ENVIRONMENT: &[(&str, &str)] = &[("QUENCH_COMPILE_CACHE", ""), ("QUENCH_STARTUP_SNAPSHOT", "off")];
+/// The environment that makes a run cold: a cache home that cannot be created, so the run
+/// neither loads compiled programs nor restores a startup snapshot, and stores neither.
+const COLD_ENVIRONMENT: &[(&str, &str)] = &[("XDG_CACHE_HOME", "/dev/null")];
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);

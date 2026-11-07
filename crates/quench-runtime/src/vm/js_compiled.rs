@@ -451,7 +451,7 @@ fn operand_is_number(program: &ResidualProgram, operand: Operand, expected: f64)
 }
 
 fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::F64));
@@ -689,7 +689,7 @@ fn compile_capture_number(
     function_id: u32,
     capture: JsJitCaptureArgument,
 ) -> Option<JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(types::F64));
     signature.returns.push(AbiParam::new(types::F64));
@@ -1623,7 +1623,7 @@ fn compile_string_hash_loop(
         // regular candidate guard still enforces activation and size limits.
         return None;
     }
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -1841,7 +1841,7 @@ fn compile_string_transform(
         JsJitStringTransform::PrefixUnderscore => 2,
         JsJitStringTransform::RemoveLeadingUnderscore => 3,
     };
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let pointer = isa.pointer_type();
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(pointer));
@@ -1966,7 +1966,7 @@ fn compile_number_domain_boolean_tree(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let region = lower_number_domain_boolean_tree(program, function_id, function, &*isa)?;
     let mut context = cranelift_codegen::Context::for_function(region.function);
     let compiled = context
@@ -3291,7 +3291,7 @@ fn compile_numeric_loop(
         return None;
     }
 
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -3863,7 +3863,7 @@ fn compile_string_branches(
     }
 
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -4304,7 +4304,7 @@ fn compile_field_reject(
     };
     let resume_pc = u32::try_from(layout.continuation_pc).ok()?;
     let resume_register = u16::try_from(layout.resume_register).ok()?;
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::I32));

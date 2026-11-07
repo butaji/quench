@@ -221,7 +221,6 @@ const KEYED_VARIABLES: &[&str] = &[
     "NODE_PENDING_DEPRECATION",
     "NODE_DEBUG",
     "NODE_PATH",
-    "QUENCH_PLATFORM",
 ];
 
 /// The compiler's canonical bootstrap has no process-specific configuration. The same
@@ -242,65 +241,32 @@ pub(crate) fn native_bootstrap_environment_is_compatible() -> bool {
 pub(crate) fn neutralize_native_bootstrap_environment(command: &mut std::process::Command) {
     for name in KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES).chain(REBOUND_VARIABLES) { command.env_remove(name); }
 }
-/// How eligible processes use a snapshot (`SnapshotUse`): `on` always, `trace` always and
-/// reporting why one was not used, `off` never; otherwise by what the entry loads.
-pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";
-const SNAPSHOT_ON: &str = "on";
-const SNAPSHOT_TRACE: &str = "trace";
-const SNAPSHOT_OFF: &str = "off";
-
 /// On macOS ARM64 the bootstrap-only image avoids more initialization code than
 /// restoring it faults in. Matched M4 startup probes (TOD-123, 2026-11-03) reduce
 /// RSS for both self-contained and console entries; retain other platforms' policy.
 const BOOTSTRAP_SMALL_ENTRIES: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
 
-/// Whether an eligible process boots from a snapshot (`SNAPSHOT_ENV`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SnapshotUse {
-    /// For an inline entry, always; for a file, when BOOTSTRAP_SMALL_ENTRIES applies
-    /// or it loads modules. The prior non-ARM64-macOS policy remains below.
-    /// (`EntryLoading::Modules`). A program that loads modules
-    /// spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
-    /// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
-    /// 123 -> 80, zod 85 -> 53, axios 132 -> 87, playwright 428 -> 382). A script that names no
-    /// module boots without one: a fresh boot loads only what it uses, while a restored
-    /// `Preloaded` realm keeps every preloaded builtin resident (V8-v7 max RSS, without ->
-    /// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
-    /// `console.log` 12.9M -> 23.6M instructions). An inline entry boots in full without one,
-    /// whatever it names (`quench -e 'console.log(42)'`, the child the tinyexec and execa npm
-    /// scenarios spawn: 27.4 -> 15.4 ms; the same line from a file 9.4 ms fresh). Only under a
-    /// policy that keeps pages resident: the preloaded realm is the memory a memory-first
-    /// process exists to avoid (V8-v7 DeltaBlue under memory-first, whose comments name
-    /// `require`, static x86_64 + BOLT, pinned, 2026-10-25: max RSS 2852 KiB without, 9112 with).
-    Auto,
-    Always,
-    Never,
-}
-
-impl SnapshotUse {
-    fn of_environment() -> Self {
-        match std::env::var_os(SNAPSHOT_ENV) {
-            Some(value) if value == SNAPSHOT_ON || value == SNAPSHOT_TRACE => Self::Always,
-            Some(value) if value == SNAPSHOT_OFF => Self::Never,
-            _ => Self::Auto,
-        }
-    }
-
-    fn restores(
-        self,
-        entry: &SnapshotEntry<'_>,
-        loading: entry_graph::EntryLoading,
-        policy: Option<quench_runtime::MemoryPolicy>,
-    ) -> bool {
-        match self {
-            Self::Auto => {
-                (BOOTSTRAP_SMALL_ENTRIES || matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
-                    && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
-            }
-            Self::Always => true,
-            Self::Never => false,
-        }
-    }
+/// Whether an eligible process boots from a snapshot: for an inline entry, always; for a file,
+/// when BOOTSTRAP_SMALL_ENTRIES applies or it loads modules (`EntryLoading::Modules`). A
+/// program that loads modules spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
+/// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
+/// 123 -> 80, zod 85 -> 53, axios 132 -> 87, playwright 428 -> 382). A script that names no
+/// module boots without one: a fresh boot loads only what it uses, while a restored
+/// `Preloaded` realm keeps every preloaded builtin resident (V8-v7 max RSS, without ->
+/// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
+/// `console.log` 12.9M -> 23.6M instructions). An inline entry boots in full without one,
+/// whatever it names (`quench -e 'console.log(42)'`, the child the tinyexec and execa npm
+/// scenarios spawn: 27.4 -> 15.4 ms; the same line from a file 9.4 ms fresh). Only under a
+/// policy that keeps pages resident: the preloaded realm is the memory a memory-first
+/// process exists to avoid (V8-v7 DeltaBlue under memory-first, whose comments name
+/// `require`, static x86_64 + BOLT, pinned, 2026-10-25: max RSS 2852 KiB without, 9112 with).
+fn restores(
+    entry: &SnapshotEntry<'_>,
+    loading: entry_graph::EntryLoading,
+    policy: Option<quench_runtime::MemoryPolicy>,
+) -> bool {
+    (BOOTSTRAP_SMALL_ENTRIES || matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
+        && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
 }
 /// Set in the environment of the process that builds a snapshot, to the file it writes.
 pub(crate) const BUILD_ENV: &str = "QUENCH_BUILD_STARTUP_SNAPSHOT";
@@ -419,15 +385,14 @@ pub(crate) fn snapshot_path(
     if worker || !crate::shared_run::names_only_inline_source(&host.shared_state.borrow().exec_argv) {
         return None;
     }
-    let snapshot_use = SnapshotUse::of_environment();
-    if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some()) || snapshot_use == SnapshotUse::Never {
+    if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some()) {
         return None;
     }
     let loading = match entry {
         SnapshotEntry::File(path) => entry_graph::entry_loading(path),
         SnapshotEntry::Inline(source) => entry_graph::inline_entry_loading(source),
     };
-    if !snapshot_use.restores(&entry, loading, crate::shared_run::process_memory_policy()) {
+    if !restores(&entry, loading, crate::shared_run::process_memory_policy()) {
         return None;
     }
     // Each build's snapshots share a directory, which a builder of another build removes.
@@ -485,9 +450,9 @@ pub(crate) fn load_or_schedule(path: &std::path::Path) -> Option<quench_runtime:
     None
 }
 
-/// Reports whether a snapshot was restored, and why not, when `SNAPSHOT_ENV` asks for it.
+/// Reports whether a snapshot was restored, and why not (`QUENCH_TRACE=startup-snapshot`).
 pub(crate) fn report(path: Option<&std::path::Path>, outcome: Result<(), &str>) {
-    if std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_TRACE) {
+    if quench_runtime::trace::Channel::StartupSnapshot.on() {
         let kind = path.and_then(SnapshotKind::of_path).map_or("", SnapshotKind::name);
         match outcome {
             Ok(()) => eprintln!("quench: startup snapshot restored ({kind})"),
@@ -569,10 +534,8 @@ mod tests {
         let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
         let inline = SnapshotEntry::Inline("console.log(42)");
         for loading in [EntryLoading::SelfContained, EntryLoading::Console, EntryLoading::Modules] {
-            assert!(SnapshotUse::Auto.restores(&inline, loading, None));
-            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), BOOTSTRAP_SMALL_ENTRIES || loading == EntryLoading::Modules);
-            assert!(SnapshotUse::Always.restores(&file, loading, None));
-            assert!(!SnapshotUse::Never.restores(&inline, loading, None));
+            assert!(restores(&inline, loading, None));
+            assert_eq!(restores(&file, loading, None), BOOTSTRAP_SMALL_ENTRIES || loading == EntryLoading::Modules);
         }
     }
 
@@ -582,12 +545,10 @@ mod tests {
         use quench_runtime::MemoryPolicy;
         let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
         let inline = SnapshotEntry::Inline("console.log(42)");
-        assert!(SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
-        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
-        assert!(!SnapshotUse::Auto.restores(&inline, EntryLoading::Console, Some(MemoryPolicy::MemoryFirst)));
-        assert_eq!(SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)), BOOTSTRAP_SMALL_ENTRIES);
-        assert!(SnapshotUse::Always.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
-        assert!(!SnapshotUse::Never.restores(&inline, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+        assert!(restores(&file, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+        assert!(!restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!restores(&inline, EntryLoading::Console, Some(MemoryPolicy::MemoryFirst)));
+        assert_eq!(restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)), BOOTSTRAP_SMALL_ENTRIES);
     }
 
     #[test]

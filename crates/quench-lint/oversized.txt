@@ -2838,7 +2838,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::enter_native 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::import_callout 58
 function-lines crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 98
 function-lines crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 500
-function-lines crates/quench-runtime/src/vm/compiled.rs::lane_materialize_inline_chain 50
 function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 1438
 function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_numeric_region 378
 function-lines crates/quench-runtime/src/vm/compiled.rs::lower_static_typed_regions 74
