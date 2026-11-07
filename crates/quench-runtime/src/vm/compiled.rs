@@ -2790,6 +2790,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
 }
 
 /// The static typed regions of one planned unit of `function_id`.
+#[cfg(feature = "aot")]
 fn lower_static_typed_unit(program: &ResidualProgram, function_id: u32, unit: &lane_unit::Unit,
     isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
 {
