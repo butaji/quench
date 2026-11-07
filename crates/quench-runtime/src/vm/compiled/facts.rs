@@ -438,7 +438,7 @@ mod tests {
         let instructions: Vec<_> = function.instructions().collect();
         let leaders = super::super::lane_region::leaders(&instructions);
         let edges: Vec<_> = instructions.iter().enumerate().filter_map(|(pc, instruction)|
-            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc).map(|target| (target, pc))).collect();
         let header = edges.iter().map(|(header, _)| *header).min().unwrap();
         let back = edges.iter().filter(|(target, _)| *target == header).map(|(_, pc)| *pc).max().unwrap();

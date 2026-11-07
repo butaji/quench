@@ -197,11 +197,7 @@ fn write_immediate(output: &mut String, instruction: WideInstruction) -> fmt::Re
         | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags => {
             let window = instruction.call_window();
             write!(output, " args={}+{}", window.base, window.count)?;
-            if matches!(
-                instruction.op().immediate_layout(),
-                ImmediateLayout::CallWindowWithEvalFlags
-                    | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
-            ) {
+            if instruction.op().is_call_with_eval_flags() {
                 write!(
                     output,
                     " direct-eval={} parameter-eval={}",

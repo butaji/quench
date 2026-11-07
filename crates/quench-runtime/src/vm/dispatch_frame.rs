@@ -2008,7 +2008,7 @@ impl<H: Host> Vm<H> {
                         let store = instruction.op().is_field_store()
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
                             .or_else(|| {
-                                matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                                instruction.op().is_throwing_name_load()
                                     .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
                             })
                             .unwrap_or_default();

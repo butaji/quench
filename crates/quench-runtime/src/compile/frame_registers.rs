@@ -11,7 +11,7 @@ const ARGUMENTS_NAME: &str = "arguments";
 
 use crate::bytecode::initialization;
 use crate::bytecode::{
-    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
+    WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
 };
 
@@ -277,10 +277,7 @@ pub(super) fn promote<'a>(
                     changed = true;
                 }
                 for field in [InstructionField::B, InstructionField::C] {
-                    if !matches!(
-                        instruction.op().field_layout(field),
-                        FieldLayout::Operand | FieldLayout::NumericIndexOperand
-                    ) {
+                    if !instruction.op().field_layout(field).holds_operand() {
                         continue;
                     }
                     let operand = Operand(instruction.field_value(field));

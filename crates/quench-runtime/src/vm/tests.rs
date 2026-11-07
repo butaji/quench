@@ -20765,7 +20765,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     assert!(
         proven
             .instructions()
-            .all(|instruction| !matches!(instruction.op(), crate::bytecode::Op::LoadLocal | crate::bytecode::Op::StoreLocal)),
+            .all(|instruction| !instruction.op().is_relocatable_local_access()),
         "every lexical slot of `proven` is read after its initialization"
     );
     vm.execute(&program).unwrap();

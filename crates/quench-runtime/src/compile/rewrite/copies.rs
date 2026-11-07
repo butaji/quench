@@ -116,7 +116,7 @@ fn move_reader(function: &BcFunction, transfers: &[(RegisterSet, RegisterSet)], 
         }
         let flow = fixed_width(function.code[at], &function.wide).op().control_flow_layout();
         if written & (source | destination) != 0
-            || !matches!(flow, crate::bytecode::ControlFlowLayout::Fallthrough | crate::bytecode::ControlFlowLayout::Call)
+            || !flow.only_falls_through()
         {
             return None;
         }
