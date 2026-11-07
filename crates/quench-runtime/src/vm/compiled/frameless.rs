@@ -28,6 +28,9 @@ const STACK_MARGIN: i64 = 128 * 1024;
 /// Recoveries of one function's frameless activations in one collection epoch after which
 /// its calls keep frames for the rest of the epoch.
 const MATERIALIZATION_LIMIT: u32 = 16;
+/// `CallEntry::meta`'s fields above its function: the register count, then the parameter count.
+const META_REGISTERS: u32 = u32::BITS;
+const META_PARAMS: u32 = META_REGISTERS + u16::BITS;
 /// `CallEntry::this`: the receiver as passed (a strict body), or no `this` slot (an arrow's
 /// is lexical). Any other value is the global object a sloppy body binds for `undefined`
 /// or `null`.
@@ -153,8 +156,8 @@ pub(super) fn emit_activation(
     let entry = emit_entry(builder, payload, callee, framed);
     let meta = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, meta) as i32);
     let fits = emit_fits(builder, (entry, meta), passed.len() as u16, receiver.is_none());
-    let registers = builder.ins().ushr_imm_u(meta, 32);
-    let registers = builder.ins().band_imm_u(registers, 0xffff);
+    let registers = builder.ins().ushr_imm_u(meta, i64::from(META_REGISTERS));
+    let registers = builder.ins().band_imm_u(registers, i64::from(u16::MAX));
     let (top, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
     let (this, constructed) = match receiver {
         Some(receiver) => (emit_this(builder, entry, receiver, record), None),
@@ -187,7 +190,7 @@ fn emit_returned(builder: &mut FunctionBuilder<'_>, (payload, arguments): (ir::V
 /// Whether the call passes no more values than the callee's parameters, and for a
 /// construction whether the callee constructs in place.
 fn emit_fits(builder: &mut FunctionBuilder<'_>, (entry, meta): (ir::Value, ir::Value), count: u16, constructs: bool) -> ir::Value {
-    let params = builder.ins().ushr_imm_u(meta, 48);
+    let params = builder.ins().ushr_imm_u(meta, i64::from(META_PARAMS));
     let fits = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, params, i64::from(count));
     if !constructs { return fits; }
     let admitted = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, constructs) as i32);
@@ -397,7 +400,7 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
         capture_values: values as u64,
         capture_len: len as u64,
         capture_stores: u64::from(super::super::dispatch_fast::capture_stores(capture).is_some()),
-        meta: u64::from(function) | (u64::from(body.registers) << 32) | (u64::from(body.params) << 48),
+        meta: u64::from(function) | (u64::from(body.registers) << META_REGISTERS) | (u64::from(body.params) << META_PARAMS),
         this,
         constructs: u64::from(Vm::<H>::inline_constructible(body)),
     };
