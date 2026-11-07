@@ -78,17 +78,16 @@ fn write_eval_binding(out: &mut BinaryWriter, binding: &EvalBinding) {
     out.u8(binding.declaration as u8);
 }
 
-pub(super) fn write_program(
-    program: &super::ResidualProgram,
-    path: &std::path::Path,
-) -> Result<(), String> {
+pub(super) fn write_program(program: &super::ResidualProgram, path: &std::path::Path) -> Result<(), String> {
+    crate::vm::freeze_call_sites(program);
     let (bytes, _) = encode_program(program, AtomEncoding::Program, SourceEncoding::Included);
     std::fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
 /// A compact encoding of `program` for a compile cache, with the program's atom ids in the
 /// order its table names them (`decode_compact_program` maps each name to its reader's id).
-/// The source text is left out: whoever decodes it supplies the same text.
+/// The source text is left out: whoever decodes it supplies the same text. Its reader, this
+/// build, parses call sites for a diagnostic alone (each entry's had cost mandreel 14 MB).
 pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
     let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()), SourceEncoding::External);
     (sealed(bytes), order)
@@ -97,6 +96,7 @@ pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u
 /// An entry program's cached form (`ResidualProgram::encode_trusted`): the lossless encoding
 /// under the program's own atom ids, which seed the VM's, followed by its checksum.
 pub(super) fn encode_trusted_program(program: &super::ResidualProgram) -> Vec<u8> {
+    crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Program, SourceEncoding::Included).0)
 }
 
@@ -208,7 +208,6 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
-        crate::vm::freeze_source_call_sites(source);
         out.bool(source.call_sites.get().is_some());
         if let Some(sites) = source.call_sites.get() {
             out.u32(sites.len() as u32);
@@ -448,6 +447,7 @@ pub(super) fn decode_compact_program(
 
 #[cfg(feature = "aot")]
 pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
+    crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)
 }
 
