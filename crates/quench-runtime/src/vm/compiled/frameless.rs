@@ -325,7 +325,7 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
         materializations: 0,
     });
     if !usage.loop_free || usage.materializations >= MATERIALIZATION_LIMIT { return None; }
-    let code = native_code(vm, owner, function)?;
+    let code = native_entry(vm, owner, function)?;
     let capture = vm.target_capture(program, owner, env);
     // SAFETY: a live environment's dense slots stay in place through this collection epoch.
     let (values, len) = (!capture.is_null()).then(|| unsafe {
@@ -335,7 +335,7 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
     let entry = CallEntry {
         callee: callee.to_bits(),
         epoch: vm.heap.collection_epoch(),
-        code,
+        code: code as u64,
         capture_values: values as u64,
         capture_len: len as u64,
         capture_stores: u64::from(super::super::dispatch_fast::capture_stores(capture).is_some()),
@@ -351,6 +351,17 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
 /// PC, PC, registers)`, followed by `inlined`: each continues at its callee's call, the
 /// innermost at `pc`. Counts the leave against the innermost frameless function
 /// (`MATERIALIZATION_LIMIT`).
+/// The native entry of `function` in `owner`'s linked code, which only native builds have.
+#[cfg(feature = "native-execution")]
+fn native_entry<H: Host>(vm: &Vm<H>, owner: crate::vm::ProgramId, function: u32) -> Option<usize> {
+    vm.programs.native_js_code(owner)?.entries().get(function as usize).map(|code| *code as usize)
+}
+
+#[cfg(not(feature = "native-execution"))]
+fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<usize> {
+    None
+}
+
 pub(super) fn chain<H: Host>(vm: &mut Vm<H>, dispatch: &JsStepDispatch, pc: u32,
     inlined: impl Iterator<Item = (u32, u32, u32, *const Value)>) -> Vec<(u32, u32, u32, *const Value)> {
     let live = vm.frameless.live(dispatch);
@@ -375,15 +386,4 @@ pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     let chain = chain(vm, dispatch, pc as u32, std::iter::empty());
     super::materialize_chain(vm, program, dispatch, &chain);
     dispatch.outcome.take()
-}
-
-/// A linked native program's entry for `function`; only native execution links one.
-#[cfg(feature = "native-execution")]
-fn native_code<H: Host>(vm: &Vm<H>, owner: super::super::program_store::ProgramId, function: u32) -> Option<u64> {
-    Some(*vm.programs.native_js_code(owner)?.entries().get(function as usize)? as usize as u64)
-}
-
-#[cfg(not(feature = "native-execution"))]
-fn native_code<H: Host>(_: &Vm<H>, _: super::super::program_store::ProgramId, _: u32) -> Option<u64> {
-    None
 }

@@ -14277,6 +14277,7 @@ impl<H: Host> Vm<H> {
 
     /// Run a guarded linked operation without allocating a callee frame.
     /// A miss precedes guest effects and leaves the call to its ordinary path.
+    #[cfg(feature = "native-execution")]
     fn native_guarded_call(
         &mut self,
         program: &ResidualProgram,
