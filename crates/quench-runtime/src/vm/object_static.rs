@@ -311,27 +311,15 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    pub(super) fn object_for_in_keys(
-        &mut self,
-        p: &ResidualProgram,
-        source: Value,
-    ) -> Result<Value, JsError> {
-        if source.is_null() || source.is_undefined() {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    Vec::new(),
-                ),
-            }));
+    /// The for-in key snapshot of `object` (`Vm::for_in_start`): every enumerable string key
+    /// along its prototype chain, each once, in EnumerateObjectProperties order.
+    pub(super) fn object_for_in_keys(&mut self, p: &ResidualProgram, object: Value) -> Result<Value, JsError> {
+        let mut current = object;
+        if let Some(keys) = self.own_for_in_keys(current) {
+            return Ok(keys);
         }
-        let mut current = self.box_object(source)?;
         if let Some(keys) = self.shape_for_in_keys(current) {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    keys,
-                ),
-            }));
+            return Ok(self.internal_array(keys));
         }
         let mut visited_objects = FxHashMap::default();
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
@@ -399,11 +387,6 @@ impl<H: Host> Vm<H> {
     /// the last one with an enumerable key are skipped, since they can neither
     /// add a key nor shadow one. `None` sends other chains to the generic walk.
     fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
-        // The common chain: the receiver's memoized enumerable keys, and no prototype with an
-        // enumerable key, so no key shadows another and the order is the receiver's own.
-        if let Some(keys) = self.own_for_in_keys(receiver) {
-            return Some(keys);
-        }
         let mut chain = Vec::new();
         let mut current = receiver;
         while !current.is_null() {
@@ -450,36 +433,6 @@ impl<H: Host> Vm<H> {
         Some(result)
     }
 
-    /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
-    /// key, as most have not (class methods are not enumerable): a prototype then neither
-    /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
-    /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`). `None`
-    /// leaves any other chain to the walk.
-    fn own_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
-        let slots = self.shape_enumerable_slots(receiver)?;
-        let mut prototype = self.object_data(receiver)?.proto();
-        while !prototype.is_null() {
-            if !self.shape_enumerable_slots(prototype)?.is_empty() {
-                return None;
-            }
-            prototype = self.object_data(prototype)?.proto();
-        }
-        let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
-        let shape = self.object_data(receiver)?.shape();
-        self.for_in_own_keys = Some(ForInOwnKeys::new(receiver, shape, self.heap.collection_epoch(), keys.clone()));
-        Some(keys)
-    }
-
-    /// Whether `key` is one of the own enumerable keys a for-in over `source` listed from
-    /// its shape (`ForInOwnKeys`) while `source` keeps that shape and stores no attributes
-    /// beside it: then it is still an own enumerable property, as the loop's check asks,
-    /// without a lookup. Any other key or object is left to the lookup.
-    pub(super) fn for_in_own_key_listed(&self, source: Value, key: Value) -> bool {
-        self.for_in_own_keys.as_ref().is_some_and(|listed| {
-            self.object_data(source).is_some_and(|data| !data.has_side_descriptors() && listed.lists(source, data.shape(), self.heap.collection_epoch(), key))
-        })
-    }
-
     pub(super) fn object_for_in_key_is_enumerable(
         &mut self,
         p: &ResidualProgram,
@@ -488,9 +441,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         if source.is_null() || source.is_undefined() {
             return Ok(false);
-        }
-        if self.for_in_own_key_listed(source, key) {
-            return Ok(true);
         }
         let mut current = self.box_object(source)?;
         if !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
@@ -645,20 +595,6 @@ impl<H: Host> Vm<H> {
                     self.box_object(value)
                 }
             }
-            Native::ForInKeys => {
-                self.object_for_in_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ForInKeyIsEnumerable => Ok(
-                if self.object_for_in_key_is_enumerable(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
-                )? {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            ),
             Native::ObjectGetOwnPropertyNames => {
                 self.object_names(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }

@@ -2,18 +2,13 @@ use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
 /// Internal global bindings, which compiled code loads by name and no source text can
-/// declare: the for-in key list and its per-key enumerability check, iterator closing and
-/// `with` scope exit (`WITH_ENTER_BINDING` enters).
-pub(crate) const FOR_IN_KEYS_BINDING: &str = "\0quench:for-in-keys";
-pub(crate) const FOR_IN_KEY_IS_ENUMERABLE_BINDING: &str = "\0quench:for-in-key-is-enumerable";
+/// declare: iterator closing and `with` scope exit (`WITH_ENTER_BINDING` enters).
 pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
 /// The intrinsic a `super` access reads its home's parent with (`Native::ReflectGetPrototypeOf`).
 pub(crate) const SUPER_BASE_BINDING: &str = "\0quench:super-base";
 pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
 /// Every internal global the realm installs on its global object.
-pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
-    FOR_IN_KEYS_BINDING,
-    FOR_IN_KEY_IS_ENUMERABLE_BINDING,
+pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 3] = [
     ITERATOR_CLOSE_BINDING,
     WITH_ENTER_BINDING,
     WITH_EXIT_BINDING,
@@ -42,8 +37,6 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
         // The iteration helpers each realm also installs on its global object.
         ITERATOR_CLOSE_BINDING => Native::IteratorClose,
-        FOR_IN_KEYS_BINDING => Native::ForInKeys,
-        FOR_IN_KEY_IS_ENUMERABLE_BINDING => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }
@@ -932,6 +925,10 @@ opcodes!(
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Unused),
     IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
+    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, Register, Unused),
+    // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
+    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix, @ Register, @ fields(Register, Register, Unused),
     InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Unused, Unused, Unused),
@@ -4171,7 +4168,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 133;
+    pub const FORMAT_VERSION: u8 = 135;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
