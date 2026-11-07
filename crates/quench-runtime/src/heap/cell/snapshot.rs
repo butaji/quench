@@ -180,7 +180,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         private_elements,
         stack_data,
         element_facts,
-        // A restored heap's prototypes watch nothing (`Heap::forget_prototypes`).
+        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`).
         watch: _,
     } = extras;
     if external_address.is_some() {

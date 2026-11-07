@@ -707,7 +707,7 @@ complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::definition 20
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::exact_range 21
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::held_registers 11
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::inline_region 68
-complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 43
+complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 39
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::representations 32
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::tagged_registers_with_failure 36
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::value_reads 16
@@ -1476,7 +1476,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 714
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1052
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1691
-file-lines crates/quench-runtime/src/heap.rs 4740
+file-lines crates/quench-runtime/src/heap.rs 4711
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 4028
@@ -1511,7 +1511,7 @@ file-lines crates/quench-runtime/src/vm/compiled/facts.rs 523
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5985
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 984
-file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7656
+file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7628
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 598
 file-lines crates/quench-runtime/src/vm/compiled/wavefront.rs 1445
 file-lines crates/quench-runtime/src/vm/construction.rs 1487
@@ -1541,13 +1541,13 @@ file-lines crates/quench-runtime/src/vm/intl_relative.rs 611
 file-lines crates/quench-runtime/src/vm/iterators.rs 3576
 file-lines crates/quench-runtime/src/vm/jit_backend/select.rs 679
 file-lines crates/quench-runtime/src/vm/js_compiled.rs 4544
-file-lines crates/quench-runtime/src/vm/json.rs 2167
+file-lines crates/quench-runtime/src/vm/json.rs 2166
 file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
 file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 5046
+file-lines crates/quench-runtime/src/vm/object.rs 5045
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1462
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
@@ -2725,7 +2725,6 @@ function-lines crates/quench-runtime/src/heap.rs::Heap::iterator_edges 60
 function-lines crates/quench-runtime/src/heap.rs::Heap::mark_value 224
 function-lines crates/quench-runtime/src/heap.rs::Heap::profile_allocation 58
 function-lines crates/quench-runtime/src/heap.rs::Heap::reset 54
-function-lines crates/quench-runtime/src/heap.rs::Heap::retire_dead_prototypes 42
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_full_parallel 67
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_serial 153
 function-lines crates/quench-runtime/src/heap.rs::ParallelSweepSlab<'slots>::sweep 48
@@ -3046,7 +3045,7 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::entry_bounds 5
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::exact_range 66
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::held_registers 61
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::inline_region 426
-function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 182
+function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::int32_facts 152
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::lower_verified 44
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::renamed 62
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::representations 141
