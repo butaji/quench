@@ -29,26 +29,24 @@ struct PollPage {
 }
 
 impl PollPage {
-    /// Where the page is asked to start; the kernel may place it elsewhere.
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    const HINT: usize = 1 << 29;
-
     #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     fn new() -> Option<Self> {
         // The protection granule is a host property (16 KiB on Apple Silicon).
         let bytes = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
         if bytes == 0 { return None; }
+        // Compiled code reads the page at a 32-bit absolute address on x86-64, so every
+        // interrupt's page, not only the first, is placed in the low 2 GiB.
         #[cfg(target_os = "linux")]
-        let hint = Self::HINT as *mut libc::c_void;
+        let placement = libc::MAP_32BIT;
         #[cfg(target_os = "macos")]
-        let hint = std::ptr::null_mut();
+        let placement = 0;
         // SAFETY: an anonymous private read-only page; the result is checked.
         let pointer = unsafe {
             libc::mmap(
-                hint,
+                std::ptr::null_mut(),
                 bytes,
                 libc::PROT_READ,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | placement,
                 -1,
                 0,
             )
