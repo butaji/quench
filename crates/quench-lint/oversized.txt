@@ -515,7 +515,7 @@ complexity crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 44
 complexity crates/quench-runtime/src/compile.rs::Engine::static_module_exports 16
 complexity crates/quench-runtime/src/compile.rs::Engine::static_module_throw 13
 complexity crates/quench-runtime/src/compile/arrow.rs::Compiler<'_>::compile_arrow_function 19
-complexity crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_base 13
+complexity crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_base 12
 complexity crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::emit_hoisted 17
 complexity crates/quench-runtime/src/compile/ast/call.rs::FunctionCompiler<'_,'_>::call 12
 complexity crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::assign_pattern 12
@@ -1370,7 +1370,7 @@ file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1538
 file-lines crates/quench-runtime/src/compile.rs 4442
-file-lines crates/quench-runtime/src/compile/ast.rs 1315
+file-lines crates/quench-runtime/src/compile/ast.rs 1310
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
 file-lines crates/quench-runtime/src/compile/ast/expression.rs 987
@@ -2539,7 +2539,6 @@ function-lines crates/quench-runtime/src/compile.rs::append_module_link_statemen
 function-lines crates/quench-runtime/src/compile.rs::module_hoisted_functions 42
 function-lines crates/quench-runtime/src/compile/annex_b_targets.rs::invalid_target 54
 function-lines crates/quench-runtime/src/compile/arrow.rs::Compiler<'_>::compile_arrow_function 226
-function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_base 44
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::capture_scopes 42
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::current_capture_scope 44
 function-lines crates/quench-runtime/src/compile/ast.rs::FunctionCompiler<'a,'b>::emit 52
