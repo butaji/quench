@@ -13935,6 +13935,8 @@ fn lane_native_value<H: Host>(
 
 mod native_calls;
 use native_calls::{for_in_next_handler, native_call_handler, string_char_at_ascii, string_char_code_at};
+mod wasm_gc;
+use wasm_gc::wasm_gc_handler;
 
 /// Whether liveness proves the result register of the running function's call record `i`
 /// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
@@ -19544,9 +19546,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
-        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => {
-            Some(lane_binary::<H>)
-        }
+        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
@@ -19584,7 +19584,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H, NOT_LEAF>),
         Op::Yield => Some(lane_yield::<H>),
-        _ => None,
+        _ => wasm_gc_handler::<H>(op),
     }
 }
 

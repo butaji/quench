@@ -66,3 +66,22 @@ fn a_map_like_object_keeps_key_order_and_values_through_vacated_index_entries() 
     assert_eq!(output.borrow().as_slice(), ["true true 0 true"]);
 }
 
+
+#[test]
+fn objects_leaving_a_shared_dictionary_shape_reuse_its_transitions() {
+    // Boxing a string adds one property per character, so boxing a string longer than the
+    // property-count trigger turns the shared box layout into a dictionary partway. Every
+    // later box of that string must take the cached transitions from there, not append
+    // shapes of its own (SunSpider tagcloud slowed to a crawl when they did).
+    let shapes_after = |boxes: usize| {
+        let source = format!(
+            "var text = 'x'.repeat(66000); var n = 0;
+             for (var i = 0; i < {boxes}; i++) n += Object(text).length;"
+        );
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&Engine::specialize(&source, "box.js").unwrap()).unwrap();
+        vm.shapes.len()
+    };
+    let growth = shapes_after(3) - shapes_after(1);
+    assert!(growth < 16, "boxing appended {growth} shapes");
+}
