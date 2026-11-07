@@ -107,6 +107,8 @@ pub type Register = u16;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
+mod initializer_stores;
+pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue};
 mod field_store;
 pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
@@ -2507,8 +2509,7 @@ impl Function {
         let parameter = |register: Register| (register < self.params).then_some(register);
         let mut fallbacks: SmallVec<[Option<f64>; 4]> = smallvec::smallvec![None; usize::from(self.params)];
         let mut stores = Vec::new();
-        // The temporaries primitive constants were loaded into, latest last.
-        let mut temporaries: SmallVec<[(Register, InitializerConstant); 4]> = SmallVec::new();
+        let mut temporaries = initializer_stores::Temporaries::default();
         let mut pc = 0;
         let store = |instruction: &WideInstruction| instruction.stores_to_this().then_some(());
         loop {
@@ -2559,22 +2560,12 @@ impl Function {
                     });
                     pc += 1;
                 }
-                // `this.f = k` of a temporary a primitive constant was loaded into.
-                set if store(set).is_some()
-                    && let Some(&(_, constant)) = temporaries.iter().rev().find(|(register, _)| *register == set.register_a()) =>
-                {
-                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Constant(constant) });
+                // `this.f = k` or `this.f = p op k` of a temporary (`Temporaries::value`).
+                set if store(set).is_some() && let Some(value) = temporaries.value(set.register_a()) => {
+                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value });
                     pc += 1;
                 }
-                // A primitive constant loaded into a temporary, which writes nothing else.
-                load if load.op() == Op::LoadConst
-                    && load.result_flags() == 0
-                    && load.result_register() >= self.params
-                    && let Some(constant) = InitializerConstant::of(constants, load.constant_index()) =>
-                {
-                    temporaries.push((load.result_register(), constant));
-                    pc += 1;
-                }
+                written if temporaries.write(written, self.params, &fallbacks, constants) => pc += 1,
                 _ => break,
             }
         }
@@ -2586,8 +2577,8 @@ impl Function {
                 (undefined_load(completion) && completion.returns_from_frame())
                     || (completion.op() == Op::Return
                         && completion.register_a() >= self.params
-                        && match temporaries.iter().rev().find(|(register, _)| *register == completion.register_a()) {
-                            Some((_, constant)) => *constant == InitializerConstant::Undefined,
+                        && match temporaries.value(completion.register_a()) {
+                            Some(value) => value == InitializerValue::Constant(InitializerConstant::Undefined),
                             None => self.initial_register == InitialRegister::Undefined,
                         })
             }
@@ -4329,67 +4320,3 @@ mod disassemble;
 mod tests;
 mod validate;
 
-/// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
-/// cache site `site`, takes `value`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct InitializerStore {
-    pub(crate) atom: u32,
-    pub(crate) site: u16,
-    pub(crate) value: InitializerValue,
-}
-
-/// What an initializer store gives its field.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InitializerValue {
-    /// Parameter `parameter` as passed, or the Number `fallback` where it is falsy.
-    Parameter { parameter: u16, fallback: Option<f64> },
-    /// A primitive constant, whatever is passed: `this.id = 0`, `this.parent = void 0`.
-    Constant(InitializerConstant),
-}
-
-impl InitializerStore {
-    /// The parameter the store reads, if any.
-    pub(crate) fn parameter(&self) -> Option<u16> {
-        match self.value {
-            InitializerValue::Parameter { parameter, .. } => Some(parameter),
-            InitializerValue::Constant(_) => None,
-        }
-    }
-}
-
-/// The constants an initializer store writes: those whose value needs no heap cell.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InitializerConstant {
-    Number(f64),
-    Boolean(bool),
-    Null,
-    Undefined,
-    /// A string literal: the program's constant at this index, the value its `LoadConst`
-    /// yields (`this.type = ""`).
-    String(u32),
-}
-
-impl InitializerConstant {
-    fn of(constants: &[Constant], index: usize) -> Option<Self> {
-        Some(match constants.get(index)? {
-            Constant::Number(number) => Self::Number(*number),
-            Constant::Boolean(boolean) => Self::Boolean(*boolean),
-            Constant::Null => Self::Null,
-            Constant::Undefined => Self::Undefined,
-            Constant::String(_) | Constant::StringUnits(_) => Self::String(u32::try_from(index).ok()?),
-            _ => return None,
-        })
-    }
-
-    /// The value the constant stores, a string literal's from the running program's
-    /// materialized constants (`program_constant`).
-    pub(crate) fn value(self, program_constant: impl FnOnce(usize) -> Option<crate::value::Value>) -> Option<crate::value::Value> {
-        Some(match self {
-            Self::Number(number) => crate::value::Value::number(number),
-            Self::Boolean(boolean) => crate::value::Value::boolean(boolean),
-            Self::Null => crate::value::Value::NULL,
-            Self::Undefined => crate::value::Value::UNDEFINED,
-            Self::String(index) => return program_constant(index as usize),
-        })
-    }
-}

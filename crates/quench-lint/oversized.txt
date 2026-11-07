@@ -481,7 +481,7 @@ complexity crates/quench-regexp/src/lib.rs::string_property_matches_units 12
 complexity crates/quench-regexp/src/lib.rs::term_contains_invalid_string_property 12
 complexity crates/quench-runtime/src/bytecode.rs::Function::body_binding_reads_beside_clones 13
 complexity crates/quench-runtime/src/bytecode.rs::Function::derive_call_plan 58
-complexity crates/quench-runtime/src/bytecode.rs::Function::derive_initializer_stores 48
+complexity crates/quench-runtime/src/bytecode.rs::Function::derive_initializer_stores 45
 complexity crates/quench-runtime/src/bytecode.rs::Function::forwarded_this_method 24
 complexity crates/quench-runtime/src/bytecode.rs::Function::kept_arguments 18
 complexity crates/quench-runtime/src/bytecode.rs::Function::plain_local_context_ineligibility 16
@@ -752,7 +752,7 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::call_prepared_l
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_callback 18
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 19
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 68
+complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 66
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 13
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 260
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::element_read_body 11
@@ -1366,7 +1366,7 @@ file-lines crates/quench-regexp/src/lib.rs 2986
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2526
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4395
+file-lines crates/quench-runtime/src/bytecode.rs 4322
 file-lines crates/quench-runtime/src/bytecode/binary.rs 1804
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
@@ -1427,7 +1427,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23857
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23684
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -2481,7 +2481,7 @@ function-lines crates/quench-runtime/src/api_native_tests.rs::split_host_catalog
 function-lines crates/quench-runtime/src/bigint/digits.rs::div_rem_digits 54
 function-lines crates/quench-runtime/src/bin/quench.rs::main 48
 function-lines crates/quench-runtime/src/bytecode.rs::Function::derive_call_plan 130
-function-lines crates/quench-runtime/src/bytecode.rs::Function::derive_initializer_stores 122
+function-lines crates/quench-runtime/src/bytecode.rs::Function::derive_initializer_stores 111
 function-lines crates/quench-runtime/src/bytecode.rs::Function::forwarded_this_method 46
 function-lines crates/quench-runtime/src/bytecode.rs::Function::kept_arguments 58
 function-lines crates/quench-runtime/src/bytecode.rs::Function::super_forwarding 138
@@ -3017,7 +3017,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::call_prepar
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_callback 151
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 97
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 243
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 260
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 257
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 129
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 1141
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::direct_callers_subscribe_to_callee_slot_dependencies 58
