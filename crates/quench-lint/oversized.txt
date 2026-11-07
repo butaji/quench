@@ -1247,8 +1247,8 @@ file-lines crates/quench-node-test/tests/shared_regressions.rs 634
 file-lines crates/quench-node/src/aot/graph/loader_bindings.rs 636
 file-lines crates/quench-node/src/host/hmr.rs 843
 file-lines crates/quench-node/src/host/node_host.rs 580
-file-lines crates/quench-node/src/host/resident_pages.rs 1288
-file-lines crates/quench-node/src/host/shared_vm.rs 3283
+file-lines crates/quench-node/src/host/resident_pages.rs 1286
+file-lines crates/quench-node/src/host/shared_vm.rs 3276
 file-lines crates/quench-node/src/host/shared_vm/commonjs.rs 3365
 file-lines crates/quench-node/src/host/startup_snapshot.rs 616
 file-lines crates/quench-node/src/modules/assert_shared_vm.rs 1358
@@ -1434,7 +1434,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 657
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24083
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24082
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3047
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1462,7 +1462,7 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 5127
+file-lines crates/quench-runtime/src/vm/object.rs 5080
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 1015
 file-lines crates/quench-runtime/src/vm/object_get.rs 1518
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
@@ -3394,7 +3394,6 @@ function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::set_property_with_
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::set_receiver_proxy_data_property 52
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::update_property_attributes 58
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::walked_property_shape_slot 50
-function-lines crates/quench-runtime/src/vm/object.rs::derive_shape_lookup_index 47
 function-lines crates/quench-runtime/src/vm/object.rs::tests::native_only_field_probes_use_semantic_specialization_permission 59
 function-lines crates/quench-runtime/src/vm/object_array.rs::Vm<H>::define_array_length 97
 function-lines crates/quench-runtime/src/vm/object_array.rs::Vm<H>::define_array_property 73
