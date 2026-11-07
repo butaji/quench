@@ -4201,10 +4201,7 @@ impl Heap {
                 object(value);
                 work.extend(elements.iter().copied());
             }
-            Cell::WasmGc { fields, .. } => {
-                work.extend(fields.values.iter().copied());
-                work.extend(fields.descriptor);
-            }
+            Cell::WasmGc { fields, .. } => work.extend(fields.edges().iter().copied()),
             Cell::WasmExtern(value) => work.push(*value),
             Cell::AccessorPair { getter, setter } => {
                 work.push(*getter);
@@ -4487,7 +4484,7 @@ impl Heap {
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
                 Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
-                Cell::WasmGc { fields, .. } => fields.capacity() * size_of::<Value>(),
+                Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }
