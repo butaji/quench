@@ -1,5 +1,9 @@
 #![deny(warnings)]
 #![feature(rust_preserve_none_cc)]
+// Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
+// whatever the handler body keeps on its stack (`vm::dispatch_fast`).
+#![cfg_attr(quench_lane_tail_calls, feature(explicit_tail_calls))]
+#![cfg_attr(quench_lane_tail_calls, allow(incomplete_features))]
 // `heap::array_proofs` reads its armed pointer as a plain thread-local load on every array
 // storage change (`ARMED_PROOFS`).
 #![feature(thread_local)]

@@ -1068,22 +1068,22 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 #[cfg(not(quench_profiled))]
 #[test]
 fn shape_compaction_clears_own_field_hints() {
-    // Read and store sites warmed on one layout hold its shape id as their own-field hint. A full
+    // Read, nested read and store sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
     // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
-    for body in ["return o.a + 0;", "o.a = v; return v;"] {
+    for body in ["return o.a + 0;", "o.a = v; return v;", "return o.n.a + 0;"] {
         let reads: String = (0..SITES).map(|k| format!("function read{k}(o, v) {{ {body} }}\n")).collect();
         let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
         let source = format!(
             r#"
           {reads}
           var sites = [{calls}], sum = 0;
-          function T(a, b) {{ this.a = a; this.b = b; }}
+          function T(a, b) {{ this.a = a; this.b = b; this.n = this; }}
           function drive(read, o, n, v) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o, v); return s; }}
           function resume() {{
             var result = 0;
-            for (var k = 0; k < sites.length; k++) result += drive(sites[k], {{ before: -1, a: k }}, 50, k);
+            for (var k = 0; k < sites.length; k++) {{ var r = {{ before: -1, a: k }}; r.n = r; result += drive(sites[k], r, 50, k); }}
             return result;
           }}
           for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50, k);
@@ -1120,6 +1120,773 @@ fn shape_compaction_clears_own_field_hints() {
             Value::integer((50 * (0..SITES).sum::<usize>()) as i32),
         );
     }
+}
+
+#[test]
+fn nested_reads_follow_their_first_steps_hint_across_shapes() {
+    // A nested read's record keeps the own entry its first step last hit as its hint
+    // (`lane_nested_own_value`): bases of two layouts holding the first field at different
+    // slots, alternating and in runs, a prototype-held first field, and a parser whose `this`
+    // gains a field mid-run each read the field the layout in hand holds. Expected value is
+    // Node's (v26).
+    let source = r#"
+      function A(t) { this.t = t; }
+      function B(t) { this.pad = 0; this.t = t; }
+      function C() {}
+      C.prototype.t = { label: 5 };
+      var leafA = { label: 7 }, leafB = { label: 9 };
+      function read(o) { return o.t.label; }
+      function Parser(late) { this.type = leafA; this.pos = 0; if (late) this.inTemplate = true; }
+      Parser.prototype.label = function () { return this.type.label; };
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += read(new A(leafA));
+      for (i = 0; i < 300; i++) s += read(new B(leafB));
+      for (i = 0; i < 300; i++) s += read(i & 1 ? new A(leafA) : new B(leafB));
+      for (i = 0; i < 300; i++) s += read(i % 3 ? new C() : new A(leafB));
+      var early = new Parser(false), late = new Parser(true);
+      for (i = 0; i < 600; i++) s += (i < 200 || i > 400 ? early : late).label();
+      late.type = leafB;
+      for (i = 0; i < 300; i++) s += late.label() + early.label();
+      print(String(s));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "nested-read-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["18100"]);
+}
+
+#[test]
+fn inherited_reads_follow_their_hint_and_the_prototype_values() {
+    // An inherited read's record keeps the entry that last answered it as its hint, and the
+    // entry its answer while no prototype changes (`Vm::hinted_inherited_field_hit`):
+    // instances of sibling and nested subclasses reading one site, a method replaced on the
+    // base prototype, shadowed on an intermediate one and deleted again, and a receiver moved
+    // to another prototype each read the method the receiver in hand inherits. Expected value
+    // is Node's (v26).
+    let source = r#"
+      class A { m() { return 1; } }
+      class B extends A {}
+      class C extends B { constructor() { super(); this.c = 1; } }
+      class D extends B { constructor() { super(); this.d = 1; this.e = 2; } }
+      class E extends C {}
+      var c = new C(), d = new D(), e = new E();
+      function read(o) { var f = o.m; return f.call(o); }
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += read(c);
+      for (i = 0; i < 300; i++) s += read(i & 1 ? c : d);
+      for (i = 0; i < 300; i++) s += read(i % 3 === 0 ? e : i % 3 === 1 ? d : c);
+      A.prototype.m = function () { return 10; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? c : d);
+      B.prototype.m = function () { return 100; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? e : d);
+      delete B.prototype.m;
+      for (i = 0; i < 300; i++) s += read(i & 1 ? c : e);
+      var moved = new C();
+      Object.setPrototypeOf(moved, { m() { return 1000; } });
+      for (i = 0; i < 300; i++) s += read(i & 1 ? moved : c);
+      A.prototype.m = function () { return 7; };
+      for (i = 0; i < 300; i++) s += read(i % 3 === 0 ? e : i % 3 === 1 ? d : c);
+      print(String(s));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "inherited-read-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["190500"]);
+}
+
+#[test]
+fn polymorphic_method_reads_follow_their_holder_hint() {
+    // A polymorphic read a prototype answered keeps that read, with its value, as its record's
+    // hint (`Vm::holder_hint_hit`): receivers of two shapes sharing a prototype, a method
+    // replaced on it, another prototype, an own method shadowing it, a receiver moved to
+    // another prototype, and a method deleted and added again each read the method the
+    // receiver in hand inherits. Expected value is Node's (v26).
+    let source = r#"
+      function P(late) { this.pos = 1; if (late) this.inTemplate = true; }
+      P.prototype.step = function () { return 1; };
+      function Q() { this.pos = 1; }
+      Q.prototype.step = function () { return 100; };
+      var early = new P(false), late = new P(true), other = new Q();
+      function read(o) { var f = o.step; return f.call(o); }
+      var s = 0, i;
+      for (i = 0; i < 400; i++) s += read(i < 100 || i > 300 ? early : late);
+      P.prototype.step = function () { return 10; };
+      for (i = 0; i < 400; i++) s += read(i & 1 ? early : late);
+      for (i = 0; i < 400; i++) s += read(i % 3 ? other : late);
+      var shadow = new P(true);
+      shadow.step = function () { return 1000; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? shadow : late);
+      var moved = new P(false);
+      Object.setPrototypeOf(moved, Q.prototype);
+      for (i = 0; i < 300; i++) s += read(i & 1 ? moved : early);
+      delete P.prototype.step;
+      P.prototype.step = function () { return 7; };
+      for (i = 0; i < 300; i++) s += read(i & 1 ? early : late);
+      print(String(s));
+    "#;
+    // A store site that cached the prototype's layout before any read marked it writes the
+    // method the hint holds, which moves the epoch the hint holds under.
+    let stores = r#"
+      function P(late) { this.pos = 1; if (late) this.inTemplate = true; }
+      var one = function () { return 1; }, two = function () { return 2; };
+      function put(p, f) { p.step = f; }
+      for (var k = 0; k < 200; k++) put(P.prototype, k & 1 ? one : two);
+      var early = new P(false), late = new P(true);
+      function read(o) { var f = o.step; return f.call(o); }
+      var s = 0, i;
+      for (i = 0; i < 400; i++) s += read(i < 100 || i > 300 ? early : late);
+      for (i = 0; i < 400; i++) { put(P.prototype, i & 2 ? one : two); s += read(i & 1 ? early : late); }
+      print(String(s));
+    "#;
+    for (source, expected) in [(source, "202440"), (stores, "1000")] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(source, "holder-read-hints.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected]);
+    }
+}
+
+#[test]
+fn monomorphic_field_sites_follow_prototypes_integrity_and_globals() {
+    // A monomorphic prototype read answers from its record's hint (`Vm::holder_hint_hit`), an
+    // own store from its record's entry into packed inline or arena storage
+    // (`Object::exact_storage`), and a constant operand's integer is proved once
+    // (`lane_operator_integer_constant`). Warmed sites then see a prototype value replaced,
+    // `setPrototypeOf`, a shadowing own property, an accessor added to the prototype, a deleted
+    // and re-added holder, values past the narrow range, a non-writable or frozen target, an
+    // accessor on the receiver or its prototype, and a global property redefined, deleted and
+    // made a getter. Expected values are Node's (v22, as a script).
+    let prototype = r#"
+      var out = [];
+      function P() {}
+      P.prototype.k = 5;
+      function readK(o) { return o.k; }
+      var o = new P(), s = 0, i;
+      for (i = 0; i < 300; i++) s += readK(o);
+      out.push(s);
+      P.prototype.k = 7;
+      out.push(readK(o));
+      for (i = 0, s = 0; i < 300; i++) s += readK(o);
+      out.push(s);
+      var shadow = new P();
+      shadow.k = 11;
+      out.push(readK(shadow), readK(o));
+      Object.setPrototypeOf(o, { k: 13 });
+      out.push(readK(o));
+      Object.setPrototypeOf(o, P.prototype);
+      out.push(readK(o));
+      var calls = 0;
+      Object.defineProperty(P.prototype, "k", { get: function () { calls++; return this === o ? 17 : 19; }, configurable: true });
+      out.push(readK(o), readK(new P()), calls);
+      delete P.prototype.k;
+      out.push(String(readK(o)));
+      Object.prototype.k = "object k";
+      out.push(readK(o));
+      delete Object.prototype.k;
+      P.prototype.k = 23;
+      for (i = 0, s = 0; i < 300; i++) s += readK(o);
+      out.push(s);
+      Object.freeze(P.prototype);
+      out.push(readK(o));
+      print(out.join("|"));
+    "#;
+    let stores = r#"
+      var out = [];
+      function put(o, x) { o.v = x; return o.w; }
+      function C() { this.v = 0; }
+      C.prototype.set = function (x) { this.v = x; };
+      function strictPut(o, x) { "use strict"; o.v = x; }
+      var o = { v: 3, w: 4 }, c = new C(), s = 0, i;
+      for (i = 0; i < 300; i++) { s += put(o, i); c.set(i); s += c.v; }
+      out.push(s, o.v, c.v);
+      put(o, 1 << 30); c.set(-(1 << 30) - 1);
+      out.push(o.v, o.w, c.v);
+      put(o, 2.5); c.set("str");
+      out.push(o.v, o.w, c.v);
+      put(o, o); c.set(null);
+      out.push(o.v === o, o.w, c.v);
+      for (i = 0; i < 300; i++) { put(o, i); c.set(i); }
+      out.push(o.v, c.v);
+      Object.defineProperty(o, "v", { writable: false });
+      put(o, 99);
+      out.push(o.v);
+      try { strictPut(o, 98); out.push("no throw"); } catch (e) { out.push(e.constructor.name); }
+      Object.freeze(c);
+      c.set(1234);
+      out.push(c.v);
+      var d = new C();
+      for (i = 0; i < 300; i++) d.set(i);
+      var seen = [];
+      Object.defineProperty(d, "v", { set: function (x) { seen.push(x); }, get: function () { return "got"; }, configurable: true });
+      d.set(41);
+      out.push(d.v, seen.join(","));
+      var e = new C();
+      Object.defineProperty(C.prototype, "v", { set: function (x) { seen.push("proto " + x); }, configurable: true });
+      e.set(42);
+      out.push(e.v, seen.join(","));
+      var f = new C();
+      out.push(f.v);
+      f.set(43);
+      out.push(f.v, seen.join(","));
+      print(out.join("|"));
+    "#;
+    let globals = r#"
+      var out = [];
+      var g = 5;
+      globalThis.h = 6;
+      function readG() { return g; }
+      function readH() { return typeof h === "undefined" ? "absent" : h; }
+      function readHPlain() { try { return h; } catch (e) { return e.constructor.name; } }
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += readG() + readH() + readHPlain();
+      out.push(s);
+      g = 8; h = 9;
+      out.push(readG(), readH(), readHPlain());
+      out.push(delete globalThis.g, readG());
+      out.push(delete globalThis.h, readH(), readHPlain());
+      var calls = 0;
+      Object.defineProperty(globalThis, "h", { get: function () { calls++; return 10; }, configurable: true });
+      for (i = 0, s = 0; i < 300; i++) s += readH() + readHPlain();
+      out.push(s, calls);
+      Object.defineProperty(globalThis, "h", { value: 12, writable: false, configurable: true });
+      h = 13;
+      out.push(readH(), readHPlain());
+      Object.defineProperty(globalThis, "g", { value: 14 });
+      out.push(readG());
+      g = 15;
+      out.push(readG(), Object.getOwnPropertyDescriptor(globalThis, "g").writable);
+      print(out.join("|"));
+    "#;
+    for (source, expected) in [
+        (prototype, "1500|7|2100|11|7|13|7|17|19|2|undefined|object k|6900|23"),
+        (
+            stores,
+            "46050|299|299|1073741824|4|-1073741825|2.5|4|str|true|4||299|299|299|TypeError|299|got|41|42|41|||41,proto 0,proto 43",
+        ),
+        (globals, "5100|8|9|9|false|8|true|absent|ReferenceError|6000|900|12|12|14|15|true"),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(source, "monomorphic-field-sites.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected]);
+    }
+}
+
+#[test]
+fn string_method_reads_follow_the_prototype_values() {
+    // A string primitive's method read keeps `String.prototype`'s answer as its record's hint
+    // (`Vm::string_hint_hit`): a method replaced by assignment, restored, and redefined each
+    // reads the method `String.prototype` holds then. Expected value is Node's (v26).
+    let source = r#"
+      function code(str, k) { return str.charCodeAt(k); }
+      function tail(str) { return str.slice(1); }
+      var s = 0, i, text = "hello world";
+      for (i = 0; i < 500; i++) s += code(text, i % 11) + tail(i & 1 ? "ab" : "xyz").length;
+      var original = String.prototype.charCodeAt;
+      String.prototype.charCodeAt = function (k) { return 1000 + k; };
+      for (i = 0; i < 300; i++) s += code(text, i % 11);
+      String.prototype.charCodeAt = original;
+      for (i = 0; i < 300; i++) s += code(i & 1 ? text : "QQ", i % 2);
+      Object.defineProperty(String.prototype, "slice", { value: function () { return "zzzz"; }, writable: true, configurable: true });
+      for (i = 0; i < 300; i++) s += tail("ab").length;
+      print(String(s));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "string-read-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["381490"]);
+}
+
+#[test]
+fn lane_array_callback_sites_keep_iteration_semantics() {
+    // A call site of an array's callback method calls the native straight from the lane
+    // (`lane_call_array_callback`), whose callbacks run in that lane from their first call
+    // (`Vm::call_prepared`): the arguments and thisArg passed, holes skipped and the length
+    // read once, a throwing and a non-callable callback, an inherited index seen mid-loop, map
+    // and some, a strict callback's this, a redefined forEach, an array-like receiver, a native
+    // callback and a bound one each keep the generic steps. Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function put() { for (var k = 0; k < arguments.length; k++) out[out.length] = arguments[k]; }
+      var sum = 0;
+      function add(x) { sum = (sum + x) | 0; }
+      function each(a, f, t) { return a.forEach(f, t); }
+      function map(a, f) { return a.map(f); }
+      function some(a, f) { return a.some(f); }
+      var i;
+      for (i = 0; i < 300; i++) each([i], add);
+      put(sum);
+      // Receiver, index, array and thisArg passed; holes skipped; length fixed at the start.
+      var seen = [];
+      each([1, , 3], function (v, k, a) { seen.push(v + ":" + k + ":" + a.length + ":" + (this && this.tag)); a.push(9); }, { tag: "t" });
+      put(seen.join(","));
+      // A callback that throws stops the loop; the error reaches the caller.
+      var calls = 0;
+      try { each([1, 2, 3], function (v) { calls++; if (v === 2) throw new RangeError("stop"); }); } catch (e) { put(e.name + " " + e.message + " " + calls); }
+      // A non-callable callback throws TypeError before any element is read.
+      try { each([1], 5); } catch (e) { put(e.constructor.name); }
+      // Elements deleted and indexed prototype values seen mid-loop.
+      Array.prototype[1] = "inherited";
+      var got = [];
+      each([0, , 2], function (v) { got.push(v); });
+      delete Array.prototype[1];
+      put(got.join(","));
+      // map and some at warmed sites; strict callback this.
+      for (i = 0; i < 300; i++) sum += map([i, i], function (v) { return v * 2; })[1] + (some([i], function (v) { return v > 150; }) ? 1 : 0);
+      put(sum, each([1], function () { "use strict"; put(String(this)); }));
+      // Redefined forEach and an array-like receiver through the same site.
+      var saved = Array.prototype.forEach;
+      Array.prototype.forEach = function (f) { return "mine"; };
+      put(each([1], add));
+      Array.prototype.forEach = saved;
+      var like = { length: 2, 0: "a", 1: "b", forEach: saved };
+      var letters = "";
+      each(like, function (v) { letters += v; });
+      put(letters);
+      // A callback that is itself a native, and a bound function.
+      var pushed = [];
+      each([7, 8], pushed.push, pushed);
+      put(pushed.length);
+      each([5], function (v) { put(this.base + v); }.bind({ base: 100 }));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_array_callback_sites_keep_iteration_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["44850|1:0:3:t,3:2:4:t|RangeError stop 2|TypeError|0,inherited,2|undefined|134699||mine|ab|6|105"]
+    );
+}
+
+#[test]
+fn for_each_of_one_element_with_a_dead_result_keeps_callback_semantics() {
+    // A `forEach` site whose result nothing reads calls the callback of a one-element array as
+    // a plain call (`lane_call_for_each_once`), and an array step re-enters its callback in
+    // place (`lane_reenter_prepared_values`): a live or returned result, the arguments and
+    // this passed, a callback mutating its array, a hole, a length past the storage with an
+    // inherited index, a throwing callback's error and frames, generator, async and bound
+    // callbacks, a redefined forEach and nested iterations keep the generic steps. Expected
+    // value is Node's (v22), whose frames also name the native's.
+    let source = r#"
+      var out = [];
+      var sum = 0;
+      function add(x) { sum = (sum + x) | 0; return "ignored"; }
+      function each(a, f, t) { a.forEach(f, t); }
+      function value(a, f) { return a.forEach(f); }
+      function kept(a, f) { var r = a.forEach(f); return r; }
+      var i;
+      for (i = 0; i < 400; i++) each([i], add);
+      out.push(sum);
+      // A live result stays undefined whatever the callback returns.
+      for (i = 0; i < 400; i++) if (value([i], add) !== undefined || kept([i], add) !== undefined) out.push("defined");
+      out.push(sum);
+      // Element, index, array and thisArg passed; sloppy and strict this.
+      var seen = [];
+      for (i = 0; i < 3; i++) each([i], function (v, k, a) { seen.push(v + ":" + k + ":" + a.length + ":" + this.tag); }, { tag: "t" });
+      each([1], function () { seen.push(this === globalThis); });
+      each([1], function () { "use strict"; seen.push(this); });
+      each([1], function () { "use strict"; seen.push(typeof this); }, 5);
+      each([1], function () { seen.push(typeof this); }, 5);
+      each([1], function () { seen.push(arguments.length + ":" + arguments[2].length); });
+      out.push(seen.join(","));
+      // A callback that mutates the array: the length read first bounds the loop.
+      var grown = [1];
+      each(grown, function (v, k, a) { a.push(v + 1); a.push(v + 2); });
+      var shrunk = [1];
+      each(shrunk, function (v, k, a) { a.length = 0; });
+      out.push(grown.join(","), shrunk.length);
+      // A hole, an array whose length passes its storage, and an inherited index.
+      var holes = 0;
+      each([, ], function () { holes++; });
+      var long = [1]; long.length = 3;
+      Array.prototype[2] = "inherited";
+      var got = [];
+      each(long, function (v, k) { got.push(k + "=" + v); });
+      delete Array.prototype[2];
+      out.push(holes, got.join(","));
+      // A callback that throws stops the loop, and its error reaches the caller with the frames
+      // of the callback and the caller (Node also names the native's frame, which no Quench
+      // trace includes).
+      function thrower(v) { if (v === 350) throw new RangeError("stop " + v); }
+      function walk() { for (var j = 0; j < 400; j++) each([j], thrower); }
+      try { walk(); } catch (e) {
+        var frames = e.stack.split("\n").slice(1).map(function (line) { return line.trim().split(" ")[1]; }).filter(function (name) { return name !== "Array.forEach"; });
+        out.push(e.name + " " + e.message + " " + frames.slice(0, 3).join(">"));
+      }
+      // A generator, an async and a bound callback.
+      var generated = 0;
+      each([1], function* () { generated++; });
+      var settled = [];
+      each([1], async function (v) { settled.push(v); });
+      each([5], function (v) { out.push(this.base + v); }.bind({ base: 100 }));
+      out.push(generated, settled.join(","));
+      // A redefined forEach at a warmed site, then the native again.
+      var saved = Array.prototype.forEach;
+      Array.prototype.forEach = function (f) { out.push("mine"); };
+      each([1], add);
+      Array.prototype.forEach = saved;
+      each([1], add);
+      out.push(sum);
+      // A forEach inside the callback of another.
+      var nested = [];
+      for (i = 0; i < 3; i++) each([i], function (v) { each([v * 10], function (w) { nested.push(w); }); });
+      out.push(nested.join(","));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "for_each_of_one_element_with_a_dead_result_keeps_callback_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["79800|239400|0:0:1:t,1:0:1:t,2:0:1:t,true,,number,object,3:1|1,2,3|0|0|0=1,2=inherited|RangeError stop 350 thrower>each>walk|105|0|1|mine|239401|0,10,20"]);
+}
+
+#[test]
+fn capture_update_calls_keep_closure_semantics() {
+    // A capture's int32 update by a constant is one record (`lane_update_capture_int32`), and a
+    // plain call of a capture leaf whose body is that update and its return is answered in
+    // place (`lane_script_call_update_capture`): the int32 wrap both ways, extra values and a
+    // receiver, a returned call, shared captures, recreated closures, captures holding other
+    // values, a call in the binding's TDZ, a const binding and an arrow keep closure semantics.
+    // Expected value is Node's (v22).
+    let source = r#"
+      var out = [];
+      function counter(start) { var c = start; return function () { c = (c + 1) | 0; return c; }; }
+      function down(start) { var c = start; return function () { c = (c - 3) | 0; return c; }; }
+      function drive(f, n) { var acc = 0; for (var i = 0; i < n; i++) acc = (acc + f()) | 0; return acc; }
+      function tail(f) { return f(); }
+      var bump = counter(0);
+      out.push(drive(bump, 500), bump(), tail(bump));
+      // The int32 wrap at both bounds, and a difference.
+      var high = counter(2147483640);
+      out.push(drive(high, 400), high());
+      var low = down(-2147483640);
+      out.push(drive(low, 400), low());
+      // Extra values passed, and a receiver.
+      out.push(bump(1, 2, 3), bump.call({}), drive(function () { return bump(7); }, 300));
+      // Shared captures: two closures of one scope see each other's stores.
+      function pair() { var c = 0; return [function () { c = (c + 1) | 0; return c; }, function () { c = (c + 10) | 0; return c; }, function () { return c; }]; }
+      var p = pair();
+      out.push(drive(p[0], 300), drive(p[1], 300), p[2]());
+      // Recreated closures each start from their own scope.
+      var made = 0;
+      for (var k = 0; k < 300; k++) made = (made + drive(counter(k), 3)) | 0;
+      out.push(made);
+      // A capture holding other values: a string, a double, undefined, an object.
+      function loose(v) { var c = v; return [function () { c = (c + 1) | 0; return c; }, function (x) { c = x; }]; }
+      var l = loose(0);
+      drive(l[0], 300);
+      l[1]("12"); out.push(l[0]());
+      l[1](2.75); out.push(l[0]());
+      l[1](undefined); out.push(l[0]());
+      l[1]({ valueOf: function () { return 41; } }); out.push(l[0]());
+      l[1](4294967296 + 5); out.push(l[0]());
+      // TDZ: a call before the binding's initialization throws, after it counts.
+      function early() {
+        var f = function () { c = (c + 1) | 0; return c; };
+        var r = [];
+        try { f(); } catch (e) { r.push(e.name); }
+        let c = 0;
+        for (var j = 0; j < 300; j++) f();
+        r.push(f());
+        return r.join(" ");
+      }
+      out.push(early(), early());
+      // A const capture's update throws.
+      function fixed() { const c = 1; var f = function () { c = (c + 1) | 0; return c; }; try { for (var j = 0; j < 300; j++) f(); } catch (e) { return e.name + " " + c; } }
+      out.push(fixed());
+      // An arrow counter and a counter whose result is unused.
+      var n = 0;
+      var arrow = () => (n = (n + 1) | 0);
+      for (var a = 0; a < 300; a++) arrow();
+      var quiet = counter(0);
+      for (a = 0; a < 300; a++) quiet();
+      out.push(n, quiet());
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "capture_update_calls_keep_closure_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["125250|501|502|77000|-2147483255|-237400|2147482453|503|504|196350|45150|541500|3300|136350|121|3|0|42|6|ReferenceError 301|ReferenceError 301|TypeError 1|300|301"]);
+}
+
+#[test]
+fn double_constant_operator_pairs_keep_two_roundings() {
+    // An operator with a double constant runs without an integer step
+    // (`lane_operator_double_constant`), and with the operator after it as one record
+    // (`lane_operator_constant_pair`) that rounds each result as the two records do: signed
+    // zero, NaN, the infinities, subnormals, the largest double, coercible and BigInt operands,
+    // and a sum no fused multiply-add would give keep Number semantics. Expected value is
+    // Node's (v22).
+    let source = r#"
+      var out = [];
+      function show(x) { return Object.is(x, -0) ? "-0" : String(x); }
+      function mulAdd(x, y) { return x * 0.999 + y; }
+      function addMul(x, y) { return (x + 0.5) * y; }
+      function subDiv(x, y) { return y / (x - 1.25); }
+      function divSub(x, y) { return x / 0.1 - y; }
+      function scaled(x) { var t = x * 2.5; return t + t; }
+      function loop(n) { var acc = 0; for (var i = 0; i < n; i++) acc = acc * 0.999 + i; return acc; }
+      for (var k = 0; k < 400; k++) { mulAdd(k, k); addMul(k, k); subDiv(k, k); divSub(k, k); scaled(k); }
+      var vals = [-0, 1, 0.1, NaN, Infinity, -Infinity, 5e-324, 1.7976931348623157e308, "2", null, 7n];
+      for (var x of vals) {
+        for (var y of [-0, 1e-320, -1]) {
+          var row = [];
+          for (var f of [mulAdd, addMul, subDiv, divSub]) {
+            try { row.push(show(f(x, y))); } catch (e) { row.push(e.constructor.name); }
+          }
+          try { row.push(show(scaled(x))); } catch (e) { row.push(e.constructor.name); }
+          out.push(row.join(" "));
+        }
+      }
+      // Two roundings, never a fused multiply-add: 0.1 * 0.999 + -0.0999 is not the fused result.
+      out.push(show(mulAdd(0.1, -0.0999)), show(mulAdd(1 / 3, -1 / 3)), show(mulAdd(1e308, 1e308)));
+      // Subnormal products round once before the sum.
+      out.push(show(mulAdd(5e-324, 0)), show(mulAdd(1.5e-323, 0)), show(mulAdd(-5e-324, -0)), show(scaled(5e-324)));
+      out.push(loop(1000).toFixed(6), loop(10));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "double_constant_operator_pairs_keep_two_roundings.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["-0 -0 0 0 -0|1e-320 5e-321 -8e-321 -1e-320 -0|-1 -0.5 0.8 1 -0|0.999 -0 0 10 5|0.999 1.5e-320 -4e-320 10 5|-0.0010000000000000009 -1.5 4 11 5|0.0999 -0 0 1 0.5|0.0999 6e-321 -8.696e-321 1 0.5|-0.9001 -0.6 0.8695652173913044 2 0.5|NaN NaN NaN NaN NaN|NaN NaN NaN NaN NaN|NaN NaN NaN NaN NaN|Infinity NaN -0 Infinity Infinity|Infinity Infinity 0 Infinity Infinity|Infinity -Infinity -0 Infinity Infinity|-Infinity NaN 0 -Infinity -Infinity|-Infinity -Infinity -0 -Infinity -Infinity|-Infinity Infinity 0 -Infinity -Infinity|5e-324 -0 0 5e-323 2e-323|1.0005e-320 5e-321 -8e-321 -9.95e-321 2e-323|-1 -0.5 0.8 1 2e-323|1.7958954417274534e+308 -0 -0 Infinity Infinity|1.7958954417274534e+308 1.7976731214730533e-12 0 Infinity Infinity|1.7958954417274534e+308 -1.7976931348623157e+308 -5.562684646268003e-309 Infinity Infinity|1.998 -0 -0 20 10|1.998 2.05e-319 1.3335e-320 20 10|0.998 -20.5 -1.3333333333333333 21 10|0 -0 0 0 0|1e-320 5e-321 -8e-321 -1e-320 0|-1 -0.5 0.8 1 0|TypeError TypeError TypeError TypeError TypeError|TypeError TypeError TypeError TypeError TypeError|TypeError TypeError TypeError TypeError TypeError|0|-0.00033333333333335213|Infinity|5e-324|1.5e-323|-5e-324|2e-323|367695.424771|44.880209748209886"]);
+}
+
+#[test]
+fn lane_array_and_function_method_reads_follow_their_holder_hint() {
+    // An array's or function's method read its prototype answered keeps that read as its record's
+    // hint (`Vm::holder_hint_hit`): an array moved to another prototype, the method replaced,
+    // deleted (Object.prototype's then answers) and restored, an own method shadowing it, and
+    // Function.prototype.call replaced and shadowed each read what the receiver in hand inherits.
+    // Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function put() { for (var k = 0; k < arguments.length; k++) out[out.length] = arguments[k]; }
+      function readPush(a) { return a.push; }
+      function readCall(f) { return f.call; }
+      function id(x) { return x; }
+      var i, hits = 0, plain = [], proto = { push: "proto push" };
+      for (i = 0; i < 300; i++) hits += readPush(plain) === Array.prototype.push ? 1 : 0;
+      var moved = [];
+      Object.setPrototypeOf(moved, proto);
+      put(hits, readPush(moved), readPush(plain) === Array.prototype.push);
+      var savedPush = Array.prototype.push;
+      Array.prototype.push = "replaced";
+      put(readPush(plain));
+      delete Array.prototype.push;
+      put(String(readPush(plain)));
+      Object.prototype.push = "object push";
+      put(readPush(plain));
+      delete Object.prototype.push;
+      Array.prototype.push = savedPush;
+      put(readPush(plain) === savedPush);
+      var shadowed = [];
+      shadowed.push = "own";
+      put(readPush(shadowed), readPush(plain) === savedPush);
+      for (i = 0; i < 300; i++) hits += readCall(id) === Function.prototype.call ? 1 : 0;
+      var savedCall = Function.prototype.call;
+      Function.prototype.call = "replaced call";
+      put(hits, readCall(id));
+      Function.prototype.call = savedCall;
+      var ownCall = function () {};
+      ownCall.call = "own call";
+      put(readCall(ownCall), readCall(id) === savedCall);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_array_and_function_method_reads_follow_their_holder_hint.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["300|proto push|true|replaced|undefined|object push|true|own|true|600|replaced call|own call|true"]
+    );
+}
+
+#[test]
+fn integer_constant_operands_and_counter_loops_keep_number_semantics() {
+    // An integer constant operand is proved once (`lane_operator_integer_constant`), an `i32`
+    // overflow boxes its double inline (`Value::overflowed_integer`), and a loop's counter
+    // test reads the update's integer (`lane_inc_dec_loop` of `COUNTER`): signed zero, the
+    // `i32` bounds, doubles, strings, NaN, booleans, null, undefined and a BigInt operand,
+    // counters past both `i32` bounds and a double counter keep Number semantics. Expected
+    // value is Node's (v22).
+    let source = r#"
+      var out = [];
+      function f(x) { return [x | 0, x + 1, x * 3, x - 7, x % 5, x / 2, x << 2]; }
+      var vals = [5, -0, 2147483647, -2147483648, 1.5, "a", 1e10, NaN, true, null, undefined, 3n];
+      for (var k = 0; k < 400; k++) f(k);
+      for (var v of vals) { try { out.push(f(v).map(String).join(",")); } catch (e) { out.push(e.constructor.name); } }
+      var s = 0, i;
+      for (i = 2147483640; i < 2147483650; i++) s += i;
+      out.push(s, i);
+      for (i = -2147483640; i > -2147483650; i--) s += i;
+      out.push(s, i);
+      for (i = 0.5; i < 5; i++) s += i;
+      out.push(s, i);
+      var a = 2147483647; for (var j = 0; j < 3; j++) { a = a + 1; } out.push(a);
+      var m = 65536; for (j = 0; j < 3; j++) { m = m * 65536; } out.push(m);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "integer-constant-operands.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["5,6,15,-2,0,2.5,20|0,1,0,-7,0,0,0|2147483647,2147483648,6442450941,2147483640,2,1073741823.5,-4|-2147483648,-2147483647,-6442450944,-2147483655,-3,-1073741824,0|1,2.5,4.5,-5.5,1.5,0.75,4|0,a1,NaN,NaN,NaN,NaN,0|1410065408,10000000001,30000000000,9999999993,0,5000000000,1345294336|0,NaN,NaN,NaN,NaN,NaN,0|1,2,3,-6,1,0.5,4|0,1,0,-7,0,0,0|0,NaN,NaN,NaN,NaN,NaN,0|TypeError|21474836445|2147483650|0|-2147483650|12.5|5.5|2147483650|18446744073709552000"]);
+}
+
+#[test]
+fn lane_math_sites_keep_math_semantics() {
+    // A call site of a Math function computes Number arguments in place (`number::math_inline_call`):
+    // NaN, signed zeros, infinities and int32 bounds, conversions whose valueOf runs once per
+    // argument in order, Symbol and BigInt errors, and a Math.max replaced by a user function,
+    // by another native, and by a shadowing global Math each keep Math's semantics. Expected
+    // value is Node's.
+    let source = r#"
+      var out = [];
+      function max2(x, y) { return Math.max(x, y); }
+      function min2(x, y) { return Math.min(x, y); }
+      function max0() { return Math.max(); }
+      function max3(x, y, z) { return Math.max(x, y, z); }
+      function floor1(x) { return Math.floor(x); }
+      function pow2(x, y) { return Math.pow(x, y); }
+      function show(v) { return Object.is(v, -0) ? "-0" : String(v); }
+      var s = 0, i;
+      for (i = 0; i < 300; i++) s += max2(i & 7, 3) + min2(i & 7, 3) + floor1(i / 3) + pow2(i & 3, 2);
+      out.push(s);
+      var values = [NaN, -0, 0, 1.5, -Infinity, Infinity, 2147483647, -2147483648, "7", null, undefined, true];
+      for (i = 0; i < values.length; i++) {
+        for (var j = 0; j < values.length; j++) {
+          out.push(show(max2(values[i], values[j])) + "/" + show(min2(values[i], values[j])));
+        }
+        out.push(show(floor1(values[i])), show(pow2(values[i], 0.5)));
+      }
+      out.push(show(max0()), show(Math.min()), show(max3(1, NaN, 3)), show(max3(-0, 0, -0)));
+      // valueOf runs once per argument, in order, even after a NaN.
+      var log = [];
+      var a = { valueOf: function () { log.push("a"); return 5; } };
+      var b = { valueOf: function () { log.push("b"); return NaN; } };
+      var c = { valueOf: function () { log.push("c"); return 9; } };
+      for (i = 0; i < 3; i++) out.push(show(max3(a, b, c)), show(max2(c, a)), show(min2(a, 4)));
+      out.push(log.join(""));
+      // A Symbol throws; a BigInt throws.
+      try { max2(1, Symbol()); } catch (e) { out.push(e.constructor.name); }
+      try { max2(1n, 2); } catch (e) { out.push(e.constructor.name); }
+      // Redefined Math.max, then a different native and a user function at the same site.
+      var savedMax = Math.max;
+      Math.max = function (x, y) { return "mine" + x + y; };
+      out.push(max2(1, 2));
+      Math.max = Math.min;
+      out.push(max2(1, 2));
+      Math.max = savedMax;
+      out.push(max2(1, 2));
+      var M = Math;
+      globalThis.Math = { max: function () { return "shadow"; }, min: M.min, floor: M.floor, pow: M.pow };
+      out.push(max2(1, 2));
+      globalThis.Math = M;
+      out.push(max2(1, 2));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_math_sites_keep_math_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["17842|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN|NaN|NaN/NaN|-0/-0|0/-0|1.5/-0|-0/-Infinity|Infinity/-0|2147483647/-0|-0/-2147483648|7/-0|0/-0|NaN/NaN|1/-0|-0|0|NaN/NaN|0/-0|0/0|1.5/0|0/-Infinity|Infinity/0|2147483647/0|0/-2147483648|7/0|0/0|NaN/NaN|1/0|0|0|NaN/NaN|1.5/-0|1.5/0|1.5/1.5|1.5/-Infinity|Infinity/1.5|2147483647/1.5|1.5/-2147483648|7/1.5|1.5/0|NaN/NaN|1.5/1|1|1.224744871391589|NaN/NaN|-0/-Infinity|0/-Infinity|1.5/-Infinity|-Infinity/-Infinity|Infinity/-Infinity|2147483647/-Infinity|-2147483648/-Infinity|7/-Infinity|0/-Infinity|NaN/NaN|1/-Infinity|-Infinity|Infinity|NaN/NaN|Infinity/-0|Infinity/0|Infinity/1.5|Infinity/-Infinity|Infinity/Infinity|Infinity/2147483647|Infinity/-2147483648|Infinity/7|Infinity/0|NaN/NaN|Infinity/1|Infinity|Infinity|NaN/NaN|2147483647/-0|2147483647/0|2147483647/1.5|2147483647/-Infinity|Infinity/2147483647|2147483647/2147483647|2147483647/-2147483648|2147483647/7|2147483647/0|NaN/NaN|2147483647/1|2147483647|46340.950001051984|NaN/NaN|-0/-2147483648|0/-2147483648|1.5/-2147483648|-2147483648/-Infinity|Infinity/-2147483648|2147483647/-2147483648|-2147483648/-2147483648|7/-2147483648|0/-2147483648|NaN/NaN|1/-2147483648|-2147483648|NaN|NaN/NaN|7/-0|7/0|7/1.5|7/-Infinity|Infinity/7|2147483647/7|7/-2147483648|7/7|7/0|NaN/NaN|7/1|7|2.6457513110645907|NaN/NaN|0/-0|0/0|1.5/0|0/-Infinity|Infinity/0|2147483647/0|0/-2147483648|7/0|0/0|NaN/NaN|1/0|0|0|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN/NaN|NaN|NaN|NaN/NaN|1/-0|1/0|1.5/1|1/-Infinity|Infinity/1|2147483647/1|1/-2147483648|7/1|1/0|NaN/NaN|1/1|1|1|-Infinity|Infinity|NaN|0|NaN|9|4|NaN|9|4|NaN|9|4|abccaaabccaaabccaa|TypeError|TypeError|mine12|1|2|shadow|2"]
+    );
+}
+
+#[test]
+fn lane_array_push_pop_sites_keep_array_semantics() {
+    // A call site of Array.prototype.push or pop appends or removes in place where the receiver's
+    // elements are ordinary and dense and no prototype holds an index (`Vm::array_push_one`,
+    // `Vm::array_pop_one`): holes, indexed accessors and values added to Array.prototype and
+    // Object.prototype after the sites warm, frozen, sealed and non-extensible arrays, a
+    // non-writable length, zero and many values, redefined and shadowed methods, and array-like
+    // and primitive receivers each keep the generic steps. Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function pp(a, v) { a.push(v); return a.pop(); }
+      function push1(a, v) { return a.push(v); }
+      function pop1(a) { return a.pop(); }
+      function tryPush(a, v) { try { return a.push(v); } catch (e) { return e.constructor.name; } }
+      function tryPop(a) { try { return a.pop(); } catch (e) { return e.constructor.name; } }
+      var s = 0, i, a = [];
+      for (i = 0; i < 300; i++) s += pp(a, i);
+      out.push(s, a.length);
+      // A hole at the end: pop reads the prototype chain.
+      var holes = [1, , 3];
+      holes.length = 2;
+      for (i = 0; i < 50; i++) push1(holes, i);
+      out.push(holes.length, String(pop1([5, , ])), 1 in holes);
+      // Indexed property on Array.prototype after warm-up: a hole there reads it, a push past
+      // a prototype setter calls it.
+      var b = [];
+      for (i = 0; i < 300; i++) push1(b, i);
+      Object.defineProperty(Array.prototype, "400", { set: function (v) { out.push("setter " + v); }, get: function () { return "proto"; }, configurable: true });
+      for (i = 0; i < 120; i++) push1(b, i);
+      out.push(b.length, b[400], Object.prototype.hasOwnProperty.call(b, 400));
+      delete Array.prototype[400];
+      var c = [];
+      c.length = 3;
+      Object.prototype[2] = "objproto";
+      out.push(String(pop1(c)), c.length);
+      delete Object.prototype[2];
+      Object.prototype[0] = "zero";
+      var d = [];
+      for (i = 0; i < 3; i++) push1(d, i);
+      out.push(d.join(","));
+      delete Object.prototype[0];
+      // Frozen, sealed, non-extensible, non-writable length.
+      var frozen = Object.freeze([1, 2]);
+      var sealed = Object.seal([1, 2]);
+      var closed = Object.preventExtensions([1, 2]);
+      var fixed = [1, 2]; Object.defineProperty(fixed, "length", { writable: false });
+      for (i = 0; i < 3; i++) {
+        out.push(tryPush(frozen, 9), tryPop(frozen), tryPush(sealed, 9), tryPop(sealed), tryPush(closed, 9), tryPop(closed), tryPush(fixed, 9), tryPop(fixed));
+      }
+      out.push(frozen.length, sealed.length, closed.length, fixed.length);
+      // Zero and many arguments.
+      var e = [1];
+      function pushMany(a) { return a.push(); }
+      function pushLots(a) { return a.push(1, 2, 3, 4, 5, 6, 7); }
+      for (i = 0; i < 100; i++) { pushMany(e); pushLots(e); }
+      out.push(e.length, e[e.length - 1]);
+      // Redefined push and pop.
+      var saved = Array.prototype.push, savedPop = Array.prototype.pop;
+      Array.prototype.push = function (v) { return "mine " + v; };
+      Array.prototype.pop = function () { return "popped"; };
+      var mine = [push1([], 4), pop1([1])];
+      Array.prototype.push = saved; Array.prototype.pop = savedPop;
+      out.push(mine[0], mine[1]);
+      var own = [];
+      own.push = function () { return "own"; };
+      out.push(push1(own, 1), push1([], 1));
+      // Array-likes and other receivers through the same sites.
+      var like = { length: 2, push: Array.prototype.push, pop: Array.prototype.pop };
+      out.push(push1(like, "x"), like.length, like[2], String(pop1(like)), like.length);
+      String.prototype.push = Array.prototype.push;
+      out.push(tryPush("str", 1));
+      delete String.prototype.push;
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_array_push_pop_sites_keep_array_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["44850|0|52|undefined|false|setter 100|420|proto|false|objproto|2|0,1,2|TypeError|TypeError|TypeError|TypeError|TypeError|2|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|1|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError||TypeError|TypeError|2|2|0|2|701|7|mine 4|popped|own|1|3|3|x|x|2|TypeError"]
+    );
 }
 
 #[test]
@@ -1221,6 +1988,76 @@ fn planned_constructions_run_forwarded_initializers_and_their_defaults() {
 }
 
 
+
+#[test]
+fn planned_constructions_store_string_literal_fields() {
+    // An initializer constructor storing string literals (`this.type = ""`, as acorn's Node
+    // does) is planned like one storing number constants: each object gets the literal the
+    // body's load yields, and writing one object's field leaves the others. Expected values
+    // are Node's (v22).
+    let source = r#"
+      function N(p, s) { this.type = ""; this.start = s; this.end = 0; this.loc = null; this.label = "name"; }
+      function U(s) { this.u = "\u00e9t\u00e9"; this.s = s; this.k = "x"; }
+      var out = [], sum = 0;
+      for (var i = 0; i < 3000; i++) {
+        var n = new N(null, i), u = new U(i);
+        sum += n.start + n.type.length + n.label.length + u.u.length;
+        if (i % 997 === 0) { n.type = "t" + i; out.push(JSON.stringify(n) + JSON.stringify(u)); }
+      }
+      var a = new N(1, 2), b = new N(3, 4);
+      out.push(a.type === b.type, a.label === "name", Object.keys(a).join(), sum);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "planned-string-fields.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [concat!(
+            r#"{"type":"t0","start":0,"end":0,"loc":null,"label":"name"}{"u":"été","s":0,"k":"x"} "#,
+            r#"{"type":"t997","start":997,"end":0,"loc":null,"label":"name"}{"u":"été","s":997,"k":"x"} "#,
+            r#"{"type":"t1994","start":1994,"end":0,"loc":null,"label":"name"}{"u":"été","s":1994,"k":"x"} "#,
+            r#"{"type":"t2991","start":2991,"end":0,"loc":null,"label":"name"}{"u":"été","s":2991,"k":"x"} "#,
+            "true true type,start,end,loc,label 4519500"
+        )]
+    );
+}
+
+#[test]
+fn rotated_loop_updates_keep_their_tests_exits_and_values() {
+    // A loop's update, back edge and integer test run as one record (`lane_inc_dec_loop`):
+    // every relation and direction, a bound the body changes, `continue` and `break`,
+    // counters other than integers (a double, a string bound, a BigInt), an int32 overflow
+    // and loops that never enter keep the values and exits of the separate records.
+    // Expected values are Node's (v22).
+    let source = r#"
+var out = [];
+function up(n) { var s = 0; for (var i = 0; i < n; i++) s = (s + i) | 0; return s + ":" + i; }
+function upLe(n) { var s = 0; for (var i = 0; i <= n; i++) s += i; return s + ":" + i; }
+function down(n) { var s = 0; for (var i = n; i > 0; i--) s += i; return s + ":" + i; }
+function downGe(n) { var s = 0; for (var i = n; i >= 0; i--) s += i; return s + ":" + i; }
+function ne(n) { var c = 0; for (var i = 0; i != n; i++) c++; return c; }
+function moving(n) { var c = 0; for (var i = 0; i < n; i++) { if (i % 3 == 0) n--; c++; } return c + ":" + n; }
+function cont(n) { var s = 0; for (var i = 0; i < n; i++) { if (i & 1) continue; if (i > 50) break; s += i; } return s + ":" + i; }
+function floats(n) { var s = 0; for (var i = 0.5; i < n; i++) s += i; return s + ":" + i; }
+function mixed(n) { var s = 0; for (var i = 0; i < n; i++) s += i; return s + ":" + i; }
+function nested(n) { var s = 0; for (var i = 0; i < n; i++) for (var j = 0; j < i; j++) s = (s + j * i) | 0; return s; }
+function big(n) { var s = 0n; for (var i = 0n; i < n; i++) s += i; return s + ":" + i; }
+function overflow() { var c = 0; for (var i = 2147483640; i < 2147483650; i++) c++; return c + ":" + i; }
+for (var k = 0; k < 300; k++) { up(100); down(100); nested(20); cont(100); moving(60); }
+out.push(up(1000), upLe(10), down(10), downGe(10), ne(17), moving(60), cont(100), floats(5), mixed(5.5), mixed("4"), nested(30), big(10n), overflow(), up(0), down(-1));
+print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "rotated-loop-updates.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["499500:1000 55:11 55:0 55:-1 17 45:45 650:52 12.5:5.5 15:6 6:4 90335 45:10 10:2147483650 0:0 0:-1"]
+    );
+}
 
 #[test]
 fn promoted_locals_preserve_order_and_survive_collection() {
@@ -2131,6 +2968,37 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
     let name = vm.intern_atom("taken");
     let taken = vm.own_property(vm.realm.globals, name).unwrap();
     assert_eq!(&*vm.to_string(&program, taken).unwrap(), "1:1");
+}
+
+#[test]
+fn young_runs_of_survivors_keep_their_values_across_collections() {
+    // Pairs whose values the inline slots cannot hold and three-field receivers take young
+    // runs (`ValueArena::young_run_padded`); most die young and a few survive, some growing
+    // past their run after it moved, some held only by a weak reference or registered for
+    // finalization. Survivors' values, identity and weak targets survive every collection;
+    // the dead ones' finalization runs; kept ones never finalize.
+    let source = "function P(a, b, c) { this.a = a; this.b = b; this.c = c; }\n\
+         var big = 0x40000000, keep = [], weak = [], finalized = 0, wrong = '';\n\
+         var registry = new FinalizationRegistry(function (token) { if (token === 'kept') wrong = 'kept finalized'; else finalized++; });\n\
+         var result = 'pending';\n\
+         function check(p, i) { return p.a === i && p.b.x === i * 3 + big && p.b.y === i && p.c === i + big && (p.d === undefined || p.d === i * 2); }\n\
+         (async function () {\n\
+           for (var i = 0; i < 60000; i++) {\n\
+             var p = new P(i, { x: i * 3 + big, y: i }, i + big);\n\
+             if (i % 997 === 0) { keep.push(p); registry.register(p, 'kept'); }\n\
+             if (i % 997 === 500) { var q = keep[keep.length - 1]; q.d = q.a * 2; q.e = 'grown'; }\n\
+             if (i % 4999 === 0) weak.push([new WeakRef(keep[keep.length - 1]), keep[keep.length - 1].a]);\n\
+             if (i % 3001 === 0) registry.register({ x: big + i, y: i }, i);\n\
+             if (i % 1000 === 0) await i;\n\
+           }\n\
+           for (var j = 0; j < 400000 && finalized === 0; j++) await { x: big + j, y: j };\n\
+           for (var k = 0; k < keep.length; k++) if (!check(keep[k], k * 997)) wrong = 'value of ' + k;\n\
+           for (var w = 0; w < weak.length; w++) { var t = weak[w][0].deref(); if (t !== keep[weak[w][1] / 997] || !check(t, weak[w][1])) wrong = 'weak ' + w; }\n\
+           result = wrong || (finalized > 0 ? 'ok' : 'none finalized');\n\
+         })();";
+    for policy in crate::MemoryPolicy::ALL {
+        assert_eq!(global_text_under(policy, source, "result"), "ok", "{policy:?}");
+    }
 }
 
 fn global_text(source: &str, name: &str) -> String {
@@ -6008,6 +6876,47 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.release_root(root));
 }
 
+/// A suspended async activation is traced by the registers live at its await alone
+/// (`Continuation::live_registers`): what it made between awaits survives minor collections
+/// under either promotion age and full ones, and reads back whole when it resumes.
+#[test]
+fn suspended_async_activations_keep_their_live_values_across_collections() {
+    use crate::heap::PromotionAge;
+
+    let source = r#"
+        async function tick() {}
+        function churn(n) { let keep = null; for (let i = 0; i < n; i++) keep = { i, next: keep }; return n; }
+        async function chain(id) {
+            await tick();
+            const made = { id, list: [id, id + 1] };
+            let sum = 0;
+            for (let step = 0; step < 4; step++) {
+                const inner = { step, made };
+                await tick();
+                sum += churn(64);
+                if (id % 50 === 0) $262.gc();
+                await tick();
+                if (inner.made !== made || inner.step !== step) throw new Error('lost ' + id);
+            }
+            return made.list[1] - made.id + sum;
+        }
+        const all = [];
+        for (let i = 0; i < 300; i++) all.push(chain(i));
+        Promise.all(all).then(
+            values => print(values.length + ' ' + values[0] + ' ' + values[299]),
+            error => print('FAIL ' + error.message));
+    "#;
+    for age in PromotionAge::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.heap.set_promotion_age_for_test(age);
+        let program = Engine::specialize(source, "suspended-live-values.js").unwrap();
+        vm.execute(&program).unwrap();
+        vm.drain_jobs(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["300 257 257"], "{age:?}");
+    }
+}
+
 #[test]
 fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     let mut frame = super::Frame {
@@ -9541,7 +10450,11 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                         }
                     }
                     vm.collect_now(&program);
-                    for handle in handles {
+                    // A primitive pattern is the one-unit string `'a'`, the heap's shared string
+                    // for its unit (`Heap::ascii_unit_strings`), which the program's own `'a'`
+                    // keeps: strings have no identity, so only the receiver must die.
+                    let released = if kind == "object" { handles.len() } else { 1 };
+                    for handle in handles.into_iter().take(released) {
                         assert!(vm.heap.weak_value(handle).is_none());
                     }
                 }
@@ -20404,6 +21317,133 @@ print(JSON.stringify(Object.keys(o).map((k) => Array.from(k, (ch) => ch.charCode
 }
 
 #[test]
+fn promise_jobs_run_short_handlers_in_the_lane_as_frames_would() {
+    // Reaction handlers a job calls run their bodies in the lane from their first
+    // instruction (`Vm::run_frame_from_lane`, `LaneView::returns_from_entry`) once their
+    // deferred runs complete: returns, throws, a returned call's completion, `this` and
+    // `arguments`, collections, thenables, async, generator and class handlers, and job order
+    // stay as Node runs them (expected output from Node 22).
+    let source = r#"
+      const gc = $262.gc;
+      const out = [];
+      let c = 0;
+      const count = () => { c++; };
+      const add = (v) => v + 1;
+      const thrower = (v) => { if (v % 3 === 0) throw new Error("t" + v); return v; };
+      function tail(v) { return add(v * 2); }
+      function sloppyThis() { return this === globalThis; }
+      function strictThis() { "use strict"; return this === undefined; }
+      function argc() { return arguments.length; }
+      const collect = (v) => { if (v % 4 === 0) gc(); return [v]; };
+      const thenable = (v) => ({ then(resolve) { out.push("then" + v); resolve(v * 10); } });
+      async function asyncHandler(v) { await null; return v + 0.5; }
+      function* gen() { yield 1; }
+      class K {}
+      for (let i = 0; i < 12; i++) {
+        const p = Promise.resolve(i);
+        p.then(count);
+        p.then(add).then((v) => out.push("a" + v));
+        p.then(thrower).then((v) => out.push("ok" + v), (e) => out.push(e.message));
+        p.then(tail).then((v) => out.push("t" + v));
+        p.then(sloppyThis).then((v) => out.push(v ? "S" : "s"));
+        p.then(strictThis).then((v) => out.push(v ? "U" : "u"));
+        p.then(argc).then((v) => out.push("n" + v));
+        p.then(collect).then((v) => out.push("g" + v[0]));
+        p.then(thenable).then((v) => out.push("th" + v));
+        p.then(asyncHandler).then((v) => out.push("as" + v));
+        p.then(gen).then((g) => out.push("gen" + g.next().value));
+        p.then(K).catch((e) => out.push(e.constructor.name));
+        Promise.reject(i).then(null, (r) => out.push("r" + r));
+      }
+      let last = Promise.resolve();
+      for (let k = 0; k < 10; k++) last = last.then(() => {});
+      last.then(() => {
+        let hash = 0;
+        const text = out.join(",");
+        for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+        print(c + "|" + out.length + "|" + hash + "|" + out.slice(0, 16).join(",") + "|" + out.slice(-6).join(","));
+      });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "lane-promise-jobs.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["12|156|314161342|r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,a1,t0,t1,S|as6.5,as7.5,as8.5,as9.5,as10.5,as11.5"]
+    );
+}
+
+#[test]
+fn promise_jobs_keep_order_errors_and_species_across_redefinitions() {
+    // Reaction jobs and `then` registrations after their species proof holds: job order across
+    // `then` and `await`, thrown handlers, collections inside jobs, and redefinitions of
+    // `Promise[@@species]`, `Promise.prototype.constructor`, an own `constructor` and
+    // `Promise.prototype.then` after warm-up, each retiring the proof (expected output from
+    // Node 22).
+    let source = r#"
+      const gc = $262.gc;
+      const out = [];
+      let count = 0;
+      const h = () => { count++; };
+      function warm(rounds) {
+        for (let i = 0; i < rounds; i++) {
+          const p = Promise.resolve(i);
+          for (let k = 0; k < 50; k++) p.then(h);
+          p.then((v) => { if (v % 7 === 0) gc(); if (v % 5 === 0) throw new Error("t" + v); return v; })
+            .then((v) => out.push("v" + v), (e) => out.push(e.message));
+        }
+      }
+      async function run() {
+        warm(30);
+        out.push("a0");
+        await null;
+        out.push("a1");
+        Promise.resolve().then(() => out.push("j1"));
+        await undefined;
+        out.push("a2");
+        class Sub extends Promise {}
+        const plain = Promise.resolve(1);
+        out.push(plain.then(h) instanceof Sub);
+        const desc = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+        Object.defineProperty(Promise, Symbol.species, { get() { return Sub; }, configurable: true });
+        out.push("species " + (plain.then(h) instanceof Sub));
+        Object.defineProperty(Promise, Symbol.species, desc);
+        out.push("restored " + (plain.then(h) instanceof Sub));
+        Promise.prototype.constructor = Sub;
+        out.push("ctor " + (plain.then(h) instanceof Sub));
+        Promise.prototype.constructor = Promise;
+        out.push("ctor back " + (plain.then(h) instanceof Sub));
+        const own = Promise.resolve(2);
+        own.constructor = Sub;
+        out.push("own " + (own.then(h) instanceof Sub) + " " + (plain.then(h) instanceof Sub));
+        warm(10);
+        const then = Promise.prototype.then;
+        Promise.prototype.then = function (f, r) { out.push("patched"); return then.call(this, f, r); };
+        await { then(resolve) { out.push("thenable"); resolve(); } };
+        await Promise.resolve(3);
+        await Promise.resolve().then(() => Promise.resolve(5)).then((v) => out.push("resolved " + v));
+        plain.then(() => out.push("direct"));
+        Promise.prototype.then = then;
+        await Promise.resolve(4);
+        out.push("count " + count);
+      }
+      run().then(() => {
+        let hash = 0;
+        const text = out.join(",");
+        for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+        print(out.length + "|" + hash + "|" + out.slice(0, 6).join(",") + "|" + out.filter((x) => !/^[vt]\d/.test(x)).join(","));
+      });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "promise-job-redefinitions.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["58|-79309871|a0,a1,t0,v1,v2,v3|a0,a1,j1,a2,false,species true,restored false,ctor true,ctor back false,own true false,thenable,patched,patched,patched,resolved 5,patched,direct,count 2007"]
+    );
+}
+
+#[test]
 fn lane_settled_async_calls_keep_their_promises_and_job_order() {
     // Non-suspending async callees run as settling lane activations
     // (`Completion::SettlesPromise`): returns, throws, thenables, an impure `then` read
@@ -20440,6 +21480,128 @@ fn lane_settled_async_calls_keep_their_promises_and_job_order() {
     assert_eq!(
         output.borrow().as_slice(),
         ["0,ok,70,5,1,00,0,1,boom1,70,5,2,22,1|280:-1226768622|40:then38,then39|abababab"]
+    );
+}
+
+#[test]
+fn lane_awaited_settled_calls_resume_as_their_promises_would() {
+    // A settling call whose result only the `await` after it reads makes its promise only
+    // where something could observe it: primitive, object, thenable and promise returns,
+    // throws, nested awaits and a kept promise resume in the order Node's do (expected
+    // output from Node 22).
+    let source = r#"
+      const out = [];
+      async function prim(x) { return x; }
+      async function none() { }
+      async function obj(x) { return { v: x }; }
+      async function thenable(x) { return { then(r) { out.push("then" + x); r("T" + x); } }; }
+      async function thrower(x) { throw new Error("boom" + x); }
+      async function inner(x) { return Promise.resolve("in" + x); }
+      async function nested(x) { return await prim(x + 1); }
+      async function step(i) {
+        out.push("s" + i);
+        const a = await prim(i);
+        await none();
+        const o = await obj(i);
+        const t = await thenable(i);
+        let e = "";
+        try { await thrower(i); } catch (error) { e = error.message; }
+        const n = await nested(i);
+        const r = await inner(i);
+        const p = prim(i * 10);
+        const q = await p;
+        out.push([a, o.v, t, e, n, r, q, p instanceof Promise].join(":"));
+        return a;
+      }
+      async function ticks(tag) { for (let k = 0; k < 12; k++) { await undefined; out.push(tag + k); } }
+      const done = [];
+      for (let i = 0; i < 40; i++) {
+        done.push(step(i));
+        Promise.resolve().then(() => out.push("p" + i)).then(() => out.push("q" + i));
+      }
+      done.push(ticks("t"));
+      Promise.all(done).then((values) => { const text = out.join(","); let hash = 0; for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0; print(values.length + "|" + out.length + ":" + hash + "|" + out.slice(40, 52).join(",") + "|" + out.slice(-3).join(",")); });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-awaited-settled.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["41|212:887089116|p0,p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11|38:38:T38:boom38:39:in38:380:true,39:39:T39:boom39:40:in39:390:true,t11"]
+    );
+}
+
+#[test]
+fn async_activations_await_again_through_their_spent_state() {
+    // An async function's later awaits suspend into the state its last await's reaction
+    // spent: the state, promoted by collections between awaits, takes young frames past the
+    // write barrier, and rejections and nested settles resume as Node's do (expected output
+    // from Node 22 with --expose-gc).
+    let source = r#"
+      const order = [];
+      async function leaf(i) { return { v: i }; }
+      async function walk(tag, n) {
+        let kept = [];
+        let sum = 0;
+        for (let i = 0; i < n; i++) {
+          const fresh = { tag, i, items: [i, i + 1] };
+          kept.push(fresh);
+          const o = await leaf(i);
+          sum += o.v + fresh.items[1];
+          if (i % 7 === 0) await null;
+          if (i % 25 === 0) $262.gc();
+          if (i % 40 === 39) { kept = kept.slice(-3); order.push(tag + i); }
+        }
+        try { await Promise.reject(new Error(tag)); } catch (e) { sum += e.message.length; }
+        return sum + kept.length + kept[kept.length - 1].items[0];
+      }
+      Promise.all([walk("a", 200), walk("b", 120), walk("c", 80)]).then((sums) => print(sums.join(",") + "|" + order.join(",")));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "await-again.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["40203,14523,6483|a39,b39,c39,a79,b79,c79,a119,b119,a159,a199"]);
+}
+
+#[test]
+fn promise_resolution_reads_then_as_get_would() {
+    // Resolving with an object reads its `then` once: plain data through its shape proof,
+    // getters, proxies, throwing getters, own and inherited `then`s and subclass promises
+    // through [[Get]], in the order Node's jobs run (expected output from Node 22).
+    let source = r#"
+      const log = [];
+      const L = (s) => log.push(String(s));
+      let reads = 0;
+      const getterThenable = { get then() { reads++; L("getter read " + reads); return (r) => r("G"); } };
+      Promise.resolve().then(() => getterThenable).then((v) => L("getter value " + v + " reads " + reads));
+      const proxied = new Proxy({}, { get(t, k) { L("proxy get " + String(k)); return k === "then" ? (r) => r("P") : undefined; } });
+      Promise.resolve().then(() => proxied).then((v) => L("proxy value " + v));
+      const own = Promise.resolve("own");
+      own.then = function (f, r) { L("own then"); return Promise.prototype.then.call(this, f, r); };
+      Promise.resolve().then(() => own).then((v) => L("own value " + v));
+      const plainObj = { a: 1 };
+      Promise.resolve().then(() => plainObj).then((v) => L("plain value " + v.a));
+      const thenNull = { then: null };
+      Promise.resolve().then(() => thenNull).then((v) => L("then null " + (v === thenNull)));
+      Object.prototype.then = undefined;
+      Promise.resolve().then(() => ({ b: 2 })).then((v) => L("proto then undefined " + v.b));
+      delete Object.prototype.then;
+      class Sub extends Promise {}
+      const sub = Sub.resolve("sub");
+      Promise.resolve().then(() => sub).then((v) => L("sub value " + v));
+      let throwingReads = 0;
+      const throwing = { get then() { throwingReads++; throw new Error("then threw"); } };
+      Promise.resolve().then(() => throwing).then(null, (e) => L("throwing " + e.message + " " + throwingReads));
+      new Promise((r) => r(getterThenable)).then((v) => L("ctor getter " + v + " " + reads));
+      Promise.resolve().then(() => L("tick1")).then(() => L("tick2")).then(() => L("tick3")).then(() => L("tick4"));
+      Promise.resolve().then(() => 0).then(() => 0).then(() => 0).then(() => 0).then(() => 0).then(() => 0).then(() => print(log.join("|")));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "then-reads.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["getter read 1|getter read 2|proxy get then|tick1|own then|plain value 1|then null true|proto then undefined 2|throwing then threw 1|ctor getter G 2|tick2|getter value G reads 2|proxy value P|tick3|own value own|sub value sub|tick4"]
     );
 }
 
@@ -20977,6 +22139,202 @@ print(JSON.stringify(out));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "json_parse_literal_shapes_keep_create_data_property_semantics.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","a,b,c,d","object","{\"a\":2,\"b\":3}","a,b","object","{\"1\":\"a\",\"2\":\"b\",\"x\":1}","1,2,x","object","{\"__proto__\":{\"p\":1},\"q\":2}","__proto__,q","object",true,"__proto__",true,"{\"k0\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39}","k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19,k20,k21,k22,k23,k24,k25,k26,k27,k28,k29,k30,k31,k32,k33,k34,k35,k36,k37,k38,k39","object","[{\"x\":1},{\"x\":2,\"y\":3},{\"y\":4,\"x\":5}]","0,1,2","object","{\"\":1,\"é\":2,\"A\":3}",",é,A","object","{\"a\":{\"b\":{\"c\":{\"d\":[null,true,false,0,1e+300]}}}}","a","object","{\"a\":10,\"b\":20}","a,b","object","SyntaxError","SyntaxError","\"\\ud800\"","0","string","{\"s\":\"x\"}","s","object","{\"trap\":1}","trap","object",true,"{\"m\":1,\"n\":2,\"z\":1}","{\"m\":3,\"n\":4}"]"#]);
+}
+
+#[test]
+fn json_parse_syntax_errors_match_node_messages_and_positions() {
+    // Malformed JSON reports V8's messages, positions, line and column, and quoted context, as
+    // Node prints them, from byte, UTF-16 and decoded UTF-8 sources.
+    let source = r##"
+const out = [];
+for (const text of ['', ' ', '{', '[1,', '{"a"', '{"a":1', '{"a":1,', '{"a":1 "b":2}', 'x', 'nul', 'tr"', 't1', '1x', '[1 2]', '{a:1}', '"abc', '"a\\x"', '"\\u12g4"', '"\\u12', '"\\é"', '"\\一"', '"a\u0001"', '-', '-01', '1.', '1.e', '1e+', '[1,]', '"\\', 'undefined', 'NaN', '{"a":1}}', 'aaaaaaaaaaaaaaaaaaaaaaaaa', '[1,2,3,4,5,6,7,8,9,10,11,12,tx]', '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,x]', '{"aaaaaaaaaaaaaaaa":x, "bbbbbbbbbbbbbbbbbbbbbbb":1}', '\r\n[1,\r\n  x]', '\n\n  [1,\n  2 3]', '{"κ":1,"name":"ω" x}', '["ωωωωωωωωωωωωωωωωωωωωω", tru]']) {
+  try { JSON.parse(text); out.push('ok'); } catch (e) { out.push(e.constructor.name + ': ' + e.message); }
+}
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_syntax_errors_match_node_messages_and_positions.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["SyntaxError: Unexpected end of JSON input","SyntaxError: Unexpected end of JSON input","SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)","SyntaxError: Unexpected end of JSON input","SyntaxError: Expected ':' after property name in JSON at position 4 (line 1 column 5)","SyntaxError: Expected ',' or '}' after property value in JSON at position 6 (line 1 column 7)","SyntaxError: Expected double-quoted property name in JSON at position 7 (line 1 column 8)","SyntaxError: Expected ',' or '}' after property value in JSON at position 7 (line 1 column 8)","SyntaxError: Unexpected token 'x', \"x\" is not valid JSON","SyntaxError: Unexpected end of JSON input","SyntaxError: Unexpected string in JSON at position 2 (line 1 column 3)","SyntaxError: Unexpected number in JSON at position 1 (line 1 column 2)","SyntaxError: Unexpected non-whitespace character after JSON at position 1 (line 1 column 2)","SyntaxError: Expected ',' or ']' after array element in JSON at position 3 (line 1 column 4)","SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)","SyntaxError: Unterminated string in JSON at position 4 (line 1 column 5)","SyntaxError: Bad escaped character in JSON at position 3 (line 1 column 4)","SyntaxError: Bad Unicode escape in JSON at position 5 (line 1 column 6)","SyntaxError: Bad Unicode escape in JSON at position 5 (line 1 column 6)","SyntaxError: Bad escaped character in JSON at position 2 (line 1 column 3)","SyntaxError: Unexpected token '一', \"\"\\一\"\" is not valid JSON","SyntaxError: Bad control character in string literal in JSON at position 2 (line 1 column 3)","SyntaxError: No number after minus sign in JSON at position 1 (line 1 column 2)","SyntaxError: Unexpected number in JSON at position 2 (line 1 column 3)","SyntaxError: Unterminated fractional number in JSON at position 2 (line 1 column 3)","SyntaxError: Unterminated fractional number in JSON at position 2 (line 1 column 3)","SyntaxError: Exponent part is missing a number in JSON at position 3 (line 1 column 4)","SyntaxError: Unexpected token ']', \"[1,]\" is not valid JSON","SyntaxError: Unexpected end of JSON input","SyntaxError: \"undefined\" is not valid JSON","SyntaxError: \"NaN\" is not valid JSON","SyntaxError: Unexpected non-whitespace character after JSON at position 7 (line 1 column 8)","SyntaxError: Unexpected token 'a', \"aaaaaaaaaa\"... is not valid JSON","SyntaxError: Unexpected token 'x', ...\"10,11,12,tx]\" is not valid JSON","SyntaxError: Unexpected token 'x', ...\",18,19,20,x]\" is not valid JSON","SyntaxError: Unexpected token 'x', ...\"aaaaaaaa\":x, \"bbbbbb\"... is not valid JSON","SyntaxError: Unexpected token 'x', \"\r\n[1,\r\n  x]\" is not valid JSON","SyntaxError: Expected ',' or ']' after array element in JSON at position 12 (line 4 column 5)","SyntaxError: Expected ',' or '}' after property value in JSON at position 18 (line 1 column 19)","SyntaxError: Unexpected token ']', ...\"ωωωω\", tru]\" is not valid JSON"]"##]);
+}
+
+#[test]
+fn json_raw_json_admits_one_whole_primitive_as_node_does() {
+    // JSON.rawJSON takes one primitive spanning the whole text, with no whitespace around it,
+    // and reports anything else with Node's messages.
+    let source = r##"
+const out = [];
+for (const text of ['1', '"a"', 'null', '[1]', '1x', '', ' 1', 'tru', '"\\x"', '-']) {
+  try { const r = JSON.rawJSON(text); out.push(JSON.stringify({ r }) + ':' + JSON.isRawJSON(r)); } catch (e) { out.push(e.constructor.name + ': ' + e.message); }
+}
+out.push(JSON.stringify([JSON.rawJSON('12345678901234567890'), JSON.rawJSON('1e400')]));
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_raw_json_admits_one_whole_primitive_as_node_does.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["{\"r\":1}:true","{\"r\":\"a\"}:true","{\"r\":null}:true","SyntaxError: Unexpected token '[', \"[1]\" is not valid JSON","SyntaxError: Invalid value for JSON.rawJSON","SyntaxError: Invalid value for JSON.rawJSON","SyntaxError: Unexpected token ' ', \" 1\" is not valid JSON","SyntaxError: Unexpected end of JSON input","SyntaxError: Bad escaped character in JSON at position 2 (line 1 column 3)","SyntaxError: No number after minus sign in JSON at position 1 (line 1 column 2)","[12345678901234567890,1e400]"]"##]);
+}
+
+#[test]
+fn json_parse_revivers_see_holders_deletions_and_source_text() {
+    // A reviver walks in V8's order with its holder as `this`; it may delete or add members,
+    // reads each primitive's source text, and stores `__proto__` and repeated keys as data.
+    let source = r##"
+const out = [];
+const log = [];
+const root = JSON.parse('{"a":[1,{"b":2}],"c":"d","e":{"f":null}}', function (k, v) {
+  log.push(k + ':' + JSON.stringify(v) + ':' + (Array.isArray(this) ? 'array' : typeof this));
+  return k === 'c' ? undefined : k === 'b' ? v * 10 : v;
+});
+out.push(log.join('|'), JSON.stringify(root));
+let holder;
+const top = JSON.parse('[1]', function (k, v) { if (k === '') holder = this; return v; });
+out.push(Object.keys(holder).join(), holder[''] === top, Object.getPrototypeOf(holder) === Object.prototype);
+out.push(JSON.stringify(JSON.parse('{"a":1,"b":2,"c":3}', function (k, v) { if (k === 'a') delete this.b; return v; })));
+out.push(JSON.stringify(JSON.parse('{"a":1,"b":2}', function (k, v) { if (k === 'a') this.z = 9; return v; })));
+out.push(JSON.stringify(JSON.parse('[1,2,3]', (k, v) => (v === 2 ? undefined : v))));
+out.push(JSON.stringify(JSON.parse('[1.0, "x", null, {"a": 1e2}]', (k, v, context) => (context && context.source !== undefined ? context.source : v))));
+const proto = JSON.parse('{"__proto__":1}', (k, v) => v);
+out.push(Object.keys(proto).join(), Object.getPrototypeOf(proto) === Object.prototype);
+out.push(JSON.stringify(JSON.parse('{"a":1,"a":2}', (k, v) => v)));
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_revivers_see_holders_deletions_and_source_text.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["0:1:array|b:2:object|1:{\"b\":20}:array|a:[1,{\"b\":20}]:object|c:\"d\":object|f:null:object|e:{\"f\":null}:object|:{\"a\":[1,{\"b\":20}],\"e\":{\"f\":null}}:object","{\"a\":[1,{\"b\":20}],\"e\":{\"f\":null}}","",true,true,"{\"a\":1,\"c\":3}","{\"a\":1,\"b\":2,\"z\":9}","[1,null,3]","[\"1.0\",\"\\\"x\\\"\",\"null\",{\"a\":\"1e2\"}]","__proto__",true,"{\"a\":2}"]"##]);
+}
+
+#[test]
+fn json_parse_values_follow_layouts_strings_numbers_and_depth() {
+    // Keys the parse predicts from earlier objects (prefixes, escapes, alternation, repeats,
+    // index keys) build the layouts Node does; repeated strings stay equal values while
+    // containers stay distinct; numbers round as Node's; nesting is bounded by memory only.
+    let source = r##"
+const out = [];
+const keys = (text) => JSON.parse(text).map((o) => Object.keys(o).join('|') + '=' + Object.values(o).join('|')).join(' ');
+out.push(keys('[{"ab":1},{"abc":2},{"ab":3},{"a":4},{"abc":5,"ab":6}]'));
+out.push(keys('[{"a\\"b":1},{"a\\"b":2},{"a\\\\b":3},{"\\u0061":5},{"a":6},{"\\u0061":7}]'));
+out.push(keys('[{"x":1,"y":2},{"x":1,"z":3},{"x":1,"y":4},{"y":1,"x":2},{"x":0}]'));
+out.push(keys('[{"a":1,"b":2},{"a":1,"b":2,"a":3},{"a":1,"b":2},{"b":1,"a":2,"b":3,"c":4}]'));
+out.push(keys('[{"":1},{"":2,"a":3},{"é":4},{"é":5,"k":6}]'));
+out.push(keys('[{"b":1,"2":2,"a":3,"1":4},{"b":1,"2":2,"a":3,"1":4}]'));
+out.push(keys('[{"p":1,"q":2},{"p":3},{"q":4,"p":5}]'));
+const nested = JSON.parse('{"list":[{"id":1,"tags":["a","b"]},{"id":2,"tags":[]},{"tags":["c"],"id":3}]}');
+out.push(nested.list.map((o) => Object.keys(o).join()).join(' '));
+const proto = JSON.parse('[{"__proto__":{"x":1},"a":2},{"__proto__":null}]');
+out.push(proto.map((o) => Object.keys(o).join() + ':' + (Object.getPrototypeOf(o) === Object.prototype) + ':' + o.x).join(' '));
+const strings = JSON.parse('["same","same","other","","","https://example.org/a/very/long/repeated/string","https://example.org/a/very/long/repeated/string","x\\ny","x\\ny"]');
+out.push(strings.join('|'), strings[0] === strings[1], strings[5] === strings[6]);
+const shared = JSON.parse('[[1,2],[1,2],{"a":1},{"a":1}]');
+shared[0].push(3); shared[2].b = 2; delete shared[3].a;
+out.push(JSON.stringify(shared));
+out.push(JSON.parse('"\\ud83d\\ude00\\ud800x\\udc00\\u00e9\\/\\b\\f\\n\\r\\t"').split('').map((c) => c.charCodeAt(0).toString(16)).join(','));
+out.push(JSON.parse('"\ud800"').charCodeAt(0), JSON.parse('{"é":"ü€😀"}')['é']);
+out.push(JSON.parse('[0,-0,1.0,-1.5e-3,1e400,-1e400,9007199254740993,123456789012345678e-5,5e-324,0.1,1e22,1e23,2147483648,-2147483649]').map((n) => (Object.is(n, -0) ? '-0' : String(n))).join(','));
+let deep = '';
+for (let i = 0; i < 100000; i++) deep += '[';
+for (let i = 0; i < 100000; i++) deep += ']';
+let value = JSON.parse(deep), depth = 0;
+while (value.length) { value = value[0]; depth++; }
+out.push(depth);
+deep = '';
+for (let i = 0; i < 20000; i++) deep += '{"a":';
+deep += 'null';
+for (let i = 0; i < 20000; i++) deep += '}';
+value = JSON.parse(deep); depth = 0;
+while (value !== null) { value = value.a; depth++; }
+out.push(depth);
+print(JSON.stringify(out));
+"##;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_values_follow_layouts_strings_numbers_and_depth.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r##"["ab=1 abc=2 ab=3 a=4 abc|ab=5|6","a\"b=1 a\"b=2 a\\b=3 a=5 a=6 a=7","x|y=1|2 x|z=1|3 x|y=1|4 y|x=1|2 x=0","a|b=1|2 a|b=3|2 a|b=1|2 b|a|c=3|2|4","=1 |a=2|3 é=4 é|k=5|6","1|2|b|a=4|2|1|3 1|2|b|a=4|2|1|3","p|q=1|2 p=3 q|p=4|5","id,tags id,tags tags,id","__proto__,a:true:undefined __proto__:true:undefined","same|same|other|||https://example.org/a/very/long/repeated/string|https://example.org/a/very/long/repeated/string|x\ny|x\ny",true,true,"[[1,2,3],[1,2],{\"a\":1,\"b\":2},{}]","d83d,de00,d800,78,dc00,e9,2f,8,c,a,d,9",55296,"ü€😀","0,-0,1,-0.0015,Infinity,-Infinity,9007199254740992,1234567890123.4568,5e-324,0.1,1e+22,1e+23,2147483648,-2147483649",99999,20000]"##]);
+}
+
+#[test]
+fn data_script_literals_evaluate_as_their_object_and_array_literals() {
+    // A script's first declaration or assignment of a JSON array or object builds its value
+    // from the text (`compile::data_literal`); keys, numbers, strings, line positions, later
+    // statements and the cases it leaves to the full parse (a `__proto__` key, a literal that
+    // is an operand) give what the literal gives in Node.
+    let programs = [
+        r##"/* data */
+var dataA = [{"id":1,"tags":["a","b"],"v":1.5},{"id":2,"tags":[],"v":-0}];
+print(dataA.length + ":" + JSON.stringify(dataA) + ":" + Object.is(dataA[1].v, -0));"##,
+        r##"// generated
+let dataB = {"b":1,"2":2,"a":{"x":[true,false,null]},"b":3}
+;print(Object.keys(dataB).join() + JSON.stringify(dataB));"##,
+        r##"const dataC = {"s":"\u00e9\ud800 \u2028 é","n":1e400,"m":[1.0,2.5e-3]};print([dataC.s.length, dataC.n, dataC.m.join()].join("|"));"##,
+        r##"globalThis.dataD = [1,2,3]; dataD.push(4); print(dataD.join());"##,
+        r##"var dataF = {"__proto__":{"inherited":1},"own":2}; print([Object.keys(dataF).join(), dataF.inherited, Object.getPrototypeOf(dataF) === Object.prototype].join("|"));"##,
+        r##"var dataG = [1,2] + 1; print(dataG);"##,
+        r##"var dataH = [10,20][1]; print(dataH);"##,
+        r##"var dataI = {"a":1}.a; print(dataI);"##,
+        r##"var dataJ = [
+1,
+2
+];
+print(new Error("line").stack.split("\n")[1].trim().replace(/^at .*?(\d+):(\d+)\)?$/, "$1:$2"));"##,
+        r##"let dataK = {"f":1};
+function readK() { return dataK.f + 1; }
+print(readK() + "|" + readK.toString());"##,
+        r##"var dataM = [1,2,3,]; print(dataM.length);"##,
+        r##"var dataO = {"a":1, "b": [1, {"c": "d"}]}  ; print(dataO.b[1].c);"##,
+        r##"var dataP = ["x", "y"]
+["length"]; print(dataP);"##,
+        r##"var dataR = [[], {}, [[]]] ; print(JSON.stringify(dataR));"##,
+        r##"var dataT = [1, 2], dataU = {"z": 26}; print(dataT.join() + dataU.z);"##,
+        r##"var dataV = [{"k":1},{"k":2}]; dataV[0].k = 5; dataV[1].j = 3; print(JSON.stringify(dataV));"##,
+        r##"var dataW = [1, 2]
+print(dataW.join("+"));"##,
+    ];
+    let expected = [
+        r##"2:[{"id":1,"tags":["a","b"],"v":1.5},{"id":2,"tags":[],"v":0}]:true"##,
+        r##"2,b,a{"2":2,"b":3,"a":{"x":[true,false,null]}}"##,
+        r##"6|Infinity|1,0.0025"##,
+        r##"1,2,3,4"##,
+        r##"own|1|false"##,
+        r##"1,21"##,
+        r##"20"##,
+        r##"1"##,
+        r##"5:7"##,
+        r##"2|function readK() { return dataK.f + 1; }"##,
+        r##"3"##,
+        r##"d"##,
+        r##"2"##,
+        r##"[[],{},[[]]]"##,
+        r##"1,226"##,
+        r##"[{"k":5},{"k":2,"j":3}]"##,
+        r##"1+2"##,
+    ];
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    for (index, program) in programs.iter().enumerate() {
+        let name = format!("data_script_literals_{index}.js");
+        vm.execute(&Engine::specialize(program, &name).unwrap()).unwrap();
+    }
+    assert_eq!(output.borrow().as_slice(), expected);
+}
+
+#[test]
+fn data_script_literals_are_built_from_their_source_text() {
+    // The literal a data script declares is one template step reading the source; one whose
+    // object literal semantics differ from JSON.parse (a `__proto__` key), or that is not the
+    // whole value, keeps its syntax tree.
+    let steps = |source: &str| Engine::specialize(source, "data_steps.js").unwrap().literal_templates;
+    let json_step = |source: &str| {
+        steps(source)
+            .iter()
+            .any(|template| matches!(template.as_ref(), [crate::bytecode::LiteralStep::Json(_)]))
+    };
+    assert!(json_step("/* data */ var d = [{\"a\": [1, 2]}, {\"b\": null}];"));
+    assert!(json_step("module.exports = {\"k\": {\"n\": [true]}}"));
+    assert!(!json_step("var d = {\"__proto__\": {\"a\": 1}, \"b\": [1]};"));
+    assert!(!json_step("var d = [[1], [2]][0];"));
+    assert!(!json_step("var d = f([[1], [2]]);"));
 }
 
 #[test]
@@ -21893,6 +23251,95 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
     }
 }
 
+#[cfg(not(quench_profiled))]
+#[test]
+fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
+    // Hot reads of global bindings (`lane_load_global_name`) across every change of what the
+    // name resolves to; the expectations are Node's, each script run as its own global Script.
+    let first = r#"
+function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }
+function check(got, want, what) { if (got !== want) throw Error(what + ': ' + got + ' !== ' + want); }
+function thrown(f) { try { f(); return 'none'; } catch (e) { return e.constructor.name; } }
+var V = 1;
+function readV() { return V; }
+check(hot(readV), 2000, 'var');
+V = 2;
+check(hot(readV), 4000, 'var redefined');
+globalThis.G = 1;
+function readG() { return G; }
+check(hot(readG), 2000, 'property');
+globalThis.G = 2;
+check(hot(readG), 4000, 'property redefined');
+Object.defineProperty(globalThis, 'G', { value: 3, writable: false, configurable: true });
+check(hot(readG), 6000, 'defineProperty data');
+Object.defineProperty(globalThis, 'G', { get() { return 4; }, configurable: true });
+check(hot(readG), 8000, 'getter');
+Object.defineProperty(globalThis, 'G', { value: 5, writable: true, configurable: true });
+check(hot(readG), 10000, 'getter replaced by data');
+globalThis.S = 1;
+function readS() { return S === undefined ? 7 : S; }
+check(hot(readS), 2000, 'before setter');
+var stored = 0;
+Object.defineProperty(globalThis, 'S', { set(v) { stored = v; }, configurable: true });
+check(hot(readS), 14000, 'setter without getter');
+S = 9;
+check(stored, 9, 'setter called');
+delete globalThis.G;
+check(thrown(function () { hot(readG); }), 'ReferenceError', 'deleted');
+function typeofH() { return typeof H === 'undefined' ? 1 : 2; }
+check(hot(typeofH), 2000, 'typeof absent');
+globalThis.H = 0;
+check(hot(typeofH), 4000, 'typeof present');
+globalThis.G = 6;
+for (var k = 0; k < 50; k++) globalThis['extra' + k] = k;
+check(hot(readG), 12000, 'other globals added');
+globalThis.L = 10;
+function readL() { return L; }
+check(hot(readL), 20000, 'before lexical');
+globalThis.K = 1;
+function readK() { return K; }
+check(hot(readK), 2000, 'before const');
+globalThis.C = 1;
+function readC() { return C; }
+check(hot(readC), 2000, 'before class');
+function readE() { return typeof E === 'undefined' ? -1 : E; }
+check(hot(readE), -2000, 'before eval var');
+globalThis.W = 1;
+function withRead(o) { with (o) { return W; } }
+check(hot(function () { return withRead({}); }), 2000, 'with misses');
+check(hot(function () { return withRead({ W: 2 }); }), 4000, 'with shadows');
+"#;
+    let later = r#"
+check(thrown(function () { hot(readL); }), 'ReferenceError', 'lexical in TDZ');
+const K = 40;
+check(hot(readK), 80000, 'const shadows');
+class C { static v = 3; }
+check(hot(function () { return readC().v; }), 6000, 'class shadows');
+(0, eval)('var E = 50;');
+check(hot(readE), 100000, 'eval var');
+check(hot(readG), 12000, 'property after lexical declarations');
+"#;
+    let program = Engine::specialize(first, "global-reads.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let held = |vm: &Vm<TestHost>| {
+        vm.programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .into_iter()
+            .flatten()
+            .filter_map(super::program_store::derived_lane_view)
+            .map(|view| view.held_name_hints())
+            .sum::<usize>()
+    };
+    assert!(held(&vm) > 0, "the hot reads hold global-object hints");
+    // A later Script's `let` shadows the global property; reading it first is a TDZ error.
+    let error = vm.eval_script_source(&program, "readL(); let L = 20;", "global-lexical.js").unwrap_err();
+    assert!(vm.format_error(&program, &error).contains("ReferenceError"));
+    // Declaring `L` cleared every hint, whatever name it holds (`Vm::note_global_lexical_names`).
+    assert_eq!(held(&vm), 0);
+    vm.eval_script_source(&program, later, "global-reads-later.js").unwrap();
+}
+
 #[test]
 fn global_declarations_survive_abrupt_script_evaluation() {
     let program = Engine::specialize_unspecialized("", "initial-script.js").unwrap();
@@ -22549,6 +23996,95 @@ fn lane_constructions_build_like_the_interpreter() {
     }
     // Node's answer for the same program.
     assert_eq!(answers, [Some(17472780.0); 2]);
+}
+
+#[test]
+fn lane_parser_node_constructions_build_like_the_interpreter() {
+    // acorn's node construction: constructors whose fields depend on the parser's options,
+    // nested constructions of a location and its positions, prototype methods and a helper
+    // run through `Function.prototype.call`. Each of these handlers dispatches its successor
+    // as a sibling jump (`become`), so a long run of them stays in one lane frame.
+    let source = r#"
+      function Position(line, col) { this.line = line; this.column = col; }
+      Position.prototype.offset = function (n) { return new Position(this.line, this.column + n); };
+      function SourceLocation(p, start, end) { this.start = start; this.end = end; if (p.sourceFile !== null) this.source = p.sourceFile; }
+      function Node(parser, pos, loc) {
+        this.type = ""; this.start = pos; this.end = 0;
+        if (parser.options.locations) this.loc = new SourceLocation(parser, loc);
+        if (parser.options.ranges) this.range = [pos, 0];
+      }
+      function finishNodeAt(node, type, pos, loc) { node.type = type; node.end = pos; if (this.options.locations) node.loc.end = loc; if (this.options.ranges) node.range[1] = pos; return node; }
+      function Parser(options) { this.options = options; this.sourceFile = options.sourceFile ? "f" : null; this.pos = 0; this.line = 1; }
+      Parser.prototype.curPosition = function () { if (this.options.locations) return new Position(this.line, this.pos); };
+      Parser.prototype.startNode = function () { return new Node(this, this.pos, this.curPosition()); };
+      Parser.prototype.finishNode = function (node, type) { return finishNodeAt.call(this, node, type, this.pos, this.curPosition()); };
+      function run(options, n) {
+        const p = new Parser(options);
+        let t = 0;
+        for (let i = 0; i < n; i++) {
+          const node = p.startNode();
+          p.pos += 3; if (i % 7 === 0) p.line++;
+          p.finishNode(node, i & 1 ? "Identifier" : "Literal");
+          t += node.end - node.start + node.type.length;
+          if (node.loc) t += node.loc.start.column + node.loc.end.line + (node.loc.source ? 1 : 0) + node.loc.start.offset(2).column;
+          if (node.range) t += node.range[1];
+        }
+        return t;
+      }
+      let total = 0;
+      for (let r = 0; r < 8; r++) {
+        total += run({ locations: true, ranges: true, sourceFile: r & 1 }, 200);
+        total += run({ locations: false, ranges: r % 3 === 0 }, 150);
+      }
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-parser-nodes.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1600989.0); 2]);
+}
+
+#[test]
+fn lane_nested_lengths_read_like_the_interpreter() {
+    // A tokenizer's `this.input.length`: a nested read whose last step is a string's own
+    // `length`, of empty, ASCII and wide strings, and an array's at the same sites, which
+    // read what the interpreter reads.
+    let source = r#"
+      function Tokenizer(input) { this.input = input; this.pos = 0; }
+      Tokenizer.prototype.remaining = function () { return this.input.length - this.pos; };
+      function scan(t) { let n = 0; while (t.pos < t.input.length) { t.pos++; n++; } return n; }
+      const inputs = ["", "abc", "x".repeat(70), "é€😀", [1, 2, 3, 4], [], new Array(9)];
+      let total = 0;
+      for (let r = 0; r < 300; r++) {
+        for (const input of inputs) {
+          const t = new Tokenizer(input);
+          total += t.remaining() * 3 + scan(t) + t.remaining() + t.input.length;
+        }
+      }
+      globalThis.answer = total;
+    "#;
+    let program = Engine::specialize(source, "lane-nested-lengths.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(135000.0); 2]);
 }
 
 #[test]
@@ -24124,5 +25660,945 @@ fn lane_bodies_keep_the_callees_they_inline_across_collections() {
         if let Err(error) = vm.execute(&program) { panic!("{mode:?}: {error:?}"); }
         let atom = vm.intern_atom("answer");
         assert_eq!(vm.own_property(vm.realm.globals, atom).and_then(Value::as_number), Some((0..40).map(|round| f64::from(200 * round + 300)).sum()));
+    }
+}
+
+#[test]
+fn lane_iterator_step_exits_run_the_move_their_jump_absorbs() {
+    // Node oracle: "object". The body is long enough that the step's `done` test compiles as
+    // a `JumpFalse` over the loop's exit `Jump`, which the lane fuses with the argument move at
+    // its target (`JumpFusions::THROUGH`). A finished step must run that move, not jump past it.
+    let padding = (0..3000).map(|index| format!("total = total + {index};\n")).collect::<String>();
+    let source = format!(
+        r#"(function () {{
+      function exitCall(source) {{
+        var total = 0;
+        {padding}
+        var hasOwn = Object.prototype.hasOwnProperty;
+        function makePredicate(name, known) {{ return typeof known; }}
+        var copy = {{}};
+        for (var key in source) {{
+          if (hasOwn.call(source, key)) copy[key] = source[key];
+        }}
+        return makePredicate("x", copy);
+      }}
+      const source = {{}};
+      for (let i = 0; i < 5000; i++) source["k" + i] = i;
+      let result;
+      for (let i = 0; i < 3; i++) result = exitCall(source);
+      globalThis.answer = result;
+    }})();"#
+    );
+    let program = Engine::specialize(&source, "lane-step-exit.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        if let Err(error) = vm.execute(&program) { panic!("{mode:?}: {error:?}"); }
+        let atom = vm.intern_atom("answer");
+        let answer = vm.own_property(vm.realm.globals, atom).unwrap();
+        assert_eq!(vm.to_string(&program, answer).unwrap(), "object", "{mode:?}");
+    }
+}
+
+#[test]
+fn non_callable_call_sites_derive_from_source_at_the_first_error() {
+    let source = "const o = { a: { b: 1 } };\n\
+        function call() { try { o.a.b(); } catch (error) { print(error.message); } }\n\
+        call(); call();\n\
+        try { new o.a(); } catch (error) { print(error.message); }";
+    let program = Engine::specialize(source, "call-sites.js").unwrap();
+    assert!(program.source.as_ref().unwrap().call_sites.get().is_none(), "compilation parses no call sites");
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), [
+        "o.a.b is not a function", "o.a.b is not a function", "o.a is not a constructor",
+    ]);
+}
+
+#[test]
+fn literal_templates_hold_int32_elements_in_their_steps() {
+    let source = "const t = { a: [1, -0, 2147483647, -2147483648, 2147483648, 1.5, null, 's', -7], b: [[0, -1], []] };\n\
+        print(Object.is(t.a[1], -0) + ' ' + t.a.join() + ' ' + t.b[0][1] + ' ' + t.b.length);\n\
+        const u = { a: [1, -0, 2147483647, -2147483648, 2147483648, 1.5, null, 's', -7], b: [[0, -1], []] };\n\
+        print(t.a !== u.a && JSON.stringify(t) === JSON.stringify(u));";
+    let program = Engine::specialize(source, "int-steps.js").unwrap();
+    let steps: Vec<_> = program.literal_templates.iter().flat_map(|steps| steps.iter().copied()).collect();
+    for value in [1, 2147483647, -2147483648, 0, -1] {
+        assert!(steps.contains(&crate::bytecode::LiteralStep::Int(value)), "{value}: {steps:?}");
+    }
+    let held = |number: f64| program.constants.iter().any(|constant| {
+        matches!(constant, crate::bytecode::Constant::Number(value) if value.to_bits() == number.to_bits())
+    });
+    assert!(held(-0.0) && held(2147483648.0) && held(1.5) && !held(2147483647.0), "{:?}", program.constants);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), [
+        "true 1,0,2147483647,-2147483648,2147483648,1.5,,s,-7 -1 2",
+        "true",
+    ]);
+}
+
+#[test]
+fn prepared_native_callbacks_keep_call_semantics() {
+    // A native's loop of callback calls (`Vm::with_prepared_callback`) proves the callee once:
+    // receivers, `arguments`, legacy reflection, re-entrancy, throws, collections, mutation
+    // of the array and of the callee's binding, and non-lane callees behave as Node's.
+    let source = r#"// A native's loop of callback calls (array iteration, sort comparators, collection forEach)
+// runs its callee as Node does: receivers, arguments, legacy reflection, re-entrancy, throws,
+// collections, mutation of the array and of the callee's binding, non-lane callees.
+var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
+var out = [];
+function run() {
+  // this, arguments and legacy f.arguments for sloppy, strict and arrow callbacks
+  var a = [1, 2, 3];
+  function sloppy(x) { out.push(typeof this, this === globalThis, arguments.length, sloppy.arguments[2] === a); }
+  a.forEach(sloppy);
+  function strict(x) { "use strict"; out.push(this === undefined, arguments.length); }
+  a.forEach(strict);
+  var receiver = { k: 9 };
+  a.forEach(function (x) { out.push(this.k + x); }, receiver);
+  a.forEach(function () { "use strict"; out.push(typeof this); }, 5);
+  a.forEach(function () { out.push(typeof this); }, 5);
+  a.forEach((x, i, arr) => out.push(x * 10 + i, arr === a));
+  // re-entrancy: a callback that runs forEach again with the same and another callee
+  var depth = 0;
+  function nest(x) { if (depth < 2) { depth++; [x, x + 1].forEach(nest); depth--; } out.push("n" + depth + x); }
+  [1, 2].forEach(nest);
+  // a throw propagates and later calls do not run
+  try { a.forEach(function (x) { out.push("t" + x); if (x === 2) throw new Error("stop" + x); }); }
+  catch (e) { out.push(e.message); }
+  // the array mutates under the loop: pushes are not visited, removals are skipped
+  var m = [1, 2, 3, 4];
+  m.forEach(function (x, i) { out.push("m" + x); if (i === 0) { m.push(99); m.pop(); m.pop(); } });
+  var holes = [1, , 3]; holes.forEach(function (x, i) { out.push("h" + i); if (i === 0) holes[1] = 7; });
+  // the callee's binding is redefined: the loop keeps the function it was given
+  var g = function (x) { out.push("g" + x); g = function () { out.push("never"); }; };
+  a.forEach(g);
+  // collections in callbacks: values the native keeps after the call stay alive
+  var objs = []; for (var i = 0; i < 50; i++) objs.push({ v: i });
+  var kept = objs.filter(function (o, i) { o = null; objs[i] = null; if (i % 7 === 0) gc(); var junk = []; for (var j = 0; j < 100; j++) junk.push({ j: j }); return i % 5 === 0; });
+  out.push(kept.map(function (o) { return o.v; }).join("."));
+  out.push([5, 6, 7].map(function (x) { gc(); return { y: x }; }).map((o) => o.y).join("."));
+  out.push([1, 2, 3].some((x) => x > 1), [1, 2, 3].every((x) => x > 1), [1, 2, 3].find((x) => x > 1), [1, 2, 3].findIndex((x) => x > 5), [1, 2, 3].findLast((x) => x < 3), [1, 2, 3].findLastIndex((x) => x < 3));
+  // sort comparators: the same exactness
+  var s = [5, 1, 4, 2, 3];
+  out.push(s.slice().sort(function (x, y) { gc(); return x - y; }).join(""));
+  try { s.slice().sort(function (x, y) { if (x === 4 || y === 4) throw new Error("cmp"); return x - y; }); } catch (e) { out.push(e.message); }
+  out.push(s.slice().sort(function (x, y) { "use strict"; return this === undefined ? y - x : 0; }).join(""));
+  out.push(s.slice().sort((x, y) => arguments.length + x - y).join(""));
+  // a class constructor is not callable, a bound function and a proxy are
+  try { a.forEach(class K {}); } catch (e) { out.push(e.constructor.name); }
+  a.forEach(function (x) { out.push(this.k * x); }.bind({ k: 2 }));
+  a.forEach(new Proxy(function (x) { out.push("p" + x); }, {}));
+  // a generator and an async callback
+  a.forEach(function* (x) { out.push("never"); });
+  a.forEach(async function (x) { out.push("a" + x); await null; out.push("late" + x); });
+  // deep recursion through a callback reaches a RangeError, which unwinds
+  function down(n) { [n].forEach(function (k) { down(k + 1); }); }
+  try { down(0); } catch (e) { out.push(e.constructor.name); }
+  // a callback that redefines Array.prototype.forEach while it runs
+  var original = Array.prototype.forEach;
+  [1, 2].forEach(function (x) { Array.prototype.forEach = function () { out.push("replaced"); }; out.push("o" + x); });
+  [1].forEach(function () {});
+  Array.prototype.forEach = original;
+  // reducers and collection walks
+  out.push([1, 2, 3, 4].reduce(function (acc, x, i, arr) { return acc + x * i + arr.length + arguments.length; }, 0));
+  out.push([1, 2, 3].reduceRight((acc, x) => acc + "" + x, "r"));
+  var map = new Map([[1, "a"], [2, "b"]]);
+  map.forEach(function (v, k, m) { out.push(k + v + (m === map) + (this === receiver)); if (k === 1) { map.delete(2); map.set(3, "c"); } }, receiver);
+  var set = new Set([1, 2]);
+  set.forEach(function (v, w) { out.push(v === w, typeof this); if (v === 1) set.add(5); gc(); });
+  // many elements, so the loop's later calls run as its first did
+  var sum = 0; var big = []; for (var i = 0; i < 3000; i++) big.push(i);
+  big.forEach(function (x) { sum += x; if (x % 1000 === 0) gc(); });
+  out.push(sum);
+}
+run();
+run();
+var result = out.join(",");
+"#;
+    // A callback recursing through `forEach` reaches the guest stack limit, which the worker
+    // stack the native stack guard budgets for holds.
+    let run = move || for specialized in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = if specialized {
+            Engine::specialize(source, "prepared-callbacks.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source,
+                name: "prepared-callbacks.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let name = vm.intern_atom("result");
+        let value = vm.own_property(vm.realm.globals, name).unwrap();
+        assert_eq!(
+            vm.to_string(&program, value).unwrap().to_string(),
+            "object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500,object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500"
+        );
+    };
+    std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
+}
+
+/// Runs `source` and returns what it printed, with the collections its run made.
+fn leaf_call_output(source: &str, name: &str) -> (Vec<String>, u64) {
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, name).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    vm.execute(&program).unwrap();
+    let collections = vm.heap.collection_epoch() - epoch;
+    let printed = output.borrow().clone();
+    (printed, collections)
+}
+
+#[test]
+fn lane_leaf_calls_follow_callee_redefinition() {
+    // A site that called leaves (`CallEntry::Leaf`, `CallEntry::ContextLeaf`) and meets another
+    // callee calls it, whatever it captures (expected values from Node).
+    let source = r#"
+      var f = function (x) { return (x + 1) | 0; };
+      function gl(x) { return x * 2; }
+      var counter = (function () { var c = 0; return function () { c = (c + 1) | 0; return c; }; })();
+      function run(n) {
+        var acc = 0;
+        for (var i = 0; i < n; i++) {
+          acc = (f(acc) + gl(1) + counter()) | 0;
+          if (i === 3000) {
+            f = function (x) { return (x + 2) | 0; };
+            gl = function (x) { return x * 3; };
+            counter = (function () { var c = 100; return function () { c = (c + 2) | 0; return c; }; })();
+          }
+        }
+        return acc;
+      }
+      print(run(6000));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-redefinition.js").0, ["13825399"]);
+}
+
+#[test]
+fn lane_leaf_calls_that_throw_keep_their_frames() {
+    // A leaf's record that leaves the lane makes the leaf an activation first
+    // (`lane_materialize_leaf`), so its error's stack holds its frame, and a `valueOf` it
+    // reaches runs above it (expected frames from Node).
+    let source = r#"
+      function getV(o) { return o.v; }
+      function add(a, b) { return a + b; }
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      function run(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) s = (s + getV({ v: i })) | 0;
+        try { getV(undefined); } catch (e) { print(e.constructor.name + " " + frames(e)); }
+        var bad = { valueOf: function () { throw new Error("boom"); } };
+        for (var j = 0; j < n; j++) s = (s + add(j, 1)) | 0;
+        try { add(1, bad); } catch (e) { print(e.message + " " + frames(e)); }
+        return s;
+      }
+      print(run(3000));
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "leaf-throws.js").0,
+        ["TypeError getV,run", "boom valueOf,add", "9000000"]
+    );
+}
+
+#[test]
+fn lane_leaf_calls_reach_the_recursion_limit_as_activations() {
+    // A leaf call takes the room its activation would (`lane_activation_room`), so recursion
+    // through leaf calls overflows as it would without them, and recovers.
+    let source = r#"
+      function leafInc(x) { return (x + 1) | 0; }
+      function rec(n) { return n === 0 ? 0 : (leafInc(n) + rec(n - 1)) | 0; }
+      function run() {
+        for (var i = 0; i < 3000; i++) rec(10);
+        try { rec(1e7); return "no error"; } catch (e) { return (e instanceof RangeError) + " " + rec(100); }
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-recursion.js").0, ["true 5150"]);
+}
+
+#[test]
+fn lane_leaf_calls_keep_legacy_caller_and_arguments() {
+    // A sloppy leaf reading its own `caller`, or its caller's `arguments`, sees the frames a
+    // call without leaves would have (expected values from Node).
+    let source = r#"
+      function who() { return who.caller === viaWho; }
+      function viaWho(a) { return who(); }
+      function peek() { return outer.arguments.length + ":" + outer.arguments[1]; }
+      function outer(a) { return peek(); }
+      function run() {
+        var ok = 0, last = "";
+        for (var i = 0; i < 3000; i++) { if (viaWho(i)) ok++; last = outer(i, "x" + i, 3); }
+        return ok + " " + last;
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-legacy.js").0, ["3000 3:x2999"]);
+}
+
+#[test]
+fn lane_leaf_calls_survive_collections_their_getters_make() {
+    // A leaf's field read that meets a getter makes the leaf an activation before the
+    // getter's (`lane_getter_activation`), so the object in the leaf's register survives the
+    // collections the getter's allocations make; a leaf's concatenation allocates too.
+    let source = r#"
+      var holder = { get x() { var a = []; for (var k = 0; k < 64; k++) a.push({ k: k }); return a.length; } };
+      function rd(o, p) { var t = p.y; var g = o.x; return t.k + g; }
+      function cat(a, b) { return a + b; }
+      function run() {
+        var s = 0, str = "";
+        for (var i = 0; i < 20000; i++) { s = (s + rd(holder, { y: { k: i & 7 } })) | 0; str = cat("v", i); }
+        return s + " " + str;
+      }
+      print(run());
+    "#;
+    let (printed, collections) = leaf_call_output(source, "leaf-collections.js");
+    assert_eq!(printed, ["1350000 v19999"]);
+    assert!(collections > 0, "the getters' allocations collect");
+}
+
+#[test]
+fn lane_capture_leaf_calls_keep_binding_semantics() {
+    // Leaves reading and storing captures (`CallEntry::CaptureLeaf`, a store followed by a
+    // read of its capture as one record): shared captures, per-iteration and wide per-iteration
+    // bindings, TDZ and constant stores, sloppy `this`, `arguments` and direct eval beside
+    // them, closures recreated after warm-up, and a throw's frames and receiver (expected
+    // values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      function shared() {
+        var c = 0;
+        var inc = function () { c = (c + 1) | 0; return c; };
+        var get = function () { return c; };
+        var add = function (k) { c = (c + k) | 0; return c; };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + inc() + get() + add(i & 3)) | 0;
+        return s + ":" + c;
+      }
+      print(shared());
+      function perIteration() {
+        var fs = [];
+        for (let k = 0; k < 4; k++) fs.push(function () { k = (k + 3) | 0; return k; });
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + fs[i & 3]()) | 0;
+        return s + ":" + fs.map(function (f) { return f(); }).join("/");
+      }
+      print(perIteration());
+      function tdz(early, store) {
+        var f = store ? function () { y = 5; return y; } : function () { y = (y + 1) | 0; return y; };
+        if (early) { try { f(); return "none"; } catch (e) { return e.constructor.name + ":" + e.message; } }
+        let y = 0;
+        return f;
+      }
+      function tdzRun() {
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + tdz(false, (i & 1) === 1)()) | 0;
+        return s + " " + tdz(true, false) + " " + tdz(true, true);
+      }
+      print(tdzRun());
+      function constant() {
+        const k = 1;
+        var bad = function () { k = (k + 1) | 0; return k; };
+        var ok = function () { return (k + 1) | 0; };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + ok()) | 0;
+        try { bad(); } catch (e) { return s + " " + e.constructor.name + ":" + e.message; }
+      }
+      print(constant());
+      function context() {
+        var c = 0;
+        var sloppyThis = function () { c = (c + 1) | 0; return this === globalThis ? 1 : 2; };
+        var args = function () { c = (c + 1) | 0; return arguments.length; };
+        var evals = function () { c = (c + 1) | 0; return eval("c"); };
+        var o = { m: sloppyThis, n: function () { c = (c + 1) | 0; return c; } };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + sloppyThis() + o.m() + args(i, i) + o.n() + o.n.call(i)) | 0;
+        s = (s + evals()) | 0;
+        return s + ":" + c;
+      }
+      print(context());
+      function recreated() {
+        var make = function (start) { var c = start; return function () { c = (c + 1) | 0; return c; }; };
+        var f = make(0), s = 0;
+        for (var i = 0; i < 6000; i++) {
+          if (i % 1000 === 999) f = make(i);
+          s = (s + f()) | 0;
+        }
+        return s;
+      }
+      print(recreated());
+      function throwsIn() {
+        var c = 0;
+        var deep = function () { c = (c + 1) | 0; return c.x.y; };
+        var plain = function () { c = (c + 1) | 0; return c; };
+        var s = 0;
+        for (var i = 0; i < 3000; i++) s = (s + plain()) | 0;
+        var out = [s];
+        try { deep(); } catch (e) { out.push(e.constructor.name + " " + frames(e)); }
+        var prepare = Error.prepareStackTrace;
+        Error.prepareStackTrace = function (e, sites) { return sites[0].getFunctionName() + "/" + sites[0].getTypeName() + "/" + typeof sites[0].getThis(); };
+        try { deep(); } catch (e) { out.push(e.stack); }
+        try { deep.call(5); } catch (e) { out.push(e.stack); }
+        try { ({ deep: deep }).deep(); } catch (e) { out.push(e.stack); }
+        Error.prepareStackTrace = prepare;
+        return out.join(" | ");
+      }
+      print(throwsIn());
+      function wide() {
+        var decl = [];
+        for (var j = 0; j < 70; j++) decl.push("a" + j + " = " + j);
+        return new Function("var fs = []; for (let " + decl.join(", ") + ", k = 0; k < 4; k++) fs.push(function () { a69 = (a69 + k) | 0; return a69; });" +
+          "var s = 0; for (var i = 0; i < 3000; i++) s = (s + fs[i & 3]()) | 0; return s + ':' + fs.map(function (f) { return f(); }).join('/');")();
+      }
+      print(wide());
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "capture-leaves.js").0,
+        [
+            "33741000:7500",
+            "3384000:2253/2254/2255/2256",
+            "9000 ReferenceError:Cannot access 'y' before initialization ReferenceError:Cannot access 'y' before initialization",
+            "6000 TypeError:Assignment to constant variable.",
+            "45042001:15001",
+            "18003000",
+            "4501500 | TypeError deep,throwsIn | deep/null/object | deep/Number/object | deep/Object/object",
+            "1896750:69/820/1571/2322",
+        ]
+    );
+}
+
+#[test]
+fn lane_int32_truncated_sums_match_node() {
+    // `(a + b) | 0` and `(a - b) | 0` run as one record (`lane_operator_int32`) whose int32
+    // operands wrap; overflowing, fractional, NaN, string, BigInt-free primitive and
+    // `valueOf` operands, and a sum whose register stays live, keep the operators' own
+    // results (expected values from Node).
+    let source = r#"
+      function wrap(a, b) {
+        var s = 0, d = 0, k = 0, kept = 0, t = "";
+        for (var i = 0; i < 3000; i++) {
+          s = (s + a[i & 7]) | 0;
+          d = (d - b[i & 7]) | 0;
+          k = (k + 2147483000) | 0;
+          var sum = kept + i;
+          kept = (sum + 1) | 0;
+          t = (sum - 1) | 0;
+        }
+        return [s, d, k, kept, t, sum].join(",");
+      }
+      print(wrap([1, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1]));
+      print(wrap([2147483647, -2147483648, 1, -1, 0, 7, 9, 11], [-2147483648, 2147483647, 3, 3, 3, 3, 3, 3]));
+      print(wrap([0.5, 1.5, 1e10, -0, NaN, Infinity, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8]));
+      print(wrap(["1", "2", 3, 4, 5, 6, 7, 8], [true, null, undefined, {}, [], 1n === 1n, "x", 1]));
+      var vo = { valueOf: function () { return 2147483647; } };
+      print(wrap([vo, vo, vo, vo, 1, 1, 1, 1], [vo, 1, vo, 1, vo, 1, vo, 1]));
+    "#;
+    assert_eq!(
+        leaf_call_output(source, "int32-sums.js").0,
+        [
+            "13500,-13500,-1944000,4501500,4501498,4501499",
+            "9750,-6375,-1944000,4501500,4501498,4501499",
+            "7,-13500,-1944000,4501500,4501498,4501499",
+            "1000583613,-1,-1944000,4501500,4501498,4501499",
+            "0,0,-1944000,4501500,4501498,4501499",
+        ]
+    );
+}
+
+#[test]
+fn lane_leaf_calls_bind_receivers_as_activations() {
+    // A leaf method reads its receiver's field; a sloppy leaf binds the global object for a
+    // missing receiver and a strict one `undefined` (expected values from Node).
+    let source = r#"
+      function C() { this.n = 2; }
+      C.prototype.m = function (x) { return (x + this.n) | 0; };
+      function sloppyThis() { return this === globalThis; }
+      function strictThis() { "use strict"; return this; }
+      function run() {
+        var o = new C(), s = 0, t = 0, u = 0;
+        for (var i = 0; i < 3000; i++) { s = o.m(s); if (sloppyThis()) t++; if (strictThis() === undefined) u++; }
+        var m = o.m;
+        return s + " " + t + " " + u + " " + m(1);
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-receivers.js").0, ["6000 3000 3000 0"]);
+}
+
+#[test]
+fn lane_leaf_calls_make_operations_in_place_as_activations() {
+    // A leaf's operation made in place (`lane_in_place`: a `valueOf` a binary reaches, a
+    // proxy's read) makes the leaf an activation first, from an activation or from the
+    // frame, so the guest code runs above the leaf's frame (expected values from Node).
+    let source = r#"
+      function sum3(a, b) { var t = a + b; return t * 2; }
+      function rd(o) { var v = o.k; return v + 1; }
+      var log = [];
+      var obj = { valueOf: function () { log.push(new Error().stack.split("\n")[2].trim().split(" ")[1]); return 5; } };
+      var prox = new Proxy({}, { get: function (t, k) { log.push("get " + String(k)); return 7; } });
+      function inner(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) s = (s + sum3(i, 1) + rd({ k: i })) | 0;
+        return (s + sum3(obj, 1) + rd(prox)) | 0;
+      }
+      function outer() { return inner(3000); }
+      var top = 0;
+      for (var i = 0; i < 3000; i++) top = (top + sum3(i, 2) + rd({ k: 1 })) | 0;
+      top = (top + sum3(obj, 2) + rd(prox)) | 0;
+      print(outer() + " " + top + " " + log.join(","));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-in-place.js").0, ["13504520 9015022 sum3,get k,sum3,get k"]);
+}
+
+#[test]
+fn lane_leaf_call_sites_meeting_other_callees_call_each() {
+    // A site whose callee was a leaf calls a plain activation, the other leaf form, a read
+    // body and a native in turn as their own forms would (expected values from Node).
+    let source = r#"
+      function A(n) { this.n = n; } A.prototype.f = function (x) { return (x + 1) | 0; };
+      function B(n) { this.n = n; } B.prototype.f = function (x) { return (x + this.n) | 0; };
+      function C(n) { this.n = n; } C.prototype.f = function (x) { var s = 0; for (var k = 0; k < 3; k++) s += x; return s | 0; };
+      function D(n) { this.n = n; } D.prototype.f = function () { return this.n; };
+      function E(n) { this.n = n; } E.prototype.f = Math.abs;
+      var objects = [new A(1), new B(2), new C(3), new D(4), new E(5)];
+      function run() {
+        var acc = 0;
+        for (var i = 0; i < 5000; i++) acc = (acc + objects[i % 5].f(i & 15)) | 0;
+        return acc;
+      }
+      print(run());
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-polymorphic.js").0, ["51944"]);
+}
+
+#[test]
+fn lane_leaf_calls_store_fields_as_activations() {
+    // A leaf's field store (`SetField`, `SetThisField`) past its caches makes the leaf an
+    // activation first (`lane_set_field_in_place`): a setter runs above it, a frozen or
+    // non-writable target ignores a sloppy store and throws for a strict one, a proxy's trap
+    // sees its receiver, an accessor defined after warm-up runs, and a store to `undefined`
+    // throws from the leaf's frame (expected values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      function setV(o, x) { o.v = x; }
+      function C() { this.v = 0; }
+      C.prototype.set = function (x) { this.v = x; };
+      function strictSet(o, x) { "use strict"; o.v = x; }
+      var log = [];
+      function run(n) {
+        var a = { v: 0 }, c = new C(), s = 0;
+        for (var i = 0; i < n; i++) { setV(a, i); c.set(i); strictSet(a, i); s = (s + a.v + c.v) | 0; }
+        // A setter reached from a leaf's store runs above the leaf.
+        var acc = { set v(x) { log.push("set " + x); if (x === 2) throw new Error("in setter"); } };
+        for (var j = 0; j < 3; j++) {
+          try { setV(acc, j); } catch (e) { log.push(e.message + " " + frames(e)); }
+        }
+        // An accessor defined on a warmed receiver after warm-up.
+        Object.defineProperty(c, "v", { set: function (x) { log.push("c.v=" + x); }, get: function () { return -1; } });
+        c.set(7);
+        // A frozen and a non-writable target: sloppy stores do nothing, strict ones throw.
+        var frozen = Object.freeze({ v: 1 });
+        setV(frozen, 9);
+        log.push("frozen " + frozen.v);
+        try { strictSet(frozen, 9); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        var fixed = {}; Object.defineProperty(fixed, "v", { value: 5, writable: false });
+        setV(fixed, 6);
+        try { strictSet(fixed, 6); } catch (e) { log.push(e.constructor.name + " " + fixed.v); }
+        // A proxy's trap sees the store and its receiver.
+        var p = new Proxy({}, { set: function (t, k, v, r) { log.push("trap " + k + "=" + v + " " + (r === p)); t[k] = v; return true; } });
+        setV(p, 3);
+        // A store to undefined throws from the leaf.
+        try { setV(undefined, 1); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        return s;
+      }
+      print(run(3000));
+      print(log.join("|"));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-stores.js").0, ["8997000", "set 0|set 1|set 2|in setter set,setV|c.v=7|frozen 1|TypeError strictSet,run|TypeError 5|trap v=3 true|TypeError setV,run"]);
+}
+
+#[test]
+fn lane_leaf_calls_read_globals_as_they_change() {
+    // A leaf's global name load (`LoadName`) reads the global as it is at each call: redefined,
+    // deleted (a ReferenceError from the leaf's frame), turned into a getter, which runs above
+    // the leaf, after warm-up (expected values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      var K = 3;
+      globalThis.G = 4;
+      function readK(x) { return (x + K) | 0; }
+      function readG(x) { return (x + G) | 0; }
+      var log = [];
+      function run(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) s = (readK(s) + readG(i)) | 0;
+        log.push(s);
+        K = 10;
+        log.push(readK(0));
+        delete globalThis.G;
+        try { readG(1); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        globalThis.G = 20;
+        log.push(readG(1));
+        Object.defineProperty(globalThis, "G", { get: function () { log.push("get G"); return 30; }, configurable: true });
+        log.push(readG(1));
+        Object.defineProperty(globalThis, "G", { get: function () { throw new Error("getter"); }, configurable: true });
+        try { readG(1); } catch (e) { log.push(e.message + " " + frames(e)); }
+        for (var j = 0; j < n; j++) s = (s + readK(j)) | 0;
+        return s;
+      }
+      print(run(3000));
+      print(log.join("|"));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-globals.js").0, ["9048000", "4519500|10|ReferenceError readG,run|21|get G|31|getter get,readG"]);
+}
+
+#[test]
+fn lane_leaf_calls_share_captures_and_store_their_own_receiver() {
+    // Closures sharing a capture see each other's stores through leaf calls, and a leaf whose
+    // read stores to `this` (`lane_get_field_sink`) makes its receiver its own, not its
+    // caller's (expected values from Node).
+    let source = r#"
+      function make() {
+        var c = 0;
+        return {
+          bump: function () { c = (c + 1) | 0; return c; },
+          reset: function (v) { c = v; },
+          read: function () { return c; },
+        };
+      }
+      function Holder() { this.a = "holder"; }
+      // A sink store (`this.a = o.b.c`) writes the callee's receiver, not its caller's.
+      function sink(o) { this.a = o.b.c; }
+      Holder.prototype.run = function (n) {
+        var k = make(), other = make(), y = { a: 0, sink: sink }, s = 0;
+        for (var i = 0; i < n; i++) {
+          s = (s + k.bump() + other.bump()) | 0;
+          if (i === 1000) k.reset(500);
+          y.sink({ b: { c: i } });
+        }
+        return [s, k.read(), other.read(), y.a, this.a].join(",");
+      };
+      print(new Holder().run(3000));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-captures.js").0, ["8001501,2499,3000,2999,holder"]);
+}
+
+#[test]
+fn lane_leaf_calls_return_field_reads_as_activations() {
+    // A leaf's returning field read (`lane_returning`) keeps its leaf form through every kind
+    // its site takes, and a getter, a proxy or a throw it meets after warm-up makes the leaf an
+    // activation first (expected values from Node).
+    let source = r#"
+      function frames(e) {
+        return e.stack.split("\n").slice(1, 3).map(function (l) { return l.trim().split(" ")[1].split(".").pop(); }).join(",");
+      }
+      var Direction = { FORWARD: 1, BACKWARD: 2 };
+      function Pair(a, b) { this.a = a; this.b = b; this.direction = Direction.FORWARD; }
+      Pair.prototype.input = function () { return (this.direction == Direction.FORWARD) ? this.a : this.b; };
+      function pick(o, f) { return f ? o.a : o.b; }
+      var log = [];
+      function run(n) {
+        var p = new Pair(1, 2), q = new Pair(3, 4), s = 0;
+        q.direction = Direction.BACKWARD;
+        for (var i = 0; i < n; i++) s = (s + p.input() + q.input() + pick(p, i & 1) + pick({ a: 5, b: 6 }, i & 1)) | 0;
+        log.push(s);
+        // A getter met by a leaf's returning read after warm-up runs above the leaf.
+        var g = { b: 0 };
+        Object.defineProperty(g, "a", { get: function () { log.push("get a"); return 9; } });
+        log.push(pick(g, 1));
+        var bad = { get a() { throw new Error("getter"); } };
+        try { pick(bad, 1); } catch (e) { log.push(e.message + " " + frames(e)); }
+        // A proxy's trap sees the read.
+        var prox = new Proxy({}, { get: function (t, k) { log.push("trap " + String(k)); return 11; } });
+        log.push(pick(prox, 0));
+        // An accessor added to the prototype after warm-up shadows nothing own, so own reads stay.
+        Object.defineProperty(Pair.prototype, "c", { get: function () { return 0; } });
+        log.push(p.input());
+        // A changed global shape and a redefined global the leaf reads.
+        Direction = { FORWARD: 2, BACKWARD: 1 };
+        log.push(p.input(), q.input());
+        try { pick(undefined, 1); } catch (e) { log.push(e.constructor.name + " " + frames(e)); }
+        return s;
+      }
+      print(run(3000));
+      print(log.join("|"));
+    "#;
+    assert_eq!(leaf_call_output(source, "leaf-returning-reads.js").0, ["36000", "36000|get a|9|getter get,pick|trap b|11|1|2|3|TypeError pick,run"]);
+}
+
+#[test]
+fn lane_returning_operators_keep_binary_semantics() {
+    // A returning arithmetic `Binary` decided per operator (`lane_returning_operator`) gives
+    // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
+    // `Binary` gives (expected values from Node).
+    let source = r#"
+      function add(a, b) { return a + b; }
+      function sub1(a) { return a - 1; }
+      function or0(a) { return a | 0; }
+      function shr(a, b) { return a >>> b; }
+      function run() {
+        var s = 0, t = "", u = 0n;
+        for (var i = 0; i < 3000; i++) {
+          s = add(s, sub1(i)) | 0;
+          s = (s + or0(i * 1.5) + shr(-i, 28)) | 0;
+        }
+        t = add("a", 1) + add(1.5, 0.25) + add(true, 1);
+        u = add(2n ** 64n, 1n);
+        var v = add({ valueOf: function () { return 40; } }, 2);
+        return s + " " + t + " " + u + " " + v + " " + sub1("7") + " " + or0(2 ** 32 + 5);
+      }
+      print(run());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "returning-operators.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["11287485 a11.752 18446744073709551617 42 6 5"]);
+}
+
+#[test]
+fn lane_array_iterations_keep_callback_method_semantics() {
+    // An array callback method over a dense array runs its callbacks as activations of the
+    // calling lane (`lane_begin_array_iteration`), each return stepping the loop: the
+    // arguments and thisArg, holes, the length read once and the array mutated under the
+    // loop, throws, collections inside callbacks, map and filter results and species, the
+    // early answers, nesting and recursion, generator, async and bound callbacks, a redefined
+    // forEach, and callbacks whose activations become frames mid-iteration behave as Node's;
+    // so do array literals made at once (`lane_make_array_elements`). Expected value is
+    // Node's (`node --expose-gc`).
+    let source = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
+var out = [];
+function each(a, f, t) { return a.forEach(f, t); }
+function map(a, f, t) { return a.map(f, t); }
+function filter(a, f) { return a.filter(f); }
+function some(a, f) { return a.some(f); }
+function every(a, f) { return a.every(f); }
+function find(a, f) { return a.find(f); }
+function findIndex(a, f) { return a.findIndex(f); }
+function findLast(a, f) { return a.findLast(f); }
+function findLastIndex(a, f) { return a.findLastIndex(f); }
+function run(round) {
+  // arguments, index, array and thisArg; a strict callback's primitive this; an arrow's this
+  var seen = [];
+  each([4, 5, 6], function (v, k, a) { seen.push(v + ":" + k + ":" + (a.length) + ":" + this.tag + ":" + arguments.length); }, { tag: "t" });
+  each([1], function () { "use strict"; seen.push(typeof this); }, 7);
+  each([1], () => seen.push(this === globalThis));
+  out.push(seen.join(","));
+  // holes skipped, with and without an inherited index
+  var got = [];
+  each([0, , 2, , 4], function (v, k) { got.push(k); });
+  Array.prototype[3] = "p";
+  each([0, , 2, , 4], function (v, k) { got.push(v); });
+  delete Array.prototype[3];
+  out.push(got.join(","));
+  // length read once; elements pushed are not visited; removed and deleted ones are skipped
+  var m = [1, 2, 3, 4, 5];
+  var visits = [];
+  each(m, function (v, k) { visits.push(v); if (k === 0) { m.push(9); } if (k === 1) { m.length = 4; } if (k === 2) { delete m[3]; } });
+  var g = [1, 2, 3];
+  each(g, function (v, k) { visits.push("g" + v); if (k === 0) g[2] = 30; });
+  out.push(visits.join(","));
+  // a throw after some elements propagates and stops the loop
+  var calls = 0;
+  try { each([1, 2, 3, 4], function (v) { calls++; if (v === 3) throw new TypeError("at" + v); }); }
+  catch (e) { out.push(e.name + ":" + e.message + ":" + calls); }
+  try { map([1, 2, 3], function (v) { if (v === 2) throw "plain"; return v; }); } catch (e) { out.push(e); }
+  // a collection inside the callback keeps the result, the element and the receiver alive
+  var objs = []; for (var i = 0; i < 40; i++) objs.push({ v: i });
+  var kept = filter(objs, function (o, k) { var keep = o.v % 3 === 0; o = null; objs[k] = null; if (k % 9 === 0) gc(); var junk = []; for (var j = 0; j < 50; j++) junk.push({ j: j }); return keep; });
+  out.push(kept.map(function (o) { return o.v; }).join("."));
+  var mapped = map([{ v: 1 }, { v: 2 }, { v: 3 }], function (o) { gc(); return { w: o.v * 2 }; });
+  out.push(mapped.map(function (o) { return o.w; }).join("."));
+  // map and filter results: fresh arrays of the realm's Array, species respected
+  var src = [1, 2, 3, 4];
+  var doubled = map(src, function (v) { return v * 2; });
+  var evens = filter(src, function (v) { return v % 2 === 0; });
+  out.push(doubled.join("."), evens.join("."), doubled !== src, Array.isArray(doubled), Object.getPrototypeOf(evens) === Array.prototype, doubled.length, evens.length);
+  class Sub extends Array {}
+  var sub = Sub.from([1, 2, 3]);
+  var subMapped = map(sub, function (v) { return v + 1; });
+  out.push(subMapped instanceof Sub, subMapped.join("."), filter(sub, function (v) { return v > 1; }) instanceof Sub);
+  var specied = [1, 2];
+  specied.constructor = { [Symbol.species]: function (n) { var o = { length: n, made: true }; return o; } };
+  var sp = map(specied, function (v) { return v * 3; });
+  out.push(sp.made, sp[0], sp[1], Array.isArray(sp));
+  // map over holes keeps the holes in the result
+  var holed = map([1, , 3], function (v) { return v * 10; });
+  out.push(holed.length, 1 in holed, holed.join("."));
+  // some, every and the finds answer early and from the right end
+  var order = [];
+  out.push(some([1, 2, 3, 4], function (v) { order.push(v); return v === 2; }), every([1, 2, 3], function (v) { order.push("e" + v); return v < 2; }));
+  out.push(find([5, 6, 7], function (v) { return v > 5; }), findIndex([5, 6, 7], function (v) { return v > 9; }));
+  out.push(findLast([5, 6, 7], function (v) { order.push("l" + v); return v < 7; }), findLastIndex([5, 6, 7], function (v) { return v === 5; }));
+  out.push(find([1, , 3], function (v, k) { order.push("f" + k + v); return false; }));
+  out.push(order.join(","));
+  // a nested iteration in the callback, and a callback that recurses through forEach
+  var nested = [];
+  each([1, 2], function (x) { each([10, 20], function (y) { nested.push(x * y); }); nested.push(map([x], function (z) { return -z; })[0]); });
+  out.push(nested.join(","));
+  var depth = 0;
+  function down(n) { if (n < 50) each([n], function (k) { depth = k; down(k + 1); }); }
+  down(0);
+  out.push(depth);
+  // generator, async and bound callbacks; a stack read inside the callback
+  each([1, 2], function* (x) { out.push("never"); });
+  each([1, 2], async function (x) { out.push("a" + x); await null; out.push("late" + x); });
+  each([3], function (x) { out.push(this.b + x); }.bind({ b: 100 }));
+  var stack = "";
+  each([1], function inner() { stack = new Error("s").stack; });
+  out.push(stack.indexOf("inner") >= 0);
+  // a redefined Array.prototype.forEach, while the site runs and after it
+  var original = Array.prototype.forEach;
+  each([1, 2], function (x) { Array.prototype.forEach = function () { out.push("replaced"); }; out.push("o" + x); });
+  each([1], function () { out.push("never"); });
+  Array.prototype.forEach = original;
+  // the callback returns early many times through the same site
+  var sum = 0;
+  for (var r = 0; r < 200; r++) each([r, r + 1, r + 2], function (v) { sum += v; });
+  var big = []; for (var b = 0; b < 2000; b++) big.push(b);
+  out.push(sum, map(big, function (v) { return v & 7; }).length, filter(big, function (v) { if (v % 500 === 0) gc(); return v % 3 === 0; }).length);
+  // callbacks whose frames become frames mid-iteration: a direct eval, legacy caller
+  // reflection, a throw caught inside the callback, and a getter on a later element's path
+  var framed = [];
+  each([1, 2, 3], function (v) { framed.push(eval("v * 2")); });
+  function reflect(v) { framed.push(typeof reflect.caller); }
+  each([1, 2], reflect);
+  each([1, 2, 3], function (v) { try { if (v === 2) throw v; framed.push("t" + v); } catch (e) { framed.push("c" + e); } });
+  var getterArray = [1, 2, 3];
+  Object.defineProperty(getterArray, 2, { get: function () { framed.push("get"); return 30; } });
+  framed.push(map(getterArray, function (v) { return v + 1; }).join("."));
+  out.push(framed.join(","));
+  // array literals made at once: values, holes, nesting and elements read before the array
+  var x = round + 1;
+  var lit = [x, x + 1, "s", { k: x }, [x, [x]], null, undefined];
+  var holes = [x, , x];
+  out.push(lit.length, lit[3].k, lit[4][1][0], lit[6] === undefined, 6 in lit, holes.length, 1 in holes, JSON.stringify(lit));
+  return round;
+}
+for (var round = 0; round < 3; round++) run(round);
+var result = out.join("|");
+"#;
+    let run = move || for specialized in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = if specialized {
+            Engine::specialize(source, "lane-array-iterations.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source,
+                name: "lane-array-iterations.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let name = vm.intern_atom("result");
+        let value = vm.own_property(vm.realm.globals, name).unwrap();
+        assert_eq!(
+            vm.to_string(&program, value).unwrap().to_string(),
+            r#"4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|1|1|true|true|3|false|[1,2,"s",{"k":1},[1,[1]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|2|2|true|true|3|false|[2,3,"s",{"k":2},[2,[2]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|3|3|true|true|3|false|[3,4,"s",{"k":3},[3,[3]],null,null]"#
+        );
+    };
+    std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
+}
+
+#[test]
+fn young_array_elements_keep_array_semantics_across_collections() {
+    // Small array literals take young runs of elements (`ArrayElements::young`): most die
+    // young, and a few survive, then grow and are written past their run; some are held only
+    // by a weak reference or registered for finalization. Holes, length changes, delete,
+    // sort, splice, concat, spread, freezing, aliasing and int32/double/tagged transitions on
+    // small arrays read as in Node (v22.23).
+    let source = "var big = 0x40000000, keep = [], weak = [], finalized = 0, wrong = '', log = [];\n\
+         var registry = new FinalizationRegistry(function (token) { if (token === 'kept') wrong = 'kept finalized'; else finalized++; });\n\
+         function sum(a) { var s = 0; for (var k = 0; k < a.length; k++) s += (k in a) ? (typeof a[k] === 'number' ? a[k] : 1) : 100; return s; }\n\
+         var result = 'pending';\n\
+         (async function () {\n\
+         for (var i = 0; i < 60000; i++) {\n\
+         var a = [i, i + 1, { x: i }];\n\
+         var b = [i + big, 0.5];\n\
+         if (a[2].x !== i || b[0] !== i + big) wrong = 'fresh ' + i;\n\
+         if (i % 997 === 0) { keep.push(a); registry.register(a, 'kept'); }\n\
+         if (i % 997 === 500) { var q = keep[keep.length - 1]; for (var g = 0; g < 20; g++) q.push(g * 2); q[1] = 'w'; }\n\
+         if (i % 4999 === 0) weak.push([new WeakRef(keep[keep.length - 1]), keep.length - 1]);\n\
+         if (i % 3001 === 0) registry.register([big, i], i);\n\
+         if (i % 1000 === 0) await i;\n\
+         }\n\
+         for (var j = 0; j < 400000 && finalized === 0; j++) await [big, j];\n\
+         for (var k = 0; k < keep.length; k++) {\n\
+         var e = keep[k], n = k * 997;\n\
+         if (e[0] !== n || e[2].x !== n) wrong = 'value of ' + k;\n\
+         if (k < keep.length - 1 && (e.length !== 23 || e[1] !== 'w' || e[22] !== 38)) wrong = 'grown ' + k + ' ' + e.length;\n\
+         }\n\
+         for (var w = 0; w < weak.length; w++) if (weak[w][0].deref() !== keep[weak[w][1]]) wrong = 'weak ' + w;\n\
+         // Holes, length, delete.\n\
+         var h = [1, 2, 3]; h.length = 6; log.push(h.length, 4 in h, sum(h));\n\
+         h.length = 2; log.push(JSON.stringify(h)); delete h[0]; log.push(0 in h, h.length, sum(h));\n\
+         var hh = [1, , 3]; log.push(1 in hh, hh.length, JSON.stringify(hh)); hh[5] = 6; log.push(hh.length, sum(hh));\n\
+         // Sort, splice, concat.\n\
+         var s = [3, 1, 2]; s.sort(); log.push(s.join());\n\
+         var sp = [1, 2, 3, 4]; var removed = sp.splice(1, 2, 'a', 'b', 'c'); log.push(sp.join(), removed.join());\n\
+         var c = [1, 2].concat([3], 4, [[5]]); log.push(c.length, JSON.stringify(c));\n\
+         // Spread.\n\
+         var src = [7, 8]; var sp2 = [0, ...src, 9, ...'ab']; log.push(JSON.stringify(sp2));\n\
+         // Typed and packed transitions.\n\
+         var t = [1, 2, 3]; t[1] = 1.5; log.push(t.join()); t[2] = 'x'; log.push(t.join()); t[1] = 2; t[2] = 3; log.push(t.reduce(function (x, y) { return x + y; }));\n\
+         var u = [1, 2]; u.push(undefined); log.push(u.length, u[2] === undefined, 2 in u); u.pop(); u.pop(); log.push(u.join());\n\
+         var f = Object.freeze([1, 2]); try { f[0] = 9; } catch (err) {} log.push(f[0]);\n\
+         var same = [5, 6]; var alias = same; alias[0] = 50; log.push(same[0]);\n\
+         result = (wrong || 'ok ' + log.join('|')) + (finalized > 0 ? '' : ' none finalized');\n\
+         })();";
+    // Node's log; Node runs no finalization callback between microtasks, where Quench's
+    // collections run one for the dead registered arrays.
+    let expected = "ok 6|false|306|[1,2]|false|2|102|false|3|[1,null,3]|6|310|1,2,3|1,a,b,c,4|2,3|5|[1,2,3,4,[5]]|[0,7,8,9,\"a\",\"b\"]|1,1.5,3|1,1.5,x|6|3|true|true|1|1|50";
+    for policy in crate::MemoryPolicy::ALL {
+        assert_eq!(global_text_under(policy, source, "result"), expected, "{policy:?}");
+    }
+}
+
+#[test]
+fn appended_strings_keep_their_text_when_appends_extend_a_shared_buffer() {
+    // Text built by `+=` past the copy bound grows in an append buffer (`AppendBuffer`):
+    // strings taken along the way, two appends to one string, ASCII text meeting non-ASCII,
+    // wide text, keys, long appends, regexps and comparisons read as in Node (v22.23).
+    let source = "var log = [];\n\
+         function hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }\n\
+         // ASCII text past the copy bound grows by appends; earlier strings keep their text.\n\
+         var out = \"\", kept = [];\n\
+         for (var i = 0; i < 3000; i++) { out += \"<i>\" + i + \"</i>\"; if (i % 700 === 0) kept.push(out); }\n\
+         log.push(out.length, hash(out), kept.map(function (k) { return k.length + \":\" + hash(k); }).join(\",\"));\n\
+         // Two appends to one string: the second must not see the first.\n\
+         var base = out, a = base + \"A\", b = base + \"BB\";\n\
+         log.push(a.length, b.length, a.slice(-3), b.slice(-3), base.slice(-4), a === base + \"A\", b.endsWith(\"BB\"));\n\
+         // An ASCII buffer meeting non-ASCII text, then ASCII again.\n\
+         var w = out; w += \"Château\"; w += \" ok\"; var w2 = w + \"🍷\";\n\
+         log.push(w.length, w.slice(-11), w2.length, w2.charCodeAt(w2.length - 1), hash(w2), w.indexOf(\"â\"));\n\
+         // Wide text built by appends, with branches and keys.\n\
+         var t = \"é\";\n\
+         for (var j = 0; j < 4000; j++) t += j % 3 ? \"x\" + j : \"î\";\n\
+         var t1 = t + \"1\", t2 = t + \"2\";\n\
+         var o = {}; o[t1] = 1; o[t2] = 2;\n\
+         log.push(t.length, hash(t), t1 < t2, o[t + \"1\"], o[t + \"2\"], t1.charAt(t1.length - 1), t2.lastIndexOf(\"î\"));\n\
+         // Long appends, regexps, splitting, JSON and comparisons on built text.\n\
+         var big = out; for (var k = 0; k < 5; k++) big += big.slice(0, 600);\n\
+         log.push(big.length, hash(big), /<i>2999<\\/i>/.test(big), big.match(/<i>\\d+<\\/i>/g).length, big.split(\"</i>\").length);\n\
+         log.push(JSON.stringify(w.slice(-7)), (out + \"z\") > out, (out + \"z\").localeCompare(out + \"y\"), String(out + \"\").length);\n\
+         var result = log.join(\"|\");";
+    let expected = "31890|1893119096|8:2009183303,6900:2055862346,14301:1906283492,22001:249205826,29701:1813277707|31891|31892|i>A|>BB|</i>|true|true|31900|>Château ok|31902|57207|-153158003|31892|13927|1601758801|true|1|2|1|13926|34890|982673343|true|3335|3336|\"teau ok\"|true|1|31890";
+    for policy in crate::MemoryPolicy::ALL {
+        assert_eq!(global_text_under(policy, source, "result"), expected, "{policy:?}");
     }
 }

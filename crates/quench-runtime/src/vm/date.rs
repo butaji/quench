@@ -523,10 +523,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A Date getter's call on a Date (`date_reads`), which raises nothing; `None` for any
+    /// other receiver, whose TypeError the general call raises.
+    pub(super) fn plain_date_get(&self, native: Native, receiver: Value) -> Option<Value> {
+        let Some(Cell::Date { milliseconds, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        date_getter(native, *milliseconds).map(Value::number)
+    }
+
     pub(super) fn date_construct_native(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
+        new_target: Value,
     ) -> Result<Value, JsError> {
         let milliseconds = if args.len() < DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD {
             match args.first().copied() {
@@ -556,10 +566,10 @@ impl<H: Host> Vm<H> {
             }
             make_date_milliseconds(parts, false)
         };
-        let prototype_atom = self.prototype_atom();
-        let native_date = self.native_value(Native::Date);
+        // OrdinaryCreateFromConstructor(NewTarget, "%Date.prototype%") follows the time value,
+        // so the object is born with its final prototype in NewTarget's realm.
         let prototype = self
-            .own_property(native_date, prototype_atom)
+            .native_constructor_prototype(p, new_target, Native::Date)?
             .unwrap_or(self.object_proto);
         Ok(self.heap.alloc(Cell::Date {
             milliseconds,
@@ -587,8 +597,10 @@ fn date_utc_constructor_value<H: Host>(
     Ok(make_date_milliseconds(components, true))
 }
 
-fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
-    if !matches!(
+/// Whether `native` is a Date getter (`date_getter`): it reads its receiver's time value and
+/// the host's time zone rules, and runs no guest code.
+pub(super) fn date_reads(native: Native) -> bool {
+    matches!(
         native,
         Native::DateGetTime
             | Native::DateValueOf
@@ -610,7 +622,11 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
             | Native::DateGetUTCSeconds
             | Native::DateGetUTCMilliseconds
             | Native::DateGetYear
-    ) {
+    )
+}
+
+fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
+    if !date_reads(native) {
         return None;
     }
     if native == Native::DateGetTime || native == Native::DateValueOf {

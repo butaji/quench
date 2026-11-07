@@ -962,11 +962,13 @@ function.plain_local_slots(&self.superinstructions)
                 super::LiteralStep::Constant(index) => {
                     (0, (index as usize) < self.constants.len())
                 }
+                super::LiteralStep::Int(_) => (0, true),
                 super::LiteralStep::Array(count) => (count as usize, true),
                 super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
                     Some(site) => (site.atoms.len(), true),
                     None => (0, false),
                 },
+                super::LiteralStep::Json(start) => (0, self.data_literal_text(start).is_some()),
             };
             if !valid || taken > depth {
                 return false;

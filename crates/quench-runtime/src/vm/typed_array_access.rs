@@ -251,7 +251,7 @@ impl<H: Host> Vm<H> {
     /// another value, or a detached or immutable buffer, which accept no writes.
     pub(crate) fn embedding_with_buffer_bytes_mut<T>(&mut self, value: Value, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
         let (buffer, range) = self.embedding_buffer_range(value)?;
-        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.get_mut(buffer)? else {
+        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.buffer_bytes_mut(buffer)? else {
             return None;
         };
         let mut bytes = bytes.make_mut();
@@ -646,7 +646,7 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Uint32 | TypedArrayKind::Int32 => encoded[..4].copy_from_slice(&(integer as u32).to_ne_bytes()),
             _ => return false,
         }
-        let Some(Cell::ArrayBuffer { bytes: store, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+        let Some(Cell::ArrayBuffer { bytes: store, detached: false, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return false;
         };
         let Some(store) = store.lane_mut() else {
@@ -677,7 +677,7 @@ impl<H: Host> Vm<H> {
     /// current length, or a detached or shrunken buffer, writes nothing.
     fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
         let encoded = Self::typed_array_element_bytes(view.kind, value);
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return;
         };
         // An owned store no other cell shares is written in place (`BufferBytes::lane_mut`);

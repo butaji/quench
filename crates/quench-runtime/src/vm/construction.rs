@@ -1017,8 +1017,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own `prototype` data property `key` in its `shape`; `None`
     /// for an accessor or no such property. Out of line and of plain values: a construct the
-    /// lane inlines this lookup into passes it no address of its stack, which would keep its
-    /// dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    /// lane inlines this lookup into passes it no address of its stack.
     #[inline(never)]
     fn prototype_data_slot(&self, constructor: Value, shape: u32, key: PropertyKey) -> Option<usize> {
         self.property_attributes(constructor, key)
@@ -1091,7 +1090,18 @@ impl<H: Host> Vm<H> {
         Ok(self.array_prototype_for_realm(realm))
     }
 
+    /// `realm`'s `Array.prototype`. The active realm's is the field that follows it
+    /// (`Vm::realm_prototype_field`), read without the table.
+    #[inline(always)]
     pub(super) fn array_prototype_for_realm(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.array_proto;
+        }
+        self.array_prototype_in_table(realm)
+    }
+
+    #[inline(never)]
+    fn array_prototype_in_table(&self, realm: Value) -> Value {
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1385,7 +1395,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args, Some(new_target)),
-            Native::Date => self.date_construct_native(p, args),
+            Native::Date => self.date_construct_native(p, args, new_target),
             Native::IntlNumberFormat => self.intl_number_format_construct(p, args, new_target),
             Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
             Native::IntlPluralRules => self.intl_plural_rules_construct(p, args, new_target),

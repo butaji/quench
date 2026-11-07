@@ -777,17 +777,20 @@ impl<H: Host> Vm<H> {
         values: &mut [RootId],
         comparator: Option<RootId>,
     ) -> Result<(), JsError> {
-        super::sort::try_stable_sort_by(values, |left, right| {
-            if let Some(comparator) = comparator {
-                let comparator = self.heap.root_value(comparator).unwrap();
-                let left = self.heap.root_value(*left).unwrap();
-                let right = self.heap.root_value(*right).unwrap();
-                self.compare_sort_callback(p, comparator, left, right)
-            } else {
+        let Some(comparator) = comparator else {
+            return super::sort::try_stable_sort_by(values, |left, right| {
                 let left = self.heap.root_value(*left).unwrap();
                 let right = self.heap.root_value(*right).unwrap();
                 Ok(self.typed_array_sort_compare(left, right))
-            }
+            });
+        };
+        let comparator = self.heap.root_value(comparator).unwrap();
+        self.with_prepared_callback(comparator, Value::UNDEFINED, |vm, prepared| {
+            super::sort::try_stable_sort_by(values, |left, right| {
+                let left = vm.heap.root_value(*left).unwrap();
+                let right = vm.heap.root_value(*right).unwrap();
+                vm.compare_sort_callback(p, prepared, left, right)
+            })
         })
     }
 

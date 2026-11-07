@@ -1056,11 +1056,21 @@ impl<H: Host> Vm<H> {
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
             // A matcher subject owns whole wide storage, so a slice's run is copied into one;
             // it is not kept, as nothing else holds that copy to find it by.
-            FlatUnits::WideSlice(_) => {
+            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) => {
                 let crate::vm::wtf16::Units::Wide(units) = flat.view() else {
                     unreachable!("a wide slice views wide units")
                 };
                 return PreparedSubject::Local(quench_regexp::Subject::new(Rc::from(units)));
+            }
+            // An append buffer's prefix is copied into whole storage as a wide slice's run is.
+            FlatUnits::AsciiPrefix(..) => {
+                let crate::vm::wtf16::Units::Ascii(bytes) = flat.view() else {
+                    unreachable!("an ASCII prefix views ASCII units")
+                };
+                // SAFETY: ASCII bytes are UTF-8.
+                let text: Rc<str> = Rc::from(unsafe { std::str::from_utf8_unchecked(bytes) });
+                let length = text.len();
+                return PreparedSubject::Local(quench_regexp::Subject::from_ascii(text, 0..length));
             }
         };
         let fresh = || match text {

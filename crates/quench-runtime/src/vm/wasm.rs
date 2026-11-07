@@ -2022,9 +2022,9 @@ mod tests {
     }
 
     #[test]
-    fn compiled_wasm_vector_accesses_compile_without_a_memory_register() {
-        // A function whose only accesses are vector ones has no memory register
-        // (`memory_register`): its accesses read the memory through the binding each loads.
+    fn compiled_wasm_vector_accesses_compile_through_the_prologue_memory_register() {
+        // A function whose only accesses are vector ones binds its memory once, in its
+        // prologue, and that binding is its memory register (`memory_register`).
         let memarg = |offset| wasmparser::MemArg {
             align: 0,
             max_align: 4,
@@ -2086,7 +2086,7 @@ mod tests {
         )
         .unwrap();
         let function = module.residual().function_get(0).expect("double");
-        assert_eq!(super::super::dispatch_fast::memory_register(function), None);
+        assert_eq!(super::super::dispatch_fast::memory_register(function), Some(0));
         let mut vm = Vm::new(crate::SystemHost);
         vm.programs.compile_wasm_modules_at_first_entry();
         vm.set_execution_mode(crate::ExecutionMode::Compiled);

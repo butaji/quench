@@ -3354,10 +3354,13 @@ impl ProgramStore {
         }
     }
 
-    /// Drops every lane view's field hints (`LaneView::clear_field_hints`).
-    pub(super) fn clear_field_hints(&self) {
+    /// Clears every lane view's global-object hints of its by-name loads
+    /// (`LaneView::clear_name_hints`): the global lexical names they read past changed.
+    pub(super) fn clear_global_name_hints(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.clear_field_hints();
+            for view in entry.lane_views.arena.borrow().iter().flatten() {
+                view.clear_name_hints();
+            }
         }
     }
 
@@ -4056,12 +4059,6 @@ impl LaneViews {
     fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
             view.invalidate_shape_bindings();
-        }
-    }
-
-    fn clear_field_hints(&self) {
-        for view in self.arena.borrow().iter().flatten() {
-            view.clear_field_hints();
         }
     }
 

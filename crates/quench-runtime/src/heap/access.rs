@@ -454,10 +454,23 @@ impl Heap {
         if stored.heap_index().is_some() {
             return self.get_mut(value);
         }
+        self.get_mut_unbarriered(value)
+    }
+
+    /// `get_mut` for a write that adds no edge from the cell, past the write barrier.
+    #[inline(always)]
+    fn get_mut_unbarriered(&mut self, value: Value) -> Option<&mut Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
         };
         self.slots.get_mut(index as usize)?.cell.as_mut()
+    }
+
+    /// The ArrayBuffer `value`, mutably, for a write of its bytes: bytes hold no heap
+    /// reference, so the write passes no write barrier. `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn buffer_bytes_mut(&mut self, value: Value) -> Option<&mut Cell> {
+        self.get_mut_unbarriered(value).filter(|cell| matches!(cell, Cell::ArrayBuffer { .. }))
     }
 
     /// `record_array_mut` for a store of `stored` into the array's elements.
@@ -632,6 +645,20 @@ impl Heap {
         let grown = elements.capacity() - capacity;
         self.charge_payload_growth(grown * size_of::<Value>());
         Some(result)
+    }
+
+    /// Appends `value` to the direct array `array`'s elements, as `grow_array_elements` grows
+    /// them, through the write barrier of that one store (`record_array_store_mut`).
+    #[inline(always)]
+    pub(crate) fn push_array_element(&mut self, array: Value, value: Value) -> Option<()> {
+        let elements = self.record_array_store_mut(array, value)?.elements_mut().make_mut();
+        let capacity = elements.capacity();
+        elements.push(value);
+        let grown = elements.capacity() - capacity;
+        if grown != 0 {
+            self.charge_payload_growth(grown * size_of::<Value>());
+        }
+        Some(())
     }
 
     /// `record_array`, mutably.

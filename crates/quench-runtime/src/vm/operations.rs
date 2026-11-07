@@ -744,7 +744,7 @@ fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, rig
             && int32_zero_product_sign!(left, right, |l, r| l | r, |signs| signs < 0) =>
                 Value::number(-0.0),
         Some(integer) => Value::integer(integer),
-        None => Value::number(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
+        None => Value::overflowed_integer(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
     }
 }
 
@@ -847,6 +847,13 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
+}
+
+/// `integer_operator` of a right operand the caller proved an integer: only the left's tag
+/// is tested.
+#[inline(always)]
+pub(super) fn integer_constant_operator<const OP: u32>(left: Value, right: i32) -> Option<Value> {
+    numeric_integer_result(numeric_binary_operator(OP)?, left.as_int()?, right)
 }
 
 #[inline(always)]
@@ -996,7 +1003,9 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         // A Number-only unary Math call neither allocates nor enters guest code. Its
         // ignored receiver and trailing arguments need no roots on that path.
-        let result = if let Some(value) = super::number::math_unary_call(native, args) {
+        let result = if let Some(value) =
+            native.is_math_function().then(|| super::number::math_unary_call(native, args)).flatten()
+        {
             Ok(value)
         } else {
             self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
@@ -1014,6 +1023,31 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// The family whose entry runs `native` (`NativeFamily`): the native alone decides it, so
+    /// each native's is derived once, on its first call, and read after.
+    #[inline(always)]
+    fn native_family_of(&mut self, native: Native) -> NativeFamily {
+        let index = native as usize;
+        if let Some(&family) = self.native_families.get(index)
+            && family != NativeFamily::Unresolved
+        {
+            return family;
+        }
+        self.resolve_native_family(native)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn resolve_native_family(&mut self, native: Native) -> NativeFamily {
+        let family = Self::native_family(native);
+        let index = native as usize;
+        if self.native_families.len() <= index {
+            self.native_families.resize(index + 1, NativeFamily::Unresolved);
+        }
+        self.native_families[index] = family;
+        family
+    }
+
     fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
@@ -1021,108 +1055,57 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        // A JavaScript call of a Wasm export takes no family test first: calls across the
-        // boundary are a hot path (JetStream richards-wasm).
-        if native == Native::WasmExportedFunction {
-            return self.call_wasm_exported_function(p, args);
+        match self.native_family_of(native) {
+            NativeFamily::WasmExport => self.call_wasm_exported_function(p, args),
+            NativeFamily::Generator => self.generator_prototype_method(p, native, this, args),
+            NativeFamily::ArrayCallback => self.array_callback_native(p, native, this, args),
+            NativeFamily::StringHtml => self
+                .string_html_method(p, native, this, args)
+                .expect("an HTML method's family is its own"),
+            NativeFamily::Finalization => self.call_finalization_registry_native(p, native, this, args),
+            NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
+            NativeFamily::Collection => self.call_collection_native(p, native, this, args),
+            NativeFamily::WasmJs => self.call_wasm_js_native(p, native, this, args),
+            NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
+            NativeFamily::ShadowRealmCalled => {
+                Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()))
+            }
+            NativeFamily::WeakCalled => {
+                let constructor = match native {
+                    Native::WeakMap => "WeakMap",
+                    Native::WeakSet => "WeakSet",
+                    _ => "WeakRef",
+                };
+                Err(self.type_error(p, format!("Constructor {constructor} requires 'new'")))
+            }
+            NativeFamily::TypedArray => self
+                .maybe_call_typed_array_native(p, native, this, args)
+                .expect("a typed array method's family is its own"),
+            NativeFamily::TypedArrayCalled => {
+                Err(self.type_error(p, "typed array constructor requires new".into()))
+            }
+            NativeFamily::Atomics => self.atomics_native(p, native, args),
+            NativeFamily::Test262Agent => self.call_test262_agent(p, args),
+            NativeFamily::BigInt => self.bigint_native(p, native, this, args),
+            NativeFamily::Promise => self.call_promise_native(p, native, this, args),
+            NativeFamily::AsyncFromSyncValue => self.async_from_sync_value(args),
+            NativeFamily::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
+            NativeFamily::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
+            NativeFamily::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
+            NativeFamily::AsyncGeneratorDelegateReturnStart => {
+                self.async_generator_delegate_return_start(p, args)
+            }
+            NativeFamily::ObjectStatic => self.call_object_native(p, native, args),
+            NativeFamily::LazyDataProperty => self.lazy_data_property_access(p, this, args),
+            NativeFamily::ProxyRevoke => {
+                let callee = self
+                    .active_native_callable()
+                    .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
+                self.proxy_revoke(callee)
+            }
+            NativeFamily::DataView => self.data_view_native(p, native, this, args),
+            NativeFamily::Table | NativeFamily::Unresolved => self.call_native_table(p, native, this, args),
         }
-        // Nor does a generator's resumption, once per value a `for-of` or spread draws from it
-        // (`call_collection_native` routes these alike).
-        if matches!(native, Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow) {
-            return self.generator_prototype_method(p, native, this, args);
-        }
-        // The string and RegExp methods belong to none of the families below.
-        if native.is_string_regexp_or_math() {
-            return self.call_native_table(p, native, this, args);
-        }
-        if let Some(result) = self.string_html_method(p, native, this, args) {
-            return result;
-        }
-        if Self::is_finalization_native(native) {
-            return self.call_finalization_registry_native(p, native, this, args);
-        }
-        if Self::is_disposal_native(native) {
-            return self.call_disposal_native(p, native, this, args);
-        }
-        if Self::is_collection_native(native) {
-            return self.call_collection_native(p, native, this, args);
-        }
-        if super::wasm_js::is_wasm_js_native(native) {
-            return self.call_wasm_js_native(p, native, this, args);
-        }
-        if matches!(
-            native,
-            Native::ShadowRealmEvaluate
-                | Native::ShadowRealmImportValue
-                | Native::ShadowRealmImportValueFulfilled
-                | Native::ShadowRealmWrappedFunction
-        ) {
-            return self.shadow_realm_native(p, native, this, args);
-        }
-        if native == Native::ShadowRealm {
-            return Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()));
-        }
-        if matches!(native, Native::WeakMap | Native::WeakSet | Native::WeakRef) {
-            let constructor = match native {
-                Native::WeakMap => "WeakMap",
-                Native::WeakSet => "WeakSet",
-                Native::WeakRef => "WeakRef",
-                _ => unreachable!(),
-            };
-            return Err(self.type_error(
-                p,
-                format!("Constructor {constructor} requires 'new'"),
-            ));
-        }
-        if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
-            return result;
-        }
-        if native.is_typed_array_constructor() {
-            return Err(self.type_error(p, "typed array constructor requires new".into()));
-        }
-        if native.is_atomics_native() {
-            return self.atomics_native(p, native, args);
-        }
-        if native == Native::Test262Agent {
-            return self.call_test262_agent(p, args);
-        }
-        if native.is_bigint_native() {
-            return self.bigint_native(p, native, this, args);
-        }
-        if native.is_promise_native() {
-            return self.call_promise_native(p, native, this, args);
-        }
-        if native == Native::AsyncFromSyncValue {
-            return self.async_from_sync_value(args);
-        }
-        if native == Native::AsyncFromSyncValueRejected {
-            return self.async_from_sync_value_rejected(p, args);
-        }
-        if native == Native::AsyncGeneratorReturnFulfilled {
-            return self.async_generator_return_fulfilled(p, args);
-        }
-        if native == Native::AsyncGeneratorReturnRejected {
-            return self.async_generator_return_rejected(p, args);
-        }
-        if native == Native::AsyncGeneratorDelegateReturnStart {
-            return self.async_generator_delegate_return_start(p, args);
-        }
-        if native.is_object_static() {
-            return self.call_object_native(p, native, args);
-        }
-        if native == Native::LazyDataProperty {
-            return self.lazy_data_property_access(p, this, args);
-        }
-        if native == Native::ProxyRevoke {
-            let callee = self
-                .active_native_callable()
-                .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-            return self.proxy_revoke(callee);
-        }
-        if native.is_data_view_native() {
-            return self.data_view_native(p, native, this, args);
-        }
-        self.call_native_table(p, native, this, args)
     }
 
     /// The natives no family above claims, by kind.
@@ -2655,4 +2638,108 @@ pub(super) fn equality_operator(op: u32) -> Option<(bool, bool)> {
     );
     let offset = op.wrapping_sub(EQUALITY);
     (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
+}
+
+/// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
+/// natives that share an implementation; `Table` for the natives no family claims.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(super) enum NativeFamily {
+    /// Not derived yet (`Vm::native_families`).
+    Unresolved,
+    WasmExport,
+    Generator,
+    ArrayCallback,
+    StringHtml,
+    Finalization,
+    Disposal,
+    Collection,
+    WasmJs,
+    ShadowRealm,
+    ShadowRealmCalled,
+    WeakCalled,
+    TypedArray,
+    TypedArrayCalled,
+    Atomics,
+    Test262Agent,
+    BigInt,
+    Promise,
+    AsyncFromSyncValue,
+    AsyncFromSyncValueRejected,
+    AsyncGeneratorReturnFulfilled,
+    AsyncGeneratorReturnRejected,
+    AsyncGeneratorDelegateReturnStart,
+    ObjectStatic,
+    LazyDataProperty,
+    ProxyRevoke,
+    DataView,
+    Table,
+}
+
+impl<H: Host> Vm<H> {
+/// `native`'s family, by the families' own membership tests in their precedence order: the
+/// string, RegExp and Math methods belong to none of the families after them.
+fn native_family(native: Native) -> NativeFamily {
+    use NativeFamily as F;
+    match native {
+        Native::WasmExportedFunction => return F::WasmExport,
+        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => return F::Generator,
+        _ => {}
+    }
+    if native.is_string_regexp_or_math() {
+        return F::Table;
+    }
+    if native.is_array_callback() {
+        return F::ArrayCallback;
+    }
+    if super::string::is_string_html_method(native) {
+        return F::StringHtml;
+    }
+    if Self::is_finalization_native(native) {
+        return F::Finalization;
+    }
+    if Self::is_disposal_native(native) {
+        return F::Disposal;
+    }
+    if Self::is_collection_native(native) {
+        return F::Collection;
+    }
+    if super::wasm_js::is_wasm_js_native(native) {
+        return F::WasmJs;
+    }
+    match native {
+        Native::ShadowRealmEvaluate
+        | Native::ShadowRealmImportValue
+        | Native::ShadowRealmImportValueFulfilled
+        | Native::ShadowRealmWrappedFunction => return F::ShadowRealm,
+        Native::ShadowRealm => return F::ShadowRealmCalled,
+        Native::WeakMap | Native::WeakSet | Native::WeakRef => return F::WeakCalled,
+        _ => {}
+    }
+    if native.is_typed_array_method() || native.is_typed_array_iterator() {
+        return F::TypedArray;
+    }
+    if native.is_typed_array_constructor() {
+        return F::TypedArrayCalled;
+    }
+    if native.is_atomics_native() {
+        return F::Atomics;
+    }
+    match native {
+        Native::Test262Agent => return F::Test262Agent,
+        _ if native.is_bigint_native() => return F::BigInt,
+        _ if native.is_promise_native() => return F::Promise,
+        Native::AsyncFromSyncValue => return F::AsyncFromSyncValue,
+        Native::AsyncFromSyncValueRejected => return F::AsyncFromSyncValueRejected,
+        Native::AsyncGeneratorReturnFulfilled => return F::AsyncGeneratorReturnFulfilled,
+        Native::AsyncGeneratorReturnRejected => return F::AsyncGeneratorReturnRejected,
+        Native::AsyncGeneratorDelegateReturnStart => return F::AsyncGeneratorDelegateReturnStart,
+        _ if native.is_object_static() => return F::ObjectStatic,
+        Native::LazyDataProperty => return F::LazyDataProperty,
+        Native::ProxyRevoke => return F::ProxyRevoke,
+        _ if native.is_data_view_native() => return F::DataView,
+        _ => {}
+    }
+    F::Table
+}
 }

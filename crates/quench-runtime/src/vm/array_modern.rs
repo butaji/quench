@@ -862,10 +862,19 @@ impl<H: Host> Vm<H> {
             }
         }
         let mut values = self.active_call_roots[roots..].to_vec();
-        let outcome = super::sort::try_stable_sort_by(&mut values, |left, right| {
-            self.sort_compare(p, comparator, *left, *right)
-        })
-        .and_then(|()| self.store_sorted(p, object, &values, undefined_count, length, mutate));
+        let sorted = match comparator {
+            Some(comparator) => self.with_prepared_callback(comparator, Value::UNDEFINED, |vm, prepared| {
+                super::sort::try_stable_sort_by(&mut values, |left, right| {
+                    vm.compare_sort_callback(p, prepared, *left, *right)
+                })
+            }),
+            None => super::sort::try_stable_sort_by(&mut values, |left, right| {
+                let left = self.to_string(p, *left)?;
+                let right = self.to_string(p, *right)?;
+                Ok(left.cmp(&right))
+            }),
+        };
+        let outcome = sorted.and_then(|()| self.store_sorted(p, object, &values, undefined_count, length, mutate));
         self.active_call_roots.truncate(roots);
         outcome
     }
@@ -911,20 +920,5 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(object)
-    }
-
-    fn sort_compare(
-        &mut self,
-        p: &ResidualProgram,
-        comparator: Option<Value>,
-        left: Value,
-        right: Value,
-    ) -> Result<std::cmp::Ordering, JsError> {
-        if let Some(comparator) = comparator {
-            return self.compare_sort_callback(p, comparator, left, right);
-        }
-        let left = self.to_string(p, left)?;
-        let right = self.to_string(p, right)?;
-        Ok(left.cmp(&right))
     }
 }

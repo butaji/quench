@@ -240,6 +240,7 @@ impl<H: Host> Vm<H> {
         }
         let Self {
             native_microtask_running,
+            unobserved_jobs_entered: _,
             host,
             specialized,
             heap,
@@ -340,6 +341,7 @@ impl<H: Host> Vm<H> {
             array_iteration_proof: _,
             array_species_proof: _,
             for_in_own_keys: _,
+            json_output: _,
             species_slot_proof: _,
             promise_species_proof: _,
             function_name_shapes: _,
@@ -356,24 +358,28 @@ impl<H: Host> Vm<H> {
             regexp_subjects: _,
             regexp_matchers: _,
             atom_classes: _,
+            intrinsic_natives: _,
+            native_families: _,
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,
             string_concats: _,
             string_atoms: _,
             recent_atom_strings: _,
-            ascii_unit_strings: _,
             bound_parts_layout: _,
             call_targets: _,
             field_caches: _,
             inherited_field_indices: _,
-            accessor_field_caches: _,
+            accessor_field_indices: _,
+            accessor_fields: _,
             field_add_indices: _,
             field_add_sets: _,
             keyed_adds: _,
             megamorphic_field_indices: _,
             field_cache_writes: _,
             megamorphic_fields: _,
+            holder_hints: _,
+            prototype_value_epoch: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
@@ -569,7 +575,7 @@ impl<H: Host> Vm<H> {
         self.realm.intrinsics = Snap::unsnap(&mut reader)?;
         self.realm.template_objects = Snap::unsnap(&mut reader)?;
         // The restored realms' declarations may shadow names a derived view's hints read.
-        self.programs.clear_field_hints();
+        self.note_global_lexical_names();
         self.realm.promise = promise::PromiseRuntime::read_snapshot(&mut reader)?;
         macro_rules! read_prototypes {
             ($($field:ident),*) => { $( self.$field = reader.value()?; )* };
@@ -660,6 +666,7 @@ impl<H: Host> Vm<H> {
         self.name_atom_memo.clear();
         self.private_site_homes.clear();
         self.atom_classes.clear();
+        self.intrinsic_natives.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
         let atom_text = self.atom_text.clone();
@@ -751,6 +758,8 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.clear();
         self.field_add_indices.clear();
         self.inherited_field_indices.clear();
+        self.accessor_field_indices.clear();
+        self.accessor_fields.clear();
         self.method_caches.clear();
         self.object_shapes.clear();
         self.field_cache_writes = Some(Vec::new());
