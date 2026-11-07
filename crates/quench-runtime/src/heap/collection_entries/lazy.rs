@@ -21,6 +21,12 @@ impl<T: CollectionEntry> From<CollectionEntries<T>> for Entries<T> {
     }
 }
 
+impl<T: CollectionEntry> Entries<T> {
+    /// The entry storage owned (`CollectionEntries::payload_bytes`); none until written.
+    pub(crate) fn payload_bytes(&self) -> usize {
+        self.0.as_deref().map_or(0, CollectionEntries::payload_bytes)
+    }
+}
 
 impl<T: SharedEmpty> Deref for Entries<T> {
     type Target = CollectionEntries<T>;

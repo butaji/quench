@@ -4,11 +4,12 @@
 //! position an iterator or `forEach` holds keeps naming the same entry; holes are dropped by
 //! compaction, which renumbers the collection's registered iterators. Each slot's key hash,
 //! folded to 32 bits, sits beside the slots in a parallel array: probes compare hashes before
-//! keys, and the key index (`index::KeyIndex`, flat arrays of slot indices) is built from the
-//! hashes once a collection outgrows a linear scan and kept current by every mutation here.
-//! The collector reads only the slots.
+//! keys, and the key index (`index::KeyIndex`: flat arrays of hash tags and slots, probed a
+//! word of tags at a time) is built from the hashes once a collection outgrows a linear scan
+//! and kept current by every mutation here. The collector reads only the slots.
 
 use crate::value::Value;
+use smallvec::SmallVec;
 
 /// Collections up to this size are searched by a linear scan: comparing a few keys costs
 /// less than hashing the probe key and building an index.
@@ -68,8 +69,9 @@ pub(crate) fn number_key_hash(number: f64) -> u64 {
 #[derive(Clone, Debug)]
 pub(crate) struct CollectionEntries<T> {
     slots: Vec<T>,
-    /// Per slot, its key's folded hash (`folded_hash`); a hole keeps its key's.
-    hashes: Vec<u32>,
+    /// Per slot, its key's folded hash (`folded_hash`); a hole keeps its key's. Inline while
+    /// a linear scan serves, so a small collection allocates its slots alone.
+    hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]>,
     live: usize,
     /// Present once the slots outnumber `LINEAR_SCAN_ENTRIES`.
     index: Option<index::KeyIndex>,
@@ -85,7 +87,7 @@ impl<T> Default for CollectionEntries<T> {
     fn default() -> Self {
         Self {
             slots: Vec::new(),
-            hashes: Vec::new(),
+            hashes: SmallVec::new(),
             live: 0,
             index: None,
             iterators: Vec::new(),
@@ -125,7 +127,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The entries `snapshot_parts` gave; the key index is rebuilt from the hashes.
     pub(crate) fn from_snapshot_parts(slots: Vec<T>, hashes: Vec<u32>, live: usize, iterators: Vec<Value>) -> Self {
         let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
-        Self { slots, hashes, live, index, iterators, walks: 0 }
+        Self { slots, hashes: SmallVec::from_vec(hashes), live, index, iterators, walks: 0 }
     }
 
     /// Entries with distinct keys, each with its key's hash.
@@ -148,7 +150,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// (`Cell::payload_bytes`).
     pub(crate) fn payload_bytes(&self) -> usize {
         self.slots.capacity() * size_of::<T>()
-            + self.hashes.capacity() * size_of::<u32>()
+            + if self.hashes.spilled() { self.hashes.capacity() * size_of::<u32>() } else { 0 }
             + self.index.as_ref().map_or(0, index::KeyIndex::bytes)
     }
 
@@ -192,7 +194,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             candidate == key || (candidate != HOLE && same(candidate))
         };
         match &self.index {
-            Some(index) => index.find(&self.hashes, hash, matches),
+            Some(index) => index.find(hash, matches),
             None => (0..self.slots.len()).find(|&slot| self.hashes[slot] == hash && matches(slot)),
         }
     }
