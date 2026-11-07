@@ -59,7 +59,7 @@ const NUMBER_ENTRY_MISS: i64 = 1;
 /// guards and exits cost. A larger body is planned again with less inlined
 /// (`Vm::compile_lane_method`).
 const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
-const LANE_BODY_MAX_CODE_BYTES: usize =
+pub(super) const LANE_BODY_MAX_CODE_BYTES: usize =
     super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
@@ -241,13 +241,10 @@ struct Entry {
     call_receivers: CompoundBitSet,
 }
 
-pub(super) struct LaneRegion {
-    pub(super) code: Vec<u8>,
-    pub(super) stable: StableFacts,
-    /// Instructions the region runs natively, for admission.
-    pub(super) native: usize,
+/// A lane body lowered for the code generator, which may run it on another thread.
+pub(super) struct LoweredLane {
+    pub(super) region: LoweredRegion,
     pub(super) clif: Option<String>,
-    pub(super) fault_poll: bool,
     pub(super) first_entry: bool,
 }
 
@@ -1230,16 +1227,10 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, sta
     edges
 }
 
-/// Why a unit has no lane body: it does not lower, or its machine code is rejected.
-pub(super) enum LaneDecline {
-    Unlowered,
-    Rejected(super::super::jit_backend::NativeCompileRejection),
-}
-
-/// Specializes `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
-/// gives the proved shapes and slots of.
+/// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
+/// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn compile(
+pub(super) fn lower_body(
     program: &ResidualProgram,
     function_id: u32,
     unit: &super::lane_unit::Unit,
@@ -1252,18 +1243,15 @@ pub(super) fn compile(
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
     allow_first_entry: bool,
-) -> Result<LaneRegion, LaneDecline> {
-    let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
+) -> Option<LoweredLane> {
+    let isa = super::jit_backend::target_isa("speed")?;
     let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
         vm, generic, direct, frame_captures, None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense));
     let first_entry = osr.is_none();
     let region = osr.or_else(|| allow_first_entry.then(|| lower(program, function_id, unit, helpers, fields,
-        global_reads, vm, generic, direct, frame_captures, loop_entry, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense)).flatten())
-        .ok_or(LaneDecline::Unlowered)?;
+        global_reads, vm, generic, direct, frame_captures, loop_entry, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense)).flatten())?;
     let clif = native_dump_directory().map(|_| region.function.to_string());
-    let code = compile_native_function(region.function, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
-        .map_err(LaneDecline::Rejected)?;
-    Ok(LaneRegion { code, native: region.native, clif, fault_poll: region.fault_poll, first_entry, stable: region.stable })
+    Some(LoweredLane { region, clif, first_entry })
 }
 
 /// Build the typed residual and validate every value/CFG edge before publication.
