@@ -1,5 +1,9 @@
 #![deny(warnings)]
 #![feature(rust_preserve_none_cc)]
+// Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
+// whatever the handler body keeps on its stack (`vm::dispatch_fast`).
+#![cfg_attr(quench_lane_tail_calls, feature(explicit_tail_calls))]
+#![cfg_attr(quench_lane_tail_calls, allow(incomplete_features))]
 // `heap::array_proofs` reads its armed pointer as a plain thread-local load on every array
 // storage change (`ARMED_PROOFS`).
 #![feature(thread_local)]
@@ -13,6 +17,9 @@ pub mod units {
     pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
     pub const OCTAL_RADIX: u32 = 8;
+    /// The UTF-16 code units of the line terminators text readers split on.
+    pub const LINE_FEED: u16 = b'\n' as u16;
+    pub const CARRIAGE_RETURN: u16 = b'\r' as u16;
 }
 
 /// JavaScript property names the runtime and its hosts both spell.

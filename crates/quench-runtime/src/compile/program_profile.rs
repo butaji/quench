@@ -140,3 +140,15 @@ impl ProgramFootprint {
         );
     }
 }
+
+/// The arena a compilation parsed its program into, reported when `QUENCH_MEMORY` is set.
+#[cfg(feature = "profile-memory")]
+pub(super) fn report_parse_arena(allocator: &oxc_allocator::Allocator) {
+    if std::env::var_os("QUENCH_MEMORY").is_some() {
+        eprintln!(
+            "{{\"kind\":\"quench-oxc-memory\",\"used\":{},\"capacity\":{}}}",
+            allocator.used_bytes(),
+            allocator.capacity(),
+        );
+    }
+}

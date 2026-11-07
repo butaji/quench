@@ -717,27 +717,12 @@ impl<H: Host> Vm<H> {
             .alloc_string(super::wtf16::JsString::from_units(units)))
     }
 
-    /// The string of the one code unit `unit`, when it is ASCII: the one made last, until a
-    /// collection (`Vm::ascii_unit_strings`). Strings have no identity, so sharing one is
-    /// unobservable.
+    /// The string of the one code unit `unit`, when it is ASCII (`Heap::ascii_unit_strings`).
     pub(super) fn ascii_unit_string(&mut self, unit: u16) -> Option<Value> {
-        let index = usize::from(unit);
-        if index >= super::ASCII_UNITS {
-            return None;
-        }
-        let strings = self
-            .ascii_unit_strings
-            .get_or_insert_with(|| Box::new([Value::UNDEFINED; super::ASCII_UNITS]));
-        if !strings[index].is_undefined() {
-            return Some(strings[index]);
-        }
-        let byte = [unit as u8];
+        let byte = u8::try_from(unit).ok().filter(u8::is_ascii)?;
+        let byte = [byte];
         // SAFETY: an ASCII byte is UTF-8.
         let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        let value = self.heap.alloc_string(text);
-        if let Some(strings) = &mut self.ascii_unit_strings {
-            strings[index] = value;
-        }
-        Some(value)
+        Some(self.heap.alloc_string(text))
     }
 }

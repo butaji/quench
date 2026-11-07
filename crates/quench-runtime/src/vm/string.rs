@@ -202,6 +202,11 @@ const STRING_RECEIVERS: [StringReceiver; Native::COUNT as usize] = {
     table
 };
 
+/// Whether `native` is one of the HTML string methods (`STRING_HTML_METHODS`).
+pub(super) fn is_string_html_method(native: Native) -> bool {
+    string_html_method(native).is_some()
+}
+
 fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
     STRING_HTML_METHODS
         .iter()

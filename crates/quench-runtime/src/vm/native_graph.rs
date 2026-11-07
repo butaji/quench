@@ -150,11 +150,9 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 signature: super::compiled::native_lane_helpers_signature(&*isa),
             });
         }
-        let has_narrow_table = typed_units.iter().flatten().any(|unit|
-            unit.function.global_values.values().any(|global| matches!(global,
-                ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. }
-                    if unit.function.params.user_named_funcs()[*name] == ir::UserExternalName::new(
-                        NATIVE_DATA_NAMESPACE, program.function_count() as u32))));
+        // General dispatch decodes packed inline fields through the table too, so every image
+        // publishes it (`NarrowTable::Linked`).
+        let has_narrow_table = true;
         let mut operations = vec![None; Op::COUNT];
         for sites in &bodies {
             // Fallback tables name an entry for every PC, so every op is collected.

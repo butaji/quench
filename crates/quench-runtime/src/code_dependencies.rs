@@ -129,8 +129,18 @@ impl CodeReaders {
         true
     }
 
-    /// A widening visits only this owner's readers, before the incompatible effect.
+    /// A widening visits only this owner's readers, before the incompatible effect. An owner
+    /// without readers, every owner of a run without native code, is the test alone; the
+    /// walk is out of line (`retire_readers`).
+    #[inline(always)]
     pub(crate) fn retire(&mut self, owner: u32) {
+        if self.heads.get(owner as usize).is_some_and(Option::is_some) {
+            self.retire_readers(owner);
+        }
+    }
+
+    #[inline(never)]
+    fn retire_readers(&mut self, owner: u32) {
         let Some(head) = self.heads.get_mut(owner as usize) else { return };
         let mut cursor = head.take();
         while let Some(link) = cursor {

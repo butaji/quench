@@ -564,11 +564,11 @@ fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Optio
     match (heap.get(left), heap.get(right)) {
         (Some(Cell::BigInt(bigint)), None) if let Some(string) = heap.string(right) => Some(
             crate::bigint::parse_string(string.host_string())
-                .map(|right| bigint.as_ref().cmp(&right)),
+                .map(|right| bigint.cmp(&crate::bigint::JsBigInt::from(&right))),
         ),
         (None, Some(Cell::BigInt(bigint))) if let Some(string) = heap.string(left) => Some(
             crate::bigint::parse_string(string.host_string())
-                .map(|left| left.cmp(bigint)),
+                .map(|left| crate::bigint::JsBigInt::from(&left).cmp(bigint)),
         ),
         _ => None,
     }
@@ -583,10 +583,10 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
     ) {
         (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(left.cmp(right))),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
-            Some(bigint_number_ordering(bigint, number))
+            Some(bigint_number_ordering(&bigint.to_num(), number))
         }
         (_, Some(Cell::BigInt(bigint)), Some(number), _) => {
-            Some(bigint_number_ordering(bigint, number).map(Ordering::reverse))
+            Some(bigint_number_ordering(&bigint.to_num(), number).map(Ordering::reverse))
         }
         _ => None,
     }

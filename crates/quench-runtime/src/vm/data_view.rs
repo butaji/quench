@@ -269,7 +269,7 @@ impl<H: Host> Vm<H> {
                 resizable: false,
                 immutable: false,
                 ..
-            } = self.heap.get_mut(buffer)?
+            } = self.heap.buffer_bytes_mut(buffer)?
             else {
                 return None;
             };
@@ -548,7 +548,7 @@ impl<H: Host> Vm<H> {
         } else {
             (value << ((DATA_VIEW_DOUBLE_WIDTH - width) * u8::BITS as usize)).to_be_bytes()
         };
-        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.buffer_bytes_mut(buffer) else {
             return Err(JsError("DataView buffer is invalid".into()));
         };
         let mut guard = bytes.make_mut();

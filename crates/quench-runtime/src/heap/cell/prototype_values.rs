@@ -8,9 +8,29 @@ use std::rc::Rc;
 // layout change retires all of it (`advance_prototype_layout_epoch`), so the code itself checks
 // nothing per read. Guest heaps and their native publications are thread-confined (Rc
 // ownership): another thread's prototype writes never retire this thread's code.
+//
+// Interpreter-side proofs (method and promise caches) still compare an epoch per use, which
+// every retirement advances; native code reads no epoch.
 thread_local! {
     static PROTOTYPE_VALUE_READERS: std::cell::RefCell<crate::code_dependencies::CodeReaders> =
         std::cell::RefCell::new(crate::code_dependencies::CodeReaders::default());
+    static PROTOTYPE_VALUE_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Changes whenever what a prototype offers its inheritors can have changed, for interpreter
+/// caches that check it per use.
+#[inline(always)]
+pub(crate) fn prototype_value_epoch() -> u64 {
+    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::get)
+}
+
+/// Where a VM loads `prototype_value_epoch` from (`Vm::prototype_value_epoch`).
+pub(crate) fn prototype_value_epoch_address() -> *const u64 {
+    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::as_ptr)
+}
+
+fn advance_epoch() {
+    PROTOTYPE_VALUE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
 }
 
 /// Makes `code` retire when a prototype of exact shape `holder` changes a value or any
@@ -20,12 +40,14 @@ pub(crate) fn subscribe_prototype_values(holder: u32, code: &Rc<dyn crate::code_
 }
 
 pub(super) fn retire(holder: u32) {
+    advance_epoch();
     // Retiring drops code, which never writes a prototype, so the table is not reentered.
     PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().retire(holder));
 }
 
 /// Retires all of it: a layout change moves what every slot holds.
 pub(super) fn reset() {
+    advance_epoch();
     PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().reset());
 }
 

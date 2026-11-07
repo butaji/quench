@@ -705,7 +705,7 @@ fn cell_bytes(cell: &Cell) -> usize {
                     + scope.boxed_bytes()
                     + std::mem::size_of_val(scope.with_objects())
             }
-            Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+            Cell::BigInt(value) => value.spilled_bytes(),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => {
                 size_of::<super::PromiseCell>()

@@ -181,13 +181,18 @@ impl Suite {
         }
     }
 
-    /// The measured engines, Quench first. QuickJS has no realm API, which
-    /// JetStream needs for every benchmark.
+    /// The measured engines, Quench first. QuickJS runs JetStream through its own
+    /// prelude (`jetstream-quickjs-prelude.js`), which stands in for the realm API it lacks.
     fn engine_names(self) -> &'static [&'static str] {
-        match self {
-            Self::V8V7 => &["quench", "quickjs", "bun", "node"],
-            Self::JetStream3 => &["quench", "bun", "node"],
-        }
+        &["quench", "quickjs", "bun", "node"]
+    }
+
+    /// Whether a failed run of `engine` marks it unable to run the test rather than
+    /// invalidating the fixture. JetStream peers lack host APIs some tests need, which no
+    /// capability probe names in advance: QuickJS has no `Intl` or `TextDecoder`, and Node
+    /// `--jitless` has no `WebAssembly` in a `vm` realm. Quench failing still invalidates.
+    fn failure_is_unsupported(self, engine: &EngineSpec) -> bool {
+        self == Self::JetStream3 && !engine.name.starts_with("quench")
     }
 
     fn fixture_names(self) -> &'static [&'static str] {
@@ -197,20 +202,21 @@ impl Suite {
         }
     }
 
-    /// Writes the runnable source and returns it with the engine arguments.
-    fn materialize(self, file: &Path) -> (PathBuf, Vec<OsString>) {
+    /// Writes the runnable sources and returns them with each engine's arguments.
+    fn materialize(self, file: &Path) -> Materialized {
         match self {
             Self::V8V7 => {
                 let source = materialize(file);
                 let arguments = vec![source.clone().into_os_string()];
-                (source, arguments)
+                Materialized { temporaries: vec![source], arguments, quickjs_arguments: None }
             }
             Self::JetStream3 => {
-                let prelude = temporary_path("jetstream3-prelude.js");
-                fs::write(&prelude, jetstream::prelude())
-                    .unwrap_or_else(|error| fail(&error.to_string()));
+                let prelude = write_temporary("jetstream3-prelude.js", jetstream::prelude());
+                let quickjs_prelude =
+                    write_temporary("jetstream3-quickjs-prelude.js", jetstream::quickjs_prelude());
                 let arguments = jetstream::arguments(file, &prelude);
-                (prelude, arguments)
+                let quickjs_arguments = Some(jetstream::arguments(file, &quickjs_prelude));
+                Materialized { temporaries: vec![prelude, quickjs_prelude], arguments, quickjs_arguments }
             }
         }
     }
@@ -1353,7 +1359,8 @@ fn bun_engine(options: &Options) -> EngineSpec {
 }
 
 fn quickjs_engine(options: &Options) -> EngineSpec {
-    let mut qjs = spec("quickjs", &options.qjs, vec![], BTreeMap::new());
+    // `--std` exposes the `std` and `os` modules the JetStream prelude reads files through.
+    let mut qjs = spec("quickjs", &options.qjs, vec!["--std".into()], BTreeMap::new());
     qjs.version = version(&qjs.executable, &["--version"], &qjs.env);
     qjs.jit_proof_command = vec![qjs.executable.display().to_string(), "--version".into()];
     qjs.jit_proof =
@@ -2071,20 +2078,31 @@ fn run_fixture(
     let unsupported_engines = unsupported
         .into_iter()
         .filter_map(|(engine, reason)| Some((engine.name.to_string(), reason?)))
-        .collect();
+        .collect::<BTreeMap<_, _>>();
     let engines = &supported
         .into_iter()
         .map(|(engine, _)| engine.clone())
         .collect::<Vec<_>>()[..];
-    let (temporary, arguments) = suite.materialize(file);
+    let materialized = suite.materialize(file);
+    let mut unsupported_engines: BTreeMap<String, String> = unsupported_engines;
+    let mut engines = engines.to_vec();
     let mut results = Vec::with_capacity(rounds);
     for round in 0..rounds {
-        let order = rotated_order(engines, round);
+        let order = rotated_order(&engines, round);
         let mut samples = BTreeMap::new();
         for engine in &order {
-            let mut sample = run(engine, &arguments, timeout_ms);
+            let mut sample = run(engine, materialized.arguments_for(engine), timeout_ms);
             sample.score = suite.score(file, &sample.stdout);
+            if !sample.valid() && suite.failure_is_unsupported(engine) {
+                unsupported_engines.insert(engine.name.to_string(), unsupported_failure(&sample));
+                continue;
+            }
             samples.insert(engine.name.to_string(), sample);
+        }
+        engines.retain(|engine| !unsupported_engines.contains_key(engine.name));
+        for round in &mut results {
+            let round: &mut RoundRecord = round;
+            round.samples.retain(|name, _| !unsupported_engines.contains_key(name));
         }
         results.push(RoundRecord {
             round,
@@ -2095,7 +2113,8 @@ fn run_fixture(
             break;
         }
     }
-    let _ = fs::remove_file(temporary);
+    materialized.remove();
+    let engines = &engines[..];
     let valid = results.len() == rounds
         && results
             .iter()
@@ -2113,6 +2132,49 @@ fn run_fixture(
         unsupported_engines,
         rounds: results,
     }
+}
+
+/// A suite's runnable sources and the arguments that run them, per engine.
+struct Materialized {
+    temporaries: Vec<PathBuf>,
+    arguments: Vec<OsString>,
+    /// QuickJS's own arguments, when the suite needs a QuickJS-specific prelude.
+    quickjs_arguments: Option<Vec<OsString>>,
+}
+
+impl Materialized {
+    fn arguments_for(&self, engine: &EngineSpec) -> &[OsString] {
+        match (&self.quickjs_arguments, engine.name) {
+            (Some(arguments), "quickjs") => arguments,
+            _ => &self.arguments,
+        }
+    }
+
+    fn remove(self) {
+        for temporary in self.temporaries {
+            let _ = fs::remove_file(temporary);
+        }
+    }
+}
+
+fn write_temporary(name: &str, contents: &[u8]) -> PathBuf {
+    let path = temporary_path(name);
+    fs::write(&path, contents).unwrap_or_else(|error| fail(&error.to_string()));
+    path
+}
+
+/// The longest stderr tail an unsupported-engine reason keeps.
+const UNSUPPORTED_STDERR_TAIL: usize = 240;
+
+fn unsupported_failure(sample: &Sample) -> String {
+    let stderr = sample.stderr.trim_end();
+    let tail_start = stderr.floor_char_boundary(stderr.len().saturating_sub(UNSUPPORTED_STDERR_TAIL));
+    format!(
+        "the engine exited with status {} without a score{}: {}",
+        sample.status,
+        if sample.timed_out { " (timed out)" } else { "" },
+        &stderr[tail_start..]
+    )
 }
 
 fn rotated_order(engines: &[EngineSpec], round: usize) -> Vec<EngineSpec> {

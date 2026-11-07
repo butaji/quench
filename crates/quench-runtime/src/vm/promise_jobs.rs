@@ -343,11 +343,12 @@ impl<H: Host> Vm<H> {
             .get(&job)
             .copied()
             .ok_or_else(|| JsError("stale Promise aggregate job".into()))?;
+        let aggregate = self.heap.function(job).map_or(Value::UNDEFINED, |function| function.env);
         let Some((mode, resolve, reject)) = self
             .realm
             .promise
             .aggregates
-            .get(&aggregate_job.aggregate)
+            .get(&aggregate)
             .map(|record| (record.mode, record.resolve, record.reject))
         else {
             return Ok(Value::UNDEFINED);
@@ -378,7 +379,7 @@ impl<H: Host> Vm<H> {
                         .realm
                         .promise
                         .aggregates
-                        .get_mut(&aggregate_job.aggregate)
+                        .get_mut(&aggregate)
                         .unwrap();
                     match record.called.get_mut(index) {
                         Some(called) if !*called => {
@@ -418,7 +419,7 @@ impl<H: Host> Vm<H> {
                         .realm
                         .promise
                         .aggregates
-                        .get_mut(&aggregate_job.aggregate)
+                        .get_mut(&aggregate)
                         .unwrap();
                     record.values[index] = result;
                     record.remaining = record.remaining.saturating_sub(1);
@@ -462,38 +463,56 @@ impl<H: Host> Vm<H> {
             }));
     }
 
-    /// NewPromiseReactionJob's body for a reaction the queue holds directly. The job's realm
-    /// stays current after it: the job queue decides when to leave it.
+    /// A promise job's boundary around `body`: the job's realm, which stays current after
+    /// it (the job queue decides when to leave it), and the host's job context, entered,
+    /// observed before and after the body, and released. The job's values are call roots
+    /// for its whole run (`Vm::run_pending_job`).
+    fn run_promise_job(
+        &mut self,
+        realm: Value,
+        context: Option<HostExecutionContext>,
+        body: impl FnOnce(&mut Self) -> Result<(), JsError>,
+    ) -> Result<(), JsError> {
+        self.switch_realm_global(realm);
+        let context = match context {
+            Some(context) => Some(context),
+            None => self.host.enter_unobserved_job(self.unobserved_jobs_entered),
+        };
+        let Some(context) = context else {
+            // The queue's consecutive unobserved jobs share the entry (`Vm::run_job_queue`).
+            self.unobserved_jobs_entered = true;
+            let outcome = body(self);
+            for root in self.host.end_unobserved_job() {
+                self.heap.release_root(root);
+            }
+            return outcome;
+        };
+        let previous = self.host.enter_job_context(context);
+        let outcome = self.promise_job_boundary(Some(context), true).and_then(|()| body(self));
+        let after = self.promise_job_boundary(Some(context), false);
+        self.host.restore_job_context(previous);
+        self.release_job_context(context);
+        outcome.and(after)
+    }
+
+    /// NewPromiseReactionJob's body for a reaction the queue holds directly.
     pub(super) fn run_promise_reaction(
         &mut self,
         p: &ResidualProgram,
         reaction: PromiseJob,
     ) -> Result<(), JsError> {
         let value = reaction.value;
-        self.switch_realm_global(reaction.realm);
-        let previous_context = reaction
-            .execution_context
-            .and_then(|context| self.host.enter_job_context(context));
-        let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
-            vm.promise_job_boundary(reaction.execution_context, true)?;
+        self.run_promise_job(reaction.realm, reaction.execution_context, |vm| {
             let await_reaction = vm.heap.await_state(reaction.handler).is_some();
             if !await_reaction && !vm.is_function(reaction.handler) {
-                vm.settle_reaction(
-                    p,
-                    reaction.next,
-                    if reaction.rejected {
-                        PromiseState::Rejected
-                    } else {
-                        PromiseState::Fulfilled
-                    },
-                    value,
-                )?;
-                return Ok(Value::UNDEFINED);
+                let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
+                return vm.settle_reaction(p, reaction.next, state, value);
             }
             let called = if await_reaction {
                 vm.resume_await(p, reaction.handler, reaction.rejected, value)
             } else {
-                vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
+                // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
+                vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
             };
             let (state, result) = match called {
                 Ok(result) => (PromiseState::Fulfilled, result),
@@ -506,19 +525,8 @@ impl<H: Host> Vm<H> {
                     error.thrown_value().unwrap_or(Value::UNDEFINED),
                 ),
             };
-            vm.settle_reaction(p, reaction.next, state, result)?;
-            Ok(Value::UNDEFINED)
-        });
-        let after = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
-            vm.promise_job_boundary(reaction.execution_context, false)
-        });
-        if reaction.execution_context.is_some() {
-            self.host.restore_job_context(previous_context);
-        }
-        if let Some(context) = reaction.execution_context {
-            self.release_job_context(context);
-        }
-        outcome.and(after).map(|_| ())
+            vm.settle_reaction(p, reaction.next, state, result)
+        })
     }
 
     pub(super) fn release_job_context(&mut self, context: HostExecutionContext) {
@@ -538,7 +546,9 @@ impl<H: Host> Vm<H> {
         if next.is_undefined() {
             return Ok(());
         }
-        let capability = self.realm.promise.reaction_capabilities.remove(&next);
+        // Only a species other than %Promise% leaves a capability (`promise_then`).
+        let capabilities = &mut self.realm.promise.reaction_capabilities;
+        let capability = if capabilities.is_empty() { None } else { capabilities.remove(&next) };
         if let Some((resolve, reject)) = capability {
             let settler = if state == PromiseState::Fulfilled {
                 resolve
@@ -577,7 +587,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         promise: Value,
         target: Value,
-    ) -> Result<Value, JsError> {
+    ) -> Result<(), JsError> {
         let next = self
             .promise_species_constructor(p, promise)
             .and_then(|constructor| {
@@ -620,52 +630,31 @@ impl<H: Host> Vm<H> {
                 self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
             }
         }
-        Ok(Value::UNDEFINED)
+        Ok(())
     }
 
-    /// NewPromiseResolveThenableJob's body. The job's realm stays current after it, as a
-    /// reaction job's does.
+    /// NewPromiseResolveThenableJob's body.
     pub(super) fn run_thenable_job(
         &mut self,
         p: &ResidualProgram,
         thenable: super::promise::ThenableJob,
     ) -> Result<(), JsError> {
-        self.switch_realm_global(thenable.realm);
-        let previous_context = thenable
-            .execution_context
-            .and_then(|context| self.host.enter_job_context(context));
-        let outcome =
-            self.with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
-                vm.promise_job_boundary(thenable.execution_context, true)?;
-                if vm.is_intrinsic_promise_then(thenable.then)
-                    && vm.is_promise(thenable.thenable)
-                    && !vm
-                        .realm
-                        .promise
-                        .reaction_capabilities
-                        .contains_key(&thenable.promise)
-                {
-                    return vm.promise_then_resolving(p, thenable.thenable, thenable.promise);
-                }
-                let (resolve, reject) = vm.promise_resolving_functions(thenable.promise);
-                if let Err(error) =
-                    vm.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
-                {
-                    let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
-                    vm.call_value(p, reject, Value::UNDEFINED, &[reason])?;
-                }
-                Ok(Value::UNDEFINED)
-            });
-        let after = self
-            .with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
-                vm.promise_job_boundary(thenable.execution_context, false)
-            });
-        if thenable.execution_context.is_some() {
-            self.host.restore_job_context(previous_context);
-        }
-        if let Some(context) = thenable.execution_context {
-            self.release_job_context(context);
-        }
-        outcome.and(after)
+        self.run_promise_job(thenable.realm, thenable.execution_context, |vm| {
+            if vm.is_intrinsic_promise_then(thenable.then)
+                && vm.is_promise(thenable.thenable)
+                && (vm.realm.promise.reaction_capabilities.is_empty()
+                    || !vm.realm.promise.reaction_capabilities.contains_key(&thenable.promise))
+            {
+                return vm.promise_then_resolving(p, thenable.thenable, thenable.promise);
+            }
+            let (resolve, reject) = vm.promise_resolving_functions(thenable.promise);
+            if let Err(error) =
+                vm.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
+            {
+                let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+                vm.call_value(p, reject, Value::UNDEFINED, &[reason])?;
+            }
+            Ok(())
+        })
     }
 }

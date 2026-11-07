@@ -216,7 +216,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
             }
             if matches!(extension, Some("ts" | "cts")) {
                 let text = commonjs::source_text(&bytes);
-                let projected = quench_runtime::Engine::project_typescript_module_syntax(&text).map(|(source, _)| source).unwrap_or(text.clone());
+                let projected = quench_runtime::Engine::project_typescript_module_syntax(&text).map(|(source, _)| source).unwrap_or_else(|| text.clone());
                 host.record_prepared_module(&path, &projected)?;
             }
             manifest.insert_key(commonjs::native_commonjs_source(&path, &bytes, path == entry)?);

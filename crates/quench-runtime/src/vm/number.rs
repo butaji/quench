@@ -402,7 +402,7 @@ impl<H: Host> Vm<H> {
                     value
                 };
                 let number = match self.heap.get(primitive) {
-                    Some(Cell::BigInt(value)) => crate::bigint::to_f64(value),
+                    Some(Cell::BigInt(value)) => value.to_f64(),
                     _ => self.to_number(p, primitive)?,
                 };
                 Value::number(number)
@@ -608,6 +608,40 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
         }
         _ => return None,
     })
+}
+
+/// Whether a call of `native` with Number arguments is a Math function's value that
+/// `math_inline_call` computes: one of `math_numbers`' or `math_unary`'s.
+pub(super) fn math_numbers_inline(native: Native) -> bool {
+    matches!(native, Native::MathMin | Native::MathMax | Native::MathPow | Native::MathAtan2 | Native::MathImul)
+        || math_unary_operation(native).is_some()
+}
+
+/// The value of a call of the Math function `native` (`math_numbers_inline`) with at most
+/// two Number arguments, none of whose conversions runs guest code: `Math.max` and
+/// `Math.min` of two int32s compare them, whose result is that int32 (an int32 is never
+/// -0); any other call takes `math_unary` or `math_numbers`. `None` for another native, any
+/// other argument or more arguments, which the native's call converts.
+#[inline(always)]
+pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
+    match *args {
+        [first, second] => {
+            if let (Some(x), Some(y)) = (first.as_int(), second.as_int()) {
+                match native {
+                    Native::MathMax => return Some(Value::integer(x.max(y))),
+                    Native::MathMin => return Some(Value::integer(x.min(y))),
+                    _ => {}
+                }
+            }
+            math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number)
+        }
+        [only] => {
+            let number = only.as_number()?;
+            math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
+        }
+        [] => math_numbers(native, &[]).map(Value::number),
+        _ => None,
+    }
 }
 
 /// The value of a Math function of one Number argument (`Math.sqrt` and its kin); `None`

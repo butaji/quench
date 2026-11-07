@@ -317,7 +317,7 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::BigInt(text)) = self.heap.get(value) else {
                     unreachable!()
                 };
-                i128::try_from(text.as_ref())
+                i128::try_from(&text.to_num())
                     .map_err(|_| self.range_error(p, "Invalid epochNanoseconds".into()))?
             }
             value if value.as_bool().is_some() => i128::from(value.as_bool().unwrap_or(false)),

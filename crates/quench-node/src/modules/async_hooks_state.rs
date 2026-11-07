@@ -19,6 +19,10 @@ const FIRST_LOCAL_STORAGE_ID: u64 = 1;
 pub(super) enum StoreContext {
     Resource(u64),
     Job(u64),
+    /// The frame of a Promise job that captured no stores and no resource, by the depth of
+    /// such jobs a nested drain runs inside one another: it starts empty, and what an
+    /// `enterWith` puts in it is released when the job ends.
+    Unobserved(u32),
 }
 impl From<u64> for StoreContext {
     fn from(id: u64) -> Self {

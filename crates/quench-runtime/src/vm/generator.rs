@@ -284,6 +284,7 @@ impl<H: Host> Vm<H> {
                 self.frames.len() - 1,
                 Some(function.parameter_end_pc as usize),
                 None,
+                None,
             );
             frame = self.frames.pop().expect("generator parameter frame exists");
             match result {
@@ -1310,6 +1311,8 @@ impl<H: Host> Vm<H> {
         {
             continuation.frame.pc += 1;
             continuation.resume_register = None;
+            // The written register need not be live at the suspension the mask describes.
+            continuation.live_registers = None;
             if let Some(register) = continuation.frame.registers.get_mut(usize::from(destination)) {
                 *register = value;
             }
@@ -1468,7 +1471,7 @@ impl<H: Host> Vm<H> {
         };
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
-        self.set_active_program(previous_program);
+        self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         let outcome = match result {
             Ok(outcome) => outcome,

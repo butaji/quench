@@ -192,8 +192,8 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreNoLog), 1);
     assert!(vm.primary_own_field_store_hit::<true>(&program, receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
     assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreLogged), 1);
-    assert!(vm.hinted_primary_field_store_hit(hint, receiver, atom, Value::integer(2)));
-    assert!(!vm.hinted_primary_field_store_hit(hint, other, atom, Value::integer(2)));
+    assert!(vm.hinted_primary_field_store_hit::<false>(hint, receiver, atom, Value::integer(2)));
+    assert!(!vm.hinted_primary_field_store_hit::<false>(hint, other, atom, Value::integer(2)));
     assert_eq!(vm.profile.field_primitives.count(Path::HintedPrimaryStore), 1);
     assert!(vm.hinted_own_field_store_hit(hint, receiver, atom, Value::integer(3)));
     assert!(!vm.hinted_own_field_store_hit(hint, other, atom, Value::integer(3)));
@@ -301,7 +301,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert_eq!(vm.heap.unrepresented_slots(), 0);
     let hint = vm.field_cache_entry(site);
     let child = vm.object();
-    assert!(!vm.hinted_primary_field_store_hit(hint, receiver, atom, child),
+    assert!(!vm.hinted_primary_field_store_hit::<true>(hint, receiver, atom, child),
         "the hinted no-log store must defer a reference barrier");
     let record = receiver.direct_object_index().unwrap();
     // SAFETY: the same exact own-data shape still proves this initialized slot.
@@ -1368,6 +1368,7 @@ fn field_cache_invalidation_resets_every_written_site() {
     vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
     vm.field_add_indices = SiteTable::with_empty(SITES);
     vm.inherited_field_indices = SiteTable::with_empty(SITES);
+    vm.accessor_field_indices = SiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {

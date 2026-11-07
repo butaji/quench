@@ -9,14 +9,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
 use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, ProofKind,
+    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, NO_CONSTANT_EPOCH,
+    ProofKind,
 };
 mod cell_access;
 mod buffer_bytes;
@@ -561,6 +562,9 @@ impl Default for PrototypeRegistry {
     }
 }
 
+/// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
+pub(crate) const ASCII_UNITS: usize = 0x80;
+
 /// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
 /// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
 /// record's space; each advance retires every cache and proof the VM holds.
@@ -622,6 +626,10 @@ pub(crate) struct Heap {
     payload_bytes: usize,
     /// Payload bytes grown since the last charge, below one allocation's weight.
     uncharged_payload_bytes: usize,
+    /// The string each one-unit ASCII text made since the last collection got
+    /// (`alloc_string`): strings have no identity, so one record serves every such text, as
+    /// V8's single-character string table does. A collection empties it.
+    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
     /// What the full collection that last traced closure environments through their reads
@@ -1190,9 +1198,16 @@ impl Heap {
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
     /// allocation (`charge_allocation`) for its element storage.
     fn alloc_array(&mut self, object: ArrayObject) -> Value {
+        let prototype = object.proto();
+        self.alloc_array_of(object, prototype)
+    }
+
+    /// `alloc_array` of `object`, whose prototype is `prototype`.
+    #[inline(always)]
+    fn alloc_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
         self.admit_object_contents(&object);
-        self.mark_prototype(object.proto());
-        self.charge_allocation(array_payload_bytes(&object), 0);
+        self.mark_prototype(prototype);
+        self.charge_payload_allocation(array_payload_bytes(&object));
         match self.array_records.try_insert(object) {
             Ok(record_id) => {
                 let value = Value::direct_array(record_id);
@@ -1200,20 +1215,46 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(object) => self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells()),
+            // Only a record's sweep shows a young run's survival (`ArrayElements::young`).
+            Err(mut object) => {
+                object.leave_nursery();
+                self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells())
+            }
         }
+    }
+
+    /// A new array of `prototype`, with no properties, of the `len` elements `element` gives
+    /// for each index, which a young run holds where it can (`ValueArena::young_elements`).
+    #[inline(always)]
+    pub(crate) fn alloc_literal_array(&mut self, prototype: Value, len: usize, element: impl FnMut(usize) -> Value) -> Value {
+        let elements = match self.properties.young_elements(len) {
+            // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
+            Some(run) => unsafe { ArrayElements::young(run, len, element) },
+            None => ArrayElements::from_fn(len, element),
+        };
+        let object = ArrayObject::fresh(prototype, elements);
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Array { object });
+        }
+        self.alloc_array_of(object, prototype)
     }
 
     /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
     /// which `external` are external buffers.
     #[inline(always)]
     fn charge_allocation(&mut self, payload: usize, external: usize) {
+        self.charge_payload_allocation(payload);
+        self.charge_external_growth(external);
+    }
+
+    /// `charge_allocation` of a cell that owns no external buffer, as an array.
+    #[inline(always)]
+    fn charge_payload_allocation(&mut self, payload: usize) {
         self.charge_materialized_text();
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocated += weight;
         self.total_allocations += 1;
-        self.charge_external_growth(external);
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
@@ -1252,7 +1293,10 @@ impl Heap {
                     self.profile_allocation(value);
                     return value;
                 }
-                Err(object) => Cell::Array { object },
+                Err(mut object) => {
+                    object.leave_nursery();
+                    Cell::Array { object }
+                }
             },
             Cell::Promise(promise) => match self.promise_records.try_insert(*promise) {
                 Ok(record_id) => {
@@ -1288,6 +1332,19 @@ impl Heap {
             cell => cell,
         };
         self.alloc_in_slot(cell, track_young)
+    }
+
+    /// `alloc(Cell::BigInt(value))` without the dispatch on the cell's kind: a BigInt has no
+    /// prototype, payload or external bytes, so its weight is one allocation.
+    #[inline(always)]
+    pub(crate) fn alloc_bigint(&mut self, value: crate::bigint::JsBigInt) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::BigInt(value));
+        }
+        self.allocated += 1;
+        self.total_allocations += 1;
+        // A BigInt holds no weak entries.
+        self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::BigInt(value))
     }
 
     /// `alloc(Cell::Environment { .. })` without the dispatch on the cell's kind, with the
@@ -1339,21 +1396,24 @@ impl Heap {
         self.alloc_object_of(object, prototype)
     }
 
-    /// `alloc_object_with_properties` of a planned object whose values outgrow its inline
-    /// slots: `header`, derived once for `prototype` and an arena shape
-    /// (`InlineObjectHeader::of_run`), over a new run of `values`.
+    /// `alloc_object_with_properties` of an object whose values outgrow its inline slots, or
+    /// that they cannot hold: `header`, derived for `prototype` and an arena shape
+    /// (`InlineObjectHeader::of_run`), over a new run of the first `len` of `values`.
     #[inline(always)]
-    pub(crate) fn alloc_object_from_run_header(
+    pub(crate) fn alloc_object_from_run_header<const N: usize>(
         &mut self,
         header: InlineObjectHeader,
         prototype: Value,
-        values: &[Value],
+        values: &[Value; N],
+        len: usize,
     ) -> Value {
-        debug_assert!(values.len() > INLINE_PROPERTY_COUNT);
-        self.properties.assert_shape_length(header.shape(), values.len());
-        match self.properties.run_of(values) {
+        self.properties.assert_shape_length(header.shape(), len);
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc_object_with_properties(prototype, header.shape(), &values[..len]);
+        }
+        match self.properties.young_run_padded(values, len) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
-            None => self.alloc_object_with_properties(prototype, header.shape(), values),
+            None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
     }
 
@@ -1410,7 +1470,15 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(object) => self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells()),
+            Err(mut object) => {
+                // A young run's owner is a direct object record (`ValueArena::young_run_padded`):
+                // an object that takes a legacy slot takes an ordinary run first.
+                if self.properties.holds_young_run(object.properties()) {
+                    let storage = self.properties.duplicate(object.properties());
+                    object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
+                }
+                self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells())
+            }
         }
     }
 
@@ -1516,6 +1584,22 @@ impl Heap {
     /// many records as the legacy slots do (`STRING_RECORD_CAPACITY`); exhausting it is out
     /// of memory, as exhausting the slots is.
     pub(crate) fn alloc_string(&mut self, string: JsString) -> Value {
+        let Some(unit) = string.single_ascii_unit() else {
+            return self.alloc_string_record(string);
+        };
+        let strings = self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; ASCII_UNITS]));
+        let cached = strings[usize::from(unit)];
+        if !cached.is_undefined() {
+            return cached;
+        }
+        let value = self.alloc_string_record(string);
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings[usize::from(unit)] = value;
+        }
+        value
+    }
+
+    fn alloc_string_record(&mut self, string: JsString) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = CellKind::String as usize;
@@ -1593,6 +1677,31 @@ impl Heap {
     /// The slot part of `alloc`, for a cell no record space takes.
     fn alloc_in_slot(&mut self, cell: Cell, track_young: bool) -> Value {
         let weak = cell.has_weak_entries();
+        self.alloc_in_slot_with(track_young, weak, || cell)
+    }
+
+    /// `alloc_in_slot` of the cell `cell` makes, which a reused slot receives in place.
+    #[inline(always)]
+    fn alloc_in_slot_with(&mut self, track_young: bool, weak: bool, cell: impl FnOnce() -> Cell) -> Value {
+        let Some(slot) = self.take_free_slot() else {
+            return self.alloc_in_new_slot(cell(), track_young, weak);
+        };
+        let index = slot as u32;
+        self.slots.get_mut(slot).unwrap().cell = Some(cell());
+        if track_young {
+            self.young.push(index);
+        }
+        if weak {
+            self.young_weak.push(index);
+        }
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(Value::heap(index));
+        Value::heap(index)
+    }
+
+    /// A free slot's index, the highest of the last slab with one, claimed.
+    #[inline(always)]
+    fn take_free_slot(&mut self) -> Option<usize> {
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
             let Some(offset) = self.free_by_slab[slab_index].pop() else {
@@ -1603,19 +1712,14 @@ impl Heap {
             if self.free_by_slab[slab_index].is_empty() {
                 self.free_slabs.pop();
             }
-            let slot = slab_index * SLOTS_PER_SLAB + offset as usize;
-            let index = slot as u32;
-            self.slots.get_mut(slot).unwrap().cell = Some(cell);
-            if track_young {
-                self.young.push(index);
-            }
-            if weak {
-                self.young_weak.push(index);
-            }
-            #[cfg(feature = "profile-memory")]
-            self.profile_allocation(Value::heap(index));
-            return Value::heap(index);
+            return Some(slab_index * SLOTS_PER_SLAB + offset as usize);
         }
+        None
+    }
+
+    /// `alloc_in_slot` when no slot is free: a new one past the last.
+    #[inline(never)]
+    fn alloc_in_new_slot(&mut self, cell: Cell, track_young: bool, weak: bool) -> Value {
         let index = self.slots.len();
         self.slots.push(Slot { cell: Some(cell) });
         let slab = index / SLOTS_PER_SLAB;
@@ -1635,6 +1739,9 @@ impl Heap {
         }
         Value::heap(index as u32)
     }
+    /// Inline into the literal-pair paths (`Vm::object_pair`): as a call, its frame cost ~21
+    /// Ir of the ~120 an allocation took.
+    #[inline(always)]
     pub(crate) fn alloc_object_pair(
         &mut self,
         proto: Value,
@@ -1642,8 +1749,13 @@ impl Heap {
         first: Value,
         second: Value,
     ) -> Value {
-        let values = [first, second];
-        self.alloc_object_with_properties(proto, shape, &values)
+        if let Some(object) = Object::with_inline_values(proto, shape, &[first, second]) {
+            return self.alloc_object(object);
+        }
+        // Values the inline slots cannot hold take a run of the smallest class, as a planned
+        // receiver's do (`alloc_object_from_run_header`).
+        let padded = [first, second, Value::UNDEFINED, Value::UNDEFINED];
+        self.alloc_object_from_run_header(InlineObjectHeader::of_run(proto, shape), proto, &padded, INLINE_PROPERTY_COUNT)
     }
     pub(crate) fn alloc_object_with_properties(
         &mut self,
@@ -1808,6 +1920,21 @@ impl Heap {
             }
         }
     }
+    /// Moves the surviving young runs of `owners`, live direct objects, out of the nursery's
+    /// young range, in the order of their starts, and ends the young cycle
+    /// (`ValueArena::finish_young_cycle`).
+    fn evacuate_young_runs(&mut self, mut owners: Vec<(usize, RecordId)>) {
+        owners.sort_unstable_by_key(|&(start, _)| start);
+        for (_, record_id) in owners {
+            // SAFETY: the owners were listed from records the sweep kept.
+            let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+            let mut vector = object.properties();
+            self.properties.evacuate_young(&mut vector);
+            object.set_properties(vector, &mut self.properties);
+        }
+        self.properties.finish_young_cycle();
+    }
+
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
     fn compact_property_arena(
@@ -1922,6 +2049,8 @@ impl Heap {
         self.young_weak.clear();
         self.roots.clear();
         self.sparse_arrays = None;
+        // The shared unit strings name cells of the discarded heap.
+        self.ascii_unit_strings = None;
         self.collection_state = CollectionState::Idle;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -1958,11 +2087,17 @@ impl Heap {
     /// The string operations that make it allocate or return through the places that call
     /// this (generic allocation, native and host calls, each collection); safepoints, which
     /// run far more often, never pay for it.
+    #[inline(always)]
     pub(crate) fn charge_materialized_text(&mut self) {
         let text = crate::vm::wtf16::take_materialized_text();
-        if text == crate::vm::wtf16::MaterializedText::default() {
-            return;
+        if text != crate::vm::wtf16::MaterializedText::default() {
+            self.charge_text(text);
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn charge_text(&mut self, text: crate::vm::wtf16::MaterializedText) {
         // A flattened string's units join the payload ledger (`payload_bytes`), which its
         // sweep releases them from (`JsString::flat_unit_bytes`); text beside them is
         // allocation weight only, as no sweep releases it from the ledger.
@@ -2147,6 +2282,10 @@ impl Heap {
         // point at them to the next one (`carried_owners`): those the barriers logged, then
         // those it promotes.
         let carries_owners = !full && age.ages();
+        // The shared unit strings are no roots: one the sweep frees must not be handed out.
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings.fill(Value::UNDEFINED);
+        }
         self.charge_materialized_text();
         // The sweep may free an array whose record a later array reuses.
         retire_array_storage_proofs();
@@ -2360,6 +2499,12 @@ impl Heap {
         } else {
             self.sweep_serial(full, compacts, age, &mut remembered_owners)
         };
+        // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
+        // where no compaction moves every run.
+        let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
+        // The arrays whose young runs of elements survive, copied out before the young
+        // objects' runs move or compaction moves every run.
+        let mut young_arrays: Vec<RecordId> = Vec::new();
         let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
@@ -2386,22 +2531,29 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
-            let (object_live, object_freed) = self.object_records.sweep(full, age, full, |record| match record {
+            // Every young run's owner is a direct object (`ValueArena::young_run_padded`), so
+            // their sweep shows its survivors, minor or full, and lists those it keeps.
+            // A dead object's storage is released in place; one without extras, which its drop
+            // would free, is then forgotten.
+            let young_runs = properties.young_runs();
+            let dispose = |_record_id: RecordId, object: &Object| {
+                #[cfg(feature = "profile-memory")]
+                memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
+                object.release_storage(properties)
+            };
+            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
                             Value::direct_object(record_id),
                         ));
+                    } else if young_runs.hold(object.properties()) {
+                        note_young_owner(&mut young_owners, object.properties().start_offset(), record_id);
                     }
                 }
-                RecordSweep::Dead(_record_id, object) => {
-                    #[cfg(feature = "profile-memory")]
-                    let slots = properties.len(object.properties());
-                    properties.release(object.properties());
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_record_cell(Value::direct_object(_record_id), slots);
-                }
+                // Released in place: dropping it frees its extras.
+                RecordSweep::Dead(..) => {}
             });
             let (function_live, function_freed) =
                 self.function_records.sweep(full, age, full, |record| match record {
@@ -2416,7 +2568,7 @@ impl Heap {
                     RecordSweep::Dead(_record_id, function) => {
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(function.object.properties());
-                        properties.release(function.object.properties());
+                        properties.release_ordinary(function.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
                     }
@@ -2436,7 +2588,7 @@ impl Heap {
                         abandoned_contexts.abandon(&promise.record);
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(promise.object.properties());
-                        properties.release(promise.object.properties());
+                        properties.release_ordinary(promise.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_record_cell(Value::direct_promise(_record_id), slots);
                     }
@@ -2459,7 +2611,7 @@ impl Heap {
                     RecordSweep::Dead(_record_id, iterator) => {
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(iterator.object.properties());
-                        properties.release(iterator.object.properties());
+                        properties.release_ordinary(iterator.object.properties());
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
@@ -2475,10 +2627,29 @@ impl Heap {
                 }
             });
             let mut dead_arrays = Vec::new();
-            let (array_live, array_freed) = self.array_records.sweep(full, age, full, |record| match record {
+            // Every young run of elements is a young array's (`ArrayElements::young`), so
+            // their sweep, which shows its survivors minor or full, lists those it keeps.
+            let young_arrays = &mut young_arrays;
+            // A dead array is released in place; one owning nothing its drop frees is then
+            // forgotten, as a young array whose elements its young cycle takes back is.
+            let sparse = self.sparse_arrays.is_some();
+            let dispose = |record_id: RecordId, array: &ArrayObject| {
+                *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
+                #[cfg(feature = "profile-memory")]
+                memory_profile.freed_record_cell(Value::direct_array(record_id), properties.len(array.properties()));
+                properties.release_ordinary(array.properties());
+                if sparse {
+                    dead_arrays.push(Value::direct_array(record_id));
+                }
+                array.needs_drop()
+            };
+            let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {
                         live_payload_bytes += array_payload_bytes(array);
+                    }
+                    if array.elements().is_young() {
+                        young_arrays.push(record_id);
                     }
                     if compacts && array.properties().has_compact_range() {
                         direct_property_owners.push((
@@ -2487,15 +2658,8 @@ impl Heap {
                         ));
                     }
                 }
-                RecordSweep::Dead(record_id, array) => {
-                    *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
-                    #[cfg(feature = "profile-memory")]
-                    let slots = properties.len(array.properties());
-                    properties.release(array.properties());
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_record_cell(Value::direct_array(record_id), slots);
-                    dead_arrays.push(Value::direct_array(record_id));
-                }
+                // Released in place: dropping it frees what it owns.
+                RecordSweep::Dead(..) => {}
             });
             if let Some(arrays) = &mut self.sparse_arrays {
                 for array in dead_arrays {
@@ -2559,9 +2723,19 @@ impl Heap {
             // (truncation, `pop`, `splice`) is not charged back between full collections.
             self.payload_bytes = live_payload_bytes;
         }
+        for record_id in young_arrays {
+            // SAFETY: the sweep listed these from the records it kept.
+            unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.leave_nursery();
+        }
         if compacts {
+            // Compaction moves the young survivors with every other run and forgets the
+            // nursery (`ValueArena::finish_compaction`): due before the sweep, it stays due,
+            // as the sweep only releases.
+            debug_assert!(self.properties.compaction_due());
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
+        } else {
+            self.evacuate_young_runs(young_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -2754,24 +2928,42 @@ impl Heap {
             let sparse_arrays = &mut self.sparse_arrays;
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
-            let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
-                *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
-                *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
-                if let Cell::Promise(promise) = &cell {
-                    abandoned_contexts.abandon(&promise.record);
-                }
-                #[cfg(feature = "profile-memory")]
-                {
-                    let object_slots = cell
-                        .object()
-                        .map(|object| properties.len(object.properties()));
-                    memory_profile.freed(Value::heap(index as u32), &cell, object_slots);
-                }
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties());
-                }
-                if let Some(arrays) = sparse_arrays {
-                    arrays.remove(&Value::heap(index as u32));
+            // Frees `slot`'s cell, if it has one. A BigInt whose digits are inline, the cell
+            // most often freed where BigInt arithmetic runs, owns nothing beyond its slot: no
+            // payload or external bytes, no properties, nothing to drop.
+            let mut reclaim = |properties: &mut ValueArena, index: usize, slot: &mut Slot| {
+                match &slot.cell {
+                    None => return,
+                    Some(Cell::BigInt(value)) if value.is_inline() => {
+                        #[cfg(feature = "profile-memory")]
+                        memory_profile.freed(Value::heap(index as u32), slot.cell.as_ref().unwrap(), None);
+                        // SAFETY: the cell owns nothing a drop would release.
+                        unsafe { std::ptr::write(&mut slot.cell, None) };
+                    }
+                    Some(_) => {
+                        let cell = slot.cell.take().unwrap();
+                        #[cfg(feature = "profile-memory")]
+                        {
+                            let object_slots = cell
+                                .object()
+                                .map(|object| properties.len(object.properties()));
+                            memory_profile.freed(Value::heap(index as u32), &cell, object_slots);
+                        }
+                        *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                        *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
+                        if let Cell::Promise(promise) = &cell {
+                            abandoned_contexts.abandon(&promise.record);
+                        }
+                        if let Some(object) = cell.object() {
+                            properties.release(object.properties());
+                        }
+                        // Only an array has sparse elements, as the parallel sweep finds.
+                        if let Some(arrays) = sparse_arrays
+                            && matches!(cell, Cell::Array { .. })
+                        {
+                            arrays.remove(&Value::heap(index as u32));
+                        }
+                    }
                 }
                 let slab = index / SLOTS_PER_SLAB;
                 let slab_free = &mut free_by_slab[slab];
@@ -2781,7 +2973,6 @@ impl Heap {
                 slab_free.insert(index % SLOTS_PER_SLAB);
                 *free_slot_count += 1;
                 freed_cells += 1;
-                drop(cell);
             };
             self.collection_state = CollectionState::Sweeping;
             if full {
@@ -2799,8 +2990,8 @@ impl Heap {
                                         index,
                                     ));
                                 }
-                        } else if let Some(cell) = slot.cell.take() {
-                            reclaim(properties, index, cell);
+                        } else {
+                            reclaim(properties, index, slot);
                         }
                     }
                 }
@@ -2826,10 +3017,8 @@ impl Heap {
                         if marked { aged_fates.promoted += 1 } else { aged_fates.died += 1 }
                     }
                     if !marked {
-                        if let Some(cell) = slot.cell.take() {
-                            // Its mark bit is already clear: the test above found it so.
-                            reclaim(properties, index_usize, cell);
-                        }
+                        // Its mark bit is already clear: the test above found it so.
+                        reclaim(properties, index_usize, slot);
                         false
                     } else if was_aged || !age.ages() {
                         promoted += 1;
@@ -3599,8 +3788,10 @@ impl Heap {
     /// Classifies a pointee only when field observations are enabled.
     #[inline(always)]
     fn observed_slot_target(&self, value: Value) -> TargetShape {
+        // Only a tracking arena joins targets (`ValueArena::note_slot_target`); any other
+        // store discards it, so it classifies nothing.
         if self.properties.tracks() { observed_target(&self.object_records, value) }
-        else { TargetShape::unclassified(value) }
+        else { TargetShape::NONE }
     }
 
     /// Observes the value before writing the named object's slot.
@@ -3706,6 +3897,50 @@ impl Heap {
             }
         };
         store_exact_slot(data, &mut self.properties, slot, value, target, layout)
+    }
+
+    /// Whether the arena keeps slot representations, which observe every store
+    /// (`ValueArena::tracks`).
+    pub(crate) fn tracks_slot_representations(&self) -> bool {
+        self.properties.tracks()
+    }
+
+    /// `record_property_set_flat::<false>` of a store that keeps its layout and makes no call:
+    /// `false` also leaves to the caller a store the arena's slot representations observe
+    /// (`ValueArena::tracks`) or one that would widen inline storage.
+    ///
+    /// # Safety
+    /// As `record_property_set_flat`.
+    #[inline(always)]
+    pub(crate) unsafe fn record_property_set_unobserved(&mut self, record_id: u32, slot: usize, value: Value) -> bool {
+        if self.properties.tracks() {
+            return false;
+        }
+        // An integer, the common stored value, holds no reference the barrier logs: its one
+        // tag test also gives its narrow form.
+        let narrow = match value.as_int() {
+            Some(integer) => Value::narrow_integer(integer),
+            None if self.object_records.store_logs(record_id, value) => return false,
+            None => value.to_narrow(),
+        };
+        // SAFETY: the caller proves the record live; the barrier logs nothing for this store.
+        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+        match data.exact_storage() {
+            ExactStorage::PackedInline => data.store_packed_narrow(slot, narrow),
+            ExactStorage::Plain(start) => {
+                // SAFETY: as `store_exact_slot`.
+                unsafe { self.properties.set_flat_at(start, slot, value) };
+                true
+            }
+            // A prototype's store moves the epoch its readers hold under, a call left to the
+            // caller.
+            ExactStorage::Extended { .. } if data.was_used_as_prototype() => false,
+            ExactStorage::Extended { inline } => {
+                // SAFETY: as `store_exact_slot`.
+                unsafe { store_extended_slot(data, &mut self.properties, slot, value, inline) };
+                true
+            }
+        }
     }
 
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
@@ -4374,7 +4609,7 @@ impl Heap {
                     slots.len() * size_of::<EnvironmentSlot>()
                         + std::mem::size_of_val(with_objects)
                 }
-                Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+                Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
@@ -4440,6 +4675,13 @@ fn sort_by_unique_offset(keys: &mut Vec<u64>) {
         }
         std::mem::swap(keys, &mut scratch);
     }
+}
+
+/// Lists a young survivor's run for `Heap::evacuate_young_runs`, out of line: survivors are
+/// few, and the sweep's visitor stays small enough to inline.
+#[inline(never)]
+fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id: RecordId) {
+    owners.push((start, record_id));
 }
 
 /// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
@@ -4529,31 +4771,44 @@ unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize)
 /// Preserve declines before changing storage or values.
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, target: TargetShape, layout: PropertyStoreLayout) -> bool {
-    data.note_prototype_value_write();
-    // The caller matched the exact shape, which holds the slot.
+    // The caller matched the exact shape, which holds the slot outside dictionary storage.
     let widened = properties.note_slot_target(data.shape(), slot, value, target);
     if widened && layout == PropertyStoreLayout::PreserveNative { return false; }
-    if let Some(start) = data.plain_storage_start() {
-        debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { properties.set_flat_at(start, slot, value) };
-        return true;
-    }
-    if data.properties().has_inline_property_storage() {
-        if !data.store_inline_narrow(slot, value) {
-            if layout != PropertyStoreLayout::MayWiden {
-                return false;
+    match data.exact_storage() {
+        // SAFETY: as above.
+        ExactStorage::Plain(start) => unsafe { properties.set_flat_at(start, slot, value) },
+        // An object without extras was never a prototype: its store moves no epoch.
+        ExactStorage::PackedInline => {
+            if !data.store_packed_narrow(slot, value.to_narrow()) {
+                if layout != PropertyStoreLayout::MayWiden {
+                    return false;
+                }
+                let length = properties.len(data.properties());
+                widen_inline_storage(data, properties, data.shape(), length, slot, value);
             }
-            let length = properties.len(data.properties());
-            widen_inline_storage(data, properties, data.shape(), length, slot, value);
         }
-        return true;
+        ExactStorage::Extended { inline } => {
+            data.note_prototype_value_write();
+            // SAFETY: as above.
+            unsafe { store_extended_slot(data, properties, slot, value, inline) };
+        }
     }
-    let vector = data.properties();
-    debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
-    // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-    unsafe { properties.set_flat_unchecked(vector, slot, value) };
     true
+}
+
+/// `store_exact_slot` of an `Extended` object, without the prototype epoch: into the inline
+/// values its extras hold, or its arena run.
+///
+/// # Safety
+/// As `store_exact_slot`.
+#[inline(always)]
+unsafe fn store_extended_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, inline: bool) {
+    if inline {
+        data.store_extended_inline(slot, value);
+    } else {
+        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
+        unsafe { properties.set_flat_unchecked(data.properties(), slot, value) };
+    }
 }
 
 #[cfg(test)]

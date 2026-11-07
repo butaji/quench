@@ -732,6 +732,7 @@ impl<H: Host> Vm<H> {
                 let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), callee);
             }
+            Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
                 let import_meta = if let Some(value) = self.programs.import_meta(program) {
@@ -1066,11 +1067,7 @@ impl<H: Host> Vm<H> {
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
             }
-            Op::RequireIteratorResult => {
-                if !self.is_object_like(self.read(f, i.register_b())) {
-                    return Err(self.type_error(p, "iterator next result is not an object".into()));
-                }
-            }
+            Op::RequireIteratorResult => self.require_iterator_result(p, self.read(f, i.register_b()))?,
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),
@@ -1889,13 +1886,21 @@ pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value
             integer.checked_add(1)
         };
         return Some(next.map_or_else(
-            || Value::number(f64::from(integer) + increment_delta(is_decrement)),
+            || Value::overflowed_integer(f64::from(integer) + increment_delta(is_decrement)),
             Value::integer,
         ));
     }
     input
         .as_number()
         .map(|number| Value::number(number + increment_delta(is_decrement)))
+}
+
+/// `number_increment` of an integer whose update stays one; `None` for any other value or
+/// an overflow, which `number_increment` answers.
+#[inline(always)]
+pub(super) fn integer_increment(input: Value, is_decrement: bool) -> Option<Value> {
+    let integer = input.as_int()?;
+    if is_decrement { integer.checked_sub(1) } else { integer.checked_add(1) }.map(Value::integer)
 }
 
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional

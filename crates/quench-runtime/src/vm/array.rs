@@ -619,7 +619,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn dense_array_length(&self, this: Value) -> Option<usize> {
         let object = self.heap.array(this)?;
         if object.holds_ordinary_elements() {
-            return self.heap.sparse_length(this).is_none().then(|| object.elements().len());
+            return Some(object.elements().len());
         }
         if object.has_indexed_descriptors()
             || object.is_frozen()
@@ -693,6 +693,44 @@ impl<H: Host> Vm<H> {
         };
         super::index::mutable_array_elements(object.elements_mut()).copy_from(0, values);
         true
+    }
+
+    /// `push(value)` onto a direct array whose elements are ordinary and dense
+    /// (`Object::holds_ordinary_elements`) and whose prototypes hold no index
+    /// (`chain_holds_no_index`, a held proof that a change to any of them retires): OrdinarySet
+    /// of the index at its length defines a plain element there, and `length` grows by one,
+    /// so the steps are one append. `None` leaves any other call to `array_push_dense`.
+    #[inline(always)]
+    pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
+        let object = self.heap.record_array(this)?;
+        let length = object.elements().len();
+        if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.chain_holds_no_index(object.proto())
+        {
+            return None;
+        }
+        self.heap.push_array_element(this, value)?;
+        Some(Value::length(length + 1))
+    }
+
+    /// `pop()` of a direct array whose elements are ordinary and dense, as
+    /// `array_push_one` admits it: an empty one answers `undefined`; one whose last element is
+    /// present removes it, as the generic steps' Get, DeletePropertyOrThrow and `length` set
+    /// do. `None` for a hole, which its prototypes answer, and for any other receiver.
+    #[inline(always)]
+    pub(super) fn array_pop_one(&mut self, this: Value) -> Option<Value> {
+        let object = self.heap.record_array(this)?;
+        if !object.holds_ordinary_elements() {
+            return None;
+        }
+        match object.elements().last() {
+            None => Some(Value::UNDEFINED),
+            Some(last) if last.is_deleted() => None,
+            // Removing stores no reference, which the write barrier passes.
+            Some(_) => super::index::mutable_array_elements(
+                self.heap.record_array_store_mut(this, Value::UNDEFINED)?.elements_mut(),
+            )
+            .pop(),
+        }
     }
 
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended

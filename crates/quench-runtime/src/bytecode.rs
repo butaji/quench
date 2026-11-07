@@ -689,6 +689,15 @@ impl ImmediateLayout {
         imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
+    /// A lane `Call` record whose result only the `Await` right after it reads
+    /// (`derive_lane_view`). Lane call records carry no eval flags, so the flag reuses the
+    /// parameter-eval bit; a settling callee there needs no promise for a primitive result.
+    pub(crate) const LANE_CALL_RESULT_AWAITED_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_awaited(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
+    }
+
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
@@ -1156,7 +1165,8 @@ opcodes!(
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
-
+    // A first-call stub's body: compiles and calls its function's chunk (`Vm::call_first_chunk`).
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 );
 
 const _: () = {
@@ -1846,7 +1856,6 @@ impl RegisterRoots {
         self.masks.get().map_or(0, |masks| masks.bytes())
     }
 }
-
 
 /// A function's source positions in increasing pc order, each delta-coded against the one
 /// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
@@ -2780,7 +2789,7 @@ impl Function {
                 load if load.op() == Op::LoadConst
                     && load.result_flags() == 0
                     && load.result_register() >= self.params
-                    && let Some(constant) = constants.get(load.constant_index()).and_then(InitializerConstant::of) =>
+                    && let Some(constant) = InitializerConstant::of(constants, load.constant_index()) =>
                 {
                     temporaries.push((load.result_register(), constant));
                     pc += 1;
@@ -3341,10 +3350,17 @@ pub(crate) struct ObjectSite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LiteralStep {
     Constant(u32),
+    /// A Number that is an int32 (`Value::integer`), held in the step: the elements of a
+    /// bundle's data tables (text-encoding indexes: about 80K in JetStream web-ssr's) then
+    /// neither enter nor search the constant table.
+    Int(i32),
     /// An array of the given number of elements.
     Array(u32),
     /// An object of an object site's keys, one value each.
     Object(u32),
+    /// The value of the JSON text at this byte of the program's source: a data script's
+    /// literal (`compile::data_literal`), which the source holds in place of its tree.
+    Json(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4170,6 +4186,14 @@ impl ResidualProgram {
         self.source.as_ref().map(|source| source.text.as_ref())
     }
 
+    /// The source from compiled byte `start` on, where a data script's literal starts
+    /// (`LiteralStep::Json`); `None` when the program keeps no text there.
+    pub(crate) fn data_literal_text(&self, start: u32) -> Option<&str> {
+        let source = self.source.as_ref()?;
+        let text: &str = source.text.as_ref();
+        text.get(start.checked_sub(source.base)? as usize..)
+    }
+
     /// Resolve source-derived native error descriptions before publication.
     #[cfg(feature = "aot")]
     pub fn freeze_native_diagnostics(&self) {
@@ -4369,7 +4393,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 132;
+    pub const FORMAT_VERSION: u8 = 133;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -4562,25 +4586,32 @@ pub(crate) enum InitializerConstant {
     Boolean(bool),
     Null,
     Undefined,
+    /// A string literal: the program's constant at this index, the value its `LoadConst`
+    /// yields (`this.type = ""`).
+    String(u32),
 }
 
 impl InitializerConstant {
-    fn of(constant: &Constant) -> Option<Self> {
-        Some(match constant {
+    fn of(constants: &[Constant], index: usize) -> Option<Self> {
+        Some(match constants.get(index)? {
             Constant::Number(number) => Self::Number(*number),
             Constant::Boolean(boolean) => Self::Boolean(*boolean),
             Constant::Null => Self::Null,
             Constant::Undefined => Self::Undefined,
+            Constant::String(_) | Constant::StringUnits(_) => Self::String(u32::try_from(index).ok()?),
             _ => return None,
         })
     }
 
-    pub(crate) fn value(self) -> crate::value::Value {
-        match self {
+    /// The value the constant stores, a string literal's from the running program's
+    /// materialized constants (`program_constant`).
+    pub(crate) fn value(self, program_constant: impl FnOnce(usize) -> Option<crate::value::Value>) -> Option<crate::value::Value> {
+        Some(match self {
             Self::Number(number) => crate::value::Value::number(number),
             Self::Boolean(boolean) => crate::value::Value::boolean(boolean),
             Self::Null => crate::value::Value::NULL,
             Self::Undefined => crate::value::Value::UNDEFINED,
-        }
+            Self::String(index) => return program_constant(index as usize),
+        })
     }
 }

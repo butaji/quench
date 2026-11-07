@@ -31,10 +31,13 @@ impl From<JsError> for IteratorHelperFailure {
 /// `%ArrayIteratorPrototype%`. Both prototypes were marked when the proof was made, so a
 /// change to either's layout advances the epoch; shape compaction advances it too, so a proof
 /// never names a renumbered shape. The slots' values may change in place, so each use reads them.
+/// Realms share array shapes but not prototypes: the slots are those of `prototype`, the
+/// realm's `Array.prototype` the proof was made in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArrayIterationProof {
     shape: u32,
     epoch: u64,
+    prototype: Value,
     method_slot: usize,
     next_slot: usize,
 }
@@ -181,7 +184,7 @@ impl<H: Host> Vm<H> {
         }
         let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
         let proof = match self.array_iteration_proof {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
+            Some(proof) if proof.shape == shape && proof.epoch == epoch && proof.prototype == self.array_proto => proof,
             _ => match self.prove_array_iteration(shape, epoch) {
                 Some(proof) => proof,
                 None => return false,
@@ -214,7 +217,7 @@ impl<H: Host> Vm<H> {
         }
         let method_slot = data_slot(self, self.array_proto, method)?;
         let next_slot = data_slot(self, self.array_iterator_proto, next)?;
-        let proof = ArrayIterationProof { shape, epoch, method_slot, next_slot };
+        let proof = ArrayIterationProof { shape, epoch, prototype: self.array_proto, method_slot, next_slot };
         self.heap.mark_prototype(self.array_proto);
         self.heap.mark_prototype(self.array_iterator_proto);
         // Marking an object that was no prototype yet leaves the epoch where it was.
@@ -2937,9 +2940,7 @@ impl<H: Host> Vm<H> {
             _ => (iterator, false),
         };
         let result = self.call_value(p, method, receiver, args)?;
-        if !self.is_object_like(result) {
-            return Err(self.type_error(p, "iterator next result is not an object".into()));
-        }
+        self.require_iterator_result(p, result)?;
         if !async_from_sync {
             return Ok(result);
         }
@@ -3092,11 +3093,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "iterator next method is not callable".into()));
                     }
                     let result = vm.call_value(p, method, this, args)?;
-                    if !vm.is_object_like(result) {
-                        return Err(
-                            vm.type_error(p, "iterator next result is not an object".into())
-                        );
-                    }
+                    vm.require_iterator_result(p, result)?;
                     return Ok(result);
                 }
             };
@@ -3187,9 +3184,7 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::AsyncFromSync {
                 let result = vm.iterator_next_with_args(p, source, args)?;
-                if !vm.is_object_like(result) {
-                    return Err(vm.type_error(p, "iterator next result is not an object".into()));
-                }
+                vm.require_iterator_result(p, result)?;
                 return vm.async_from_sync_result(p, this, result, true);
             }
             // Collection iterators skip deleted slots, so they record where they stopped.

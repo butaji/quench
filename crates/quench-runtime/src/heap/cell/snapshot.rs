@@ -666,7 +666,7 @@ impl Cell {
             }
             Self::BigInt(value) => {
                 writer.u8(tag::BIGINT);
-                writer.bytes(&value.to_signed_bytes_le());
+                writer.bytes(&value.to_num().to_signed_bytes_le());
             }
             Self::Symbol(SymbolData { description, kind }) => {
                 writer.u8(tag::SYMBOL);
@@ -846,7 +846,7 @@ impl Cell {
                 Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
             }
             tag::JS_TAG => crate::vm::js_tag_cell(),
-            tag::BIGINT => Self::BigInt(Box::new(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?))),
+            tag::BIGINT => Self::bigint(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?)),
             tag::SYMBOL => Self::Symbol(SymbolData {
                 description: reader.option_string()?.map(String::into_boxed_str),
                 kind: symbol_kind::read(reader)?,

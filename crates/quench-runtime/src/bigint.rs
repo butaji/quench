@@ -1,3 +1,10 @@
+mod digits;
+#[cfg(test)]
+mod tests;
+mod value;
+
+pub(crate) use value::{Bitwise, JsBigInt};
+
 use num_bigint::{BigInt, Sign};
 
 pub(crate) const IEEE754_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
@@ -48,13 +55,8 @@ pub(crate) fn number_as_bigint(value: f64) -> Option<BigInt> {
 pub(crate) enum Error {
     DivisionByZero,
     NegativeExponent,
-    ExponentTooLarge,
-}
-
-pub(crate) fn shift(value: &BigInt, count: &BigInt, left_shift: bool) -> Result<BigInt, Error> {
-    let reverse = count.sign() == Sign::Minus;
-    let magnitude = usize::try_from(count.magnitude()).map_err(|_| Error::ExponentTooLarge)?;
-    Ok(if left_shift != reverse { value << magnitude } else { value >> magnitude })
+    /// The result would pass `value::MAX_BITS`.
+    TooLarge,
 }
 
 /// The value of a BigInt literal; OXC normalizes its digits to base 10 without separators.
@@ -71,7 +73,3 @@ pub(crate) fn to_f64(value: &BigInt) -> f64 {
     })
 }
 
-/// Bytes the magnitude's digits occupy, for heap accounting.
-pub(crate) fn magnitude_bytes(value: &BigInt) -> usize {
-    usize::try_from(value.bits().div_ceil(u64::from(u8::BITS))).unwrap_or(usize::MAX)
-}

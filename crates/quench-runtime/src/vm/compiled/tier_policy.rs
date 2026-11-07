@@ -50,6 +50,9 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
+    /// The most bodies of one function lifecycle edges may discard before it runs in the lane
+    /// for good: past them a compile costs more than its runs regain.
+    pub(in crate::vm) max_lifetimes: u8,
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
@@ -118,6 +121,7 @@ pub(in crate::vm) const TIERS: Tiers = Tiers {
         trial_runs: 1024,
         reoptimize_exits: 64,
         max_recompiles: 4,
+        max_lifetimes: 8,
         min_instructions: 24,
     },
     js_function: JsFunction {
