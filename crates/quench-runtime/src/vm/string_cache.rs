@@ -49,8 +49,7 @@ impl<H: Host> Vm<H> {
             };
             #[cfg(feature = "profile-aggregate")]
             let operand_shapes = (left.profile_shape(), right.profile_shape());
-            let mut text = left.clone();
-            text.push_js_string(right);
+            let text = left.concat(right);
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat_shapes(
                 operand_shapes.0,
@@ -80,27 +79,15 @@ impl<H: Host> Vm<H> {
         Some(value)
     }
 
-    /// The atom of the string `key`, interned as `intern_js_atom` does. A string value names
-    /// one immutable text until a collection, which empties the cache, so a key used again
-    /// (a `for-in` key passed to `getOwnPropertyDescriptor`, `in` and `defineProperty`, as
-    /// TypeScript's `__createBinding` does for each re-exported name) is not hashed and
-    /// compared again. `None` when `key` is not a string.
+    /// The atom of the string `key`, interned as `intern_js_atom` does, found once per string
+    /// record and then read from it (`Heap::string_atom`). `None` when `key` is not a string.
     pub(super) fn string_key_atom(&mut self, key: Value) -> Option<Atom> {
-        let slot = key.heap_index().map(|index| {
-            (index as usize).wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) & (STRING_ATOM_CACHE_SIZE - 1)
-        });
-        if let (Some(slot), Some(atoms)) = (slot, &self.string_atoms)
-            && atoms[slot].0 == key
-        {
-            return Some(atoms[slot].1);
+        if let Some(atom) = self.heap.string_atom(key) {
+            return Some(atom);
         }
         let name = self.heap.string(key)?.clone();
         let atom = self.intern_js_atom(&name);
-        if let Some(slot) = slot {
-            self.string_atoms
-                .get_or_insert_with(|| Box::new([(Value::UNDEFINED, 0); STRING_ATOM_CACHE_SIZE]))[slot] =
-                (key, atom);
-        }
+        self.heap.record_string_atom(key, atom);
         Some(atom)
     }
 }

@@ -10,6 +10,7 @@ use std::rc::Rc;
 use wasmparser::{BinaryReaderError, Operator};
 
 mod constant;
+pub(crate) mod extern_kind;
 pub(crate) mod gc;
 pub use constant::WasmConstantExpression;
 pub(crate) use constant::{WasmArrayInitializer, WasmInitializerEffect};
@@ -22,7 +23,6 @@ pub(crate) mod atomic;
 pub(crate) mod memory;
 mod wait;
 pub(crate) const INDEX_GROW_FAILURE: i64 = -1;
-
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
 mod inline;

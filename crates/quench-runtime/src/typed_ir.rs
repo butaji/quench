@@ -9,6 +9,8 @@
 use crate::{Value, ValueType};
 
 mod int_range;
+mod representation;
+pub(crate) use representation::Representation;
 mod slot_type;
 pub(crate) use slot_type::SlotType;
 pub(crate) use int_range::IntRange;
@@ -198,29 +200,6 @@ impl Type {
                 if self.direct_family_nullish().is_some_and(|actual| actual & !nullish == 0)
                     || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
             || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Representation {
-    Int32,
-    Float64,
-    Tagged,
-}
-
-impl Representation {
-    /// Implicit views supported by the shared emitter. Narrowing and unboxing
-    /// require explicit checked operations, never a register assignment.
-    pub(crate) fn can_receive(self, source: Self) -> bool {
-        self == source || self == Self::Tagged || (self == Self::Float64 && source == Self::Int32)
-    }
-    pub(crate) fn accepts(self, ty: Type) -> bool {
-        ty != Type::NEVER
-            && match self {
-                Self::Int32 => ty.is_subtype(Type::INT32),
-                Self::Float64 => ty.is_subtype(Type::NUMBER),
-                Self::Tagged => true,
-            }
     }
 }
 

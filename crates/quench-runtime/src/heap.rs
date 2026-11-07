@@ -25,6 +25,8 @@ mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
+mod inline_storage;
+use inline_storage::widen_inline_storage;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
@@ -37,13 +39,14 @@ mod records;
 mod root;
 mod slots;
 mod snapshot;
+mod string_alloc;
 mod string_atoms;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
-pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, number_key_hash};
+pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
@@ -693,7 +696,7 @@ pub(crate) struct GcProfile {
     #[cfg(feature = "profile-aggregate")]
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
     #[cfg(feature = "profile-aggregate")]
-    pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
+    pub allocated_size_buckets: [[u64; crate::profile::SIZE_BUCKETS]; CellKind::COUNT],
     #[cfg(feature = "profile-aggregate")]
     pub roots: u64,
     #[cfg(feature = "profile-aggregate")]
@@ -746,7 +749,7 @@ impl Default for GcProfile {
             #[cfg(feature = "profile-aggregate")]
             allocated_payload_bytes: [0; CellKind::COUNT],
             #[cfg(feature = "profile-aggregate")]
-            allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            allocated_size_buckets: [[0; crate::profile::SIZE_BUCKETS]; CellKind::COUNT],
             #[cfg(feature = "profile-aggregate")]
             roots: 0,
             #[cfg(feature = "profile-aggregate")]
@@ -1265,7 +1268,7 @@ impl Heap {
                 .entry(cell.profile_variant_name())
                 .or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+            self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
@@ -1573,50 +1576,6 @@ impl Heap {
 
     /// `alloc(Cell::Iterator(..))` without boxing the iterator first: an iterator record
     /// while one is free.
-    /// Allocates a string record. Strings have no legacy-slot form, so their space holds as
-    /// many records as the legacy slots do (`STRING_RECORD_CAPACITY`); exhausting it is out
-    /// of memory, as exhausting the slots is.
-    pub(crate) fn alloc_string(&mut self, string: JsString) -> Value {
-        let Some(unit) = string.single_ascii_unit() else {
-            return self.alloc_string_record(string);
-        };
-        let strings = self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; ASCII_UNITS]));
-        let cached = strings[usize::from(unit)];
-        if !cached.is_undefined() {
-            return cached;
-        }
-        let value = self.alloc_string_record(string);
-        if let Some(strings) = &mut self.ascii_unit_strings {
-            strings[usize::from(unit)] = value;
-        }
-        value
-    }
-
-    fn alloc_string_record(&mut self, string: JsString) -> Value {
-        #[cfg(feature = "profile-aggregate")]
-        {
-            let kind = CellKind::String as usize;
-            // Do not materialize ropes in the profiler: production charges the flat payload
-            // only when it already exists. `capacity()` flattens a rope and perturbs the
-            // allocation shape the profile is meant to observe.
-            let bytes = string.flat_unit_bytes();
-            self.gc_profile.allocated_kinds[kind] += 1;
-            *self.allocated_variants.entry("string").or_default() += 1;
-            self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
-        }
-        self.charge_materialized_text();
-        let payload = string.flat_unit_bytes();
-        let weight = 1 + payload / payload_unit();
-        self.payload_bytes = self.payload_bytes.saturating_add(payload);
-        self.allocated += weight;
-        self.total_allocations += 1;
-        match self.string_records.try_insert(string) {
-            Ok(record_id) => Value::direct_string(record_id),
-            Err(_) => panic!("string record space exhausted"),
-        }
-    }
-
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Iterator(Box::new(iterator)));
@@ -3809,14 +3768,6 @@ impl Heap {
 
     /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
     /// values move to the arena. The caller has applied the write barrier.
-    #[cold]
-    fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
-        let (data, properties) = self
-            .object_and_arena_mut(object)
-            .expect("property owner is an object");
-        let length = properties.len(data.properties());
-        widen_inline_storage(data, properties, data.shape(), length, slot, value);
-    }
     #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
         &mut self,
@@ -4580,7 +4531,7 @@ impl Heap {
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-                Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+                Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
                 Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::Environment { slots, scope, .. } => {
                     let with_objects = scope.with_objects();
@@ -4591,19 +4542,6 @@ impl Heap {
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
-    }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
-    pub(super) fn size_bucket(bytes: usize) -> usize {
-        match bytes {
-            0 => 0,
-            1..=7 => 1,
-            8..=15 => 2,
-            16..=31 => 3,
-            32..=63 => 4,
-            64..=127 => 5,
-            128..=255 => 6,
-            _ => 7,
-        }
     }
 }
 #[cfg(test)]
@@ -4662,22 +4600,6 @@ fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id
     owners.push((start, record_id));
 }
 
-/// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
-/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
-fn widen_inline_storage(
-    data: &mut Object,
-    properties: &mut ValueArena,
-    shape: u32,
-    length: usize,
-    slot: usize,
-    value: Value,
-) {
-    let mut values = data.inline_properties().expect("inline storage");
-    values[slot] = value;
-    let moved = properties.with_values(shape, &values[..length]);
-    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
-    properties.release(previous);
-}
 
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.

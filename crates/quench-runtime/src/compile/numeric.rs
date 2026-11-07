@@ -76,7 +76,7 @@ fn compact_binary_stores(
         map[pc] = code.len();
         let triple = old
             .get(pc..pc + 3)
-            .filter(|_| !protected[pc + 1] && !protected[pc + 2])
+            .filter(|_| !protected.contains(pc + 1) && !protected.contains(pc + 2))
             .and_then(|window| {
                 let live_after = live.get(pc + 3).copied().unwrap_or(RegisterSet::MAX);
                 triple_rules
@@ -95,7 +95,7 @@ fn compact_binary_stores(
         }
         let replacement = old
             .get(pc + 1)
-            .filter(|_| !protected[pc + 1])
+            .filter(|_| !protected.contains(pc + 1))
             .and_then(|second| {
                 let first = old[pc];
                 let live_after = live.get(pc + 2).copied().unwrap_or(RegisterSet::MAX);

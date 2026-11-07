@@ -1948,11 +1948,7 @@ fn date_time_fields_at_time_clip(milliseconds: f64, zone: Option<&str>) -> Optio
 }
 
 fn time_zone_offset_minutes(zone: &str) -> Option<i32> {
-    let sign = match zone.as_bytes().first()? {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
+    let sign = quench_temporal::offset_sign(zone)?;
     let digits = &zone[TIME_ZONE_SIGN_LENGTH..];
     let (hours, minutes) = match digits.len() {
         TIME_ZONE_HOUR_DIGITS => (digits, "00"),

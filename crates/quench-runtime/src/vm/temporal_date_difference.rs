@@ -53,6 +53,17 @@ enum ParsedOption<T> {
     Invalid,
 }
 
+impl<T> ParsedOption<T> {
+    /// The option's value, `default` when missing, `None` when invalid.
+    fn resolve(self, default: T) -> Option<T> {
+        match self {
+            Self::Missing => Some(default),
+            Self::Valid(value) => Some(value),
+            Self::Invalid => None,
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn temporal_plain_year_month_difference(
         &mut self,
@@ -343,11 +354,7 @@ fn year_month_difference_settings<H: Host>(
             return Err(vm.range_error(p, "Invalid smallestUnit".into()));
         }
     };
-    let rounding_mode = match rounding_mode {
-        ParsedOption::Missing => DateRoundingMode::Trunc,
-        ParsedOption::Valid(mode) => mode,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid roundingMode".into())),
-    };
+    let rounding_mode = rounding_mode.resolve(DateRoundingMode::Trunc).ok_or_else(|| vm.range_error(p, "Invalid roundingMode".into()))?;
     if !increment.is_finite()
         || !(1.0..=DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT).contains(&increment)
         || !valid_date_unit_order(largest, smallest)
@@ -434,21 +441,9 @@ fn validate_date_difference_options<H: Host>(
     increment: f64,
     rounding_mode: ParsedOption<DateRoundingMode>,
 ) -> Result<DateDifferenceOptions, JsError> {
-    let largest = match largest {
-        ParsedOption::Missing => DateUnit::Auto,
-        ParsedOption::Valid(unit) => unit,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid largestUnit".into())),
-    };
-    let smallest = match smallest {
-        ParsedOption::Missing => DateUnit::Auto,
-        ParsedOption::Valid(unit) => unit,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid smallestUnit".into())),
-    };
-    let rounding_mode = match rounding_mode {
-        ParsedOption::Missing => DateRoundingMode::Trunc,
-        ParsedOption::Valid(mode) => mode,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid roundingMode".into())),
-    };
+    let largest = largest.resolve(DateUnit::Auto).ok_or_else(|| vm.range_error(p, "Invalid largestUnit".into()))?;
+    let smallest = smallest.resolve(DateUnit::Auto).ok_or_else(|| vm.range_error(p, "Invalid smallestUnit".into()))?;
+    let rounding_mode = rounding_mode.resolve(DateRoundingMode::Trunc).ok_or_else(|| vm.range_error(p, "Invalid roundingMode".into()))?;
     if !increment.is_finite()
         || !(1.0..=DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT).contains(&increment)
     {
