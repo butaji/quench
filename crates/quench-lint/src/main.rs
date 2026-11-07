@@ -1,10 +1,11 @@
 //! Fails when the repository says the same thing twice (`duplicates`) or when a function or
 //! file outgrows the manifesto's size laws (`shape`), or when a hot path hashes, scans or
-//! allocates (`hot_path`).
+//! allocates (`hot_path`), or when the engine tests a guest program's own names (`guest_names`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
 
 mod duplicates;
+mod guest_names;
 mod hot_path;
 mod shape;
 

@@ -24,7 +24,7 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
         measures.insert(format!("file-lines {file}"), lines);
     }
     let hot = crate::hot_path::is_hot(file);
-    let mut functions = Functions { file, scope: Vec::new(), measures, seen: BTreeMap::new(), hot };
+    let mut functions = Functions { file, scope: Vec::new(), measures, seen: BTreeMap::new(), hot, test: false };
     functions.visit_file(syntax);
 }
 
@@ -37,6 +37,8 @@ struct Functions<'a> {
     seen: BTreeMap<String, usize>,
     /// Whether the hot-path cost model applies: a hot module, outside its tests.
     hot: bool,
+    /// Whether the scope exists only for tests.
+    test: bool,
 }
 
 impl Functions<'_> {
@@ -60,6 +62,9 @@ impl Functions<'_> {
         if self.hot {
             crate::hot_path::scan(&subject, body, self.measures);
         }
+        if !self.test {
+            crate::guest_names::scan(&subject, body, self.measures);
+        }
         self.visit_block(body);
         self.scope.pop();
     }
@@ -73,10 +78,11 @@ impl Functions<'_> {
 
 impl<'ast> Visit<'ast> for Functions<'_> {
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        let hot = self.hot;
-        self.hot &= !is_test(&item.attrs);
+        let (hot, test) = (self.hot, self.test);
+        self.test |= is_test(&item.attrs);
+        self.hot &= !self.test;
         self.function(&item.sig.ident, item.span(), &item.block);
-        self.hot = hot;
+        (self.hot, self.test) = (hot, test);
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
@@ -90,10 +96,11 @@ impl<'ast> Visit<'ast> for Functions<'_> {
     }
 
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
-        let hot = self.hot;
-        self.hot &= !is_test(&item.attrs);
+        let (hot, test) = (self.hot, self.test);
+        self.test |= is_test(&item.attrs);
+        self.hot &= !self.test;
         self.scoped(item.ident.to_string(), |this| syn::visit::visit_item_mod(this, item));
-        self.hot = hot;
+        (self.hot, self.test) = (hot, test);
     }
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
@@ -151,7 +158,9 @@ pub fn render(measures: &Measures) -> String {
 
 /// How to bring a new offender within its law.
 fn remedy(subject: &str) -> &'static str {
-    if subject.starts_with("hot-") {
+    if subject.starts_with("guest-name ") {
+        "no special case for one program: derive the behavior from semantics, never from a guest name"
+    } else if subject.starts_with("hot-") {
         "hot paths do O(1) work and allocate nothing: decide earlier, index a flat array, reuse a buffer"
     } else {
         "split it along a domain seam"
