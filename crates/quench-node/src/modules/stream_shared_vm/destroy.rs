@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::state::{self, bits, change, raw_bits};
 use super::{
-    arg, attempt, call_method, captures, closure, emit, emit_key, get, get_slot, intrinsic, intrinsics, is_nullish,
+    arg, attempt, call_method, captures, closure, emit, emit_key, get, get_slot, intrinsic, is_nullish,
     put, set_capture, tick, utils, Context, Outcome, Slot, Tick,
 };
 use quench_runtime::{RootId, RootedError};
@@ -324,7 +324,7 @@ pub(crate) fn on_construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> O
         }
         None => false,
     };
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     if destroyed {
         emit_key(c, stream, intrinsics.slot(Slot::Destroy), &[error])?;
     } else if c.truthy_rooted(error)? {

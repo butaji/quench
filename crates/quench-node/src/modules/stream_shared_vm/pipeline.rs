@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::utils::{self, is_iterable, is_node_stream, is_readable_node_stream};
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsic, intrinsics, is_nullish, next_tick,
+    arg, await_then, call_method, captures, closure, get, intrinsic, is_nullish, next_tick,
     number, on, once, put, put_bool, put_number, remove_listener, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -525,7 +525,7 @@ fn pump(c: &mut Context<'_>, iterable: RootId, writable: RootId, finish: RootId,
     on(c, writable, "drain", resume)?;
     let cleanup = super::eos::eos_with(c, writable, Some(false), None, resume)?;
     put(c, pump, "cleanup", cleanup)?;
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let opened = super::attempt(open_iterator(c, pump, iterable, intrinsics.slot(Slot::AsyncIterator), intrinsics.slot(Slot::Iterator)))?;
     if let Err(thrown) = opened {
         return fail(c, pump, thrown);

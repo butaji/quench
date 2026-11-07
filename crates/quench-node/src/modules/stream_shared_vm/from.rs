@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::readable::is_buffer;
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsic, intrinsics, is_null, is_nullish, is_string,
+    arg, await_then, call_method, captures, closure, get, intrinsic, is_null, is_nullish, is_string,
     next_tick, put, put_bool, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -37,7 +37,7 @@ pub(crate) fn from(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
         put(c, options, "read", read)?;
         return new_readable(c, options);
     }
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let (method, asynchronous) = if is_nullish(c, iterable) {
         (None, false)
     } else {

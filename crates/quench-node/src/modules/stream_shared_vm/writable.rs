@@ -5,7 +5,7 @@ use super::errors::{self, StreamError};
 use super::readable::{adopt_options, encode, is_buffer, is_view, length_of, needs_new, shape_events, view_to_buffer};
 use super::state::{self, bits, change, reset_buffer, writable::*};
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsic, intrinsics, is_null,
+    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsic, is_null,
     is_nullish, is_string, next_tick, number, put, put_number, put_slot, tick, Class, Context, Key, Outcome, Slot,
     Tick,
 };
@@ -57,7 +57,7 @@ pub(crate) fn has_instance(c: &mut Context<'_>, this: RootId, args: &[RootId]) -
     let global = c.global_root()?;
     let function = get(c, global, "Function")?;
     let prototype = get(c, function, "prototype")?;
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let ordinary = c.get_property_rooted(prototype, intrinsics.slot(Slot::HasInstance))?;
     let result = c.call_rooted(ordinary, this, &[object])?;
     if c.truthy_rooted(result)? {
@@ -304,7 +304,7 @@ pub(crate) fn on_write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outco
         return Ok(c.undefined());
     }
     let sync = field & SYNC != 0;
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let callback = if field & WRITE_CB != 0 { get_slot(c, state, Slot::WriteCbValue)? } else { intrinsics.nop };
     let null = c.null();
     put_slot(c, state, Slot::WriteCbValue, null)?;

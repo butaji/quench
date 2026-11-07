@@ -852,7 +852,7 @@ fn socket_error(c: &mut Context<'_>, server: RootId, socket: RootId, state: Root
         let listener = get(c, state, "onError")?;
         remove_listener(c, socket, "error", listener)?;
     }
-    let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+    let nop = crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)?;
     if listener_count(c, socket, "error")? == 0.0 {
         on(c, socket, "error", nop)?;
     }

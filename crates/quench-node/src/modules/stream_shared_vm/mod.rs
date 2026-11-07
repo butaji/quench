@@ -270,10 +270,6 @@ const _: () = {
     }
 };
 
-pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
-    intrinsic(c, |intrinsics| *intrinsics)
-}
-
 /// What `pick` reads of the intrinsics, without copying the rest.
 pub(crate) fn intrinsic<T>(c: &mut Context<'_>, pick: impl FnOnce(&Intrinsics) -> T) -> Result<T, RootedError> {
     let picked = c.host_mut().shared_state().borrow().stream_intrinsics.as_ref().map(pick);
@@ -440,7 +436,7 @@ pub(crate) fn attempt<T>(result: Result<T, RootedError>) -> Result<Result<T, Roo
 
 /// `await value`, continuing with `fulfilled(result)` or `rejected(reason)` as reactions.
 pub(crate) fn await_then(c: &mut Context<'_>, value: RootId, fulfilled: RootId, rejected: RootId) -> Result<(), RootedError> {
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let promise = if promise_resolves_to_itself(c, value, intrinsics.promise)? {
         value
     } else {
