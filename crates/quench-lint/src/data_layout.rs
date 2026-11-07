@@ -17,7 +17,8 @@ use crate::shape::Measures;
 const HASHED: &[&str] = &["HashMap", "HashSet", "BTreeMap", "BTreeSet", "FxHashMap", "FxHashSet", "IndexMap", "IndexSet"];
 /// Key types that are dense indices: integers and the engine's interned ids.
 const DENSE_KEYS: &[&str] = &["u8", "u16", "u32", "u64", "usize", "Atom", "ProgramId", "ShapeId", "FunctionId"];
-const CACHE_WORDS: &[&str] = &["cache", "memo"];
+/// Words of a snake_case name that make it a cache.
+const CACHE_WORDS: &[&str] = &["cache", "caches", "cached", "memo", "memos", "memoized"];
 const BOOL_CONTAINERS: &[&str] = &["Vec", "SmallVec", "Box", "Rc", "Arc"];
 
 pub fn scan(file: &str, syntax: &syn::File, measures: &mut Measures) {
@@ -66,8 +67,11 @@ fn is_dense_key(ty: &syn::Type) -> bool {
 }
 
 fn names_cache(ident: &syn::Ident) -> bool {
-    let name = ident.to_string().to_lowercase();
-    CACHE_WORDS.iter().any(|word| name.contains(word))
+    word_is_cache(&ident.to_string())
+}
+
+fn word_is_cache(name: &str) -> bool {
+    name.to_lowercase().split('_').any(|word| CACHE_WORDS.contains(&word))
 }
 
 impl<'ast> Visit<'ast> for Layout {
@@ -121,7 +125,7 @@ impl<'ast> Visit<'ast> for Layout {
         // `thread_local!` and other item macros declare statics in their tokens.
         let tokens = format!(" {}", item.mac.tokens.to_token_stream()).to_lowercase();
         let declares = tokens.split(" static ").skip(1).filter(|rest| {
-            rest.split([':', ' ']).next().is_some_and(|name| CACHE_WORDS.iter().any(|word| name.contains(word)))
+            rest.split([':', ' ']).next().is_some_and(word_is_cache)
         });
         self.caches += declares.count();
         syn::visit::visit_item_macro(self, item);
