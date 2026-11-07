@@ -5,8 +5,8 @@
 //! Every function outside tests is counted for `guest-name`: a comparison (`==`, `!=`, a
 //! `match` arm, `matches!`) of a string literal with an expression that reads guest names
 //! out of the program's own code (`atoms[..]`, `field_name(..)`). The names the language gives
-//! meaning to ([`LANGUAGE_NAMES`]) are exempt. The count joins the shrink-only measures in
-//! `oversized.txt`: a new test fails, an old one may only go away.
+//! meaning to ([`LANGUAGE_NAMES`]) are exempt. Every count is a violation: unlike the size
+//! measures, `oversized.txt` holds no allowance for one.
 
 use quote::ToTokens;
 use syn::visit::Visit;
@@ -27,6 +27,9 @@ const LANGUAGE_NAMES: &[&str] = &[
     "await", "yield", "let", "static", "undefined", "NaN", "Infinity", "globalThis",
 ];
 
+/// The measure every guest-name test is recorded under, by subject.
+pub const MEASURE: &str = "guest-name ";
+
 /// Records, by `guest-name <subject>`, how often a function tests a guest name.
 pub fn scan(subject: &str, body: &syn::Block, measures: &mut Measures) {
     let file = subject.split("::").next().unwrap_or(subject);
@@ -36,7 +39,7 @@ pub fn scan(subject: &str, body: &syn::Block, measures: &mut Measures) {
     let mut tests = Tests(0);
     tests.visit_block(body);
     if tests.0 > 0 {
-        measures.insert(format!("guest-name {subject}"), tests.0);
+        measures.insert(format!("{MEASURE}{subject}"), tests.0);
     }
 }
 

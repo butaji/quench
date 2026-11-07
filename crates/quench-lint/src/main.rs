@@ -62,7 +62,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let recorded = shape::parse(&fs::read_to_string(OVERSIZED).unwrap_or_default());
+    // A guest-name test has no allowance: `oversized.txt` cannot grandfather one.
+    let recorded: shape::Measures = shape::parse(&fs::read_to_string(OVERSIZED).unwrap_or_default())
+        .into_iter().filter(|(subject, _)| !subject.starts_with(guest_names::MEASURE)).collect();
     let shrunk: shape::Measures = recorded
         .iter()
         .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))
