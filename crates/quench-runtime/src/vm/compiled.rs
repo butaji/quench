@@ -1222,23 +1222,34 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 }
 
 /// Encode a Number result with `Value::number`'s integer, double and NaN
-/// representations.
+/// representations. A double with a fraction is its own bits, after one compare
+/// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    let (truncated, is_integer) = emit_js_exact_int32(builder, number);
-    let result_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let integer_bits = builder.ins().uextend(types::I64, truncated);
+    let (cold, join) = (builder.create_block(), builder.create_block());
+    builder.set_cold_block(cold);
+    let result = builder.append_block_param(join, types::I64);
+    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
+    let truncated = builder.ins().trunc(number);
+    let whole_or_nan = builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
+    builder.ins().brif(whole_or_nan, cold, &[], join, &[ir::BlockArg::Value(bits)]);
+    builder.switch_to_block(cold);
+    builder.seal_block(cold);
+    let (integer, is_integer) = emit_js_exact_int32(builder, number);
+    let integer_bits = builder.ins().uextend(types::I64, integer);
     let integer_bits = builder
         .ins()
         .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
-    let encoded = builder
-        .ins()
-        .select(is_integer, integer_bits, result_bits);
+    let encoded = builder.ins().select(is_integer, integer_bits, bits);
     let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
     let canonical_nan = builder.ins().iconst(
         types::I64,
         crate::value::ValueLayout::CANONICAL_NAN as i64,
     );
-    builder.ins().select(is_nan, canonical_nan, encoded)
+    let encoded = builder.ins().select(is_nan, canonical_nan, encoded);
+    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    builder.switch_to_block(join);
+    builder.seal_block(join);
+    result
 }
 
 /// Keep the integer tier of Quench's shared Number arithmetic denotation in
