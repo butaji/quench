@@ -579,21 +579,21 @@ impl Cell {
             Self::Map { object, entries } => {
                 writer.u8(tag::MAP);
                 write_object(writer, object)?;
-                let (slots, live, iterators) = entries.snapshot_parts()?;
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
                 writer.len(slots.len());
                 for (key, value) in slots {
                     writer.value(*key);
                     writer.value(*value);
                 }
-                writer.len(live);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
                 writer.values(iterators);
             }
             Self::Set { object, entries } => {
                 writer.u8(tag::SET);
                 write_object(writer, object)?;
-                let (slots, live, iterators) = entries.snapshot_parts()?;
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
                 writer.values(slots);
-                writer.len(live);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
                 writer.values(iterators);
             }
             Self::ShadowRealm { object, caller_global, realm_global } => {
@@ -780,16 +780,16 @@ impl Cell {
             tag::MAP => {
                 let object = boxed_object(reader)?;
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let live = reader.len()?;
-                let iterators = reader.values()?;
-                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
+                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+                let (live, iterators) = (reader.len()?, reader.values()?);
+                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SET => {
                 let object = boxed_object(reader)?;
                 let slots = reader.values()?;
-                let live = reader.len()?;
-                let iterators = reader.values()?;
-                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators).into() }
+                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+                let (live, iterators) = (reader.len()?, reader.values()?);
+                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
