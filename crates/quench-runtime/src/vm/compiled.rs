@@ -2119,13 +2119,22 @@ pub(super) struct VmFacts {
     /// The `call` name and the realm's `Function.prototype.call`, through which a call
     /// inlines the function it calls (`lane_unit::Frame::function_call`).
     pub(super) function_call: Option<(Atom, Value)>,
+    /// The object, function and array record reservations' bases, zero where not yet
+    /// reserved: a reservation never moves once made, so code compiled after it names its
+    /// base as a constant (`Lowering::base_word`).
+    pub(super) record_bases: [usize; 3],
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call }
+        let record_bases = [
+            self.heap.object_record_base().map_or(0, |base| base as usize),
+            self.heap.function_record_base().map_or(0, |base| base as usize),
+            self.heap.array_record_base().map_or(0, |base| base as usize),
+        ];
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call, record_bases }
     }
 }
 

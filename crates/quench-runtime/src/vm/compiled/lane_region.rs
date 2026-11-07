@@ -1582,7 +1582,7 @@ impl Lowering<'_, '_> {
                 let index = crate::vm::staged::index(&mut LaneMachine { lowering: self, state, pc }, crate::vm::staged::Source::Register(instruction.register_c()), missed)
                     .expect("an emitting stage's guards continue");
                 let index = self.ins().uextend(types::I64, index);
-                let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+                let records = self.base_word(std::mem::offset_of!(JsStepDispatch, array_record_base));
                 let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::ArrayRecords, records);
                 crate::vm::staged::array_record(&mut stage, base, missed)
                     .and_then(|record| crate::vm::staged::dense_element_store(&mut stage, record, index, value, missed))
@@ -2384,7 +2384,7 @@ impl Lowering<'_, '_> {
             let record = self.builder.append_block_param(join, types::I64);
             self.ins().brif(object, proved, &[], unproved, &[]);
             self.builder.switch_to_block(proved);
-            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+            let records = self.base_word(std::mem::offset_of!(JsStepDispatch, object_record_base));
             let id = self.ins().ireduce(types::I32, bits);
             let id = self.ins().uextend(types::I64, id);
             let offset = self.ins().imul_imm_u(id, crate::heap::NATIVE_OBJECT_LAYOUT.record_size as i64);
@@ -2448,7 +2448,7 @@ impl Lowering<'_, '_> {
     /// view of none, which no index is within.
     fn array_view(&mut self, bits: ir::Value) -> (ir::Value, ir::Value) {
         use crate::vm::staged::Stage;
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+        let records = self.base_word(std::mem::offset_of!(JsStepDispatch, array_record_base));
         let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
         let array = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
         let reserved = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
@@ -2472,7 +2472,7 @@ impl Lowering<'_, '_> {
         let (viewed, none, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let header = self.builder.append_block_param(join, types::I64);
         let length = self.builder.append_block_param(join, types::I64);
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base));
+        let records = self.base_word(std::mem::offset_of!(JsStepDispatch, array_record_base));
         let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::ArrayRecords, records);
         let elements = crate::vm::staged::array_record(&mut stage, bits, none)
             .and_then(|record| crate::vm::staged::writable_elements(&mut stage, record, none))
@@ -2485,6 +2485,18 @@ impl Lowering<'_, '_> {
         self.ins().jump(join, &[zero.into(), zero.into()]);
         self.builder.switch_to_block(join);
         (header, length)
+    }
+
+    /// A record reservation's base: the constant the VM reserved before this compile, else the
+    /// dispatch word, which a later reservation fills (`VmFacts::record_bases`).
+    fn base_word(&mut self, field: usize) -> ir::Value {
+        let known = [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, function_record_base),
+            std::mem::offset_of!(JsStepDispatch, array_record_base)].iter().position(|word| *word == field)
+            .map_or(0, |family| self.vm.record_bases[family]);
+        if known != 0 {
+            return self.ins().iconst(types::I64, known as i64);
+        }
+        emit_js_payload_word(&mut self.builder, self.payload, field)
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
@@ -2949,7 +2961,7 @@ impl Lowering<'_, '_> {
         }
         // Several shapes: the shared dispatch over the site's cases (`staged::field_read`).
         let cases: Vec<_> = shapes.iter().map(|field| field.case()).collect();
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let records = self.base_word(std::mem::offset_of!(JsStepDispatch, object_record_base));
         let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::PropertyValues, properties).with(crate::vm::staged::Table::ObjectRecords, records);
         crate::vm::staged::field_read(&mut stage, object, shape, &cases, exit)
     }
@@ -3002,7 +3014,7 @@ impl Lowering<'_, '_> {
             return Some(read);
         }
         // The prototype's own value, read as every tier reads it (`staged::holder_slot`).
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let records = self.base_word(std::mem::offset_of!(JsStepDispatch, object_record_base));
         let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
         let mut stage = super::object_slots::Emit::new(&mut self.builder).with(crate::vm::staged::Table::PropertyValues, properties).with(crate::vm::staged::Table::ObjectRecords, records);
         crate::vm::staged::holder_slot(&mut stage, record, holder, field.slot, field.storage_len, exit)
@@ -3046,8 +3058,8 @@ impl Lowering<'_, '_> {
                 self.ins().brif(present, known, &[], other, &[]);
                 self.builder.switch_to_block(other);
                 let bits = bits(self, state);
-                let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-                let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+                let records = self.base_word(std::mem::offset_of!(JsStepDispatch, object_record_base));
+                let functions = self.base_word(std::mem::offset_of!(JsStepDispatch, function_record_base));
                 let header = ObjectHeader::prove_readable(&mut self.builder, bits, records, functions, exit);
                 self.ins().jump(join, &[header.record.into()]);
                 self.builder.switch_to_block(known);
@@ -3071,9 +3083,9 @@ impl Lowering<'_, '_> {
             return projection;
         }
         let bits = bits(self, state);
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let records = self.base_word(std::mem::offset_of!(JsStepDispatch, object_record_base));
         let header = if read {
-            let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+            let functions = self.base_word(std::mem::offset_of!(JsStepDispatch, function_record_base));
             state.readable.insert(owner);
             ObjectHeader::prove_readable(&mut self.builder, bits, records, functions, exit)
         } else {
@@ -3392,7 +3404,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None, None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &fields, &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, record_bases: [0; 3] }, &[], &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -3417,7 +3429,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None, None, None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeMap::new(), VmFacts { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, record_bases: [0; 3] }, &[], &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
