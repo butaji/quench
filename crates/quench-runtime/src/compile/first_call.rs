@@ -107,18 +107,12 @@ impl Engine {
         };
         let views = ReplayViews::default();
         let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
-        // A stub's function without a name is an expression (`first_call_roots`), which
-        // parses alone in parentheses, one character before its place.
-        let anonymous = snippet.strip_prefix("function").is_some_and(|rest| rest.trim_start().starts_with('('));
-        let wrapped;
-        let (snippet, start) = if anonymous && span.start > 0 {
-            wrapped = format!("({snippet})");
-            (wrapped.as_str(), span.start - 1)
-        } else {
-            (snippet, span.start)
-        };
+        // An anonymous function expression is no statement: it compiles parenthesized, one
+        // character before its place, so the function itself starts where it did.
+        let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
+        let (snippet, start) = if anonymous && span.start > 0 { (std::borrow::Cow::Owned(format!("({snippet})")), span.start - 1) } else { (std::borrow::Cow::Borrowed(snippet), span.start) };
         let window = ChunkWindow { source, start, line_starts, utf16_excess };
-        Self::specialize_script_shaped(snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
+        Self::specialize_script_shaped(&snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
 }
 

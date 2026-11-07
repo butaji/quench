@@ -998,10 +998,7 @@ impl ProgramStore {
         let published = Rc::new(super::compiled::PublishedLaneMethod::with_invalidation(method, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let method = published.lease().expect("new publication");
-        let subscribed = method.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, &code))
-            && method.stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, &code))
-            && method.stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, &code));
-        if !subscribed {
+        if !super::compiled::subscribe_lane_dependencies(&method.slot_dependencies, &method.stable, &code, heap, method_atoms) {
             published.retire();
             return None;
         }
