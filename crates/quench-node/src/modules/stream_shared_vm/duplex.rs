@@ -5,7 +5,7 @@ use super::readable::{adopt_options, needs_new, shape_events, READABLE_EVENTS};
 use super::state::{self, change};
 use super::writable::{WRITABLE_EVENTS, WRITABLE_OPTIONS};
 use super::{
-    arg, call_method, captures, closure, define_methods, get, get_slot, intrinsics, is_nullish, next_tick,
+    arg, call_method, captures, closure, define_methods, get, get_slot, intrinsic, is_nullish, next_tick,
     number, on, put, put_bool, put_slot, Class, Context, Key, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -56,7 +56,7 @@ fn initialize(c: &mut Context<'_>, this: RootId, options: RootId) -> Result<(), 
     } else {
         put_bool(c, this, "allowHalfOpen", true)?;
     }
-    let stream = intrinsics(c)?.class(Class::Stream);
+    let stream = intrinsic(c, |i| i.class(Class::Stream))?;
     c.call_rooted(stream, this, &[options])?;
     super::destroy::construct_if_defined(c, this)
 }
@@ -144,7 +144,7 @@ fn initialize_transform(c: &mut Context<'_>, this: RootId, options: RootId) -> R
 
 /// The `prefinish` listener: flush unless `_final` was replaced.
 pub(crate) fn transform_prefinish(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
-    let transform = intrinsics(c)?.class(Class::Transform);
+    let transform = intrinsic(c, |i| i.class(Class::Transform))?;
     let prototype = get(c, transform, "prototype")?;
     let original = get(c, prototype, "_final")?;
     let current = get(c, this, "_final")?;
@@ -366,7 +366,7 @@ pub(crate) fn build_duplex_side(c: &mut Context<'_>, duplex: RootId) -> Outcome 
 /// `duplexPair(options)`: two duplexes, each writing into the other's readable half.
 pub(crate) fn duplex_pair(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let options = arg(c, args, 0);
-    let side = intrinsics(c)?.class(Class::DuplexSide);
+    let side = intrinsic(c, |i| i.class(Class::DuplexSide))?;
     let first = c.construct_rooted(side, side, &[options])?;
     let second = c.construct_rooted(side, side, &[options])?;
     put_slot(c, first, Slot::OtherSide, second)?;

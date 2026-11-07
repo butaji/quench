@@ -2163,6 +2163,8 @@ pub(crate) struct Vm<H> {
     accessor_fields: Vec<AccessorFieldCache>,
     field_add_indices: site_table::SiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
+    /// The layouts and strings JSON parses share within a collection epoch.
+    json_parse_cache: json::JsonParseCache,
     /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
     /// site's keys vary, so the entries are shared, indexed by source shape and atom
     /// (`keyed_add_index`); cleared with the field caches.
@@ -2441,10 +2443,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
         self.heap.release_root_scope_keeping(height, keep);
     }
-    pub(super) fn instantiate_global_declarations(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
+    pub(super) fn instantiate_global_declarations(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         if program.is_module() {
             return Ok(());
         }
