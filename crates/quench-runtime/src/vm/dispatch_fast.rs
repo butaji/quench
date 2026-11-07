@@ -126,6 +126,8 @@ union LaneOperand {
     /// A loop's backward jump in compiled execution: its site (`LoopSite`), which holds the
     /// jump's distance.
     site: *const LoopSite,
+    /// The first record of a vector region: the region, which the view owns.
+    region: *const vector_region::VectorRegion,
 }
 
 /// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
@@ -201,6 +203,13 @@ impl LaneInstruction {
         // SAFETY: `install_loop_sites` writes `site` for the records it gives
         // `lane_loop_jump`, the only handler that reads it; the sites live in the view.
         unsafe { &*self.operand.site }
+    }
+
+    #[inline(always)]
+    fn vector_region(&self) -> *const vector_region::VectorRegion {
+        // SAFETY: the view writes `region` for the records it gives `lane_vector_region`, the
+        // only handler that reads it.
+        unsafe { self.operand.region }
     }
 }
 
@@ -342,6 +351,10 @@ pub(super) struct LaneView {
     /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
+    /// The vector regions whose first records point into them (`vector_region`): only
+    /// those records read them.
+    #[cfg_attr(not(test), allow(dead_code))]
+    vector_regions: Box<[vector_region::VectorRegion]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     start: std::cell::Cell<Ip>,
@@ -9457,6 +9470,9 @@ lane_handler! {
     }
 }
 
+#[path = "vector_region.rs"]
+mod vector_region;
+
 lane_handler! {
     /// `i8x16.shuffle` of two vectors by the record's constant lane indices, as
     /// `lane_wasm_simd` runs an operator.
@@ -11592,6 +11608,7 @@ fn lane_frame_state<H: Host>(
                     vm.js_tier_runs(),
                     vm.programs.js_jit_general_dispatch_enabled(),
                     diagnostics,
+                    &vm.heap,
                 )
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
@@ -12435,6 +12452,7 @@ impl<H: Host> Vm<H> {
                 self.js_tier_runs(),
                 self.programs.js_jit_general_dispatch_enabled(),
                 diagnostics,
+                &self.heap,
             )
         })
     }
@@ -20043,19 +20061,33 @@ fn lane_returns(instruction: WideInstruction) -> bool {
 }
 
 /// The register every compiled linear-memory access of `function` goes
-/// through, when there is exactly one.
+/// through, when there is exactly one: the direct accesses', or in a body with none, its
+/// vector accesses' (`WasmMemoryAddress`) when the prologue binds it, as lowering binds a
+/// memory32 memory once per call.
 pub(super) fn memory_register(function: &Function) -> Option<u16> {
-    let mut registers = function
-        .code
-        .iter()
-        .map(|packed| decoded_instruction(function, *packed))
-        .filter_map(|instruction| match instruction.op() {
-            op if MemoryLoad::from_direct_op(op).is_some()
-                || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
-            Op::WasmMemorySize => Some(instruction.b()),
-            Op::WasmMemoryFill => Some(instruction.a()),
-            _ => None,
-        });
+    let instructions = || function.code.iter().map(|packed| decoded_instruction(function, *packed));
+    let direct = instructions().filter_map(|instruction| match instruction.op() {
+        op if MemoryLoad::from_direct_op(op).is_some()
+            || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
+        Op::WasmMemorySize => Some(instruction.b()),
+        Op::WasmMemoryFill => Some(instruction.a()),
+        _ => None,
+    });
+    single_register(direct).or_else(|| {
+        let vector = single_register(instructions().filter_map(|instruction| {
+            (instruction.op() == Op::WasmMemoryAddress).then(|| instruction.c())
+        }))?;
+        instructions()
+            .take_while(|instruction| {
+                matches!(instruction.op(), Op::WasmFillRegisters | Op::WasmInstanceBinding)
+            })
+            .any(|instruction| instruction.op() == Op::WasmInstanceBinding && instruction.a() == vector)
+            .then_some(vector)
+    })
+}
+
+/// The one register `registers` names, when they name exactly one.
+fn single_register(mut registers: impl Iterator<Item = u16>) -> Option<u16> {
     let first = registers.next()?;
     registers.all(|register| register == first).then_some(first)
 }
@@ -20106,6 +20138,7 @@ fn derive_lane_view<'live, H: Host>(
     loop_tier: bool,
     general_dispatch: bool,
     diagnostics: bool,
+    heap: &crate::heap::Heap,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
@@ -20315,6 +20348,29 @@ fn derive_lane_view<'live, H: Host>(
             .map(|acc| (backward, acc))
         })
     };
+    // Runs of vector instructions execute as one record each (`vector_region`): placed
+    // before the fusions below, which then leave each region's first record alone. Only a
+    // body with SIMD operators derives the liveness they read.
+    let vectors = wasm
+        && decoded.iter().any(|instruction| matches!(instruction.op(), Op::WasmSimd | Op::WasmSimdShuffle));
+    let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
+        Some(live) => vector_region::vector_regions(
+            &decoded,
+            constants,
+            heap,
+            memory_register,
+            live,
+            &jump_targets,
+            &exits,
+            &produced,
+        ),
+        None => Vec::new(),
+    }
+    .into_boxed_slice();
+    for region in &vector_regions {
+        records[region.first()].handler = vector_region::region_handler::<H>() as *const ();
+        records[region.first()].operand = LaneOperand { region };
+    }
     if wasm {
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
@@ -21191,6 +21247,7 @@ fn derive_lane_view<'live, H: Host>(
         environment_window,
         returns_from_entry,
         loops,
+        vector_regions,
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
@@ -22494,6 +22551,7 @@ impl<H: Host> Vm<H> {
                     self.js_tier_runs(),
                     self.programs.js_jit_general_dispatch_enabled(),
                     diagnostics,
+                    &self.heap,
                 )
             })
             .unwrap_or(std::ptr::null())
