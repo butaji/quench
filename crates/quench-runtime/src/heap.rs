@@ -223,9 +223,6 @@ pub(crate) use pacing::PromotionAge;
 const MARKED_PROTOTYPE_WAYS: usize = 2;
 #[inline(always)]
 fn payload_unit() -> usize {
-    #[cfg(feature = "gc-tuning")]
-    return *PAYLOAD_BYTES_PER_ALLOCATION_TUNED;
-    #[cfg(not(feature = "gc-tuning"))]
     PAYLOAD_BYTES_PER_ALLOCATION
 }
 /// The fewest allocations after which a collection is full on a small heap: the first
@@ -237,13 +234,7 @@ pub(crate) fn full_collection_allocation_bound(policy: MemoryPolicy) -> usize {
 }
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
-#[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
-/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
-#[cfg(feature = "gc-tuning")]
-static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
-});
 /// The fewest cells for which a collection runs on the parallel pool: live slots and live
 /// records for a mark (`Heap::parallel_mark`), which visits what is live, and allocated slots
 /// for a sweep (`sweep_full_parallel`), which visits every slot. Below it a full mark takes a
@@ -2781,15 +2772,6 @@ impl Heap {
                 aged,
             },
         );
-        #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
-        if full && crate::trace::Channel::Gc.on() {
-            // Diagnostic recount of the payload ledger after a full sweep.
-            let mut exact = 0;
-            self.for_each_live_cell(|cell| exact += cell.payload_bytes());
-            self.array_records.for_each_live(|_, array| exact += array_payload_bytes(array));
-            eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
-        }
-        #[cfg(feature = "gc-tuning")]
         if crate::trace::Channel::Gc.on() {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }

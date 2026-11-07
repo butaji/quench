@@ -12,7 +12,7 @@
 # made NavierStokes 17% slower at an equal instruction count), so `next!` and `sibling!`
 # dispatch with `become`, and helpers of the default convention return where to continue
 # (`Resumed`) instead of dispatching. The check confirms none is left. It reads symbols, so run
-# it on a binary that keeps them (`production`, `profiling`). It prints each handler with an
+# it on a binary that keeps them (`release`, `profiling`). It prints each handler with an
 # indirect call and how many it has; the HANDLER names given must have none, and the exit
 # status is 1 when one does.
 set -euo pipefail

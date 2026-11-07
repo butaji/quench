@@ -30,7 +30,7 @@ function bunBinary() {
 }
 
 const binaries = {
-  quench: process.env.QUENCH_NODE_BIN ?? path.join(repo, "target/production/quench-node"),
+  quench: process.env.QUENCH_NODE_BIN ?? path.join(repo, "target/release/quench-node"),
   quenchControl: process.env.QUENCH_CONTROL_BIN,
   node: process.env.NODE_BIN ?? process.execPath,
   bun: bunBinary(),
@@ -67,11 +67,7 @@ function engineSpecs() {
       { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: { ...QUENCH_BENCH_ENV } },
     ];
     if (binaries.quenchControl) {
-      const controlEnv = { ...QUENCH_BENCH_ENV };
-      if (process.env.QUENCH_CONTROL_GC_MAX_YOUNG) {
-        controlEnv.QUENCH_GC_MAX_YOUNG = process.env.QUENCH_CONTROL_GC_MAX_YOUNG;
-      }
-      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: controlEnv });
+      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: { ...QUENCH_BENCH_ENV } });
     }
     if (process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT !== "1") {
       specs.push({ name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} });
@@ -240,19 +236,6 @@ async function runOne(spec, round) {
       QUENCH_BENCH_WARMUPS: env.QUENCH_BENCH_WARMUPS ?? "250",
       ...Object.fromEntries([
         "QUENCH_DEV",
-        "QUENCH_GC_YOUNG",
-        "QUENCH_GC_YOUNG_NUM",
-        "QUENCH_GC_YOUNG_DEN",
-        "QUENCH_GC_MIN_YOUNG",
-        "QUENCH_GC_MAX_YOUNG",
-        "QUENCH_GC_OLD_GROWTH",
-        "QUENCH_GC_OLD_GROWTH_NUM",
-        "QUENCH_GC_OLD_GROWTH_DEN",
-        "QUENCH_GC_MIN_OLD_GROWTH",
-        "QUENCH_GC_ALLOCATION_CAP",
-        "QUENCH_GC_ALLOCATION_CAP_NUM",
-        "QUENCH_GC_ALLOCATION_CAP_DEN",
-        "QUENCH_GC_MIN_ALLOCATION_CAP",
         "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT",
         "QUENCH_NPM_PERF_SKIP_BUN_NO_JIT",
         "QUENCH_NPM_PERF_RSS_SAMPLE_MS",
