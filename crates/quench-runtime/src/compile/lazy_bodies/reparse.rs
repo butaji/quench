@@ -6,16 +6,6 @@ use oxc_ast::ast::{Expression, Function, Program, Statement};
 use oxc_span::SourceType;
 use rustc_hash::FxHashSet;
 
-/// Arena bytes reserved per source byte for a parse: the whole program's parse reserves as
-/// much (`Compiler::specialize_with_mode_and_private_names`), and pages it does not touch
-/// cost no memory.
-const ARENA_BYTES_PER_SOURCE_BYTE: usize = 32;
-
-/// The arena for parsing `text` again.
-pub(in crate::compile) fn arena(text: &str) -> Allocator {
-    Allocator::with_capacity(text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE))
-}
-
 /// A function's text parsed again alone, with every position an offset into the program's
 /// text.
 pub(in crate::compile) struct Reparsed<'a> {

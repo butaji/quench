@@ -287,7 +287,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             put_bool(c, called, "0", true)?;
             let (error, socket) = (at(0), at(1));
             if c.truthy_rooted(error)? {
-                let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+                let nop = crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)?;
                 let emit_error = function(c, super::outgoing::Member::EmitError, "", &[request, error, nop])?;
                 next_tick(c, emit_error, &[])?;
             } else {

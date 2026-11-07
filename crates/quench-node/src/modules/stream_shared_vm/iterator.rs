@@ -6,7 +6,7 @@
 
 use super::errors;
 use super::{
-    arg, call_method, captures, closure, define_methods, get, intrinsics, is_null, is_undefined, iterator_result, on,
+    arg, call_method, captures, closure, define_methods, get, intrinsic, is_null, is_undefined, iterator_result, on,
     put, remove_listener, Context, Key, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -52,7 +52,7 @@ fn create(c: &mut Context<'_>, stream: RootId, options: RootId) -> Outcome {
     super::put_number(c, record, "status", CREATED)?;
     let queue = c.array_rooted(&[])?;
     put(c, record, "queue", queue)?;
-    let nop = intrinsics(c)?.nop;
+    let nop = intrinsic(c, |i| i.nop)?;
     put(c, record, "callback", nop)?;
     let iterator = c.object_rooted()?;
     define_methods(c, iterator, &[(Key::Symbol(Slot::AsyncIterator), "streamIteratorSelf", "[Symbol.asyncIterator]")])?;
@@ -183,7 +183,7 @@ pub(crate) fn on_finished(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
 /// `callback(); callback = nop`.
 fn wake(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
     let callback = get(c, record, "callback")?;
-    let nop = intrinsics(c)?.nop;
+    let nop = intrinsic(c, |i| i.nop)?;
     put(c, record, "callback", nop)?;
     let undefined = c.undefined();
     c.call_rooted(callback, undefined, &[]).map(drop)

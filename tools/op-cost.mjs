@@ -160,7 +160,7 @@ const PEERS = [
 function run(command, args, env) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
-      env: { ...process.env, QUENCH_COMPILE_CACHE: "", ...env },
+      env: { ...process.env, XDG_CACHE_HOME: "/dev/null", ...env },
     });
     let out = "";
     let err = "";
@@ -219,7 +219,7 @@ const cachedPeers = peersFile && existsSync(peersFile) ? JSON.parse(readFileSync
 function writesNoCode(file) {
   const trace = join(directory, "no-jit.strace");
   execFileSync("strace", ["-f", "-e", "trace=mmap,mprotect", "-o", trace, quench, ...MODES["no-jit"][0], file], {
-    env: { ...process.env, QUENCH_COMPILE_CACHE: "" },
+    env: { ...process.env, XDG_CACHE_HOME: "/dev/null" },
     stdio: "ignore",
   });
   return !readFileSync(trace, "utf8")

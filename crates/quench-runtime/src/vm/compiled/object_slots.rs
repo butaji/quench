@@ -258,7 +258,7 @@ mod tests {
     #[cfg(feature = "jit")]
     #[test]
     fn checked_table_admits_once_without_admitting_receiver_handles() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 3]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn direct_family_admission_tests_the_family_alone() {
         use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         // A direct object's id names a record of the reservation, whose base every native
         // entry reads: only the family needs a test, and none where a fact proves it.

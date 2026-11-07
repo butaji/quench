@@ -729,11 +729,11 @@ impl<H: Host> Vm<H> {
         let cell = match native {
             Native::Map => Cell::Map {
                 object: Box::new(Self::empty_object(prototype)),
-                entries: Box::default(),
+                entries: Default::default(),
             },
             Native::Set => Cell::Set {
                 object: Box::new(Self::empty_object(prototype)),
-                entries: Box::default(),
+                entries: Default::default(),
             },
             _ => return Err(JsError("invalid collection constructor".into())),
         };
@@ -1453,22 +1453,14 @@ impl<H: Host> Vm<H> {
     /// and every NaN as one, strings and BigInts by content, everything else by identity.
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut hasher = rustc_hash::FxHasher::default();
         if let Some(number) = key.as_number() {
-            let number = if number == 0.0 {
-                0.0
-            } else if number.is_nan() {
-                f64::NAN
-            } else {
-                number
-            };
-            number.to_bits().hash(&mut hasher);
-        } else {
-            match self.heap.get(key) {
-                _ if let Some(text) = self.heap.string(key) => text.hash(&mut hasher),
-                Some(Cell::BigInt(value)) => value.hash(&mut hasher),
-                _ => key.hash(&mut hasher),
-            }
+            return crate::heap::number_key_hash(number);
+        }
+        let mut hasher = rustc_hash::FxHasher::default();
+        match self.heap.get(key) {
+            _ if let Some(text) = self.heap.string(key) => text.hash(&mut hasher),
+            Some(Cell::BigInt(value)) => value.hash(&mut hasher),
+            _ => key.hash(&mut hasher),
         }
         hasher.finish()
     }

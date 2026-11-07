@@ -61,7 +61,7 @@ function help() {
   console.log(`Architecture-neutral VM microbench experiments
 Usage: node quench-bench/micros/run.mjs <command> [experiment] [options]
 Commands: list, smoke, measure, diagnose, next, qualify, identity
---engine PATH (default target/production/quench-node), --bun PATH, --oracle PATH
+--engine PATH (default target/release/quench-node), --bun PATH, --oracle PATH
 --size small|medium|large|all, --variant NAME, --include-legacy, --limit N, --reserved
 --pairs N, --warmup-ms N, --window-ms N, --timeout-ms N, --out FILE.json
 --instrument counters|sites|events --trace-engine PATH [--site CODE:PC]
@@ -109,7 +109,7 @@ async function execute(command, selected, tasks, catalog, flags, options, qualif
 }
 
 function resolveEngines(flags) {
-  return { oracle: resolveBinary(flags.oracle || process.execPath), comparator: resolveBinary(flags.bun || "bun"), candidate: resolveBinary(flags.engine || "target/production/quench-node") };
+  return { oracle: resolveBinary(flags.oracle || process.execPath), comparator: resolveBinary(flags.bun || "bun"), candidate: resolveBinary(flags.engine || "target/release/quench-node") };
 }
 
 function exitStatus(report, qualification) { return report.results.some((r) => r.correctness !== "pass") || (qualification && report.qualification !== "pass") ? 1 : 0; }

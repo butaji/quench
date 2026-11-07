@@ -37,18 +37,67 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
     ShapeLookupIndex::new(entries, attributes)
 }
 
+/// The slot of an entry whose property was deleted (`ShapeLookupIndex::remove`).
+pub(super) const VACANT_SLOT: u32 = u32::MAX;
+
+impl<H: Host> Vm<H> {
+    /// The key a transition from `shape` is cached under, if any. A dictionary shape caches
+    /// none: it belongs to the one object that made it a dictionary, which only moves forward,
+    /// so no later add or delete would take a cached transition from it.
+    pub(super) fn transition_cache_key(&self, shape: u32, transition: ShapeTransition) -> Option<ShapeTransitionKey> {
+        transition.cache_key().filter(|_| !self.shape_is_dictionary(shape))
+    }
+    /// The properties of `shape` in definition order, with their slots.
+    pub(super) fn shape_entries(&self, shape: u32) -> impl Iterator<Item = &(PropertyKey, u32)> + Clone {
+        self.shape_lookup_index(shape).live_entries()
+    }
+    /// How many properties `shape` holds.
+    pub(super) fn shape_entry_count(&self, shape: u32) -> usize {
+        self.shape_lookup_index(shape).live_len()
+    }
+    pub(super) fn shape_lookup_index(&self, shape: u32) -> &ShapeLookupIndex {
+        self.shapes[shape as usize].lookup_index.get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
+    }
+}
+
 impl ShapeLookupIndex {
+    /// The live properties in definition order, with their slots.
+    pub(super) fn live_entries(&self) -> impl Iterator<Item = &(PropertyKey, u32)> + Clone {
+        self.entries.iter().filter(|(_, slot)| *slot != VACANT_SLOT)
+    }
+    /// How many properties the shape holds: only live entries have positions.
+    fn live_len(&self) -> usize {
+        self.positions.len()
+    }
     /// Drops `key`, deleted from `slot`, keeping the rest in definition order: what
     /// `derive_shape_lookup_index` derives past a deletion, without walking the chain again.
+    /// The entry is only marked vacant, so a deletion costs one hash removal; an object used
+    /// as a map (add and delete in turn) would otherwise shift and renumber every later entry
+    /// on each deletion. Once vacant entries outnumber live ones they are compacted, which
+    /// keeps the work per deletion constant on average.
     pub(super) fn remove(&mut self, key: PropertyKey, slot: u32) -> Option<()> {
         let entries = &self.entries;
         let found = self.positions.find_entry(Self::key_hash(key), |&position| entries[position as usize].0 == key);
         let position = found.ok()?.remove().0;
-        self.entries.remove(position as usize);
-        for later in self.positions.iter_mut().filter(|later| **later > position) {
-            *later -= 1;
-        }
+        self.entries[position as usize].1 = VACANT_SLOT;
         self.attributes.remove(&slot);
+        if self.entries.len() > 2 * self.live_len() {
+            self.compact();
+        }
         Some(())
     }
+    /// Drops the vacant entries and renumbers the live ones' positions.
+    fn compact(&mut self) {
+        self.entries.retain(|(_, slot)| *slot != VACANT_SLOT);
+        self.positions.clear();
+        for (position, &(key, _)) in self.entries.iter().enumerate() {
+            let entries = &self.entries;
+            self.positions.insert_unique(Self::key_hash(key), position as u32, |&position| {
+                Self::key_hash(entries[position as usize].0)
+            });
+        }
+    }
 }
+
+#[cfg(test)]
+mod tests;

@@ -4,6 +4,7 @@ mod array_literal;
 mod call;
 mod destructure;
 mod disposal;
+mod environment_clones;
 mod expression;
 mod iteration;
 mod literal_template;
@@ -131,12 +132,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     private_name_references: u64,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
-    pub(super) environment_clones: Vec<Vec<u16>>,
-    /// For each clone plan, the slots of every lexical scope active at its
-    /// site; see `per_site_environment_clones`.
-    environment_clone_scopes: Vec<Vec<u16>>,
-    /// Clone plans that open a class evaluation; their slots are never reset.
-    pub(super) class_environment_clones: FxHashSet<usize>,
+    pub(super) clone_plans: environment_clones::ClonePlans,
     controls: Vec<ControlTarget>,
     iterator_closures: Vec<IteratorClosure>,
     pub(super) iterator_close_ranges: Vec<(u32, u32)>,
@@ -173,6 +169,10 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The capture base as of a local count and parameter context (`capture_base`).
     capture_base_memo: Option<((usize, bool), Rc<super::capture_scope::BaseBindings>)>,
     disposal_scopes: Vec<DisposalScope>,
+    /// For each base name `hidden_local` was asked for, the suffix its next local takes:
+    /// a function with many blocks, loops or classes asks for the same name once per
+    /// construct, and probing every earlier name's spelling made its compile quadratic.
+    hidden_local_suffixes: FxHashMap<Atom, u32>,
 }
 
 #[derive(Default)]
@@ -249,9 +249,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             private_name_references,
             handlers: vec![],
             binding_sites: vec![],
-            environment_clones: vec![],
-            environment_clone_scopes: vec![],
-            class_environment_clones: FxHashSet::default(),
+            clone_plans: Default::default(),
             controls: vec![],
             iterator_closures: vec![],
             iterator_close_ranges: vec![],
@@ -282,6 +280,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             capture_scope_memo: None,
             capture_base_memo: None,
             disposal_scopes: vec![DisposalScope::default()],
+            hidden_local_suffixes: FxHashMap::default(),
         }
     }
 
@@ -683,12 +682,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.emit(Op::SetFunctionName, value, 0, 0, name);
     }
 
+    /// A fresh local named `name`, or `name` with a `HIDDEN_LOCAL_SUFFIX` and a count when a
+    /// local of that name exists (`source_binding_name` drops the suffix again).
     pub(super) fn hidden_local(&mut self, name: &str) -> Atom {
-        let mut candidate = name.to_owned();
-        while self.local_slots.contains_key(&self.owner.atom(&candidate)) {
-            candidate.push('_');
+        let base = self.owner.atom(name);
+        let mut suffix = self.hidden_local_suffixes.get(&base).copied().unwrap_or(0);
+        let mut atom = base;
+        while self.local_slots.contains_key(&atom) {
+            suffix += 1;
+            atom = self
+                .owner
+                .atom(&format!("{name}{}{suffix}", crate::bytecode::HIDDEN_LOCAL_SUFFIX));
         }
-        let atom = self.owner.atom(&candidate);
+        self.hidden_local_suffixes.insert(base, suffix);
         let slot = self.locals.len() as u16;
         Rc::get_mut(&mut self.local_slots)
             .expect("function local scope is uniquely owned")
@@ -933,85 +939,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn clone_lexical_environment(&mut self) {
         self.clone_environment_slots(self.lexical_scope_slots());
-    }
-
-    pub(super) fn clone_environment_slots(&mut self, mut slots: Vec<u16>) {
-        slots.sort_unstable();
-        slots.dedup();
-        if slots.is_empty() {
-            return;
-        }
-        let scopes = self.active_lexical_slots();
-        let index = if let Some(index) = self
-            .environment_clones
-            .iter()
-            .zip(&self.environment_clone_scopes)
-            .position(|(existing, existing_scopes)| {
-                *existing == slots && *existing_scopes == scopes
-            }) {
-            index
-        } else {
-            self.push_environment_clone(slots, scopes)
-        };
-        self.emit(Op::CloneEnv, 0, 0, 0, index as u32);
-    }
-
-    /// Adds a clone plan for `slots`, sited where the lexical scopes owning
-    /// `scopes` are active, and returns its index.
-    pub(super) fn push_environment_clone(&mut self, slots: Vec<u16>, scopes: Vec<u16>) -> usize {
-        self.environment_clones.push(slots);
-        self.environment_clone_scopes.push(scopes);
-        self.environment_clones.len() - 1
-    }
-
-    /// The slots of every lexical scope active at the current position.
-    pub(super) fn active_lexical_slots(&self) -> Vec<u16> {
-        let mut slots = self
-            .lexical_scopes
-            .iter()
-            .flat_map(|scope| scope.bindings.values())
-            .filter_map(|binding| self.local_slots.get(binding).copied())
-            .collect::<Vec<_>>();
-        slots.sort_unstable();
-        slots.dedup();
-        slots
-    }
-
-    /// The clone plans the function runs. A clone owns its fresh slots; every
-    /// other slot is shared with the slot's owner. A slot some clone owns but
-    /// whose scope is not active at another clone's site (an inner loop's or
-    /// a loop body's binding, seen from the loop's next iteration) is out of
-    /// reach there, so that clone resets it: sharing or copying it would keep
-    /// the previous iteration's environment, and through it every earlier
-    /// one, alive for as long as the activation runs. A class's slots (its
-    /// private names, homes and field initializers) are no lexical scope's
-    /// bindings, yet remain reachable from nested classes and closures created
-    /// while the class evaluates, so class clones' slots are never reset.
-    pub(super) fn per_site_environment_clones(&mut self) -> Vec<crate::bytecode::EnvironmentClone> {
-        let owned = self
-            .environment_clones
-            .iter()
-            .enumerate()
-            .filter(|(plan, _)| !self.class_environment_clones.contains(plan))
-            .flat_map(|(_, slots)| slots)
-            .copied()
-            .collect::<FxHashSet<_>>();
-        let scopes = std::mem::take(&mut self.environment_clone_scopes);
-        std::mem::take(&mut self.environment_clones)
-            .into_iter()
-            .zip(scopes)
-            .map(|(fresh, active)| {
-                let mut reset = owned
-                    .iter()
-                    .copied()
-                    .filter(|slot| {
-                        active.binary_search(slot).is_err() && fresh.binary_search(slot).is_err()
-                    })
-                    .collect::<Vec<_>>();
-                reset.sort_unstable();
-                crate::bytecode::EnvironmentClone { fresh, reset }
-            })
-            .collect()
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {

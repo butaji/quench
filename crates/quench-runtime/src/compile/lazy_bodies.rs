@@ -10,8 +10,10 @@
 //! early check alone makes the compilation fail, and the program compiles again eagerly,
 //! so its diagnostics are the eager ones.
 mod reparse;
-pub(super) use reparse::{Nesting, arena, reparse};
+pub(super) use reparse::{Nesting, reparse};
 use oxc_allocator::Allocator;
+mod parse_arena;
+pub(super) use parse_arena::{arena, release_after, release_free_pages, sized_arena};
 use oxc_ast::ast::{
     Argument, CallExpression, Expression, ExpressionStatement, Function, FunctionBody,
     IdentifierReference, Program, Statement,

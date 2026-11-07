@@ -1058,7 +1058,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
                 let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
@@ -1385,26 +1385,20 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc_is_resume = true;
                 self.maybe_collect(p);
             }
-            Op::JumpFalse => {
+            Op::JumpFalse | Op::JumpTrue => {
                 let value = self.read(f, i.register_a());
                 let truthy = self.truthy(value);
                 #[cfg(feature = "profile-aggregate")]
                 self.profile
                     .branch_value(value.profile_kind() as usize, truthy);
-                if !truthy {
+                if truthy == (i.op() == Op::JumpTrue) {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::JumpTrue => {
-                let value = self.read(f, i.register_a());
-                let truthy = self.truthy(value);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .branch_value(value.profile_kind() as usize, truthy);
-                if truthy {
-                    *pc = i.jump_target() as usize;
-                }
-            }
+            Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
+                Some(key) => self.write(f, i.result_register(), key),
+                None => *pc = i.jump_target() as usize,
+            },
             Op::JumpBinaryFalse => {
                 let operator = i.binary_operator_field();
                 let left_operand = i.operand_b();
@@ -1913,7 +1907,7 @@ pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode
 }
 
 impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator`, `IteratorClose` or `AppendArray` of its operand values
+    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The
     /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
@@ -1927,6 +1921,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
             Op::GetIterator => self.get_iterator(p, operand).map(Some),
+            Op::ForInStart => self.for_in_start(p, operand).map(Some),
             Op::IteratorClose => self.iterator_close(p, operand).map(Some),
             Op::AppendArray => {
                 let array = a.expect("AppendArray names its array");

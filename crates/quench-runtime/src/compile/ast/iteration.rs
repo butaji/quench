@@ -68,7 +68,6 @@ impl FunctionCompiler<'_, '_> {
             &item.body,
             source,
             item.r#await,
-            None,
             clone_environment,
             label,
         );
@@ -99,35 +98,49 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         let object = self.expression(&item.right);
-        let object_atom = self.hidden_local("\0quench:for-in:source");
-        self.store_atom(object_atom, object);
-        let object = self.load_atom(object_atom);
-        let keys = self.load_name(crate::bytecode::FOR_IN_KEYS_BINDING);
-        let this = self.literal(Constant::Undefined);
-        let base = self.next_reg;
-        let argument = self.reg();
-        self.emit(Op::Move, argument, object, 0, 0);
-        let source = self.reg();
-        self.emit(
-            Op::Call,
-            source,
-            keys,
-            this,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 1, false, false),
-        );
+        let state = self.reg();
+        self.emit(Op::ForInStart, state, object, 0, 0);
         let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
-        self.for_iterable(
-            &item.left,
-            &item.body,
-            source,
-            false,
-            Some(object_atom),
-            clone_environment,
-            label,
-        );
+        self.for_in_keys(&item.left, &item.body, state, clone_environment, label);
         if scoped {
             self.lexical_scopes.pop();
         }
+    }
+
+    /// Steps the for-in `state` (`Op::ForInNext`), which yields each snapshot key still an
+    /// enumerable property: the snapshot is an internal array no script reaches, so no
+    /// iterator protocol runs and no abrupt exit has anything to close.
+    fn for_in_keys(
+        &mut self,
+        left: &ForStatementLeft<'_>,
+        body: &Statement<'_>,
+        state: Register,
+        clone_environment: bool,
+        label: Option<Atom>,
+    ) {
+        let state_atom = self.hidden_local("\0quench:for-in:state");
+        self.store_atom(state_atom, state);
+        let head = self.code.len() as u32;
+        let state = self.load_atom(state_atom);
+        let key = self.reg();
+        let end_edge = self.emit(Op::ForInNext, key, state, 0, 0);
+        self.push_control(ControlKind::Loop, label);
+        if clone_environment
+            && matches!(left, ForStatementLeft::VariableDeclaration(declaration)
+                if declaration.kind != VariableDeclarationKind::Var)
+        {
+            self.clone_lexical_environment();
+        }
+        self.bind_for_of_left(left, key);
+        self.statement(body);
+        let control = self.controls.pop().unwrap();
+        let update = self.code.len() as u32;
+        self.patch_edges(&control.continues, update);
+        self.emit(Op::Jump, 0, 0, 0, head);
+        let end = self.code.len() as u32;
+        self.patch_to(end_edge, end);
+        self.patch_edges(&control.breaks, end);
+        self.resolve_control_destinations(&control, end, Some(update));
     }
 
     fn for_iterable(
@@ -136,7 +149,6 @@ impl FunctionCompiler<'_, '_> {
         body: &Statement<'_>,
         source: Register,
         await_values: bool,
-        for_in_source: Option<Atom>,
         clone_environment: bool,
         label: Option<Atom>,
     ) {
@@ -201,30 +213,8 @@ impl FunctionCompiler<'_, '_> {
             value_cache,
             value_atom,
         );
-        let invalid_for_in_key = for_in_source.map(|object_atom| {
-            let validate = self.load_name(crate::bytecode::FOR_IN_KEY_IS_ENUMERABLE_BINDING);
-            let object = self.load_atom(object_atom);
-            let base = self.next_reg;
-            let object_arg = self.reg();
-            self.emit(Op::Move, object_arg, object, 0, 0);
-            let key_arg = self.reg();
-            self.emit(Op::Move, key_arg, value, 0, 0);
-            let valid = self.reg();
-            let this = self.literal(Constant::Undefined);
-            self.emit(
-                Op::Call,
-                valid,
-                validate,
-                this,
-                crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
-            );
-            self.emit(Op::JumpFalse, valid, 0, 0, 0)
-        });
         let iteration_body_start = self.code.len() as u32;
-        let tracks_iterator_cleanup = for_in_source.is_none();
-        if tracks_iterator_cleanup {
-            self.emit(Op::IteratorCleanupPush, iterator, done, 0, 0);
-        }
+        self.emit(Op::IteratorCleanupPush, iterator, done, 0, 0);
         let using_iteration = match left {
             ForStatementLeft::VariableDeclaration(declaration)
                 if matches!(
@@ -275,30 +265,22 @@ impl FunctionCompiler<'_, '_> {
             iterator_atom,
             iteration_body_start,
             iteration_body_end,
-            tracks_iterator_cleanup,
             await_values,
         );
         let control = self.controls.pop().unwrap();
         self.iterator_closures.pop();
         let iteration_cleanup = self.code.len() as u32;
         self.patch_edges(&control.continues, iteration_cleanup);
-        if tracks_iterator_cleanup {
-            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
-        }
+        self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
         let skip_break_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
         let break_cleanup = self.code.len() as u32;
         self.patch_edges(&control.breaks, break_cleanup);
-        if tracks_iterator_cleanup {
-            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
-        }
+        self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
         let break_close = self.emit(Op::Jump, 0, 0, 0, 0);
         let update = self.code.len() as u32;
         self.resolve_control_destinations(&control, break_cleanup, Some(iteration_cleanup));
         self.patch_instruction(skip_break_cleanup, update);
         self.emit(Op::Jump, 0, 0, 0, head);
-        if let Some(edge) = invalid_for_in_key {
-            self.patch_to(edge, head);
-        }
         let close = self.code.len() as u32;
         self.patch_instruction(break_close, close);
         let iterator = self.load_atom(iterator_atom);
@@ -318,7 +300,6 @@ impl FunctionCompiler<'_, '_> {
         iterator: Atom,
         start: u32,
         end: u32,
-        tracks_iterator_cleanup: bool,
         await_values: bool,
     ) {
         let error = self.hidden_local("\0quench:for-of-body-error");
@@ -335,9 +316,7 @@ impl FunctionCompiler<'_, '_> {
         let slot = self.local_slot(error);
         let with_depth = self.with_depth;
 
-        if tracks_iterator_cleanup {
-            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
-        }
+        self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
         let close_iterator = self.load_atom(iterator);
         let close_result = self.close_iterator(close_iterator);
         if await_values {
@@ -363,9 +342,7 @@ impl FunctionCompiler<'_, '_> {
         let (return_target, return_slot) = if self.generator {
             let return_atom = self.hidden_local("\0quench:for-of-body-return");
             let return_target = self.code.len() as u32;
-            if tracks_iterator_cleanup {
-                self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
-            }
+            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
             let close_iterator = self.load_atom(iterator);
             let close_result = self.close_iterator(close_iterator);
             if await_values {

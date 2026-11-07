@@ -14,12 +14,15 @@ const FUNCTIONS: usize = 3;
 const STATEMENTS: usize = 6;
 const EXPRESSION_DEPTH: u32 = 3;
 
-/// Operand leaves: parameters, locals, fields, elements and the literals at JavaScript's
-/// numeric and type edges.
+/// Operand leaves: parameters, locals, fields, elements, the literals at JavaScript's
+/// numeric and type edges, and calls of small leaf callees (`PRELUDE`) that store fields past
+/// their caches and read through getters, as a lane leaf call runs them.
 const LEAVES: &[&str] = &[
     "a", "b", "t0", "t1", "o.p", "o.q", "arr[0]", "arr[i & 3]", "arr.length", "0", "-0", "1", "-1",
     "2147483647", "-2147483648", "4294967295", "0.5", "-1.5", "1e21", "NaN", "Infinity", "'7'",
-    "'x'", "''", "true", "null", "undefined", "c()",
+    "'x'", "''", "true", "null", "undefined", "c()", "put(o, a)", "put(sh[i & 7], b)", "take(g)",
+    "take(sh[i & 7])", "size(m)", "keys(o)",
+    "keys(sh[i & 7])", "keys(arr)",
 ];
 const BINARY: &[&str] = &[
     "+", "-", "*", "/", "%", "|", "&", "^", "<<", ">>", ">>>", "<", "<=", ">", "===", "==", "!==",
@@ -110,6 +113,13 @@ function mix(v) {
   h = (Math.imul(h, 31) + (n | 0)) | 0;
 }
 function counter() { var k = 0; return function () { k = (k + 1) | 0; return k; }; }
+function put(r, v) { r.w = v; return r.w; }
+function take(r) { return r.v; }
+function size(r) { return r.size; }
+function keys(r) { var s = ''; for (var k in r) { s += k; if (k === 'q') delete r.p; } return s; }
+var g = {get v() { return this.p; }, p: 3}, m = new Map([[1, 2]]);
+var sh = [{}, {w: 1}, {a: 1, w: 2}, Object.freeze({w: 3}), {set w(x) { this.s = x; }, get w() { return this.s; }},
+  Object.create(g), [], {get v() { return 9; }}];
 ";
 
 fn program(seed: u64) -> String {

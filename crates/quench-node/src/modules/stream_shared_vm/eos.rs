@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::utils::{self, is_readable_node_stream, is_writable_node_stream};
 use super::{
-    arg, captures, closure, get, intrinsics, is_nullish, is_undefined, next_tick, on, put,
+    arg, captures, closure, get, intrinsic, is_nullish, is_undefined, next_tick, on, put,
     put_bool, remove_listener, Context, Outcome,
 };
 use quench_runtime::{RootId, RootedError};
@@ -204,7 +204,7 @@ fn eos_web(c: &mut Context<'_>, record: RootId, stream: RootId, signal: RootId) 
     let resolver = closure(c, "streamEosWebSettled", "", &[record])?;
     let then = get(c, promise, "then")?;
     c.call_rooted(then, promise, &[resolver, resolver])?;
-    let nop = intrinsics(c)?.nop;
+    let nop = intrinsic(c, |i| i.nop)?;
     Ok(nop)
 }
 
@@ -242,7 +242,7 @@ fn invoke(c: &mut Context<'_>, record: RootId, args: &[RootId], even_cleaned: bo
     put_bool(c, record, "called", true)?;
     let disposable = get(c, record, "disposable")?;
     if !is_nullish(c, disposable) {
-        let key = intrinsics(c)?.slot(super::Slot::Dispose);
+        let key = intrinsic(c, |i| i.slot(super::Slot::Dispose))?;
         let dispose = c.get_property_rooted(disposable, key)?;
         c.call_rooted(dispose, disposable, &[])?;
     }
