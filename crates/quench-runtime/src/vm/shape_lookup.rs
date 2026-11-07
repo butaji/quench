@@ -41,12 +41,6 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
 pub(super) const VACANT_SLOT: u32 = u32::MAX;
 
 impl<H: Host> Vm<H> {
-    /// The key a transition from `shape` is cached under, if any. A dictionary shape caches
-    /// none: it belongs to the one object that made it a dictionary, which only moves forward,
-    /// so no later add or delete would take a cached transition from it.
-    pub(super) fn transition_cache_key(&self, shape: u32, transition: ShapeTransition) -> Option<ShapeTransitionKey> {
-        transition.cache_key().filter(|_| !self.shape_is_dictionary(shape))
-    }
     /// The properties of `shape` in definition order, with their slots.
     pub(super) fn shape_entries(&self, shape: u32) -> impl Iterator<Item = &(PropertyKey, u32)> + Clone {
         self.shape_lookup_index(shape).live_entries()
