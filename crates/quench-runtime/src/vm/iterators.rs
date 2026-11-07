@@ -2,7 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 use super::*;
-use crate::heap::IteratorZipMode;
+use crate::heap::{HelperPhase, IteratorZipMode};
 
 /// Registered iterators of one Map or Set before registration first prunes the finished and
 /// collected ones (`Vm::collection_iterator`); below it the registry stays as appended.
@@ -1022,14 +1022,7 @@ impl<H: Host> Vm<H> {
             kind,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         });
         let registered = match self.heap.get_mut(source) {
             Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
@@ -1092,14 +1085,7 @@ impl<H: Host> Vm<H> {
                 kind,
                 index: 0,
                 done: false,
-                ext: crate::heap::IteratorExt {
-                    position_high: 0,
-                    next_method: None,
-                    helper: None,
-                    helper_running: false,
-                    helper_started: false,
-                    generator: None,
-                },
+                ext: crate::heap::IteratorExt::default(),
             }))
         })();
         self.heap.release_root(root);
@@ -1201,12 +1187,8 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: crate::heap::IteratorExt {
-                position_high: 0,
                 next_method: Some(next_method),
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
+                ..Default::default()
             },
         });
         self.heap.release_root(next_root);
@@ -1238,12 +1220,8 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
                 helper: Some(Box::new(helper)),
-                helper_running: false,
-                helper_started: false,
-                generator: None,
+                ..Default::default()
             },
         });
         Ok(iterator)
@@ -1268,7 +1246,7 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord {
                 source, done, ext, ..
             }) if let Some(helper) = &ext.helper => {
-                (*source, helper.as_ref().clone(), ext.helper_running, *done)
+                (*source, helper.as_ref().clone(), ext.helper_phase == HelperPhase::Running, *done)
             }
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
@@ -1278,12 +1256,7 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = true;
-        }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_started = true;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Running);
         let result = match state {
             IteratorHelper::RegExpStringMatchAll { .. } => Err(self
                 .type_error(p, "RegExp string iterator is not a helper".into())
@@ -1337,10 +1310,14 @@ impl<H: Host> Vm<H> {
                 Err(error)
             }
         };
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = false;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Idle);
         result
+    }
+
+    fn set_helper_phase(&mut self, iterator: Value, phase: HelperPhase) {
+        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
+            ext.helper_phase = phase;
+        }
     }
 
     pub(super) fn iterator_helper_return(
@@ -1352,7 +1329,6 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord {
                 source, done, ext, ..
             }) if let Some(helper) = &ext.helper => {
-                let (helper_running, helper_started) = (&ext.helper_running, &ext.helper_started);
                 let active = match helper.as_ref() {
                     IteratorHelper::Concat { active, .. } => active.iter().copied().collect(),
                     IteratorHelper::Zip {
@@ -1368,7 +1344,7 @@ impl<H: Host> Vm<H> {
                     } => vec![*source, *inner],
                     _ => vec![*source],
                 };
-                (*done, *helper_running, *helper_started, active)
+                (*done, ext.helper_phase == HelperPhase::Running, ext.helper_phase != HelperPhase::Fresh, active)
             }
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
@@ -1378,9 +1354,7 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = true;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Running);
         let result = (|| {
             if !started {
                 self.mark_iterator_done(iterator);
@@ -1390,9 +1364,7 @@ impl<H: Host> Vm<H> {
             close_result?;
             self.iterator_result(Value::UNDEFINED, true)
         })();
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = false;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Idle);
         result
     }
 
@@ -2806,14 +2778,7 @@ impl<H: Host> Vm<H> {
             kind: IteratorKind::AsyncFromSync,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         }))
     }
 
@@ -2847,14 +2812,7 @@ impl<H: Host> Vm<H> {
             kind,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         }))
     }
 
@@ -3434,7 +3392,7 @@ impl<H: Host> Vm<H> {
                 IterationStep::Array
             }
             Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
-                if ext.generator.as_ref().is_some_and(|record| !record.running)
+                if ext.generator.as_ref().is_some_and(|record| !record.is_executing())
                     && self.is_current_realm_native(method, Native::GeneratorNext) =>
             {
                 IterationStep::Generator

@@ -824,8 +824,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(holder) else {
                 return false;
             };
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || data.boxed_primitive().is_some()
                 || !self.lacks_own_index(holder, index)
             {
@@ -871,8 +870,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(holder) else {
                 return false;
             };
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || data.boxed_primitive().is_some()
                 || data.has_indexed_descriptors()
                 || self.shape_has_index_key(data.shape())
@@ -3392,8 +3390,7 @@ impl<H: Host> Vm<H> {
             }
             let data = self.inherited_chain_link(prototype, atom, function_links)?;
             let shape = data.shape();
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || self.shape_is_dictionary(shape)
             {
                 return None;
@@ -3930,7 +3927,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.object(object) else {
             return false;
         };
-        if data.is_module_namespace() || data.is_arguments_object() {
+        if data.has_exotic_access() {
             return false;
         }
         let index = self.field_cache_index(site);
@@ -4449,8 +4446,7 @@ impl<H: Host> Vm<H> {
             }
             let data = self.heap.object_record(prototype)?;
             let shape = data.shape();
-            if data.is_module_namespace()
-                || data.is_arguments_object()
+            if data.has_exotic_access()
                 || self.shape_is_dictionary(shape)
                 || self
                     .property_attributes(prototype, key)
@@ -4588,8 +4584,7 @@ impl<H: Host> Vm<H> {
                 return false;
             };
             if data.shape() != *expected_shape
-                || data.is_module_namespace()
-                || data.is_arguments_object()
+                || data.has_exotic_access()
             {
                 return false;
             }
@@ -4616,7 +4611,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.object(object) else {
             return false;
         };
-        if data.is_module_namespace() || data.is_arguments_object() {
+        if data.has_exotic_access() {
             return false;
         }
         let site = self.field_cache_index(site);
