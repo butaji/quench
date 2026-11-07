@@ -23,10 +23,10 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
                 seen_keys.insert(key);
                 seen_slots.insert(slot);
             }
-            ShapeTransition::Descriptor { slot, attributes: value } => {
-                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
-                    attributes.insert(slot, value);
-                }
+            ShapeTransition::Descriptor { slot, attributes: value }
+                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES =>
+            {
+                attributes.insert(slot, value);
             }
             _ => {}
         }

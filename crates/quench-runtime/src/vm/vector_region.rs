@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn vector_region_traps_leave_earlier_effects_and_boxed_vectors() {
         let doubled = lanes([LEFT[0].wrapping_add(LEFT[0]), LEFT[1].wrapping_add(LEFT[1])]);
-        let quadrupled = lanes([doubled as u64 * 2, (doubled >> 64) as u64 * 2]);
+        let quadrupled = lanes([(doubled as u64).wrapping_mul(2), ((doubled >> 64) as u64).wrapping_mul(2)]);
         for (dividend, divisor, trap) in [
             (7, 0, Some(WasmTrap::IntegerDivideByZero)),
             (i32::MIN, -1, Some(WasmTrap::IntegerOverflow)),

@@ -27,7 +27,7 @@
 #    run. The corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), without and with --jit, under the
-#    memory-first policy.
+#    default memory policy the scored binary runs.
 # 4. Writes crates/quench-node/link/x86_64-linux-static.order, converts the profiles for
 #    BOLT, relinks, and writes the bolted binary beside the relinked one (`-bolt`).
 #
@@ -162,12 +162,6 @@ cp tools/layout-corpus/npm-*.js "$corpus/"
 
 # valgrind does not follow the static build's re-execution; give its allocator setting directly.
 export GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0
-# Every profile runs under the memory-first policy the qualification board measures: its
-# collections release pages, and its JS tiers compile nothing, so the throughput policy's
-# collector and compiler code was laid out hot (pinned, 2026-10-29, worst runs: Crypto
-# --jit 2840 -> 2604 KiB, Richards 2332 -> 2228, RayTrace --jit 2596 -> 2484, RegExp --jit
-# 5060 -> 4920; hot text 2.79 -> 2.10 MB).
-export QUENCH_MEMORY_POLICY=memory-first
 rm -rf "$startup" "$run"
 mkdir -p "$startup" "$run"
 programs() { (cd "$corpus" && ls -- *.js *.cjs | grep -E "${1:-.}"); }

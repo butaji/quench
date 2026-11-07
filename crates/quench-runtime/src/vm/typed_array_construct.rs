@@ -174,8 +174,7 @@ impl<H: Host> Vm<H> {
                             offset,
                         }),
                         buffer: source,
-                        length,
-                        length_tracking: resizable && requested_length.is_none(),
+                        length: crate::heap::ViewLength::new(length, resizable && requested_length.is_none()),
                     }));
                 }
 
@@ -215,8 +214,7 @@ impl<H: Host> Vm<H> {
                         offset: 0,
                     }),
                     buffer: self.heap.root_value(buffer_root).unwrap(),
-                    length,
-                    length_tracking: false,
+                    length: crate::heap::ViewLength::fixed(length),
                 });
                 let target_root = self.heap.root(typed_array);
                 target = Some(target_root);

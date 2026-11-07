@@ -13,12 +13,21 @@ use crate::bytecode::Constant;
 /// walks it; past this depth the lower levels fold when the compiler reaches them.
 const FOLD_DEPTH: u32 = 64;
 
+/// The static value an identifier names, if any: a `const` binding the compiler folded.
+pub(super) type Names<'n> = &'n mut dyn FnMut(&str) -> Option<Constant>;
+
 pub(super) fn expression(value: &Expression<'_>) -> Option<Constant> {
-    folded(value, FOLD_DEPTH)
+    folded(value, FOLD_DEPTH, &mut |_| None)
 }
 
-fn folded(value: &Expression<'_>, depth: u32) -> Option<Constant> {
+/// `expression`, reading identifiers through `names`.
+pub(super) fn expression_in(value: &Expression<'_>, names: Names<'_>) -> Option<Constant> {
+    folded(value, FOLD_DEPTH, names)
+}
+
+fn folded(value: &Expression<'_>, depth: u32, names: Names<'_>) -> Option<Constant> {
     match value {
+        Expression::Identifier(value) => names(value.name.as_str()),
         Expression::NumericLiteral(value) => Some(Constant::Number(value.value)),
         Expression::StringLiteral(value) => Some(super::string::constant(value)),
         Expression::BigIntLiteral(value) => {
@@ -26,9 +35,9 @@ fn folded(value: &Expression<'_>, depth: u32) -> Option<Constant> {
         }
         Expression::BooleanLiteral(value) => Some(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => Some(Constant::Null),
-        Expression::UnaryExpression(value) => unary_at(value, depth),
-        Expression::BinaryExpression(value) => binary_at(value, depth.checked_sub(1)?),
-        value => folded(transparent(value)?, depth),
+        Expression::UnaryExpression(value) => unary_at(value, depth, names),
+        Expression::BinaryExpression(value) => binary_at(value, depth.checked_sub(1)?, names),
+        value => folded(transparent(value)?, depth, names),
     }
 }
 
@@ -51,11 +60,11 @@ fn transparent<'a>(value: &'a Expression<'a>) -> Option<&'a Expression<'a>> {
 /// literal whose ToBoolean is fixed (`!0` and `!1` for the booleans), and `-`/`+` of a
 /// number.
 pub(super) fn unary(value: &UnaryExpression<'_>) -> Option<Constant> {
-    unary_at(value, FOLD_DEPTH)
+    unary_at(value, FOLD_DEPTH, &mut |_| None)
 }
 
-fn unary_at(value: &UnaryExpression<'_>, depth: u32) -> Option<Constant> {
-    let operand = folded(&value.argument, depth)?;
+fn unary_at(value: &UnaryExpression<'_>, depth: u32, names: Names<'_>) -> Option<Constant> {
+    let operand = folded(&value.argument, depth, names)?;
     let folded = match (value.operator, operand) {
         (UnaryOperator::Void, _) => Constant::Undefined,
         (UnaryOperator::LogicalNot, operand) => Constant::Boolean(!to_boolean(&operand)?),
@@ -68,15 +77,15 @@ fn unary_at(value: &UnaryExpression<'_>, depth: u32) -> Option<Constant> {
 
 /// A binary operator applied to static operands whose result runs no coercion: any numeric
 /// or comparison operator on two Numbers, and concatenation or equality of two strings.
-pub(super) fn binary(value: &BinaryExpression<'_>) -> Option<Constant> {
-    binary_at(value, FOLD_DEPTH)
+pub(super) fn binary_in(value: &BinaryExpression<'_>, names: Names<'_>) -> Option<Constant> {
+    binary_at(value, FOLD_DEPTH, names)
 }
 
-fn binary_at(value: &BinaryExpression<'_>, depth: u32) -> Option<Constant> {
+fn binary_at(value: &BinaryExpression<'_>, depth: u32, names: Names<'_>) -> Option<Constant> {
     // The right operand is usually a leaf: a dynamic one ends the fold before the left
     // subtree is walked.
-    let right = folded(&value.right, depth)?;
-    let left = folded(&value.left, depth)?;
+    let right = folded(&value.right, depth, names)?;
+    let left = folded(&value.left, depth, names)?;
     match (left, right) {
         (Constant::Number(left), Constant::Number(right)) => {
             crate::vm::operations::static_number_binary(value.operator as u32, left, right)

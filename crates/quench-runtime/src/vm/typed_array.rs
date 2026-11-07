@@ -687,7 +687,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::TypedArray {
             buffer,
             object,
-            length_tracking,
+            length: view_length,
             kind,
             ..
         }) = self.heap.get(this)
@@ -695,7 +695,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
         let (buffer, offset, length_tracking, kind) =
-            (*buffer, object.offset, *length_tracking, *kind);
+            (*buffer, object.offset, view_length.is_tracking(), *kind);
         let length = self.typed_array_length(this).unwrap_or_default();
         let begin = self.typed_array_relative_index(p, args.first(), length)?;
         let end_arg = args.get(1).filter(|value| !value.is_undefined());
@@ -1063,34 +1063,19 @@ impl<H: Host> Vm<H> {
             buffer,
             object,
             length,
-            length_tracking,
             kind,
             ..
         }) = self.heap.get(this)
         else {
             return None;
         };
-        let (buffer, offset, length, length_tracking, kind) =
-            (*buffer, object.offset, *length, *length_tracking, *kind);
-        let (buffer_length, detached) = match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer {
-                bytes, detached, ..
-            }) => (bytes.len(), *detached),
-            _ => (0, true),
+        let (buffer, offset, length, kind) = (*buffer, object.offset, *length, *kind);
+        let view_length = match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => length.within(offset, kind.width(), bytes.len()),
+            _ => None,
         };
-        let out_of_bounds = detached
-            || if length_tracking {
-                offset > buffer_length
-            } else {
-                offset.saturating_add(length.saturating_mul(kind.width())) > buffer_length
-            };
-        let view_length = if detached || out_of_bounds {
-            0
-        } else if length_tracking {
-            buffer_length.saturating_sub(offset) / kind.width()
-        } else {
-            length
-        };
+        let out_of_bounds = view_length.is_none();
+        let view_length = view_length.unwrap_or(0);
         Some(match native {
             Native::TypedArrayBufferGetter => buffer,
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
