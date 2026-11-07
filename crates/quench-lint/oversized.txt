@@ -1465,7 +1465,7 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 524
 file-lines crates/quench-runtime/src/vm/collections.rs 1477
-file-lines crates/quench-runtime/src/vm/compiled.rs 19343
+file-lines crates/quench-runtime/src/vm/compiled.rs 19340
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 518
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5913
@@ -1477,7 +1477,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1946
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23524
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23464
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -4193,7 +4193,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::ActivationState::of 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::InstructionSet::new 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneStack::default 11
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::osr_diagnostics 3
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_lane_body 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::ScriptTargets::with_len 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 3
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 2
