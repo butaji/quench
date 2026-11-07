@@ -1089,7 +1089,7 @@ impl<H: Host> Vm<H> {
         self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
-        self.promise_species_proof.set(None);
+        self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
@@ -1672,14 +1672,13 @@ impl<H: Host> Vm<H> {
 
     /// The reads a site's proved inherited entries answer (`proved_inherited_field_hit`), as
     /// constants: a receiver of the entry's shape whose prototype link is the proved one, while
-    /// no prototype changes (`heap::prototype_value_epoch`), reads what the proved holder held
+    /// the value stays (`heap::subscribe_prototype_values`), reads what the proved holder held
     /// when the code was compiled, `undefined` for an absent name.
     fn inherited_native_loads(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
-        let epoch = crate::heap::prototype_value_epoch();
         let mut loads = Vec::new();
         let mut index = self.inherited_field_indices.get(self.field_cache_index(site));
         while index != NO_INHERITED_FIELD {
-            let cache = *self.heap.dependencies().inherited(index);
+            let cache = self.heap.dependencies().inherited(index);
             index = cache.next;
             if !cache.proved || cache.receiver == NO_FIELD_RECEIVER {
                 continue;
@@ -1700,7 +1699,7 @@ impl<H: Host> Vm<H> {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 target_shape: None,
-                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)], epoch),
+                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]),
             });
         }
         loads
@@ -1730,9 +1729,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the
-    /// link that names it, and the epoch they are read under: what a holder read may take
-    /// while the receiver's link names one of them and the epoch holds
-    /// (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
+    /// link that names it: what a holder read may take while the receiver's link names one of
+    /// them and no value changes (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
     /// prototypes holding the same names share it.
     fn inherited_constant(&self, holder: u32, slot: u16) -> Option<super::compiled::InheritedConstant> {
         let mut holders = Vec::new();
@@ -1741,7 +1739,7 @@ impl<H: Host> Vm<H> {
             if value.is_deleted() { return None; }
             holders.push((crate::heap::ProtoLink::of(prototype).bits(), value));
         }
-        super::compiled::InheritedConstant::of(holders, crate::heap::prototype_value_epoch())
+        super::compiled::InheritedConstant::of(holders)
     }
 
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
@@ -2182,7 +2180,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The value inherited entry `index` answers for `object` while its proof holds: its
-    /// constant while the prototype value epoch it was read under holds, else the proved
+    /// constant while the holder's values hold (`constant_watch`), else the proved
     /// holder's slot, which becomes the constant.
     #[inline(always)]
     fn proved_inherited_entry_value(&mut self, index: u32, object: Value) -> Option<Value> {
@@ -2199,21 +2197,18 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let depth = u16::from(cache.depth);
-        let epoch = self.prototype_value_epoch();
-        let value = if cache.constant_epoch == epoch {
-            cache.constant
-        } else {
-            let value = match cache.answer {
-                InheritedFieldAnswer::Slot(slot) => {
-                    let holder = self.heap.object_record(cache.proved_holder)?;
-                    // SAFETY: the proof keeps the holder and its recorded shape.
-                    unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?
-                }
-                InheritedFieldAnswer::Absent => Value::UNDEFINED,
-            };
-            let cache = self.heap.dependencies_mut().inherited_mut(index);
-            (cache.constant, cache.constant_epoch) = (value, epoch);
-            value
+        let value = match cache.answer {
+            InheritedFieldAnswer::Absent => Value::UNDEFINED,
+            InheritedFieldAnswer::Slot(_) if cache.constant_watch.as_ref().is_some_and(|watch| watch.is_published()) => cache.constant,
+            InheritedFieldAnswer::Slot(slot) => {
+                let holder = self.heap.object_record(cache.proved_holder)?;
+                // SAFETY: the proof keeps the holder and its recorded shape.
+                let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
+                let watch = crate::heap::watch_prototype_values([holder.exact_shape()]);
+                let cache = self.heap.dependencies_mut().inherited_mut(index);
+                (cache.constant, cache.constant_watch) = (value, watch);
+                value
+            }
         };
         self.profile.field_cache_hit(0, depth);
         Some(value)
@@ -2269,19 +2264,19 @@ impl<H: Host> Vm<H> {
         (hint.atom == atom
             && hint.receiver == receiver.exact_shape()
             && hint.prototype == receiver.proto_link()
-            && hint.epoch == self.prototype_value_epoch())
+            && hint.watch.is_published())
         .then_some(hint.value)
     }
 
     /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
-    /// (`hold_string_hint`): the realm's `String.prototype` still, under the epoch the hint
+    /// (`hold_string_hint`): the realm's `String.prototype` still, under the hint's watch
     /// was read in.
     #[inline(always)]
     pub(super) fn string_hint_hit(&self, index: u16, atom: Atom) -> Option<Value> {
         let hint = self.holder_hints.get(usize::from(index))?;
         (hint.atom == atom
             && hint.holder == self.string_proto
-            && hint.epoch == self.prototype_value_epoch())
+            && hint.watch.is_published())
         .then_some(hint.value)
     }
 
@@ -2316,17 +2311,11 @@ impl<H: Host> Vm<H> {
     /// Makes `value`, which `prototype` answered for a read of `atom` from a receiver of
     /// exact shape `receiver`, a record's hint: in place of `owned`, the hint the record
     /// holds, else as a new one; its index, `None` once the indices reach `limit`. The
-    /// prototype is marked first, so a change to it advances the epoch the hint holds under.
+    /// prototype is marked first, so a change to its values retires the hint's watch.
     fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, receiver: u32, prototype: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_prototype(prototype);
-        let hint = super::HolderHint {
-            receiver,
-            atom,
-            prototype: crate::heap::ProtoLink::of(prototype),
-            holder: prototype,
-            value,
-            epoch: self.prototype_value_epoch(),
-        };
+        let watch = crate::heap::watch_prototype_values(self.heap.object(prototype).map(Object::exact_shape))?;
+        let hint = super::HolderHint { receiver, atom, prototype: crate::heap::ProtoLink::of(prototype), holder: prototype, value, watch };
         if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.len()) {
             self.holder_hints[usize::from(index)] = hint;
             return Some(index);
@@ -3266,7 +3255,7 @@ impl<H: Host> Vm<H> {
             self.heap.dependencies_mut().inherited_mut(previous).next = NO_INHERITED_FIELD;
             index
         } else {
-            self.heap.dependencies_mut().push_inherited(cache)
+            self.heap.dependencies_mut().push_inherited(cache.clone())
         };
         cache.next = head;
         *self.heap.dependencies_mut().inherited_mut(slot) = cache;
@@ -3370,7 +3359,7 @@ impl<H: Host> Vm<H> {
         let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
         cache.proved_holder = proof.holder;
-        cache.constant_epoch = crate::heap::NO_CONSTANT_EPOCH;
+        cache.constant_watch = None;
         dependencies.prove_inherited(proof.index, &subjects);
     }
 
@@ -3425,7 +3414,7 @@ impl<H: Host> Vm<H> {
             proved_prototype: crate::heap::ProtoLink::NULL,
             proved_holder: Value::UNDEFINED,
             constant: Value::UNDEFINED,
-            constant_epoch: crate::heap::NO_CONSTANT_EPOCH,
+            constant_watch: None,
             next: NO_INHERITED_FIELD,
         };
         // Shapes alone prove a name absent only for a receiver whose shape holds every own

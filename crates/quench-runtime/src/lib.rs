@@ -46,6 +46,7 @@ mod number_to_string;
 mod number_inputs;
 mod profile;
 mod snapshot;
+mod staged;
 mod typed_ir;
 pub(crate) use quench_stack as stack;
 mod unicode;

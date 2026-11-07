@@ -13,14 +13,20 @@ pub(super) struct LanePublications {
 }
 
 impl ProgramStore {
-    /// Publishes a lane body under its dependencies: the slots it reads (`Heap::subscribe_slot`)
-    /// and the field caches its reads specialized on (`field_site_readers`).
-    pub(in crate::vm) fn publish_lane_method(&self, method: LaneMethod, heap: &mut crate::heap::Heap) -> Option<Rc<PublishedLaneMethod>> {
+    /// Publishes a lane body under the dependencies its code took: its slots' types
+    /// (`Heap::subscribe_slot`), its Stable facts (prototype values by holder shape, unnamed
+    /// method atoms in `method_atoms`) and the field caches its reads specialized on
+    /// (`field_site_readers`). A change of any retires it and sets its invalidation word.
+    pub(in crate::vm) fn publish_lane_method(&self, method: LaneMethod, heap: &mut crate::heap::Heap,
+        method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
-        let published = Rc::new(PublishedLaneMethod::new(method));
+        let invalidation = method.invalidation.clone();
+        let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let method = published.lease().expect("new publication");
         let subscribed = method.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, &code))
+            && method.stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, &code))
+            && method.stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, &code))
             && method.read_sites.iter().all(|site| self.lane_publications.field_site_readers.borrow_mut().subscribe(*site, &code));
         if !subscribed {
             published.retire();
@@ -93,7 +99,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert!(!method.read_sites.is_empty(), "the body reads through a field site");
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let read = vm.intern_atom("read");
         let read = vm.own_property(vm.realm.globals, read).unwrap();
         let first = vm.intern_atom("first");

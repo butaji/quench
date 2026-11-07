@@ -5825,7 +5825,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let chain = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
         let key = (receiver, load.shape);
         if let Some((object, proved)) = self.objects.get(&key).copied()
-            && proved == chain && usize::from(load.slot) < object.storage_len {
+            && proved == chain && usize::from(load.slot) < object.storage_len() {
             return Some(object);
         }
         let heap_base = self.region.native_heap_word();
@@ -7196,10 +7196,8 @@ mod tests {
             (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))
         }).unwrap();
-        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::Number(value) => Value::number(*value),
-            _ => Value::UNDEFINED,
-        }).collect();
+        let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
         region(function, &decoded, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap()
     }
@@ -7224,11 +7222,8 @@ mod tests {
         let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
             (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))).unwrap();
-        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::Number(value) => Value::number(*value),
-            crate::bytecode::Constant::Null => Value::NULL,
-            _ => Value::UNDEFINED,
-        }).collect();
+        let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
         let region = region(function, &instructions, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap();
         assert_eq!(region.fields.len(), 2);
@@ -7284,10 +7279,8 @@ mod tests {
             let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
                 (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                     .then(|| (pc as u32, instruction.jump_target()))).unwrap();
-            let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-                crate::bytecode::Constant::Number(value) => Value::number(*value),
-                _ => Value::UNDEFINED,
-            }).collect();
+            let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
             let region = region(function, &instructions, &constants, &program.field_sites,
                 program.shared_register_root_masks(1), header, backedge).unwrap();
             let verified = verify_unprofiled(&region).unwrap();

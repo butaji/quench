@@ -21,6 +21,7 @@ use super::*;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, CheckedObjectTable, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
+use crate::typed_ir::Division;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
@@ -29,6 +30,14 @@ use cranelift_codegen::entity::EntityRef;
 mod packed_ranges;
 #[path = "lane_region/global_reads.rs"]
 mod global_reads;
+#[path = "lane_region/stable.rs"]
+mod stable;
+#[path = "lane_region/polls.rs"]
+mod polls;
+use polls::specialize_closed_polls;
+#[cfg(test)]
+use polls::retain_closed_polls;
+pub(crate) use stable::StableFacts;
 use crate::typed_ir::IntRange;
 
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
@@ -133,9 +142,10 @@ struct LocalProofs {
     /// Dense array views by the tagged base they prove, until an instruction that could
     /// change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
-    /// The `heap::prototype_value_epoch` this block proved current. Only a helper that may
-    /// run JavaScript or write a prototype changes it; each such helper retires the proof.
-    epoch: Option<u64>,
+    /// Whether this block read the code's invalidation word since the last helper that may
+    /// change a Stable fact's subject (run JavaScript, write a prototype, name a method):
+    /// every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
+    stable: bool,
 }
 
 impl LocalProofs {
@@ -155,7 +165,7 @@ impl State {
         Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), epoch: None,
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false,
             arrays: smallvec::SmallVec::new() } }
     }
 
@@ -173,7 +183,7 @@ impl State {
         self.proofs.headers.fill(None);
         self.proofs.readable.clear();
         self.proofs.layouts.clear();
-        self.proofs.epoch = None;
+        self.proofs.stable = false;
         for fact in &mut self.values {
             let unshaped = fact.value.ty.without_object_shape();
             if unshaped != fact.value.ty {
@@ -232,6 +242,7 @@ struct Entry {
 
 pub(super) struct LaneRegion {
     pub(super) code: Vec<u8>,
+    pub(super) stable: StableFacts,
     /// Instructions the region runs natively, for admission.
     pub(super) native: usize,
     pub(super) clif: Option<String>,
@@ -325,6 +336,7 @@ pub(super) struct LoweredRegion {
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
     #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     pub(super) hoists_arrays: bool,
+    pub(super) stable: StableFacts,
 }
 
 struct Lowering<'a, 'f> {
@@ -338,7 +350,9 @@ struct Lowering<'a, 'f> {
     global_reads: &'a BTreeMap<usize, Option<Value>>,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
-    vm: VmFacts,
+    vm: VmFacts<'a>,
+    /// The Stable facts the code folded, each a code dependency of its publication.
+    stable: stable::StableUses,
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
     /// runs by the call protocol (`Lowering::construct`).
     generic: &'a [usize],
@@ -740,7 +754,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.int32_projections.contains(projection))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
-        state.proofs.epoch = first.epoch.filter(|epoch| rest.iter().all(|other| other.epoch == Some(*epoch)));
+        state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -1232,7 +1246,7 @@ pub(super) fn compile(
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     global_reads: &BTreeMap<usize, Option<Value>>,
-    vm: VmFacts,
+    vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
@@ -1249,7 +1263,7 @@ pub(super) fn compile(
     let clif = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
         .map_err(LaneDecline::Rejected)?;
-    Ok(LaneRegion { code, native: region.native, clif, fault_poll: region.fault_poll, first_entry })
+    Ok(LaneRegion { code, native: region.native, clif, fault_poll: region.fault_poll, first_entry, stable: region.stable })
 }
 
 /// Build the typed residual and validate every value/CFG edge before publication.
@@ -1261,7 +1275,7 @@ pub(super) fn lower(
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     global_reads: &BTreeMap<usize, Option<Value>>,
-    vm: VmFacts,
+    vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
@@ -1368,6 +1382,7 @@ pub(super) fn lower(
         shared_headers,
         global_reads,
         vm,
+        stable: Default::default(),
         generic,
         direct,
         frame_captures,
@@ -1758,76 +1773,11 @@ pub(super) fn lower(
     let mut polls = std::mem::take(&mut lowering.polls);
     let reentries = std::mem::take(&mut lowering.reentries);
     let helpers = lowering.helpers;
+    let stable = lowering.stable.take();
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
-    if fault_poll && !polls.is_empty() {
-        retain_closed_polls(&native, &reentries, &mut polls);
-        if !polls.is_empty() { specialize_interrupt_owner(&mut native, helpers, context, &polls, isa); }
-    }
-    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays })
-}
-
-/// A callback retires ownership only on paths reachable from its completion. A callback
-/// after a closed loop cannot invalidate that loop's entry proof retroactively.
-fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Block], polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>) {
-    if reentries.is_empty() { return; }
-    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
-    let mut possible: CompoundBitSet = CompoundBitSet::with_capacity(function.dfg.num_blocks());
-    let mut pending = smallvec::SmallVec::<[ir::Block; INLINE_EFFECT_EDGES]>::new();
-    for &block in reentries {
-        if possible.insert(block.index()) { pending.push(block); }
-    }
-    while let Some(block) = pending.pop() {
-        for successor in cfg.succ_iter(block) {
-            if possible.insert(successor.index()) { pending.push(successor); }
-        }
-    }
-    polls.retain(|poll| {
-        let block = function.layout.inst_block(*poll).expect("published poll block");
-        let effect = if possible.contains(block.index()) { Reentry::Possible } else { Reentry::Closed };
-        effect == Reentry::Closed
-    });
-}
-
-/// Bind the current owner's proof once, after helper binding and before guest execution.
-/// Each selected poll lies before any reachable callback completion.
-fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers, context: ir::Value,
-    polls: &[ir::Inst], isa: &dyn cranelift_codegen::isa::TargetIsa)
-{
-    use cranelift_codegen::cursor::{Cursor, FuncCursor};
-    let entry = function.layout.entry_block().expect("native entry");
-    let after = match helpers {
-        #[cfg(feature = "aot")]
-        LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
-            ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
-        },
-        LaneHelpers::Numeric | LaneHelpers::Process(_) => None,
-        #[cfg(feature = "aot")]
-        LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
-    };
-    let mut cursor = FuncCursor::new(function);
-    if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
-    else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
-    let address = helpers.address(cursor.ins(), LaneHelper::InterruptOwner);
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(ir::AbiParam::new(types::I64));
-    signature.returns.push(ir::AbiParam::new(types::I64));
-    let signature = cursor.func.import_signature(signature);
-    let call = cursor.ins().call_indirect(signature, address, &[context]);
-    let exclusive = cursor.func.dfg.inst_results(call)[0];
-    let mut gates = Vec::with_capacity(polls.len());
-    for &poll in polls {
-        let before = cursor.func.layout.inst_block(poll).expect("poll block");
-        let polled = cursor.func.dfg.make_block();
-        cursor.func.layout.split_block(polled, poll);
-        let next = cursor.func.layout.next_inst(poll).expect("poll continuation");
-        let resume = cursor.func.dfg.make_block();
-        cursor.func.layout.split_block(resume, next);
-        cursor.goto_bottom(before); let gate = cursor.ins().brif(exclusive, resume, &[], polled, &[]);
-        gates.push((gate, false));
-        cursor.goto_bottom(polled); cursor.ins().jump(resume, &[]);
-    }
-    cursor.func.effect_specializations.push(ir::function::EffectSpecialization { proof: call, gates });
+    if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable })
 }
 
 impl Lowering<'_, '_> {
@@ -2402,9 +2352,11 @@ impl Lowering<'_, '_> {
         (self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0), domain.ty())
     }
 
+
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
+        if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
         let word_index = atom / u64::BITS;
         let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
         let words_len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
@@ -4073,7 +4025,7 @@ impl Lowering<'_, '_> {
             self.loop_element_write(state, array, pc, instruction, exit);
             state.proofs.arrays.clear();
             state.proofs.fields.clear();
-            state.proofs.epoch = None;
+            state.proofs.stable = false;
             return true;
         }
         let value = self.tagged(state, instruction.register_a());
@@ -4108,7 +4060,7 @@ impl Lowering<'_, '_> {
         state.proofs.arrays.clear();
         state.proofs.fields.clear();
         // The helper may write a prototype's element or mapped argument.
-        state.proofs.epoch = None;
+        state.proofs.stable = false;
         true
     }
 
@@ -4521,7 +4473,7 @@ impl Lowering<'_, '_> {
         if let [field] = shapes {
             let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
             let projection = match known {
-                Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
+                Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
                 _ => {
                     self.prove_shape(state, owner, shape, field.shape, exit);
                     let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
@@ -4592,14 +4544,8 @@ impl Lowering<'_, '_> {
         let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
-        if let Some(constant) = field.inherited {
-            if state.proofs.epoch != Some(constant.epoch) {
-                let address = self.ins().iconst(types::I64, crate::heap::prototype_value_epoch_address() as i64);
-                let epoch = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-                let unchanged = self.ins().icmp_imm_u(IntCC::Equal, epoch, constant.epoch as i64);
-                emit_js_guard(&mut self.builder, unchanged, exit);
-                state.proofs.epoch = Some(constant.epoch);
-            }
+        if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
+            self.hold_holder(state, exit, holder);
             // The receiver's link selects its prototype's value; one prototype's is a constant.
             let ((first, value), rest) = constant.values().split_first()?;
             let mut matched = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*first));
@@ -5094,10 +5040,10 @@ impl Lowering<'_, '_> {
         self.store_helper_unbound(state, object, atom, site, value, exit);
     }
 
-    /// The VM's store hit, which may write a prototype's own field: the block's proof of the
-    /// prototype value epoch retires.
+    /// The VM's store hit, which may write a prototype's own field: the block reads the
+    /// invalidation word again before it next holds a Stable fact.
     fn store_helper_unbound(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
-        state.proofs.epoch = None;
+        state.proofs.stable = false;
         let atom = self.ins().iconst(types::I64, i64::from(atom));
         let site = self.ins().iconst(types::I64, i64::from(site));
         let stored = self.helper_call(LaneHelper::FieldSet, &[object, atom, site, value]);

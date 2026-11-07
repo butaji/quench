@@ -45,6 +45,18 @@ Nothing is stored, checked or computed twice, at any level.
    (indices, borrowed slices, packed words), not copies, re-encodings, boxed values or
    per-call conversions; a protocol that needs translating on every crossing is redesigned.
 
+Single homes (add to these; never a second copy):
+- `crates/quench-runtime/src/staged.rs`: object-layout and narrow-value reads, written once
+  over the `Stage` trait. `Concrete` runs them in the interpreter, `Emit` generates them as
+  Cranelift IR. Tests check that layout decodes outside this file only go down.
+- `vm/compiled/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
+  compiles.
+- `vm/compiled/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
+- `code_dependencies.rs`: stable facts (binding time `Stable`) fold only under a code
+  dependency, compiled code's and the interpreter's caches alike (prototype values, method
+  atoms, a lane body's read sites). Retirement sets the body's invalidation word; there is no
+  prototype value epoch.
+
 ## Lisp mindset manifesto
 
 Every line carries domain meaning. Code is a liability; data is leverage.

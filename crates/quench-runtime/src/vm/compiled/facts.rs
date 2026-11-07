@@ -140,9 +140,8 @@ fn register(operand: Operand) -> Option<Register> {
     (operand.kind()? == OperandKind::Register).then(|| operand.register_index()).flatten()
 }
 
-/// The value a constant denotes where it is an immediate (no heap allocation): numbers,
-/// booleans, `null` and `undefined`.
-pub(super) fn immediate(constant: &Constant) -> Option<Value> {
+/// The value a constant denotes where it is an immediate (no heap allocation): numbers, booleans, `null` and `undefined`.
+pub(in crate::vm) fn immediate(constant: &Constant) -> Option<Value> {
     match constant {
         Constant::Number(number) => Some(Value::number(*number)),
         Constant::Boolean(value) => Some(Value::boolean(*value)),
@@ -153,13 +152,13 @@ pub(super) fn immediate(constant: &Constant) -> Option<Value> {
 }
 
 /// A numeric constant is a static semantic value, regardless of machine view.
-pub(super) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
+pub(in crate::vm) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
     (operand.kind() == Some(OperandKind::Constant)).then_some(())?;
     constants.get(usize::from(operand.payload())).and_then(immediate).and_then(Value::as_number)
 }
 
 /// The semantic type of an operand, independent of its selected machine view.
-pub(super) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
+pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
         Some(OperandKind::Register) => register_type(operand.payload()),
         Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
@@ -177,7 +176,7 @@ fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
 }
 
 /// Whether an immediate is an int32 Number in its tagged encoding.
-pub(super) fn is_int32(value: Value) -> bool {
+pub(in crate::vm) fn is_int32(value: Value) -> bool {
     Type::immediate(value).is_subtype(Type::INT32)
 }
 
@@ -537,3 +536,4 @@ mod tests {
         assert!(facts.types.is_empty());
     }
 }
+#[cfg(test)] #[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

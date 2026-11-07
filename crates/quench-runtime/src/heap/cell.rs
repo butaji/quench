@@ -11,7 +11,9 @@ use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod prototype_values;
 mod snapshot;
+pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -27,38 +29,11 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
 
-/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and every value read
-/// under the current `PROTOTYPE_VALUE_EPOCH`: a layout change moves what a slot holds.
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and all code that
+/// holds a prototype's value as a constant: a layout change moves what a slot holds.
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
-    advance_prototype_value_epoch();
-}
-
-// Changes whenever what an object used as a prototype offers its inheritors can have
-// changed: its layout (`advance_prototype_layout_epoch`) or the value of any of its slots
-// (`Object::note_prototype_value_write`). Native code that took an inherited value as a
-// constant reads it while this holds the epoch it was compiled under.
-// Guest heaps and their native publications are thread-confined (Rc ownership).
-// A different thread cannot mutate a constant's owner; its prototype writes must
-// not permanently retire this thread's compiled methods. The cell's address is
-// stable for the lifetime of the thread that owns those methods.
-thread_local! {
-    static PROTOTYPE_VALUE_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// The current `PROTOTYPE_VALUE_EPOCH`.
-#[inline(always)]
-pub(crate) fn prototype_value_epoch() -> u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::get)
-}
-
-/// Where native code loads `PROTOTYPE_VALUE_EPOCH` from.
-pub(crate) fn prototype_value_epoch_address() -> *const u64 {
-    PROTOTYPE_VALUE_EPOCH.with(std::cell::Cell::as_ptr)
-}
-
-fn advance_prototype_value_epoch() {
-    PROTOTYPE_VALUE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+    prototype_values::reset();
 }
 
 #[derive(Clone, Debug, Default)]
@@ -70,19 +45,6 @@ pub(crate) struct WeakMapEntries {
 #[cfg(test)]
 mod cell_layout_tests {
     use super::*;
-
-    #[test]
-    fn prototype_value_epochs_follow_the_native_owner_thread() {
-        let before = prototype_value_epoch();
-        let address = prototype_value_epoch_address();
-        std::thread::spawn(advance_prototype_layout_epoch).join().unwrap();
-        assert_eq!(prototype_value_epoch(), before, "another VM thread owns no local constant");
-        advance_prototype_value_epoch();
-        assert_eq!(prototype_value_epoch(), before.wrapping_add(1));
-        advance_prototype_layout_epoch();
-        assert_eq!(prototype_value_epoch(), before.wrapping_add(2));
-        assert_eq!(prototype_value_epoch_address(), address, "native loads retain one address");
-    }
 
     /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
     /// and its element backing.
@@ -2649,7 +2611,7 @@ impl Object {
     #[inline(always)]
     pub(crate) fn note_prototype_value_write(&self) {
         if self.was_used_as_prototype() {
-            advance_prototype_value_epoch();
+            prototype_values::retire(self.exact_shape());
         }
     }
 

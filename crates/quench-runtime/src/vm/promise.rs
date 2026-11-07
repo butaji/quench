@@ -13,16 +13,14 @@ use rustc_hash::FxHashSet;
 /// That SpeciesConstructor(promise, %Promise%) answers the realm's `%Promise%` for receivers
 /// of one shape and prototype (`Vm::promise_species_proved`), held as a dependency: the walk
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
-/// `@@species` holding the intrinsic getter, and both objects are watched prototypes, so any
-/// write to their slots or change to their layouts advances the prototype value epoch the
-/// proof was made under (`heap::prototype_value_epoch`), as does a collection that frees a
-/// prototype. A use reads no slot.
-#[derive(Clone, Copy)]
+/// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
+/// values it subscribes to (`heap::subscribe_prototype_values`): a write to their slots or a
+/// change to any prototype's layout retires it, as does a collection. A use reads no slot.
 pub(super) struct PromiseSpeciesProof {
     shape: u32,
     prototype: Value,
-    value_epoch: u64,
     realm: Value,
+    watch: crate::heap::PrototypeValueWatch,
 }
 
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
@@ -5693,7 +5691,8 @@ impl<H: Host> Vm<H> {
     /// prototype, with no side descriptors, under the value epoch the proof was made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
-        let Some(proof) = self.promise_species_proof.get() else {
+        let proofs = self.promise_species_proof.borrow();
+        let Some(proof) = proofs.as_ref().filter(|proof| proof.watch.is_published()) else {
             return false;
         };
         let Some(data) = self.heap.ordinary_object(promise) else {
@@ -5702,7 +5701,6 @@ impl<H: Host> Vm<H> {
         data.shape() == proof.shape
             && data.proto() == proof.prototype
             && !data.has_side_descriptors()
-            && proof.value_epoch == crate::heap::prototype_value_epoch()
             && proof.realm == self.realm.globals
     }
 
@@ -5723,12 +5721,9 @@ impl<H: Host> Vm<H> {
         };
         self.heap.mark_prototype(holder);
         self.heap.mark_prototype(constructor);
-        self.promise_species_proof.set(Some(PromiseSpeciesProof {
-            shape,
-            prototype,
-            value_epoch: crate::heap::prototype_value_epoch(),
-            realm: self.realm.globals,
-        }));
+        let watched = [holder, constructor].into_iter().filter_map(|object| self.heap.object(object).map(Object::exact_shape));
+        *self.promise_species_proof.borrow_mut() = crate::heap::watch_prototype_values(watched.collect::<Vec<_>>())
+            .map(|watch| PromiseSpeciesProof { shape, prototype, realm: self.realm.globals, watch });
     }
 
     pub(super) fn promise_then(
