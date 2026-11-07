@@ -159,20 +159,14 @@ fn binary_count(function: &crate::bytecode::Function, counts: &[u64]) -> u64 {
         .iter()
         .enumerate()
         .filter(|(_, instruction)| {
-            matches!(
-                instruction.op(),
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply
-            )
+            instruction.op().is_binary_arithmetic()
         })
         .map(|(pc, _)| counts.get(pc).copied().unwrap_or(0))
         .sum()
 }
 
 fn backward_edge_target(instruction: Instr, pc: usize) -> Option<usize> {
-    if !matches!(
-        instruction.op().control_flow_layout(),
-        ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
-    ) {
+    if !instruction.op().control_flow_layout().jumps() {
         return None;
     }
     let target = instruction.jump_target() as usize;

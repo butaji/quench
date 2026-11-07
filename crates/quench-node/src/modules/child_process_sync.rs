@@ -150,10 +150,7 @@ pub(crate) fn collect(
                         }
                     }
                     Err(error)
-                        if matches!(
-                            error.kind(),
-                            io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                        ) => {}
+                        if crate::io_transient::is_transient(error.kind()) => {}
                     Err(failure) => {
                         pipe_error.get_or_insert_with(|| failure.raw_os_error().unwrap_or(libc::EIO));
                         stdin = None;
@@ -178,10 +175,7 @@ pub(crate) fn collect(
                 Ok(0) => *pipe = None,
                 Ok(length) => bytes.extend_from_slice(&buffer[..length]),
                 Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                    ) => {}
+                    if crate::io_transient::is_transient(error.kind()) => {}
                 Err(failure) => {
                     pipe_error.get_or_insert_with(|| failure.raw_os_error().unwrap_or(libc::EIO));
                     *pipe = None;

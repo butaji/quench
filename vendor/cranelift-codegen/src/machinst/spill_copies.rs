@@ -68,7 +68,9 @@ pub(super) fn eliminate(function: &impl Function, environment: &MachineEnv,
         .chain(environment.non_preferred_regs_by_class.iter()).flatten() {
         allocatable.add(reg);
     }
-    let mut exits: Vec<Option<Box<Facts>>> = vec![None; function.num_blocks()];
+    // A block's exit facts live from its end until its last forward successor
+    // merges them, held as the few registers they name.
+    let mut exits: Vec<Option<Box<[(u8, Spill)]>>> = vec![None; function.num_blocks()];
     let mut remove = CompoundBitSet::<usize>::with_capacity(output.edits.len());
     for index in 0..function.num_blocks() {
         let block = Block::new(index);
@@ -79,12 +81,19 @@ pub(super) fn eliminate(function: &impl Function, environment: &MachineEnv,
         if block != function.entry_block() && !predecessors.is_empty()
             && predecessors.iter().all(|pred| pred.index() < index)
             && let Some(initial) = &exits[predecessors[0].index()] {
-            facts = **initial;
+            for &(reg, spill) in initial.iter() { facts[usize::from(reg)] = Some(spill); }
             for pred in &predecessors[1..] {
                 let Some(other) = &exits[pred.index()] else { facts.fill(None); break; };
-                for (fact, other) in facts.iter_mut().zip(other.iter()) {
-                    if fact != other { *fact = None; }
+                let mut known = other.iter().peekable();
+                for (reg, fact) in facts.iter_mut().enumerate() {
+                    let agreed = known.next_if(|(other, _)| usize::from(*other) == reg).map(|(_, spill)| *spill);
+                    if *fact != agreed { *fact = None; }
                 }
+            }
+        }
+        for pred in predecessors {
+            if pred.index() < index && function.block_succs(*pred).iter().all(|succ| succ.index() <= index) {
+                exits[pred.index()] = None;
             }
         }
         let first = regalloc2::ProgPoint::before(function.block_insns(block).first());
@@ -109,7 +118,10 @@ pub(super) fn eliminate(function: &impl Function, environment: &MachineEnv,
                 }
             }
         }
-        if facts.iter().any(Option::is_some) { exits[index] = Some(Box::new(facts)); }
+        if facts.iter().any(Option::is_some) {
+            exits[index] = Some(facts.iter().enumerate()
+                .filter_map(|(reg, fact)| Some((u8::try_from(reg).ok()?, (*fact)?))).collect());
+        }
     }
     let mut index = 0;
     output.edits.retain(|_| { let keep = !remove.contains(index); index += 1; keep });
@@ -123,6 +135,7 @@ mod tests {
 
     struct Diamond {
         preds: [Vec<Block>; 4],
+        succs: [Vec<Block>; 4],
         defs: Vec<Operand>,
         clobber: PRegSet,
         last_slot: bool,
@@ -130,7 +143,9 @@ mod tests {
     impl Diamond {
         fn new() -> Self {
             Self { preds: [vec![], vec![Block::new(0)], vec![Block::new(0)],
-                vec![Block::new(1), Block::new(2)]], defs: vec![], clobber: PRegSet::default(), last_slot: false }
+                vec![Block::new(1), Block::new(2)]],
+                succs: [vec![Block::new(1), Block::new(2)], vec![Block::new(3)], vec![Block::new(3)], vec![]],
+                defs: vec![], clobber: PRegSet::default(), last_slot: false }
         }
     }
     impl Function for Diamond {
@@ -140,7 +155,7 @@ mod tests {
         fn block_insns(&self, block: Block) -> InstRange {
             InstRange::new(Inst::new(block.index() * 2), Inst::new(block.index() * 2 + 2))
         }
-        fn block_succs(&self, _: Block) -> &[Block] { &[] }
+        fn block_succs(&self, block: Block) -> &[Block] { &self.succs[block.index()] }
         fn block_preds(&self, block: Block) -> &[Block] { &self.preds[block.index()] }
         fn block_params(&self, _: Block) -> &[VReg] { &[] }
         fn is_ret(&self, inst: Inst) -> bool { inst.index() == 7 }

@@ -1,10 +1,9 @@
 use super::temporal_date::{self, IsoDate};
 use super::*;
 
-use crate::vm::temporal_date_arithmetic::DURATION_YEARS_FIELD;
-use crate::vm::temporal_date_arithmetic::DURATION_MONTHS_FIELD;
-use crate::vm::temporal_date_arithmetic::DURATION_WEEKS_FIELD;
-use crate::vm::temporal_date_arithmetic::DURATION_DAYS_FIELD;
+use crate::vm::temporal_date_arithmetic::{
+    DURATION_DAYS_FIELD, DURATION_MONTHS_FIELD, DURATION_WEEKS_FIELD, DURATION_YEARS_FIELD,
+};
 pub(crate) const MONTHS_PER_YEAR: i128 = 12;
 const DAYS_PER_WEEK: i64 = 7;
 
@@ -18,6 +17,13 @@ pub(super) enum DateUnit {
     Month,
     Week,
     Day,
+}
+
+impl DateUnit {
+    /// Whether the unit is counted in calendar months (a year is twelve of them).
+    fn counts_months(self) -> bool {
+        matches!(self, DateUnit::Year | DateUnit::Month)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -34,13 +40,6 @@ enum DateRoundingMode {
 }
 
 struct DateDifferenceOptions {
-    largest: DateUnit,
-    smallest: DateUnit,
-    increment: f64,
-    rounding_mode: DateRoundingMode,
-}
-
-struct YearMonthDifferenceOptions {
     largest: DateUnit,
     smallest: DateUnit,
     increment: f64,
@@ -76,7 +75,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let settings = self.year_month_difference_options(p, options)?;
         if !matches!(calendar.as_str(), "iso8601" | "gregory")
-            && matches!(settings.largest, DateUnit::Year | DateUnit::Month)
+            && settings.largest.counts_months()
             && settings.smallest == DateUnit::Month
             && settings.increment == 1.0
             && is_trunc(settings.rounding_mode)
@@ -133,9 +132,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         options: Value,
-    ) -> Result<YearMonthDifferenceOptions, JsError> {
+    ) -> Result<DateDifferenceOptions, JsError> {
         if options.is_undefined() {
-            return Ok(YearMonthDifferenceOptions::default());
+            return Ok(DateDifferenceOptions::YEAR_MONTH);
         }
         if !self.is_object_like(options) {
             return Err(self.type_error(p, "Invalid options".into()));
@@ -197,7 +196,7 @@ impl<H: Host> Vm<H> {
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let settings = self.plain_date_difference_options(p, options)?;
         if !matches!(calendar.as_str(), "iso8601" | "gregory")
-            && matches!(settings.largest, DateUnit::Year | DateUnit::Month)
+            && settings.largest.counts_months()
             && matches!(settings.smallest, DateUnit::Auto | DateUnit::Day)
             && settings.increment == 1.0
             && is_trunc(settings.rounding_mode)
@@ -249,7 +248,7 @@ impl<H: Host> Vm<H> {
         options: Value,
     ) -> Result<DateDifferenceOptions, JsError> {
         if options.is_undefined() {
-            return Ok(DateDifferenceOptions::default());
+            return Ok(DateDifferenceOptions::DATE);
         }
         if !self.is_object_like(options) {
             return Err(self.type_error(p, "Options must be an object".into()));
@@ -310,26 +309,13 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl Default for DateDifferenceOptions {
-    fn default() -> Self {
-        Self {
-            largest: DateUnit::Day,
-            smallest: DateUnit::Auto,
-            increment: 1.0,
-            rounding_mode: DateRoundingMode::Trunc,
-        }
-    }
-}
-
-impl Default for YearMonthDifferenceOptions {
-    fn default() -> Self {
-        Self {
-            largest: DateUnit::Year,
-            smallest: DateUnit::Month,
-            increment: 1.0,
-            rounding_mode: DateRoundingMode::Trunc,
-        }
-    }
+impl DateDifferenceOptions {
+    /// A plain date difference's defaults: whole days, truncated.
+    const DATE: Self =
+        Self { largest: DateUnit::Day, smallest: DateUnit::Auto, increment: 1.0, rounding_mode: DateRoundingMode::Trunc };
+    /// A year-month difference's defaults: years and months, truncated to the month.
+    const YEAR_MONTH: Self =
+        Self { largest: DateUnit::Year, smallest: DateUnit::Month, increment: 1.0, rounding_mode: DateRoundingMode::Trunc };
 }
 
 fn year_month_difference_settings<H: Host>(
@@ -339,7 +325,7 @@ fn year_month_difference_settings<H: Host>(
     smallest: ParsedOption<DateUnit>,
     increment: f64,
     rounding_mode: ParsedOption<DateRoundingMode>,
-) -> Result<YearMonthDifferenceOptions, JsError> {
+) -> Result<DateDifferenceOptions, JsError> {
     let largest = match largest {
         ParsedOption::Missing | ParsedOption::Valid(DateUnit::Auto) => DateUnit::Year,
         ParsedOption::Valid(unit @ (DateUnit::Year | DateUnit::Month)) => unit,
@@ -361,7 +347,7 @@ fn year_month_difference_settings<H: Host>(
     {
         return Err(vm.range_error(p, "Invalid difference options".into()));
     }
-    Ok(YearMonthDifferenceOptions {
+    Ok(DateDifferenceOptions {
         largest,
         smallest,
         increment,
@@ -371,7 +357,7 @@ fn year_month_difference_settings<H: Host>(
 
 fn year_month_difference_fields(
     total_months: f64,
-    settings: &YearMonthDifferenceOptions,
+    settings: &DateDifferenceOptions,
 ) -> (f64, f64) {
     if settings.smallest == DateUnit::Year {
         return (
@@ -394,10 +380,7 @@ fn year_month_difference_fields(
         settings.rounding_mode,
     );
     if months.abs() >= MONTHS_PER_YEAR as f64 {
-        (
-            years + months.signum(),
-            months - months.signum() * MONTHS_PER_YEAR as f64,
-        )
+        (years + months.signum(), months - months.signum() * MONTHS_PER_YEAR as f64)
     } else {
         (years, months)
     }
@@ -513,7 +496,7 @@ fn iso_date_difference(start: IsoDate, end: IsoDate, largest: DateUnit) -> Optio
         fields[DURATION_YEARS_FIELD] = count as f64;
         cursor = next;
     }
-    if matches!(largest, DateUnit::Year | DateUnit::Month) {
+    if largest.counts_months() {
         let months = i128::from(end.year - cursor.year) * MONTHS_PER_YEAR
             + i128::from(end.month as i32 - cursor.month as i32);
         let (count, next) = fit_largest(cursor, end, months, 1)?;

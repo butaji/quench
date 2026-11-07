@@ -814,11 +814,10 @@ impl<H: Host> Vm<H> {
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
-                        let key_hash = self.same_value_zero_hash(key);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
-                        if let Some(compaction) = entries.remove(index, key_hash) {
+                        if let Some(compaction) = entries.remove(index) {
                             self.heap
                                 .move_collection_iterators(this, |slot| compaction.new_slot(slot));
                         }
@@ -947,14 +946,13 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
-                let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
                         "Set.prototype.delete called on incompatible receiver".into(),
                     ));
                 };
-                if let Some(compaction) = entries.remove(index, value_hash) {
+                if let Some(compaction) = entries.remove(index) {
                     self.heap
                         .move_collection_iterators(this, |slot| compaction.new_slot(slot));
                 }
@@ -1397,7 +1395,6 @@ impl<H: Host> Vm<H> {
         entries.position(
             key,
             key_hash,
-            |candidate| self.same_value_zero_hash(candidate),
             |candidate| self.same_value_zero(candidate, key),
         )
     }

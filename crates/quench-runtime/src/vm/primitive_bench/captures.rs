@@ -52,7 +52,7 @@ fn dense_read<const STORAGE: u8, const CASE: u8>(b: &mut Bencher) {
         let owner = heap.alloc_environment(
             Value::NULL, 1, slots.clone(), EnvironmentScopeRef::of_program(0),
         ).0;
-        slots = slots.iteration_copy(owner, &[], &[], |_, _| unreachable!()).unwrap();
+        slots = slots.iteration_copy(owner, &[], crate::bytecode::Resets::listed(&[]), |_, _| unreachable!()).unwrap();
         assert!(matches!(slots.state(index), Some(EnvironmentSlotState::Shared(value)) if value == owner));
     }
     let slots = slots.dense().expect("these fixtures must remain dense");

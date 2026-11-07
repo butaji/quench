@@ -604,10 +604,7 @@ fn block_producer(
             return None;
         }
         let instruction = fixed_width(function.code[pc], &function.wide);
-        if !matches!(
-            instruction.op().control_flow_layout(),
-            crate::bytecode::ControlFlowLayout::Fallthrough | crate::bytecode::ControlFlowLayout::Call
-        ) || instruction.returns_from_frame()
+        if !instruction.op().control_flow_layout().only_falls_through() || instruction.returns_from_frame()
         {
             return None;
         }

@@ -212,7 +212,7 @@ pub(crate) fn initialize(
         return Err(fail(c, "Compression handle already initialized"));
     }
     let (engine, state_index, callback_index) =
-        if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+        if mode.is_zstd() {
             let params = parameter_values(c, args)?;
             let pledge = pledged_size(c, args.get(1).copied())?;
             let dictionary = dictionary_bytes(c, args.get(4).copied())?;
@@ -234,7 +234,7 @@ pub(crate) fn initialize(
         Ok(engine) => engine,
         Err(error) => {
             emit_error(c, handle, &error)?;
-            let init_message = if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+            let init_message = if mode.is_zstd() {
                 &error.message
             } else {
                 "Initialization failed"
