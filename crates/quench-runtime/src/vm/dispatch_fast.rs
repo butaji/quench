@@ -708,6 +708,10 @@ impl LaneBodyStats {
 /// threshold backs off, and `LANE_BODY_MAX_RECOMPILES` bounds it.
 const LANE_BODY_REOPTIMIZE_EXITS: u16 = 64;
 const LANE_BODY_MAX_RECOMPILES: u8 = 4;
+/// The completed runs a body makes before a cache it read through growing retires it
+/// (`LaneView::specialize_again_from_caches`): a warming program's caches grow at most
+/// writes, a steady one's at a phase change, which the body's runs since then pay for.
+const LANE_BODY_STALE_RUNS: u32 = 4096;
 
 /// The completed runs per leave past which a body keeps its code instead of specializing
 /// again: a leave resumes in the lane for some hundred instructions, a compile of a unit
@@ -889,6 +893,26 @@ impl LaneView {
             method.retired.set(true);
             self.retired.borrow_mut().push(method);
         }
+    }
+
+    /// Retires the specialized body, whose reads predate an entry their caches gained, for
+    /// another specialization at the next entry from the caches as they are, within the
+    /// recompile budget; its direct callers call through the lane meanwhile.
+    /// Whether it retired the body; one that has not yet run long since its specialization
+    /// (`LANE_BODY_STALE_RUNS`) keeps it, as warming caches grow at most of their writes.
+    fn specialize_again_from_caches(&self) -> bool {
+        // SAFETY: as `lane_body`; a running body keeps its code alive among `retired`.
+        let body = unsafe { &mut *self.tier_lane.get() };
+        let LaneBody::Specialized { recompiles, tier_prologue, stuck, completed, .. } = body else { return true };
+        if *recompiles >= LANE_BODY_MAX_RECOMPILES { return true; }
+        if completed.get() < LANE_BODY_STALE_RUNS { return false; }
+        let (recompiles, stuck) = (*recompiles + 1, *stuck);
+        // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
+        unsafe { (*self.prologue.get()).handler = *tier_prologue };
+        let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Unspecialized { entries: 0, recompiles, stuck }) else { unreachable!() };
+        method.retired.set(true);
+        self.retired.borrow_mut().push(method);
+        true
     }
 
     /// Whether it has no body yet and counts entries toward one, its first or a next.
@@ -2489,6 +2513,20 @@ unsafe fn lane_this<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
         return Some(this);
     }
     unsafe { vm(cx).current_this((*cx).frame) }
+}
+
+impl<H: Host> Vm<H> {
+    /// An entry field cache index `site` gained: the lane bodies whose reads specialized on it
+    /// predate it, and specialize again (`LaneView::specialize_again_from_caches`).
+    #[inline(always)]
+    pub(super) fn retire_lane_readers(&mut self, site: usize) {
+        if self.lane_read_dependents.is_empty() { return; }
+        if let Some(views) = self.lane_read_dependents.get_mut(&site) {
+            // SAFETY: the map holds views of live programs (`reclaim_unreferenced_programs`
+            // clears it).
+            views.retain(|view| !unsafe { &**view }.specialize_again_from_caches());
+        }
+    }
 }
 
 /// The running lane's context.
@@ -7520,12 +7558,20 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         }
         method
     };
-    if now {
+    let specialized = if now {
         own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
         own.lane_body().is_some()
     } else {
         own.specialize_lane_body(lane_body_entry::<H>, specialize)
+    };
+    // The new body depends on its read sites' caches (`Vm::lane_read_dependents`).
+    if let Some(method) = own.lane_body() {
+        for site in &method.read_sites {
+            let views = vm.lane_read_dependents.entry(*site).or_default();
+            if !views.contains(&std::ptr::from_ref(own)) { views.push(own); }
+        }
     }
+    specialized
 }
 
 /// A loop no region runs (`lane_loop_jump`) runs in its function's lane body, entered at its

@@ -2830,6 +2830,7 @@ impl<H: Host> Vm<H> {
     /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its
     /// oldest one's storage, so a site's entries stay bounded however many shapes reach it.
     fn record_inherited_field(&mut self, site: usize, mut cache: InheritedFieldCache) {
+        self.retire_lane_readers(site);
         let head = self.inherited_field_indices.get(site);
         let (mut index, mut previous, mut length) = (head, NO_INHERITED_FIELD, 0);
         while index != NO_INHERITED_FIELD {
@@ -4397,6 +4398,7 @@ impl<H: Host> Vm<H> {
             return;
         }
         self.note_field_cache_write(site);
+        self.retire_lane_readers(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(site) };
         if table_index != NO_MEGAMORPHIC_FIELD {

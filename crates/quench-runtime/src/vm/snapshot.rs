@@ -409,6 +409,7 @@ impl<H: Host> Vm<H> {
             function_values,
             // Lane code is not snapshotted, so neither are the callees it names.
             lane_code_roots: _,
+            lane_read_dependents: _,
             wasm_exported_functions,
             private_homes,
             default_collation: _,

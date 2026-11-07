@@ -2072,6 +2072,10 @@ pub(crate) struct Vm<H> {
     /// `compiled::DirectCallee`): roots of every collection, so no callee a body guards dies
     /// and gives its record and environment to another function while the code lives.
     lane_code_roots: Vec<Value>,
+    /// Per field cache index, the lane views whose specialized bodies read through it
+    /// (`compiled::LaneMethod::read_sites`): an entry the cache gains there is a receiver the
+    /// code predates, so they specialize again (`Vm::retire_lane_readers`).
+    lane_read_dependents: FxHashMap<usize, Vec<*const dispatch_fast::LaneView>>,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,

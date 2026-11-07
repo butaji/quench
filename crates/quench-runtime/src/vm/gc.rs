@@ -384,6 +384,8 @@ impl<H: Host> Vm<H> {
         if reclaimed.is_empty() {
             return;
         }
+        // Their views go with them.
+        self.lane_read_dependents.clear();
         self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values

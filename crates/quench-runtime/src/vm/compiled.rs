@@ -6810,6 +6810,8 @@ pub(super) struct LaneMethod {
     pub(super) retired: std::cell::Cell<bool>,
     /// Whether it runs on an environment activation's window (`lane_unit::Window`).
     pub(super) windowed: bool,
+    /// The field cache indices its reads specialized on (`Vm::lane_read_dependents`).
+    pub(super) read_sites: Vec<usize>,
 }
 
 impl LaneMethod {
@@ -7210,12 +7212,15 @@ impl<H: Host> Vm<H> {
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
     fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
         -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        // A store a previous body left at takes the VM's store; a read keeps the site's
+        // shapes, its misses answered by the VM's read (`Lowering::probed_read`), so a leave
+        // made before the cache knew a shape does not keep the read off native code.
         let generic: Vec<u16> = generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
-            .map(|(site, _)| site).collect();
+            .filter(|(_, read)| !read).map(|(site, _)| site).collect();
         unit.instructions
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(site, _)| !generic.contains(site))
+            .filter(|(site, read)| *read || !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_store_descriptors(site) }))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
@@ -7352,6 +7357,10 @@ impl<H: Host> Vm<H> {
             callee.entry = entry as usize;
         }
         let names_shapes = !fields.is_empty() || !_direct.is_empty();
+        let read_sites: Vec<usize> = unit.instructions.iter()
+            .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
+            .filter(|(_, read)| *read).map(|(site, _)| self.field_cache_index(site))
+            .collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         // A leave inside a direct callee's inlined frames fills the same scratch window
         // (`lane_body_inlined_activation`): the window covers every body it calls directly.
         // A callee specialized again later retires, and is then called through the lane.
@@ -7367,7 +7376,7 @@ impl<H: Host> Vm<H> {
                 self.lane_code_roots.push(callee);
             }
         }
-        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed, retired: std::cell::Cell::new(false), windowed: window.is_some() });
+        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed, retired: std::cell::Cell::new(false), windowed: window.is_some(), read_sites });
         method.bind_self_calls();
         Some(method)
     }

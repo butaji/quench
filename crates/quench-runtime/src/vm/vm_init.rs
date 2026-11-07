@@ -193,6 +193,7 @@ impl<H: Host> Vm<H> {
             descriptors: FxHashMap::default(),
             function_values: FxHashMap::default(),
             lane_code_roots: Vec::new(),
+            lane_read_dependents: FxHashMap::default(),
             wasm_exported_functions: FxHashMap::default(),
             private_homes: FxHashMap::default(),
             default_collation: None,
