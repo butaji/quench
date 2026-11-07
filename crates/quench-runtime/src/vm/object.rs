@@ -2223,8 +2223,9 @@ impl<H: Host> Vm<H> {
         .then_some(hint.value)
     }
 
-    /// The object part of a direct object, array or function, whose own shape and prototype
-    /// link a prototype-held hint tests (`holder_hint_hit`).
+    /// The object part of a direct object, array or function, or of a builtin whose named
+    /// properties are all ordinary (a collection, date, regexp, promise or iterator), whose
+    /// own shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() {
@@ -2233,7 +2234,8 @@ impl<H: Host> Vm<H> {
         if let Some(array) = self.heap.record_array(object) {
             return Some(array);
         }
-        object.direct_function_index().and_then(|_| self.heap.function(object)).map(|function| &function.object)
+        let function = object.direct_function_index().and_then(|_| self.heap.function(object));
+        function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`
