@@ -650,7 +650,6 @@ complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_tier_frame_entry 
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::run_compiled_inner 53
 complexity crates/quench-runtime/src/vm/compiled.rs::cached_direct_reference 13
 complexity crates/quench-runtime/src/vm/compiled.rs::compile_built_functions 14
-complexity crates/quench-runtime/src/vm/compiled.rs::direct_call 12
 complexity crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 13
 complexity crates/quench-runtime/src/vm/compiled.rs::js_numeric_control_flow 13
 complexity crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 88
@@ -3054,7 +3053,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_gett
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 149
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_begin_array_iteration 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_activate 62
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_left 52
