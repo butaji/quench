@@ -358,7 +358,7 @@ impl<H: Host> Vm<H> {
             regexp_matchers: _,
             atom_classes: _,
             intrinsic_natives: _,
-            native_families: _,
+            native_families: _, first_chunks: _,
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,

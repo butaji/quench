@@ -3549,7 +3549,7 @@ struct Int32Facts {
     /// The PCs of products whose zero needs no sign: no factor is ever negative, or every
     /// read of the product treats -0 as +0 and no leave writes it back.
     signless_zero: std::collections::BTreeSet<u32>,
-    /// The PCs of sums and differences every read of which takes ToInt32 of them (a
+    /// The PCs of sums, differences and exact products every read of which takes ToInt32 of them (a
     /// bitwise operand, or an operand of another such sum) and no leave writes back: the
     /// wrapped `i32` is the exact result modulo 2^32, which is all any read observes, so it
     /// needs no overflow guard. An exit's write-back gives the interpreter that `i32`, which
@@ -3828,38 +3828,8 @@ fn int32_facts(
             }
         })
     };
-    // The webs only ToInt32 reads, as the greatest fixpoint: a sum's operand counts while
-    // the sum is one.
-    let sums = |instruction: WideInstruction| {
-        matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply).then(|| arithmetic(instruction.op(), instruction.binary_operator())).flatten()
-    };
-    let mut truncated: std::collections::BTreeSet<Definition> = (0..webs.parent.len())
-        .filter(|definition| webs.find(*definition) == *definition && int32(*definition) && !written_back.contains(definition))
-        .collect();
-    loop {
-        let before = truncated.len();
-        let kept: std::collections::BTreeSet<Definition> = truncated
-            .iter()
-            .copied()
-            .filter(|web| {
-                readers[*web].iter().all(|offset| {
-                    let instruction = region.instructions[*offset];
-                    let pc = region.header + *offset as u32;
-                    match sums(instruction) {
-                        Some(Arithmetic::Int32(_)) => true,
-                        Some(Arithmetic::Float(NumberArithmetic::Add | NumberArithmetic::Subtract)) => {
-                            truncated.contains(&webs.defined(region, pc))
-                        }
-                        _ => false,
-                    }
-                })
-            })
-            .collect();
-        truncated = kept;
-        if truncated.len() == before {
-            break;
-        }
-    }
+    let truncated = truncation::truncated_webs(region, webs, &readers, (0..webs.parent.len())
+        .filter(|definition| webs.find(*definition) == *definition && int32(*definition) && !written_back.contains(definition)));
     let mut facts = Int32Facts { ranges: ranges.clone(), bounds: bounds.clone(), ..Int32Facts::default() };
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
         if !webs.reachable[offset] {
@@ -3877,12 +3847,12 @@ fn int32_facts(
         if !int32(web) {
             continue;
         }
-        if operator != NumberArithmetic::Multiply && truncated.contains(&web) {
+        let operand = |operand: Operand| operand_range(&ranges, pc, operand);
+        let range = exact_range(instruction, &operand, &|register| register_range(&ranges, pc, register), &region.constants);
+        if truncated.contains(&web) && truncation::wraps_exactly(operator, range) {
             facts.truncated.insert(pc);
         }
-        let operand = |operand: Operand| operand_range(&ranges, pc, operand);
-        if let Some((low, high)) =
-            exact_range(instruction, &operand, &|register| register_range(&ranges, pc, register), &region.constants)
+        if let Some((low, high)) = range
             && low >= INT32_RANGE.0
             && high <= INT32_RANGE.1
         {
@@ -6500,7 +6470,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let (result, overflow) = match operator {
             NumberArithmetic::Add | NumberArithmetic::Subtract =>
                 operator.apply(&mut super::EmitArithmetic::<true> { builder: &mut self.body.builder }, left, right),
-            NumberArithmetic::Multiply if self.proved(pc) => {
+            NumberArithmetic::Multiply if self.wraps(pc) => {
                 return self.body.builder.ins().imul(left, right);
             }
             NumberArithmetic::Multiply if exact && self.facts.signless_zero.contains(&pc) => {
@@ -7122,6 +7092,8 @@ mod iteration;
 #[cfg(test)]
 #[path = "osr_loop/coverage_tests.rs"]
 mod coverage_tests;
+#[path = "osr_loop/truncation.rs"]
+mod truncation;
 
 #[cfg(test)]
 mod tests {

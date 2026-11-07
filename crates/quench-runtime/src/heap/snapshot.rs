@@ -58,7 +58,6 @@ impl Heap {
         policy: super::MemoryPolicy,
     ) -> SnapshotResult<Self> {
         let mut heap = Self::new();
-        heap.forget_prototypes();
         heap.set_memory_policy(policy);
         let slots = reader.len()?;
         for index in 0..slots {
@@ -101,7 +100,43 @@ impl Heap {
         })?;
         heap.sparse_arrays = (!sparse.is_empty()).then(|| Box::new(sparse.into_iter().collect()));
         heap.settle_restored_pacing();
+        heap.register_restored_prototypes();
         Ok(heap)
+    }
+
+    /// Registers every restored prototype with a subject of its own (a snapshot keeps no
+    /// watches), so the registry knows all prototypes again: a collection then retires the
+    /// prototype proofs only when a prototype dies, instead of at every collection.
+    fn register_restored_prototypes(&mut self) {
+        let mut prototypes = Vec::new();
+        self.object_records.for_each_live(|id, object| {
+            if object.was_used_as_prototype() { prototypes.push(Value::direct_object(id)); }
+        });
+        self.array_records.for_each_live(|id, array| {
+            if array.was_used_as_prototype() { prototypes.push(Value::direct_array(id)); }
+        });
+        self.function_records.for_each_live(|id, function| {
+            if function.object.was_used_as_prototype() { prototypes.push(Value::direct_function(id)); }
+        });
+        self.promise_records.for_each_live(|id, promise| {
+            if promise.object.was_used_as_prototype() { prototypes.push(Value::direct_promise(id)); }
+        });
+        self.iterator_records.for_each_live(|id, iterator| {
+            if iterator.object.was_used_as_prototype() { prototypes.push(Value::direct_iterator(id)); }
+        });
+        for (index, slot) in self.slots.iter().enumerate() {
+            if slot.cell.as_ref().and_then(Cell::object).is_some_and(Object::was_used_as_prototype) {
+                prototypes.push(Value::heap(index as u32));
+            }
+        }
+        let mut known = Vec::with_capacity(prototypes.len());
+        for prototype in prototypes {
+            let watch = self.dependencies.watch();
+            let subject = watch.subject().expect("a new watch names its subject");
+            self.prototype_object_mut(prototype).expect("a restored prototype").watch_as(watch);
+            known.push((prototype, subject));
+        }
+        self.prototypes = known;
     }
 
     /// Plans pacing as a full collection that kept everything restored would.
@@ -173,4 +208,34 @@ fn read_records<T, const CAPACITY: usize>(
     let _high_water = reader.u32()?;
     space.finish_snapshot_inserts();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restored_prototypes_are_registered_and_watched_again() {
+        // A snapshot keeps no watches; the restored heap registers each prototype anew, so a
+        // collection in which no prototype died retires no proofs (`retire_dead_prototypes`).
+        let mut heap = Heap::new();
+        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let record_prototype = heap.alloc_object(Object::new(Value::NULL));
+        let plain = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        heap.mark_prototype(prototype);
+        heap.mark_prototype(record_prototype);
+        let mut writer = crate::snapshot::Writer::new();
+        heap.write_snapshot(&mut writer).unwrap();
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
+        let registered: Vec<Value> = restored.prototypes.iter().map(|(value, _)| *value).collect();
+        assert_eq!(registered.len(), 2);
+        assert!(registered.contains(&prototype) && registered.contains(&record_prototype) && !registered.contains(&plain));
+        for value in [prototype, record_prototype] {
+            assert!(restored.object(value).and_then(Object::watched_subject).is_some());
+        }
+        restored.collect([prototype, record_prototype]);
+        assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");
+    }
 }

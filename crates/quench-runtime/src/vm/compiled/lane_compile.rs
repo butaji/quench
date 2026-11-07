@@ -58,9 +58,23 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
+/// Lane bodies with at least this many IR instructions allocate registers in one pass; smaller
+/// ones keep the backtracking allocator. One pass pays off where compile latency dominates (large
+/// bodies), backtracking where a small hot loop runs millions of times. Experiment build, 3
+/// interleaved rounds (2026-11-07): one pass everywhere cost call-method 2.2 -> 5.2 ns and
+/// call-polymorphic 8.6 -> 15.9 ns (bodies of 400-1900 instructions); at 2048 those recover
+/// (2.21, 8.63 ns) while richards (bodies 2k-17k) keeps 28.5 vs 26.9 all-backtracking and
+/// delta-blue 48.0 vs 43.9.
+const LANE_SINGLE_PASS_MIN_INSTS: usize = 2048;
+
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = super::jit_backend::lane_body_isa().ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
+    let isa = if function.dfg.num_insts() >= LANE_SINGLE_PASS_MIN_INSTS {
+        super::jit_backend::lane_body_isa()
+    } else {
+        super::jit_backend::target_isa()
+    }
+    .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 

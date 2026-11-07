@@ -189,8 +189,8 @@ pub(crate) fn script(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> 
         return Err(c.throw(error));
     }
     let code = argument(c, args, 0);
-    let code = c.to_string(code)?;
-    let code = c.string_rooted(&code);
+    // ToString of a string is itself: its text, megabytes for a data script, is not copied.
+    let code = if c.string_utf8_length(code)?.is_some() { code } else { let text = c.to_string(code)?; c.decoded_string_rooted(&text) };
     let options = argument(c, args, 1);
     let options = script_options(c, options)?;
     let default_filename = c.string_rooted(DEFAULT_FILENAME);
