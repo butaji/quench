@@ -410,7 +410,6 @@ impl<H: Host> Vm<H> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
-        self.enumerable_keys.clear();
         // Prepared regexp subjects share their strings' text: kept across a collection, they
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();

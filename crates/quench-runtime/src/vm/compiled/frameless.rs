@@ -6,12 +6,13 @@
 //! inlined callee's recovery) makes the whole chain's frames through the shared recovery
 //! (`materialize_chain`) and stops every native caller, and the general loop continues in
 //! the innermost frame exactly where it left. A function whose activations keep leaving
-//! takes the framed call again (`MATERIALIZATION_LIMIT`).
+//! within one collection cycle takes the framed call again until the next
+//! (`MATERIALIZATION_LIMIT`), so warm-up exits do not disable it for good.
 use super::{
     emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
     JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
 };
-use crate::bytecode::WideInstruction;
+use crate::bytecode::{ConstructArguments, Op, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
@@ -24,8 +25,12 @@ const CACHE_ENTRIES: usize = 256;
 /// Native stack a frameless call leaves above the entry's limit for the exact steps and
 /// recovery that may follow inside it.
 const STACK_MARGIN: i64 = 128 * 1024;
-/// Recoveries of one function's frameless activations after which its calls keep frames.
+/// Recoveries of one function's frameless activations in one collection epoch after which
+/// its calls keep frames for the rest of the epoch.
 const MATERIALIZATION_LIMIT: u32 = 16;
+/// `CallEntry::meta`'s fields above its function: the register count, then the parameter count.
+const META_REGISTERS: u32 = u32::BITS;
+const META_PARAMS: u32 = META_REGISTERS + u16::BITS;
 /// `CallEntry::this`: the receiver as passed (a strict body), or no `this` slot (an arrow's
 /// is lexical). Any other value is the global object a sloppy body binds for `undefined`
 /// or `null`.
@@ -33,7 +38,7 @@ const THIS_RECEIVER: u64 = 0;
 const THIS_NONE: u64 = 1;
 
 /// A frameless activation: its function, the call in its caller that made it, its
-/// registers and the `this` its body reads (`JsStepDispatch::fixed_this_slot`).
+/// registers, the `this` its body reads (`JsStepDispatch::fixed_this_slot`) and its callee.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct ShadowRecord {
@@ -41,6 +46,7 @@ pub(super) struct ShadowRecord {
     call_pc: u32,
     window: *const Value,
     this: Value,
+    callee: Value,
 }
 
 /// An admitted callee, by its value, in the collection epoch it was admitted in: its native
@@ -58,6 +64,8 @@ struct CallEntry {
     capture_stores: u64,
     meta: u64,
     this: u64,
+    /// Whether `new` may construct with it in place (`Vm::inline_constructible`).
+    constructs: u64,
 }
 
 /// The per-VM storage of frameless calls. The windows are never scanned: no collection runs
@@ -66,13 +74,15 @@ pub(crate) struct Frameless {
     windows: Box<[Value]>,
     shadow: Box<[ShadowRecord]>,
     cache: Box<[CallEntry]>,
-    /// The leaves of each function's frameless activations (`MATERIALIZATION_LIMIT`).
-    materializations: rustc_hash::FxHashMap<(u32, u32), u32>,
+    /// The leaves of each function's frameless activations in the epoch they count in
+    /// (`MATERIALIZATION_LIMIT`).
+    materializations: rustc_hash::FxHashMap<(u32, u32), (u32, u64)>,
 }
 
 impl Default for Frameless {
     fn default() -> Self {
-        let empty = ShadowRecord { function: 0, call_pc: 0, window: std::ptr::null(), this: Value::UNDEFINED };
+        let empty = ShadowRecord { function: 0, call_pc: 0, window: std::ptr::null(), this: Value::UNDEFINED,
+            callee: Value::UNDEFINED };
         Self {
             windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
             shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
@@ -107,8 +117,10 @@ impl Frameless {
     }
 }
 
-/// A frameless call of the plain `Call` at `pc` where its callee is admitted and the stacks
-/// have room; else `framed`, the call's framed path.
+/// A frameless call of the plain `Call` or `Construct` at `pc` where its callee is admitted
+/// and the stacks have room; else `framed`, the instruction's framed path. A construction
+/// binds the receiver its callee allocates in place (`general_construct_receiver`) and yields
+/// it unless the body returns an object.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_call(
     builder: &mut FunctionBuilder<'_>,
@@ -119,34 +131,91 @@ pub(super) fn emit_call(
     destination: i32,
     framed: ir::Block,
 ) -> Option<()> {
-    let window = instruction.call_window();
+    let (window, receiver) = if instruction.op() == Op::Construct {
+        let ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
+        (!instruction.is_super_construct()).then_some((window, None))?
+    } else { (instruction.call_window(), Some(register_offset(instruction.register_c())?)) };
     let passed = (0..window.count).map(|index| register_offset(window.base + index)).collect::<Option<Vec<_>>>()?;
     let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, register_offset(instruction.register_b())?);
-    let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, register_offset(instruction.register_c())?);
-    let entry = emit_entry(builder, payload, callee, framed);
-    let meta = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, meta) as i32);
-    let params = builder.ins().ushr_imm_u(meta, 48);
-    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, params, i64::from(window.count));
-    let registers = builder.ins().ushr_imm_u(meta, 32);
-    let registers = builder.ins().band_imm_u(registers, 0xffff);
-    let (top, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
-    emit_window(builder, (arguments, top), &passed, registers);
-    let this = emit_this(builder, entry, receiver, record);
-    emit_record(builder, record, (meta, pc, top));
-    let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, registers, record, this));
-    let returned = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, status, i64::from(JS_GENERAL_RETURN_STATUS_BASE));
-    let done = builder.create_block();
-    // A callee that stopped made the chain's frames (`leave`): this caller stops with it.
-    builder.ins().brif(returned, done, &[], exact.stopped_block, &[]);
-    builder.switch_to_block(done);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), exact.result_pointer, 0);
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
-    builder.ins().jump(next, &[]);
+    let receiver = receiver.map(|offset| builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset));
+    emit_activation(builder, (pc, next), (arguments, payload), exact, (callee, receiver, &passed), (destination, framed));
     Some(())
 }
 
-/// The shadow record's function (the low half of `meta`), call PC and window.
-fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, (meta, pc, top): (ir::Value, usize, ir::Value)) {
+/// A frameless activation of `callee` made by the instruction at `pc`, passing the
+/// `passed` registers, bound to `receiver` or, where none, to the receiver a construction
+/// allocates; its value goes to `destination`, and any refusal to `framed`.
+pub(super) fn emit_activation(
+    builder: &mut FunctionBuilder<'_>,
+    (pc, next): (usize, ir::Block),
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+    (callee, receiver, passed): (ir::Value, Option<ir::Value>, &[i32]),
+    (destination, framed): (i32, ir::Block),
+) {
+    let entry = emit_entry(builder, payload, callee, framed);
+    let meta = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, meta) as i32);
+    let fits = emit_fits(builder, (entry, meta), passed.len() as u16, receiver.is_none());
+    let registers = builder.ins().ushr_imm_u(meta, i64::from(META_REGISTERS));
+    let registers = builder.ins().band_imm_u(registers, i64::from(u16::MAX));
+    let (top, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
+    let (this, constructed) = match receiver {
+        Some(receiver) => (emit_this(builder, entry, receiver, record), None),
+        None => emit_receiver(builder, payload, (callee, record), framed),
+    };
+    emit_window(builder, (arguments, top), passed, registers);
+    emit_record(builder, record, (meta, pc, top), callee);
+    let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, registers, record, this));
+    emit_returned(builder, (payload, arguments), exact, (status, constructed), (destination, next));
+}
+
+/// Stores the callee's return value, or for a construction the value it yields, in
+/// `destination`; a callee that stopped made the chain's frames (`leave`), and this caller
+/// stops with it.
+fn emit_returned(builder: &mut FunctionBuilder<'_>, (payload, arguments): (ir::Value, ir::Value), exact: &JsExactFallback,
+    (status, constructed): (ir::Value, Option<ir::Value>), (destination, next): (i32, ir::Block)) {
+    let returned = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, status, i64::from(JS_GENERAL_RETURN_STATUS_BASE));
+    let done = builder.create_block();
+    builder.ins().brif(returned, done, &[], exact.stopped_block, &[]);
+    builder.switch_to_block(done);
+    let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), exact.result_pointer, 0);
+    if let Some(constructed) = constructed {
+        let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, construct_result));
+        value = emit_lane_helper_call(builder, payload, helper, &[value, constructed]);
+    }
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    builder.ins().jump(next, &[]);
+}
+
+/// Whether the call passes no more values than the callee's parameters, and for a
+/// construction whether the callee constructs in place.
+fn emit_fits(builder: &mut FunctionBuilder<'_>, (entry, meta): (ir::Value, ir::Value), count: u16, constructs: bool) -> ir::Value {
+    let params = builder.ins().ushr_imm_u(meta, i64::from(META_PARAMS));
+    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, params, i64::from(count));
+    if !constructs { return fits; }
+    let admitted = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, constructs) as i32);
+    let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
+    builder.ins().band(fits, admitted)
+}
+
+/// The receiver a construction of `callee` allocates, bound in the record's `this` slot:
+/// the slot's address and the receiver; `framed` where it allocates none.
+fn emit_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (callee, record): (ir::Value, ir::Value),
+    framed: ir::Block) -> (ir::Value, Option<ir::Value>) {
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, construct_receiver));
+    let receiver = emit_lane_helper_call(builder, payload, helper, &[callee]);
+    let allocated = builder.ins().icmp_imm_u(IntCC::NotEqual, receiver, Value::DELETED.to_bits() as i64);
+    let bound = builder.create_block();
+    builder.ins().brif(allocated, bound, &[], framed, &[]);
+    builder.switch_to_block(bound);
+    builder.ins().store(MemFlagsData::trusted(), receiver, record, std::mem::offset_of!(ShadowRecord, this) as i32);
+    (builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64), Some(receiver))
+}
+
+/// The shadow record's function (the low half of `meta`), call PC, window and callee.
+fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, (meta, pc, top): (ir::Value, usize, ir::Value),
+    callee: ir::Value) {
+    builder.ins().store(MemFlagsData::trusted(), callee, record, std::mem::offset_of!(ShadowRecord, callee) as i32);
     let function = builder.ins().ireduce(types::I32, meta);
     builder.ins().store(MemFlagsData::trusted(), function, record, std::mem::offset_of!(ShadowRecord, function) as i32);
     let call_pc = builder.ins().iconst(types::I32, pc as i64);
@@ -312,7 +381,9 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
     let body = program.function_get(function as usize)?;
     let plan = body.call_plan(program);
     if !plan.in_loop || !plan.registers_only || body.rest { return None; }
-    if vm.frameless.materializations.get(&(owner.raw(), function)).is_some_and(|leaves| *leaves >= MATERIALIZATION_LIMIT) {
+    let epoch = vm.heap.collection_epoch();
+    if vm.frameless.materializations.get(&(owner.raw(), function))
+        .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
         return None;
     }
     let code = native_entry(vm, owner, function)?;
@@ -329,8 +400,9 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
         capture_values: values as u64,
         capture_len: len as u64,
         capture_stores: u64::from(super::super::dispatch_fast::capture_stores(capture).is_some()),
-        meta: u64::from(function) | (u64::from(body.registers) << 32) | (u64::from(body.params) << 48),
+        meta: u64::from(function) | (u64::from(body.registers) << META_REGISTERS) | (u64::from(body.params) << META_PARAMS),
         this,
+        constructs: u64::from(Vm::<H>::inline_constructible(body)),
     };
     let slot = (callee.to_bits() as usize) & (CACHE_ENTRIES - 1);
     vm.frameless.cache[slot] = entry;
@@ -352,21 +424,53 @@ fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<u
     None
 }
 
+/// The chain of the payload's frameless activations, outermost first, followed by `inlined`:
+/// each continues at its callee's call, the innermost at `pc`. Counts the leave against the
+/// innermost frameless function (`MATERIALIZATION_LIMIT`).
 pub(super) fn chain<H: Host>(vm: &mut Vm<H>, dispatch: &JsStepDispatch, pc: u32,
-    inlined: impl Iterator<Item = (u32, u32, u32, *const Value)>) -> Vec<(u32, u32, u32, *const Value)> {
+    inlined: impl Iterator<Item = ChainFrame>) -> Vec<ChainFrame> {
     let live = vm.frameless.live(dispatch);
     let continues = live.iter().skip(1).map(|record| record.call_pc).chain([pc]);
-    let records: Vec<_> = live.iter().zip(continues)
-        .map(|(record, at)| (record.function, record.call_pc, at, record.window)).collect();
-    if let Some(&(function, ..)) = records.last() {
-        let leaves = vm.frameless.materializations.entry((dispatch.program_id.raw(), function)).or_default();
+    let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| ChainFrame { function: record.function,
+        call_pc: record.call_pc, source_pc, registers: record.window, this: record.this, callee: record.callee }).collect();
+    if let Some(last) = records.last() {
+        let epoch = vm.heap.collection_epoch();
+        let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last.function)).or_default();
+        if *counted != epoch { (*leaves, *counted) = (0, epoch); }
         *leaves += 1;
         if *leaves == MATERIALIZATION_LIMIT {
-            // Calls of it keep frames from now on: no cached admission names it.
+            // Calls of it keep frames for this epoch: no cached admission names it.
             vm.frameless.clear();
         }
     }
     records.into_iter().chain(inlined).collect()
+}
+
+/// The receiver an in-place construction of `callee` allocates (`Vm::inline_construct_receiver`),
+/// in the callee's realm with no collection due; else `Value::DELETED` before any effect.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_construct_receiver<H: Host>(vm: u64, _residual: u64, callee: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let callee = Value::from_bits(callee);
+    // A due collection runs at the construction's exact step, never under frameless windows.
+    if vm.heap.should_collect() || vm.construct_target.is_some()
+        || vm.heap.function(callee).is_none_or(|record| record.realm != vm.realm.globals) {
+        return Value::DELETED.to_bits();
+    }
+    vm.inline_construct_receiver(callee).unwrap_or(Value::DELETED).to_bits()
+}
+
+/// [[Construct]]'s result: the body's returned object, otherwise the receiver.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_construct_result<H: Host>(vm: u64, _residual: u64, value: u64, receiver: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    if vm.is_object_like(Value::from_bits(value)) { value } else { receiver }
 }
 
 /// An exact step inside a frameless activation runs in its frame: the step that made the
@@ -376,4 +480,19 @@ pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     let chain = chain(vm, dispatch, pc as u32, std::iter::empty());
     super::materialize_chain(vm, program, dispatch, &chain);
     dispatch.outcome.take()
+}
+
+/// One native activation the VM makes a frame for (`materialize_chain`): its function, the
+/// call in its caller, the PC it continues at, its registers, and the receiver a construction
+/// allocated for it (`Value::DELETED` for a call), and its callee where its instruction names
+/// none in a register (a getter's read; else `Value::DELETED`).
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct ChainFrame {
+    pub(super) function: u32, pub(super) call_pc: u32, pub(super) source_pc: u32, pub(super) registers: *const Value,
+    pub(super) this: Value, pub(super) callee: Value,
+}
+
+/// The construction helpers' addresses, as `JsStepDispatch` holds them.
+pub(super) fn construct_helpers<H: Host>() -> (usize, usize) {
+    (general_construct_receiver::<H> as *const () as usize, general_construct_result::<H> as *const () as usize)
 }

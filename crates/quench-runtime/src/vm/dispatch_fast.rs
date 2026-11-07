@@ -3486,7 +3486,7 @@ lane_handler! {
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
-            Ok(StepResult::Continue) if next == pc + 1 => {}
+            Ok(StepResult::Continue) => {}
             Ok(_) => unreachable!("an in-place step only continues"),
             Err(error) => {
                 vm.lane_raised = Some(error);
@@ -3495,7 +3495,9 @@ lane_handler! {
         }
         // The step may allocate, which can make a collection due.
         note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script(cx))
+        // SAFETY: the step continues at a record of the running frame's view.
+        let target = unsafe { (*cx).base.add(next) };
+        if next > pc { next!(cx, r, target, Carried::script(cx)) } else { exit(target) }
     }
 }
 
@@ -3573,8 +3575,8 @@ fn lane_in_place<H: Host, T>(
 }
 
 /// Instructions whose general step reads and writes only the frame, its registers and heap
-/// values, runs guest code only through nested calls, and continues to the next instruction
-/// or throws: no jump, call, return, `this` binding or environment change the lane caches.
+/// values, runs guest code only through nested calls, and continues (a backward jump in the
+/// general path) or throws: no call, return, `this` binding or environment change the lane caches.
 const fn lane_steps_in_place(op: Op) -> bool {
     matches!(
         op,
@@ -3593,6 +3595,7 @@ const fn lane_steps_in_place(op: Op) -> bool {
             | Op::CopyDataProperties
             | Op::GetIterator
             | Op::ForInStart
+            | Op::ForInNext
             | Op::RequireIteratorResult
             | Op::IteratorClose
             | Op::IteratorCleanupPush
@@ -4769,32 +4772,12 @@ fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Va
     // every index inside its length, so their reads come before the ordinary array probes,
     // which would only decline them.
     vm.dense_array_element(base, key)
+        .or_else(|| lane_named_key_element(ip, vm, base, key))
         .or_else(|| lane_typed_array_element(ip, vm, base, key))
         .or_else(|| lane_string_index_element(ip, vm, base, key))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
         .or_else(|| vm.keyed_array_length(base, key))
-}
-
-/// A string's unit at an index inside its length (`lane_string_element`): the site then
-/// tries it first (`lane_get_index_string`).
-fn lane_string_index_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
-    let value = lane_string_element(vm, base, key)?;
-    requicken::<H>(ip, lane_get_index_string::<H>);
-    Some(value)
-}
-
-script_handler! {
-    /// `lane_get_index_registers` at a site that read a string: its unit at an index inside
-    /// its length is the whole read; any other read takes the generic order.
-    fn lane_get_index_string<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(value) = lane_string_element(vm, r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_registers::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
 }
 
 /// A typed array's element at an index key (`Vm::plain_typed_element`), which no dense array
@@ -13933,8 +13916,10 @@ fn lane_native_value<H: Host>(
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
 }
 
+mod named_keys;
+use named_keys::{lane_named_key_element, lane_string_index_element};
 mod native_calls;
-use native_calls::{for_in_next_handler, native_call_handler, string_char_at_ascii, string_char_code_at};
+use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
 
@@ -19499,19 +19484,18 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     })
 }
 
-/// The handlers of the jumps (`other_handler`): their direction decides whether they run a
-/// safepoint.
+/// The handlers of the jumps (`other_handler`), whose direction decides whether they run a
+/// safepoint, then of the Wasm GC steps (`wasm_gc_handler`).
 const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
-        Op::ForInNext => Some(for_in_next_handler::<H>()),
         Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
         Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
-        _ => None,
+        _ => wasm_gc_handler::<H>(op),
     }
 }
 
@@ -19519,8 +19503,6 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> O
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
-        Op::JumpBinaryFalse | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::ForInNext | Op::WasmBranchTable | Op::WasmJumpI32Zero
-        | Op::WasmJumpI32NonZero => jump_handler::<H, BACKWARD, ACC>(op),
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreName => Some(lane_store_name_first::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
@@ -19584,7 +19566,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H, NOT_LEAF>),
         Op::Yield => Some(lane_yield::<H>),
-        _ => wasm_gc_handler::<H>(op),
+        _ => jump_handler::<H, BACKWARD, ACC>(op),
     }
 }
 

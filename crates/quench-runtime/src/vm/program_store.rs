@@ -1383,12 +1383,12 @@ impl ProgramStore {
     /// module's environment holds only bindings the compiler resolved; a script's root reaches
     /// even its vars by name (`frame_var`); an eval's root may meet bindings it adds.
     pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
-        self.entry(id).is_some_and(|entry| match entry.residual.kind {
-            crate::bytecode::ProgramKind::Module => true,
-            crate::bytecode::ProgramKind::Eval if function == super::ROOT_FUNCTION_ID => false,
-            _ => self.runs_in_global_scope(id),
-        })
+        self.names_are_global(id)
+            && (function != super::ROOT_FUNCTION_ID || self.entry(id).is_some_and(|entry| entry.residual.kind != crate::bytecode::ProgramKind::Eval))
     }
+    /// Whether unresolved names in the program's nested functions are global (`general_global_get`).
+    pub(crate) fn names_are_global(&self, id: ProgramId) -> bool { self.module_kind(id) || self.runs_in_global_scope(id) }
+    fn module_kind(&self, id: ProgramId) -> bool { self.entry(id).is_some_and(|entry| entry.residual.kind == crate::bytecode::ProgramKind::Module) }
 
     /// Whether the program's root body evaluates in the global environment.
     pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {

@@ -637,7 +637,7 @@ complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_tier_frame_entry 
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::run_compiled_inner 53
 complexity crates/quench-runtime/src/vm/compiled.rs::cached_direct_reference 13
 complexity crates/quench-runtime/src/vm/compiled.rs::compile_built_functions 14
-complexity crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 13
+complexity crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 12
 complexity crates/quench-runtime/src/vm/compiled.rs::js_numeric_control_flow 13
 complexity crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 77
 complexity crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 227
@@ -912,7 +912,6 @@ complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::number 2
 complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 21
 complexity crates/quench-runtime/src/vm/json.rs::JsonSyntax::positioned_message 14
 complexity crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_value 23
-complexity crates/quench-runtime/src/vm/json.rs::Vm<H>::json_write_plain 13
 complexity crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::call_method_site_safe 13
 complexity crates/quench-runtime/src/vm/native_graph.rs::ObjectExtension<'_>::finish 43
 complexity crates/quench-runtime/src/vm/native_object.rs::emit_native_module 28
@@ -1507,13 +1506,13 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 628
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 524
 file-lines crates/quench-runtime/src/vm/collections.rs 1480
-file-lines crates/quench-runtime/src/vm/compiled.rs 21416
+file-lines crates/quench-runtime/src/vm/compiled.rs 21408
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 523
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5985
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 984
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7656
-file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 599
+file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 598
 file-lines crates/quench-runtime/src/vm/compiled/wavefront.rs 1445
 file-lines crates/quench-runtime/src/vm/construction.rs 1487
 file-lines crates/quench-runtime/src/vm/data_view.rs 648
@@ -1528,7 +1527,7 @@ file-lines crates/quench-runtime/src/vm/embedding.rs 1962
 file-lines crates/quench-runtime/src/vm/environment.rs 2760
 file-lines crates/quench-runtime/src/vm/error.rs 2691
 file-lines crates/quench-runtime/src/vm/eval.rs 1369
-file-lines crates/quench-runtime/src/vm/gc.rs 1317
+file-lines crates/quench-runtime/src/vm/gc.rs 1316
 file-lines crates/quench-runtime/src/vm/generator.rs 1803
 file-lines crates/quench-runtime/src/vm/index.rs 966
 file-lines crates/quench-runtime/src/vm/intl_collator.rs 695
@@ -1542,7 +1541,7 @@ file-lines crates/quench-runtime/src/vm/intl_relative.rs 611
 file-lines crates/quench-runtime/src/vm/iterators.rs 3576
 file-lines crates/quench-runtime/src/vm/jit_backend/select.rs 679
 file-lines crates/quench-runtime/src/vm/js_compiled.rs 4544
-file-lines crates/quench-runtime/src/vm/json.rs 2372
+file-lines crates/quench-runtime/src/vm/json.rs 2167
 file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
 file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
@@ -1577,7 +1576,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 512
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3352
-file-lines crates/quench-runtime/src/vm/tests.rs 26548
+file-lines crates/quench-runtime/src/vm/tests.rs 26545
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 964
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
@@ -2901,7 +2900,7 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::complete_pushed_
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::guarded_call_values 62
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_at_entry 582
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_compiled_call 45
-function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_general_dispatch_at_entry 125
+function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_general_dispatch_at_entry 114
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_numeric_find_at_entry 75
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_linked_frame_entry 51
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_tier_activation_entry 53
@@ -2913,7 +2912,7 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::compile_built_functions
 function-lines crates/quench-runtime/src/vm/compiled.rs::direct_reference_entry 55
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_cached_field_slot 155
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_int32_arithmetic 62
-function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_own_field_get 47
+function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_own_field_get 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_tagged_number 69
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_tagged_truthiness 50
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_lane_receiver 48
@@ -2921,9 +2920,9 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::emit_number_relation 88
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_unlogged_property_store_guard 60
 function-lines crates/quench-runtime/src/vm/compiled.rs::enter_native 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::import_callout 58
-function-lines crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 98
+function-lines crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 96
 function-lines crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 457
-function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 1335
+function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 1326
 function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_numeric_region 378
 function-lines crates/quench-runtime/src/vm/compiled.rs::lower_static_typed_regions 74
 function-lines crates/quench-runtime/src/vm/compiled.rs::native_operation_fallback_kind 113
@@ -3059,7 +3058,7 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::webs 103
 function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::emit_entry 171
 function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::lower_regions 144
 function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::tests::arithmetic_region_reads_each_number_input_once 45
-function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::tests::bound_data_fields_reach_native_arithmetic_after_cache_warmup 109
+function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::tests::bound_data_fields_reach_native_arithmetic_after_cache_warmup 108
 function-lines crates/quench-runtime/src/vm/compiled/static_loops.rs::constants 61
 function-lines crates/quench-runtime/src/vm/compiled/static_loops.rs::scalar 43
 function-lines crates/quench-runtime/src/vm/compiled/wavefront.rs::Emitter<'a,'b>::emit 165
@@ -3244,7 +3243,7 @@ function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::bound_function_p
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::function_arguments 41
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::function_caller 43
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::initialize_bound_function_metadata 81
-function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 560
+function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 559
 function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::compact_live_shapes 60
 function-lines crates/quench-runtime/src/vm/gc.rs::active_shape_attributes 43
 function-lines crates/quench-runtime/src/vm/gc.rs::rebuild_shape 61
@@ -3403,8 +3402,7 @@ function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_replacer 44
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_object 65
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_property 68
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_value 109
-function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_stringify 54
-function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_write_plain 50
+function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_stringify 42
 function-lines crates/quench-runtime/src/vm/lane_exits.rs::report 67
 function-lines crates/quench-runtime/src/vm/lazy_data_property.rs::Vm<H>::define_lazy_data_properties 49
 function-lines crates/quench-runtime/src/vm/lazy_data_property.rs::Vm<H>::lazy_data_property_access 51
@@ -3805,7 +3803,7 @@ function-lines crates/quench-runtime/src/vm/tests.rs::intl_locale_roots_boxed_op
 function-lines crates/quench-runtime/src/vm/tests.rs::intl_supported_locales_roots_callback_views_and_releases_results 98
 function-lines crates/quench-runtime/src/vm/tests.rs::iterator_close_retains_forwarded_wrappers_and_restores_scopes 129
 function-lines crates/quench-runtime/src/vm/tests.rs::iterator_step_roots_receiver_through_result_accessors 86
-function-lines crates/quench-runtime/src/vm/tests.rs::js_general_artifact_key_tracks_only_code_generation_dependencies 54
+function-lines crates/quench-runtime/src/vm/tests.rs::js_general_artifact_key_tracks_only_code_generation_dependencies 51
 function-lines crates/quench-runtime/src/vm/tests.rs::js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly 132
 function-lines crates/quench-runtime/src/vm/tests.rs::js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments 78
 function-lines crates/quench-runtime/src/vm/tests.rs::js_jit_compiles_cached_numeric_kind_field_switches 45
@@ -5237,8 +5235,6 @@ magic crates/quench-runtime/src/vm/compiled.rs::store_width 3
 magic crates/quench-runtime/src/vm/compiled.rs::successors 1
 magic crates/quench-runtime/src/vm/compiled.rs::unrollable_loops 1
 magic crates/quench-runtime/src/vm/compiled/frame_ssa.rs::FrameFlow::recovery_pc 1
-magic crates/quench-runtime/src/vm/compiled/frameless.rs::admit 2
-magic crates/quench-runtime/src/vm/compiled/frameless.rs::emit_call 3
 magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::compile_lane_method 1
 magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::lane_body_work 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 1
