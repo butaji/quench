@@ -52,6 +52,10 @@ Single homes (add to these; never a second copy):
 - `vm/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
   compiles.
 - `vm/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
+- Opcode meaning: only the interpreters (`vm/dispatch.rs`, `vm/dispatch_wasm.rs`) write it by
+  hand. Tiers derive it (`staged`, semantic entries), so an interpreter change reaches the JIT and
+  AOT. `src/staged/hand_semantics.txt` lists the hand-written opcode arms left in tiers, and it
+  may only shrink.
 - `code_dependencies.rs`: stable facts (binding time `Stable`) fold only under a code
   dependency. Retirement sets the body's invalidation word; there are no global epochs.
 

@@ -122,3 +122,60 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
             "{file} now decodes layouts {found} times, below {allowed}: lower its allowance in LAYOUT_DECODES");
     }
 }
+
+/// The interpreters: the one place an opcode's meaning is written by hand.
+const INTERPRETERS: &[&str] = &["vm/dispatch.rs", "vm/dispatch_wasm.rs"];
+
+/// Opcode match arms per file and opcode (`Op::X` before a `=>`) in `vm/`, outside the
+/// interpreters and tests.
+fn opcode_arms() -> std::collections::BTreeMap<(String, String), usize> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root.join("vm")];
+    let mut arms = std::collections::BTreeMap::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path); continue; }
+            let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            let name = path.file_name().unwrap().to_string_lossy();
+            if !name.ends_with(".rs") || name.ends_with("tests.rs") || INTERPRETERS.contains(&file.as_str()) { continue; }
+            for line in std::fs::read_to_string(&path).unwrap().lines() {
+                let Some((pattern, _)) = line.split_once("=>") else { continue };
+                for (at, _) in pattern.match_indices("Op::") {
+                    let op: String = pattern[at + 4..].chars().take_while(char::is_ascii_alphanumeric).collect();
+                    if op.starts_with(|c: char| c.is_ascii_uppercase()) {
+                        *arms.entry((file.clone(), op)).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+    arms
+}
+
+/// Futamura's first projection, enforced: a tier's meaning of an opcode is the interpreter's,
+/// specialized (`staged`, semantic entries), so an interpreter change reaches every tier. An
+/// opcode meaning a tier writes by hand is a second definition that can drift; the table of
+/// them only shrinks, and a new one fails here.
+#[test]
+fn tiers_derive_opcode_meaning_from_the_interpreter() {
+    let allowed: std::collections::BTreeMap<(String, String), usize> = include_str!("hand_semantics.txt").lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+        .map(|line| {
+            let mut fields = line.split(' ');
+            let (file, op, count) = (fields.next().unwrap(), fields.next().unwrap(), fields.next().unwrap());
+            ((file.to_owned(), op.to_owned()), count.parse().unwrap())
+        })
+        .collect();
+    let found = opcode_arms();
+    for ((file, op), count) in &found {
+        let limit = allowed.get(&(file.clone(), op.clone())).copied().unwrap_or(0);
+        assert!(*count <= limit, "{file} hand-writes Op::{op} {count} times (allowed {limit}): derive it from the \
+            interpreter through `staged` or a semantic entry instead");
+    }
+    for ((file, op), limit) in &allowed {
+        let count = found.get(&(file.clone(), op.clone())).copied().unwrap_or(0);
+        assert!(count >= *limit, "{file} now hand-writes Op::{op} {count} times: lower its line in \
+            staged/hand_semantics.txt to {count} (or drop it at 0)");
+    }
+}
