@@ -23,7 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
-use super::tier_policy::{self, TIERS};
+use tier_policy::TIERS;
 use super::*;
 use crate::bytecode::{
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
@@ -54,6 +54,10 @@ mod osr_loop;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
+pub(super) mod switches;
+pub(super) mod tier_policy;
+#[cfg(test)]
+mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
@@ -2485,8 +2489,8 @@ fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: Wide
 /// that one changed (`typed_ir::BindingTime::Stable`).
 #[derive(Clone, Copy)]
 pub(super) struct OnlineFacts<'a> {
-    /// The names method caches hold now (`Vm::method_caches_may_name`), one bit each.
-    pub(super) method_cache_atoms: &'a [u64],
+    /// The names method caches hold now.
+    pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
     pub(super) invalidation: usize,
 }
@@ -2494,8 +2498,7 @@ pub(super) struct OnlineFacts<'a> {
 impl OnlineFacts<'_> {
     /// Whether a method cache names `atom` now.
     pub(super) fn names(&self, atom: Atom) -> bool {
-        let word = (atom / u64::BITS) as usize;
-        self.method_cache_atoms.get(word).is_some_and(|bits| bits & (1 << (atom % u64::BITS)) != 0)
+        self.method_cache_atoms.contains(atom)
     }
 }
 
@@ -4535,7 +4538,7 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) fn jit_wasm_selective_enabled() -> bool {
-    super::switches::WASM_JIT_SELECTIVE.enabled()
+    switches::WASM_JIT_SELECTIVE.enabled()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4543,7 +4546,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    super::switches::WASM_JIT_ROOT_ONLY.enabled()
+    switches::WASM_JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -4551,7 +4554,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    super::switches::WASM_JIT_ROOT_FIRST.enabled()
+    switches::WASM_JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -7682,7 +7685,7 @@ impl<H: Host> Vm<H> {
             // The body folds Stable facts under its own invalidation word, which its publication
             // sets when one changes (`ProgramStore::publish_lane_method`).
             let invalidation = crate::code_dependencies::Invalidation::default();
-            let method_cache_atoms = self.method_cache_atoms.words().to_vec();
+            let method_cache_atoms = self.method_cache_atoms.bits().clone();
             let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
                 invalidation: invalidation.address() }), ..self.vm_facts() };
             let body = program.function_get(function as usize)?;
@@ -18058,70 +18061,6 @@ mod tests {
         unsafe {crate::NativeJsProgram::from_entries(program,entries,Rc::new(owners))}.unwrap()
     }
 
-    /// The lane-body compilation of the named function of `source`, after it ran.
-    fn compiled_lane_body(source: &str, name: &str) -> (Vm<crate::test_host::TestHost>, ResidualProgram, LaneMethod) {
-        let program = crate::Engine::specialize(source, "stable-facts.js").unwrap();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.execute(&program).unwrap();
-        vm.programs.enable_js_lane_methods();
-        let function = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-        let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
-        (vm, program, method)
-    }
-
-    /// Installs a method cache entry for `owner.atom`, as a call site's first call does.
-    fn name_in_a_method_cache(vm: &mut Vm<crate::test_host::TestHost>, owner: Value, atom: Atom) {
-        let callee = vm.own_property(owner, atom).unwrap();
-        let shape = vm.heap.object_record(owner).unwrap().shape();
-        let target = vm.call_target(callee).unwrap();
-        let slot = vm.shape_slot(shape, atom).unwrap() as u16;
-        let site = vm.method_caches.len();
-        vm.method_caches.push([super::super::EMPTY_METHOD_CACHE; 2]);
-        vm.record_method_cache(site, super::super::MethodCache { shape, atom, proto: owner, callee,
-            guard: super::super::MethodGuard { owner, owner_shape: shape, slot, depth: 0 }, target: Some(target) });
-    }
-
-    #[test]
-    fn a_direct_store_holds_unnamed_method_atoms_until_a_cache_names_one() {
-        let (mut vm, _program, method) = compiled_lane_body(
-            "var o={a:1,b:2}; var owner={a(){return 1},m(){return 2}}; \
-             function write(x){ for (var i=0;i<3;i++) { o.a = x; } } write(2); write(3);", "write");
-        let (a, m) = (vm.intern_atom("a"), vm.intern_atom("m"));
-        assert_eq!(method.stable.atoms, vec![a], "the store folds that no method cache names `a`");
-        let invalidation = method.invalidation.clone();
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
-        let active = published.lease().unwrap();
-        let owner_atom = vm.intern_atom("owner");
-        let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
-        name_in_a_method_cache(&mut vm, owner, m);
-        assert!(published.lease().is_some() && !invalidation.is_set(), "another name changes nothing");
-        name_in_a_method_cache(&mut vm, owner, a);
-        assert!(published.lease().is_none(), "a cache naming `a` retires the code that stored it directly");
-        assert!(invalidation.is_set(), "a run inside it leaves at its next invalidation point");
-        drop(active);
-    }
-
-    #[test]
-    fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
-        let (mut vm, _program, method) = compiled_lane_body(
-            "var C = function C(){ this.x = 1; }; C.prototype.k = 5; var c = new C(); \
-             function read(){ var n = 0; for (var i = 0; i < 5; i++) { n = (n + c.k) | 0; } return n; } \
-             for (var j = 0; j < 4; j++) read();", "read");
-        assert!(!method.stable.holders.is_empty(), "the inherited read takes the prototype's value as a constant");
-        let invalidation = method.invalidation.clone();
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
-        let (instance_atom, k) = (vm.intern_atom("c"), vm.intern_atom("k"));
-        let instance = vm.own_property(vm.realm.globals, instance_atom).unwrap();
-        let prototype = vm.heap.object(instance).unwrap().proto();
-        let shape = vm.heap.object(prototype).unwrap().shape();
-        let slot = vm.shape_slot(shape, k).unwrap();
-        vm.heap.property_set(prototype, slot, Value::integer(6));
-        assert!(published.lease().is_none(), "the prototype's write retires the code that folded its value");
-        assert!(invalidation.is_set());
-    }
-
     #[cfg(feature = "aot")]
     #[test]
     fn slot_widening_unlinks_compiled_readers_without_releasing_active_code() {
@@ -18137,7 +18076,7 @@ mod tests {
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
         let receiver_atom = vm.intern_atom("receiver");
@@ -18176,7 +18115,7 @@ mod tests {
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
             assert!(!method.slot_dependencies.is_empty());
-            let published = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
+            let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -18247,7 +18186,7 @@ mod tests {
         assert!(!method.supports_first_entry());
         assert!(!method.amortizes_entry());
         assert!(!method.calls_only_natively());
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         // No guest code executes at these collection/realm events; a code lease
         // may remain alive independently of the publication's validity.
         unsafe { vm.programs.retire_dead_native_calls(|_| false); }

@@ -6,8 +6,8 @@
 //! call cost more than the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's
 //! instructions), so each is read once.
 
-pub(super) struct Switch {
-    pub(super) name: &'static str,
+pub(in crate::vm) struct Switch {
+    pub(in crate::vm) name: &'static str,
     default: bool,
     value: std::sync::OnceLock<Option<bool>>,
 }
@@ -32,7 +32,7 @@ impl Switch {
         })
     }
 
-    pub(super) fn enabled(&self) -> bool {
+    pub(in crate::vm) fn enabled(&self) -> bool {
         self.set().unwrap_or(self.default)
     }
 
@@ -45,7 +45,7 @@ thread_local! {
 
 /// Runs `run` with `switch` set to `enabled` on this thread.
 #[cfg(test)]
-pub(super) fn with_switch<R>(switch: &Switch, enabled: bool, run: impl FnOnce() -> R) -> R {
+pub(in crate::vm) fn with_switch<R>(switch: &Switch, enabled: bool, run: impl FnOnce() -> R) -> R {
     struct Restore;
     impl Drop for Restore {
         fn drop(&mut self) {
@@ -60,17 +60,17 @@ pub(super) fn with_switch<R>(switch: &Switch, enabled: bool, run: impl FnOnce() 
 /// Wasm modules stay selective for good, compiling only their hot roots
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
-pub(super) static WASM_JIT_SELECTIVE: Switch = Switch::new("QUENCH_WASM_JIT_SELECTIVE", false);
-pub(super) static WASM_JIT_ROOT_ONLY: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_ONLY", false);
-pub(super) static WASM_JIT_ROOT_FIRST: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_FIRST", false);
+pub(in crate::vm) static WASM_JIT_SELECTIVE: Switch = Switch::new("QUENCH_WASM_JIT_SELECTIVE", false);
+pub(in crate::vm) static WASM_JIT_ROOT_ONLY: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_ONLY", false);
+pub(in crate::vm) static WASM_JIT_ROOT_FIRST: Switch = Switch::new("QUENCH_WASM_JIT_ROOT_FIRST", false);
 /// TOD-191's correctness oracle may force hot candidates past the payback model so guarded
 /// exits can be tested independently of profitability. Diagnostic only; never set by score
 /// harnesses.
-pub(super) static JS_JIT_UNPRICED_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH", false);
+pub(in crate::vm) static JS_JIT_UNPRICED_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH", false);
 /// Per-function JIT diagnostics and the reports they print at exit.
-pub(super) static JS_JIT_STATS: Switch = Switch::new("QUENCH_JS_JIT_STATS", false);
-pub(super) static JS_JIT_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_DISPATCH", false);
-pub(super) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_METHODS", false);
+pub(in crate::vm) static JS_JIT_STATS: Switch = Switch::new("QUENCH_JS_JIT_STATS", false);
+pub(in crate::vm) static JS_JIT_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_DISPATCH", false);
+pub(in crate::vm) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_METHODS", false);
 
 #[cfg(test)]
 const ALL: &[&Switch] = &[
@@ -101,9 +101,9 @@ mod tests {
     #[test]
     fn switch_variables_are_read_only_here() {
         let sources = [
-            include_str!("compiled.rs"),
-            include_str!("program_store.rs"),
-            include_str!("wasm_js.rs"),
+            include_str!("../compiled.rs"),
+            include_str!("../program_store.rs"),
+            include_str!("../wasm_js.rs"),
         ];
         for switch in ALL {
             let quoted = format!("\"{}\"", switch.name);

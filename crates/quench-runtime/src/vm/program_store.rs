@@ -1,4 +1,4 @@
-use super::tier_policy::TIERS;
+use super::compiled::tier_policy::TIERS;
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -967,10 +967,10 @@ impl Default for ProgramStore {
             } else {
                 WasmModuleCompile::ADAPTIVE
             },
-            general_baseline_priced: !super::switches::JS_JIT_UNPRICED_GENERAL_DISPATCH.enabled(),
-            js_jit_diagnostics: super::switches::JS_JIT_STATS.enabled().then(FxHashMap::default),
-            js_jit_general_dispatch_enabled: super::switches::JS_JIT_GENERAL_DISPATCH.enabled(),
-            js_jit_lane_methods_enabled: super::switches::JS_JIT_LANE_METHODS.enabled(),
+            general_baseline_priced: !super::compiled::switches::JS_JIT_UNPRICED_GENERAL_DISPATCH.enabled(),
+            js_jit_diagnostics: super::compiled::switches::JS_JIT_STATS.enabled().then(FxHashMap::default),
+            js_jit_general_dispatch_enabled: super::compiled::switches::JS_JIT_GENERAL_DISPATCH.enabled(),
+            js_jit_lane_methods_enabled: super::compiled::switches::JS_JIT_LANE_METHODS.enabled(),
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 use super::*;
+mod atoms;
+pub(super) use atoms::{AtomBits, MethodCacheAtoms};
 
 impl<H: Host> Vm<H> {
     pub(super) fn invalidate_method_caches(&mut self) {
@@ -186,10 +188,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
-        // Code that stores the atom directly held "no cache names it" as a Stable fact.
-        if self.method_cache_atoms.insert(cache.atom) {
-            self.method_atom_readers.retire(cache.atom);
-        }
+        self.method_cache_atoms.name(cache.atom);
         if let Some(set) = self
             .megamorphic_methods
             .iter_mut()
@@ -483,47 +482,5 @@ impl<H: Host> Vm<H> {
             );
         }
         self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
-    }
-}
-
-/// The atoms method caches may name: a bit per atom, set when an entry for the atom is
-/// recorded and cleared only when every method cache is, so a clear bit proves that no method
-/// cache names the atom. Exact per atom, so a program with many cached method names does not
-/// make every property add on every object scan the caches.
-#[derive(Clone, Debug, Default)]
-pub(super) struct MethodCacheAtoms {
-    words: Vec<u64>,
-}
-
-impl MethodCacheAtoms {
-    #[inline(always)]
-    fn position(atom: Atom) -> (usize, u64) {
-        ((atom / u64::BITS) as usize, 1 << (atom % u64::BITS))
-    }
-
-    #[inline(always)]
-    pub(super) fn contains(&self, atom: Atom) -> bool {
-        let (word, bit) = Self::position(atom);
-        self.words.get(word).is_some_and(|bits| bits & bit != 0)
-    }
-
-    /// Names `atom`; whether it was not named before.
-    pub(super) fn insert(&mut self, atom: Atom) -> bool {
-        let (word, bit) = Self::position(atom);
-        if word >= self.words.len() {
-            self.words.resize(word + 1, 0);
-        }
-        let new = self.words[word] & bit == 0;
-        self.words[word] |= bit;
-        new
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.words.fill(0);
-    }
-
-    /// The bit words, for generated code that tests a name (`emit_js_own_field_set`).
-    pub(super) fn words(&self) -> &[u64] {
-        &self.words
     }
 }

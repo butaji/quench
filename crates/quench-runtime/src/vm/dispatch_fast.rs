@@ -19,7 +19,7 @@
 //! which unwinds it; a due collection raises the floor so that the next
 //! safepoint jump leaves the lane.
 
-use super::tier_policy::TIERS;
+use super::compiled::tier_policy::TIERS;
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
@@ -7830,7 +7830,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         if diagnostics && let Some(method) = &method {
             own.body_stats.compiled(function, method.inlined.len());
         }
-        method.and_then(|method| vm.programs.publish_lane_method(method, &mut vm.heap, &mut vm.method_atom_readers))
+        method.and_then(|method| vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()))
     };
     if now {
         own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
@@ -15138,7 +15138,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let leaf_method = vm.compile_lane_method(&program, target.function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
     assert!(!leaf_method.slot_dependencies.is_empty());
-    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
+    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
@@ -15158,7 +15158,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         &|_, _| Vec::new(), &|_| (0, 0), direct, None, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
-    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, &mut vm.method_atom_readers).unwrap();
+    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);
     drop(leaf_body);

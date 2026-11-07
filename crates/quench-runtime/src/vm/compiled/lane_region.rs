@@ -280,7 +280,7 @@ pub(super) struct LoweredRegion {
 pub(crate) struct StableFacts {
     /// Exact shapes of prototypes whose values it holds (`heap::subscribe_prototype_values`).
     pub(crate) holders: Vec<u32>,
-    /// Atoms it stores without a method-cache test (`Vm::method_atom_readers`).
+    /// Atoms it stores without a method-cache test (`MethodCacheAtoms::readers`).
     pub(crate) atoms: Vec<Atom>,
 }
 

@@ -18,8 +18,6 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
-mod tier_policy;
-mod switches;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -2123,9 +2121,6 @@ pub(crate) struct Vm<H> {
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
-    /// Compiled code that stores an atom no method cache named when it was compiled, by atom:
-    /// a cache that first names the atom retires it (`Vm::record_method_cache`).
-    method_atom_readers: crate::code_dependencies::CodeReaders,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: site_table::SiteTable<u32>,
