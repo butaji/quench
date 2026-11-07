@@ -5825,7 +5825,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let chain = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
         let key = (receiver, load.shape);
         if let Some((object, proved)) = self.objects.get(&key).copied()
-            && proved == chain && usize::from(load.slot) < object.storage_len {
+            && proved == chain && usize::from(load.slot) < object.storage_len() {
             return Some(object);
         }
         let heap_base = self.region.native_heap_word();

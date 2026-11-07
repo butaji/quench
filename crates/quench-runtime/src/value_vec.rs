@@ -537,19 +537,6 @@ impl ValueArena {
         unsafe { *self.values.get_unchecked(vector.start() + index) }
     }
 
-    /// `get_unchecked` of a vector known to be outside dictionary mode (`exact_auxiliary`
-    /// matched a recorded shape).
-    ///
-    /// # Safety
-    /// As for `get_unchecked`, and the vector is not a dictionary.
-    #[inline(always)]
-    pub(crate) unsafe fn get_flat(&self, vector: ValueVec, index: usize) -> Value {
-        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
-        debug_assert!(index < self.len(vector));
-        // SAFETY: as for `get_unchecked`.
-        unsafe { self.get_flat_at(vector.start(), index) }
-    }
-
     /// `get_flat` of the vector whose storage starts at `start` (`ValueVec::start`).
     ///
     /// # Safety
@@ -889,6 +876,13 @@ impl ValueArena {
 
     pub(crate) fn vector_stats(&self, vector: ValueVec) -> (usize, usize) {
         (self.len(vector), self.capacity(vector))
+    }
+
+    /// The address of the first arena value, which a flat run's position offsets
+    /// (`staged::Table::PropertyValues`). Valid until the arena grows or compacts.
+    #[inline(always)]
+    pub(crate) fn values_base(&self) -> *const Value {
+        self.values.as_ptr()
     }
 
     pub(crate) fn len(&self, vector: ValueVec) -> usize {

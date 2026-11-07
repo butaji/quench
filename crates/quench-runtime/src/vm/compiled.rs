@@ -2156,20 +2156,6 @@ fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     }
 }
 
-/// Decode a packed property using the canonical NarrowLayout, transferring
-/// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
-fn emit_packed_object_slot_read(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    slot: u16,
-    join: ir::Block,
-) {
-    debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
-    let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
-    let narrow = builder.ins().ireduce(types::I32, half);
-    emit_narrow_read(builder, narrow, NarrowTable::Process, join);
-}
-
 /// Binding time changes the table address, never the packed-value semantics.
 #[derive(Clone, Copy)]
 enum NarrowTable {

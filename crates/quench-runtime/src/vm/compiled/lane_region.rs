@@ -4038,7 +4038,7 @@ impl Lowering<'_, '_> {
         if let [field] = shapes {
             let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
             let projection = match known {
-                Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
+                Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
                 _ => {
                     self.prove_shape(state, owner, shape, field.shape, exit);
                     let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,

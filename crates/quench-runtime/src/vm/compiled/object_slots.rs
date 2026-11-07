@@ -256,6 +256,84 @@ mod tests {
         }
     }
 
+    /// The residual of `staged::own_layout` and `read_slot` reads what the interpreter's
+    /// reading of the same definition reads, for every form a site may prove, and leaves
+    /// for the forms it does not handle (values extras displaced, or a form the site did not
+    /// prove).
+    #[cfg(feature = "jit")]
+    #[test]
+    fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
+        use crate::heap::{Cell, Heap, Object};
+        use crate::staged::Form;
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let mut heap = Heap::new();
+        let wide = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
+        for shape in 1..=wide {
+            heap.register_property_shape(shape as u32, shape, None);
+        }
+        let reference = heap.alloc(Cell::Error("reference".into()));
+        let mut objects = Vec::new();
+        for prototype in [false, true] {
+            for values in [vec![Value::number(7.0), reference], vec![Value::number(0.5), Value::NULL],
+                (0..wide).map(|index| Value::number(index as f64)).collect()] {
+                let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+                for (slot, value) in values.iter().enumerate() {
+                    heap.property_add(object, *value, slot as u32 + 1);
+                }
+                if prototype { heap.object_record_mut(object).unwrap().mark_as_prototype(); }
+                objects.push((object, values));
+            }
+        }
+        for form in [Form::Packed, Form::Arena, Form::Either] {
+            for slot in 0..2_u16 {
+                let mut signature = Signature::new(isa.default_call_conv());
+                signature.params.extend([AbiParam::new(types::I64); 2]);
+                signature.returns.push(AbiParam::new(types::I64));
+                let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut native, &mut context);
+                let entry = builder.create_block();
+                builder.append_block_params_for_function_params(entry);
+                builder.switch_to_block(entry);
+                let [record, base] = builder.block_params(entry).try_into().unwrap();
+                let miss = builder.create_block();
+                let mut stage = Emit { builder: &mut builder, property_values: Some(base) };
+                let inline = crate::staged::inline_storage(&mut stage, record);
+                let layout = crate::staged::own_layout(&mut stage, record, inline, form,
+                    usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
+                let value = crate::staged::read_slot(&mut stage, layout, slot);
+                builder.ins().return_(&[value]);
+                builder.switch_to_block(miss);
+                let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+                builder.ins().return_(&[deleted]);
+                builder.seal_all_blocks();
+                builder.finalize(isa.frontend_config());
+                let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
+                // SAFETY: the function reads the record and the arena run it names, both live.
+                let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
+                for (object, values) in &objects {
+                    let data = heap.object(*object).unwrap();
+                    let Some(expected) = values.get(usize::from(slot)) else { continue };
+                    let read = Value::from_bits(unsafe {
+                        run(data as *const Object as u64, heap.property_values_base() as u64)
+                    });
+                    let storage = data.plain_property_storage();
+                    let handled = match (form, storage) {
+                        (_, None) => false,
+                        (Form::Packed, Some(storage)) => storage == PlainPropertyStorage::PackedInline,
+                        (Form::Arena, Some(storage)) => storage == PlainPropertyStorage::Arena,
+                        (Form::Either, Some(_)) => true,
+                    };
+                    if handled {
+                        assert_eq!(read, *expected, "{form:?} slot {slot} {storage:?}");
+                    } else {
+                        assert_eq!(read, Value::DELETED, "{form:?} slot {slot} {storage:?} leaves");
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(feature = "jit")]
     #[test]
     fn checked_table_admits_once_without_admitting_receiver_handles() {
@@ -363,73 +441,103 @@ mod tests {
     }
 }
 
-/// The caller's admitted effects determine whether packed contents can change.
-#[derive(Clone, Copy)]
-pub(super) enum PackedAccess { Snapshot, Reload }
+pub(super) use crate::staged::PackedAccess;
+use crate::staged::{Form, Layout, Slots, Stage, Table};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PackedValue { Snapshot(ir::Value), Record(ir::Value) }
+/// The specializer's stage (`crate::staged`): each operation emits its residual as Cranelift
+/// IR into `builder`, where a guard's failure jumps to its miss block.
+pub(super) struct Emit<'a, 'b> {
+    pub(super) builder: &'a mut FunctionBuilder<'b>,
+    /// The property arena's value base (`Table::PropertyValues`), where the operation
+    /// addresses a run; a read through a proved layout already holds its address.
+    pub(super) property_values: Option<ir::Value>,
+}
 
-impl PackedValue {
-    fn load(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
-        match self {
-            Self::Snapshot(bits) => bits,
-            Self::Record(record) => builder.ins().load(types::I64, MemFlagsData::trusted(), record,
-                crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32),
-        }
+impl Stage for Emit<'_, '_> {
+    type Word = ir::Value;
+    /// Any integer: nonzero holds.
+    type Cond = ir::Value;
+    type Miss = ir::Block;
+
+    fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
+    fn load_u32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload32(MemFlagsData::trusted(), base, offset)
+    }
+    fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
+    }
+    fn load_table(&mut self, address: ir::Value) -> ir::Value {
+        self.builder.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0)
+    }
+    fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
+    fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn add_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().iadd_imm_u(a, imm as i64) }
+    fn mul_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().imul_imm_u(a, imm as i64) }
+    fn and_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().band_imm_u(a, imm as i64) }
+    fn or_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().bor_imm_u(a, imm as i64) }
+    fn shr_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value { self.builder.ins().ushr_imm_u(a, i64::from(shift)) }
+    fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
+        let low = self.builder.ins().ireduce(types::I32, a);
+        let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
+        self.builder.ins().uextend(types::I64, shifted)
+    }
+    fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
+    fn ne_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm as i64) }
+    fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
+    fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+        otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let value = self.builder.append_block_param(join, types::I64);
+        self.builder.ins().brif(cond, then_block, &[], else_block, &[]);
+        self.builder.switch_to_block(then_block);
+        self.builder.seal_block(then_block);
+        let taken = then(self);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(taken)]);
+        self.builder.switch_to_block(else_block);
+        self.builder.seal_block(else_block);
+        let other = otherwise(self);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(other)]);
+        self.builder.switch_to_block(join);
+        self.builder.seal_block(join);
+        value
+    }
+    fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        emit_js_guard(self.builder, cond, miss);
+        Some(())
+    }
+    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
+    fn table(&mut self, table: Table) -> ir::Value {
+        match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
     }
 }
 
+/// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
+/// only be reused while no admitted effect can change its layout, arena base or object lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Slots {
-    Packed(PackedValue),
-    Arena(ir::Value),
-    /// Packed inline or in the arena, as the record's flag says; `arena` is the proved range's
-    /// address where the flag selects it (`arena_range`), zero where the object is inline.
-    Dynamic { packed: PackedValue, inline: ir::Value, arena: ir::Value },
-}
-
-/// The address of the first arena slot of the object whose payload word is `payload`, in the
-/// arena at `base`. A live object of an exact shape with flat storage holds its run inside the
-/// arena: allocation places it there, compaction moves position and base together, and native
-/// code reads the base again after anything that allocates and spans no collection. So the
-/// range needs no bound.
-fn arena_range(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> ir::Value {
-    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let start = builder.ins().ireduce(types::I32, payload);
-    let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
-    let start = builder.ins().uextend(types::I64, start);
-    let offset = builder.ins().imul_imm_u(start, layout.property_value_size as i64);
-    builder.ins().iadd(base, offset)
-}
-
-/// A projection for a guarded receiver and exact shape. It may only be reused
-/// while no admitted effect can change its layout, arena base or object lifetime.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct CheckedObject {
-    slots: Slots,
-    pub(super) storage_len: usize,
-}
+pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
+    pub(super) fn storage_len(self) -> usize { self.0.storage_len }
+
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
     pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-        debug_assert!(usize::from(slot) < self.storage_len);
-        let base = match self.slots {
+        debug_assert!(usize::from(slot) < self.0.storage_len);
+        let base = match self.0.slots {
             Slots::Packed(_) => return None,
-            Slots::Arena(base) => base,
-            Slots::Dynamic { inline, arena, .. } => {
-                let flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-                emit_js_guard(builder, flat, miss);
-                arena
+            Slots::Flat(base) => base,
+            Slots::Either { inline, flat, .. } => {
+                let is_flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+                emit_js_guard(builder, is_flat, miss);
+                flat
             }
         };
         Some(builder.ins().iadd_imm_u(base,
             i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
     }
 
-    /// The caller proves receiver identity and exact shape before this operation.
+    /// The caller proves receiver identity and exact shape before this operation; `inline`
+    /// is the record's inline-storage bits (`ObjectRecord::header`), `base` the arena's.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prove(
         builder: &mut FunctionBuilder<'_>,
@@ -441,68 +549,13 @@ impl CheckedObject {
         miss: ir::Block,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), record, layout.payload_offset as i32);
-        let extras = builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
-        let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
-        emit_js_guard(builder, plain, miss);
-        let packed = match access {
-            PackedAccess::Snapshot => PackedValue::Snapshot(payload),
-            PackedAccess::Reload => PackedValue::Record(record),
-        };
-        let slots = if plan.storage == Some(PlainPropertyStorage::PackedInline) {
-            emit_js_guard(builder, inline, miss);
-            Slots::Packed(packed)
-        } else if plan.storage.is_none() && plan.storage_len <= layout.inline_property_count {
-            // The range is proved once, on the arena side of the flag only.
-            let (arena_block, join) = (builder.create_block(), builder.create_block());
-            let arena = builder.append_block_param(join, types::I64);
-            let none = builder.ins().iconst(types::I64, 0);
-            builder.ins().brif(inline, join, &[ir::BlockArg::Value(none)], arena_block, &[]);
-            builder.switch_to_block(arena_block);
-            builder.seal_block(arena_block);
-            let address = arena_range(builder, payload, base);
-            builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
-            builder.switch_to_block(join);
-            builder.seal_block(join);
-            Slots::Dynamic { packed, inline, arena }
-        } else {
-            let flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            emit_js_guard(builder, flat, miss);
-            Slots::Arena(arena_range(builder, payload, base))
-        };
-        Some(Self { slots, storage_len: plan.storage_len })
+        let mut stage = Emit { builder, property_values: Some(base) };
+        crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
+            plan.storage_len, access, miss).map(Self)
     }
 
     /// Read fresh contents using only the established layout and slot bound.
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        debug_assert!(usize::from(slot) < self.storage_len);
-        let offset = i32::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i32;
-        if let Slots::Arena(base) = self.slots {
-            return builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset);
-        }
-        let join = builder.create_block();
-        let bits = builder.append_block_param(join, types::I64);
-        let packed = match self.slots {
-            Slots::Packed(packed) => packed,
-            Slots::Dynamic { packed, inline, arena } => {
-                let inline_block = builder.create_block();
-                let arena_block = builder.create_block();
-                builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
-                builder.switch_to_block(arena_block);
-                builder.seal_block(arena_block);
-                let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arena, offset);
-                builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-                builder.switch_to_block(inline_block);
-                builder.seal_block(inline_block);
-                packed
-            }
-            Slots::Arena(_) => unreachable!(),
-        };
-        let payload = packed.load(builder);
-        emit_packed_object_slot_read(builder, payload, slot, join);
-        builder.switch_to_block(join);
-        builder.seal_block(join);
-        bits
+        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
     }
 }
