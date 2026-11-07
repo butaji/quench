@@ -4033,9 +4033,6 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
-        if purpose == RecordUse::Kept {
-            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
-        }
         let deferred = self
             .encoded_records
             .as_deref()
