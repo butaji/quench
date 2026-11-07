@@ -10409,7 +10409,11 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                         }
                     }
                     vm.collect_now(&program);
-                    for handle in handles {
+                    // A primitive pattern is the one-unit string `'a'`, the heap's shared string
+                    // for its unit (`Heap::ascii_unit_strings`), which the program's own `'a'`
+                    // keeps: strings have no identity, so only the receiver must die.
+                    let released = if kind == "object" { handles.len() } else { 1 };
+                    for handle in handles.into_iter().take(released) {
                         assert!(vm.heap.weak_value(handle).is_none());
                     }
                 }
