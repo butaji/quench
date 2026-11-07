@@ -13293,24 +13293,13 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
-        let globals = vm.realm.globals;
-        let value = if vm.realm.global_lexical_declarations.contains(&atom) {
-            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
-            else {
-                return exit(ip);
-            };
-            value
-        } else if vm.global_name_hintable(atom)
-            && let Some(hint) = vm.own_data_field_hint::<false>(globals, atom)
-            && let Some(value) = vm.record_field_entry_hit(hint, globals)
-        {
-            set_field_hint(ip, hint);
-            value
-        } else {
-            let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
-                sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
-            };
-            value
+        let value = match vm.global_name_read(code, atom, i.c) {
+            super::field_cache::GlobalNameRead::Value(value, hint) => {
+                if let Some(hint) = hint { set_field_hint(ip, hint); }
+                value
+            }
+            super::field_cache::GlobalNameRead::Uninitialized => return exit(ip),
+            super::field_cache::GlobalNameRead::Miss => sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx)),
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
