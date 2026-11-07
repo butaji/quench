@@ -138,11 +138,7 @@ pub(super) fn emit_call(
     let (top, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
     emit_window(builder, (arguments, top), &passed, registers);
     let this = emit_this(builder, entry, receiver, record);
-    let function = builder.ins().ireduce(types::I32, meta);
-    builder.ins().store(MemFlagsData::trusted(), function, record, std::mem::offset_of!(ShadowRecord, function) as i32);
-    let call_pc = builder.ins().iconst(types::I32, pc as i64);
-    builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
-    builder.ins().store(MemFlagsData::trusted(), top, record, std::mem::offset_of!(ShadowRecord, window) as i32);
+    emit_record(builder, record, (meta, pc, top));
     let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, registers, record, this));
     let returned = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, status, i64::from(JS_GENERAL_RETURN_STATUS_BASE));
     let done = builder.create_block();
@@ -153,6 +149,15 @@ pub(super) fn emit_call(
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     builder.ins().jump(next, &[]);
     Some(())
+}
+
+/// The shadow record's function (the low half of `meta`), call PC and window.
+fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, (meta, pc, top): (ir::Value, usize, ir::Value)) {
+    let function = builder.ins().ireduce(types::I32, meta);
+    builder.ins().store(MemFlagsData::trusted(), function, record, std::mem::offset_of!(ShadowRecord, function) as i32);
+    let call_pc = builder.ins().iconst(types::I32, pc as i64);
+    builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
+    builder.ins().store(MemFlagsData::trusted(), top, record, std::mem::offset_of!(ShadowRecord, window) as i32);
 }
 
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a

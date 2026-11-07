@@ -3199,9 +3199,8 @@ pub(super) fn lower_js_general_dispatch(
                 .is_some_and(|name| {
                     !name.starts_with('\0') && !crate::bytecode::is_intrinsic_name(name)
                 })
-            && next.is_some()
+            && let Some(next) = next
         {
-            let next = next.expect("a successor");
             if !general_names::lower_global_read(&mut builder, (instruction, next), &register_offset, (arguments, payload),
                 &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
                 emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer,
