@@ -13429,11 +13429,11 @@ script_handler! {
             && let Some(native) =
                 crate::bytecode::intrinsic_name_native(&code.atoms[i.imm() as usize])
         {
-            r.set(i.a, vm.native_value(native));
-            if KIND == LOAD_NAME_CALL {
-                r.set(i.b, Value::UNDEFINED);
+            if !vm.intrinsic_natives.iter().any(|&(atom, _)| atom == i.imm()) {
+                vm.intrinsic_natives.push((i.imm(), native));
             }
-            next!(cx, r, following(ip), Carried::script(cx))
+            requicken::<H>(ip, lane_load_intrinsic_native::<H, KIND>);
+            sibling!(lane_load_intrinsic_native::<H, KIND>, r, ip, Carried::script(cx))
         }
         // The running function decides the name's scope: a running leaf's is its
         // materialized activation's.
@@ -13470,6 +13470,23 @@ script_handler! {
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
+    }
+}
+
+script_handler! {
+    /// A `LoadName` of an intrinsic name its first read resolved (`lane_load_name_first`): the
+    /// active realm's function for the native it stands for (`Vm::intrinsic_natives`), which
+    /// no binding can shadow and no scope affects.
+    fn lane_load_intrinsic_native<KIND: u8>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(&(_, native)) = vm.intrinsic_natives.iter().find(|&&(atom, _)| atom == i.imm()) else {
+            sibling!(lane_load_name_first::<H, KIND>, r, ip, view)
+        };
+        r.set(i.a, vm.native_value(native));
+        if KIND == LOAD_NAME_CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 

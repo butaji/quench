@@ -1200,7 +1200,6 @@ const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
 /// An empty `Vm::recent_atom_strings` slot: no atom has this id.
 const NO_RECENT_ATOM: Atom = Atom::MAX;
 /// The code units below which a unit is ASCII.
-const ASCII_UNITS: usize = 0x80;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -2040,6 +2039,9 @@ pub(crate) struct Vm<H> {
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
+    /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
+    /// recorded by its first read (`lane_load_name_first`); it lives as long as the atoms.
+    intrinsic_natives: Vec<(Atom, Native)>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     /// The `typeof` result string of each value type, made on first use; `undefined` until
     /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
@@ -2055,10 +2057,6 @@ pub(crate) struct Vm<H> {
     /// A program compiled at run time spells its property names with such atoms, and
     /// `Object.keys` of its objects had made each key's string again on every call.
     recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
-    /// The one-unit ASCII strings recently made (`charAt`, `String.fromCharCode`), by unit;
-    /// collection empties it, as `recent_atom_strings`. A loop building a string a unit at a
-    /// time (V8-v7 Crypto's hex conversion) had allocated each unit's string anew.
-    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
     /// The slots of a bound function's target, receiver and arguments in the shape its
     /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
@@ -3077,6 +3075,7 @@ impl<H: Host> Vm<H> {
         self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();
+        self.intrinsic_natives.clear();
         self.regexp_subjects.clear();
         self.regexp_matchers.clear();
         self.atom_classes

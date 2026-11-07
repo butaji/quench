@@ -1089,6 +1089,16 @@ impl JsString {
         }
     }
 
+    /// The unit of a one-unit string, which is ASCII held inline (`FlatUnits::Short`) when
+    /// its unit is ASCII; `None` for any other string.
+    #[inline(always)]
+    pub(crate) fn single_ascii_unit(&self) -> Option<u8> {
+        match &self.repr {
+            Repr::Flat(FlatUnits::Short(short)) if short.length == 1 => Some(short.bytes[0]),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub(crate) fn len(&self) -> usize {
         match &self.repr {

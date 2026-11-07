@@ -31,10 +31,13 @@ impl From<JsError> for IteratorHelperFailure {
 /// `%ArrayIteratorPrototype%`. Both prototypes were marked when the proof was made, so a
 /// change to either's layout advances the epoch; shape compaction advances it too, so a proof
 /// never names a renumbered shape. The slots' values may change in place, so each use reads them.
+/// Realms share array shapes but not prototypes: the slots are those of `prototype`, the
+/// realm's `Array.prototype` the proof was made in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArrayIterationProof {
     shape: u32,
     epoch: u64,
+    prototype: Value,
     method_slot: usize,
     next_slot: usize,
 }
@@ -181,7 +184,7 @@ impl<H: Host> Vm<H> {
         }
         let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
         let proof = match self.array_iteration_proof {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
+            Some(proof) if proof.shape == shape && proof.epoch == epoch && proof.prototype == self.array_proto => proof,
             _ => match self.prove_array_iteration(shape, epoch) {
                 Some(proof) => proof,
                 None => return false,
@@ -214,7 +217,7 @@ impl<H: Host> Vm<H> {
         }
         let method_slot = data_slot(self, self.array_proto, method)?;
         let next_slot = data_slot(self, self.array_iterator_proto, next)?;
-        let proof = ArrayIterationProof { shape, epoch, method_slot, next_slot };
+        let proof = ArrayIterationProof { shape, epoch, prototype: self.array_proto, method_slot, next_slot };
         self.heap.mark_prototype(self.array_proto);
         self.heap.mark_prototype(self.array_iterator_proto);
         // Marking an object that was no prototype yet leaves the epoch where it was.

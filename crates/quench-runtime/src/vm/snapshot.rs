@@ -358,13 +358,13 @@ impl<H: Host> Vm<H> {
             regexp_subjects: _,
             regexp_matchers: _,
             atom_classes: _,
+            intrinsic_natives: _,
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,
             string_concats: _,
             string_atoms: _,
             recent_atom_strings: _,
-            ascii_unit_strings: _,
             bound_parts_layout: _,
             call_targets: _,
             field_caches: _,
@@ -664,6 +664,7 @@ impl<H: Host> Vm<H> {
         self.name_atom_memo.clear();
         self.private_site_homes.clear();
         self.atom_classes.clear();
+        self.intrinsic_natives.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
         let atom_text = self.atom_text.clone();

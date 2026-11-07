@@ -562,6 +562,9 @@ impl Default for PrototypeRegistry {
     }
 }
 
+/// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
+pub(crate) const ASCII_UNITS: usize = 0x80;
+
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
@@ -618,6 +621,10 @@ pub(crate) struct Heap {
     payload_bytes: usize,
     /// Payload bytes grown since the last charge, below one allocation's weight.
     uncharged_payload_bytes: usize,
+    /// The string each one-unit ASCII text made since the last collection got
+    /// (`alloc_string`): strings have no identity, so one record serves every such text, as
+    /// V8's single-character string table does. A collection empties it.
+    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
     /// What the full collection that last traced closure environments through their reads
@@ -1558,6 +1565,22 @@ impl Heap {
     /// many records as the legacy slots do (`STRING_RECORD_CAPACITY`); exhausting it is out
     /// of memory, as exhausting the slots is.
     pub(crate) fn alloc_string(&mut self, string: JsString) -> Value {
+        let Some(unit) = string.single_ascii_unit() else {
+            return self.alloc_string_record(string);
+        };
+        let strings = self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; ASCII_UNITS]));
+        let cached = strings[usize::from(unit)];
+        if !cached.is_undefined() {
+            return cached;
+        }
+        let value = self.alloc_string_record(string);
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings[usize::from(unit)] = value;
+        }
+        value
+    }
+
+    fn alloc_string_record(&mut self, string: JsString) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = CellKind::String as usize;
@@ -2208,6 +2231,10 @@ impl Heap {
         // point at them to the next one (`carried_owners`): those the barriers logged, then
         // those it promotes.
         let carries_owners = !full && age.ages();
+        // The shared unit strings are no roots: one the sweep frees must not be handed out.
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings.fill(Value::UNDEFINED);
+        }
         self.charge_materialized_text();
         // The sweep may free an array whose record a later array reuses.
         retire_array_storage_proofs();

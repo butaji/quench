@@ -1368,6 +1368,7 @@ fn field_cache_invalidation_resets_every_written_site() {
     vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
     vm.field_add_indices = SiteTable::with_empty(SITES);
     vm.inherited_field_indices = SiteTable::with_empty(SITES);
+    vm.accessor_field_indices = SiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {
