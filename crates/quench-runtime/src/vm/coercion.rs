@@ -405,11 +405,12 @@ impl<H: Host> Vm<H> {
     /// BigInts, of equal contents.
     #[inline(always)]
     pub(super) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
-        if let (Some(a), Some(b)) = (self.heap.string(a), self.heap.string(b)) {
-            return a == b;
+        // `a`'s cell alone decides most pairs: an object or symbol equals nothing it is not.
+        if let Some(a) = self.heap.string(a) {
+            return self.heap.string(b).is_some_and(|b| a == b);
         }
-        match (self.heap.get(a), self.heap.get(b)) {
-            (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
+        match self.heap.get(a) {
+            Some(Cell::BigInt(a)) => matches!(self.heap.get(b), Some(Cell::BigInt(b)) if a == b),
             _ => false,
         }
     }
