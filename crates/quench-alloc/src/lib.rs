@@ -30,6 +30,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
 use std::ptr;
+use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 /// One allocator page: the unit a size class takes and returns.
@@ -138,11 +139,26 @@ struct Heap {
     /// full collection's boundaries release back to back and the second interval takes little.
     taken: usize,
     taken_before: usize,
+    /// When this heap last returned pages (`release_empty`), `None` before the first time.
+    released_at: Option<Instant>,
 }
 
 /// The most returned pages a heap records, a quarter of a chunk's: pages past it stay in the
 /// empty pool, resident.
 const DECOMMITTED_CAPACITY: usize = CHUNK_BYTES / PAGE_BYTES / 4;
+
+/// The least time between two returns of one heap's pages: a release sooner than this keeps
+/// them, so the intervals it would have closed count as one. mimalloc's purge delay
+/// (`purge_delay`, 10 ms by default) and jemalloc's dirty-page decay rest on the same fact:
+/// a page emptied by one collection is most often taken again by the next few, and
+/// returning it costs a system call plus a zeroing fault on reuse while lowering no peak.
+/// Returning at every boundary made 88,374 single-page `madvise` calls in a 0.5 s string
+/// concatenation run; paced and coalesced, 984. The scoreboard's string-concat op ran 41%
+/// faster (254 -> 150 ns), the other ops and JetStream splay, richards, earley-boyer, raytrace
+/// and delta-blue within noise, at the same peak RSS (release build, x86_64 4 vCPU, 2026-11-07).
+/// The host's collection-time release of read-only pages measured 10 ms as the pace past which
+/// what stays resident is the run's working set (`COLLECTION_RELEASE_INTERVAL`).
+pub const PURGE_DELAY: Duration = Duration::from_millis(10);
 
 /// A heap and the flag that serializes its use, for heaps no single thread owns.
 struct LockedHeap {
@@ -343,7 +359,7 @@ pub fn release_empty_pages() {
     let heap = thread_heap();
     if !heap.is_null() {
         // SAFETY: the calling thread owns its heap.
-        unsafe { (*heap).release_empty() };
+        unsafe { (*heap).release_empty(Instant::now()) };
     }
 }
 
@@ -413,6 +429,7 @@ impl Heap {
             decommitted_len: 0,
             taken: 0,
             taken_before: 0,
+            released_at: None,
         }
     }
 
@@ -548,10 +565,15 @@ impl Heap {
     }
 
     /// Returns the empty pool's pages past those the last two intervals took to the kernel,
-    /// recording them in `decommitted`. Two intervals, as a full collection's boundaries
-    /// release back to back: the second interval took almost nothing, and the cycle's own
-    /// pages would leave with the burst's.
-    unsafe fn release_empty(&mut self) {
+    /// recording them in `decommitted`, unless this heap returned pages less than
+    /// `PURGE_DELAY` before `now`. Two intervals, as a full collection's boundaries release
+    /// back to back: the second interval took almost nothing, and the cycle's own pages would
+    /// leave with the burst's. Adjacent pages leave in one call.
+    unsafe fn release_empty(&mut self, now: Instant) {
+        if self.released_at.is_some_and(|last| now.duration_since(last) < PURGE_DELAY) {
+            return;
+        }
+        self.released_at = Some(now);
         let keep = self.taken.max(self.taken_before);
         self.taken_before = self.taken;
         self.taken = 0;
@@ -572,8 +594,7 @@ impl Heap {
             }
             self.decommitted = mapped.cast();
         }
-        // An empty pool's page has no block in use, so the kernel may take its contents; it
-        // comes back zeroed, and `init_page` writes its header before any block is used.
+        let first_returned = self.decommitted_len;
         let mut kept = 0;
         let mut link: *mut *mut Page = &mut self.empty;
         // SAFETY: empty pages are linked through `next` and none is in use.
@@ -586,10 +607,20 @@ impl Heap {
                     continue;
                 }
                 *link = (*page).next;
-                libc::madvise(page.cast(), PAGE_BYTES, libc::MADV_DONTNEED);
                 *self.decommitted.add(self.decommitted_len) = page as usize;
                 self.decommitted_len += 1;
             }
+        }
+        // SAFETY: the entries from `first_returned` were written above.
+        let returned = unsafe {
+            std::slice::from_raw_parts_mut(self.decommitted.add(first_returned), self.decommitted_len - first_returned)
+        };
+        returned.sort_unstable();
+        // An empty pool's page has no block in use, so the kernel may take its contents; it
+        // comes back zeroed, and `init_page` writes its header before any block is used.
+        for run in returned.chunk_by(|page, next| page + PAGE_BYTES == *next) {
+            // SAFETY: a run of whole, adjacent empty pages of this heap.
+            unsafe { libc::madvise(run[0] as *mut libc::c_void, run.len() * PAGE_BYTES, libc::MADV_DONTNEED) };
         }
     }
 
@@ -897,12 +928,18 @@ mod tests {
         let (empty_before, returned_before) = (empty_pages(state), state.decommitted_len);
         assert!(empty_before > 1);
         // The interval that took these pages, and the one after it, keep them for the next.
-        release_empty_pages();
-        release_empty_pages();
+        let release = |at: Instant| unsafe { (*thread_heap()).release_empty(at) };
+        let start = Instant::now();
+        release(start);
+        release(start + PURGE_DELAY);
+        let state = unsafe { &*thread_heap() };
+        assert_eq!(empty_pages(state), empty_before);
+        // A release within the purge delay keeps them and closes no interval.
+        release(start + PURGE_DELAY + PURGE_DELAY / 2);
         let state = unsafe { &*thread_heap() };
         assert_eq!(empty_pages(state), empty_before);
         // Two intervals that took none return them all.
-        release_empty_pages();
+        release(start + PURGE_DELAY * 2);
         let state = unsafe { &*thread_heap() };
         assert_eq!(empty_pages(state), 0);
         assert_eq!(state.decommitted_len, returned_before + empty_before);

@@ -22,142 +22,6 @@ fn encoding_allocates(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
 }
 
-const DIRECT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
-const RAW_I32_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
-const EARLY_IMPORT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
-
-static DIRECT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
-    std::sync::OnceLock::new();
-static RAW_I32_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
-    std::sync::OnceLock::new();
-static EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
-    std::sync::OnceLock::new();
-
-#[cfg(test)]
-thread_local! {
-    static DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-    static RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-    static EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Whether the guarded direct-copy path is enabled in this process. Separate
-/// processes can use this switch for an on/off A/B without rebuilding.
-pub(super) fn emscripten_memcpy_direct_copy_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-
-    DIRECT_EMSCRIPTEN_COPY_SWITCH
-        .get_or_init(
-            || match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
-                Ok("0") => Some(false),
-                Ok("1") => Some(true),
-                _ => None,
-            },
-        )
-        .unwrap_or(true)
-}
-
-pub(super) fn emscripten_memcpy_direct_copy_switch() -> &'static str {
-    #[cfg(test)]
-    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return if enabled { "1" } else { "0" };
-    }
-
-    match DIRECT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
-        match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        }
-    }) {
-        Some(false) => "0",
-        Some(true) => "1",
-        None => "default",
-    }
-}
-
-/// The raw-argument import path is opt-in so the late-bound path remains the
-/// control arm unless an experiment explicitly selects it.
-pub(super) fn emscripten_memcpy_raw_i32_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-
-    RAW_I32_EMSCRIPTEN_COPY_SWITCH
-        .get_or_init(
-            || match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
-                Ok("0") => Some(false),
-                Ok("1") => Some(true),
-                _ => None,
-            },
-        )
-        .unwrap_or(false)
-}
-
-pub(super) fn emscripten_memcpy_raw_i32_switch() -> &'static str {
-    #[cfg(test)]
-    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return if enabled { "1" } else { "0" };
-    }
-
-    match RAW_I32_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
-        match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        }
-    }) {
-        Some(false) => "0",
-        Some(true) => "1",
-        None => "default",
-    }
-}
-
-/// Whether compiled import callouts may try the raw memcpy guard before the
-/// general Wasm import dispatcher. The exact-import and current-view checks
-/// remain mandatory; this switch only selects where they run.
-pub(super) fn emscripten_memcpy_early_import_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-
-    EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH
-        .get_or_init(
-            || match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
-                Ok("0") => Some(false),
-                Ok("1") => Some(true),
-                _ => None,
-            },
-        )
-        .unwrap_or(false)
-}
-
-pub(super) fn emscripten_memcpy_early_import_switch() -> &'static str {
-    #[cfg(test)]
-    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return if enabled { "1" } else { "0" };
-    }
-
-    match EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
-        match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        }
-    }) {
-        Some(false) => "0",
-        Some(true) => "1",
-        None => "default",
-    }
-}
-
 pub(super) fn copy_within_relative_index(index: i64, length: usize) -> usize {
     if index < 0 {
         let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
@@ -175,70 +39,6 @@ fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
             *counter = (*counter).saturating_add(1);
         }
     }
-}
-
-fn note_emscripten_memcpy_raw_i32_hit(counter: *mut u64) {
-    if !counter.is_null() {
-        // SAFETY: the diagnostic counter lives for the compiled invocation.
-        unsafe {
-            *counter = (*counter).saturating_add(1);
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_direct_copy_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-
-    let previous = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_raw_i32_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-
-    let previous = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_early_import_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-
-    let previous =
-        EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
 }
 
 /// The main realm's interface prototypes, which every new Wasm object of the matching kind
@@ -1590,14 +1390,13 @@ impl<H: Host> Vm<H> {
                 .environment_slot(view_environment, view_slot)
                 .unwrap_or(Value::UNDEFINED);
             let copy_within_atom = self.intern_atom("copyWithin");
-            let direct_copy = emscripten_memcpy_direct_copy_enabled()
-                && self.try_emscripten_memcpy_same_memory(
-                    view,
-                    current_memory,
-                    signature,
-                    args,
-                    copy_within_atom,
-                )?;
+            let direct_copy = self.try_emscripten_memcpy_same_memory(
+                view,
+                current_memory,
+                signature,
+                args,
+                copy_within_atom,
+            )?;
             if direct_copy {
                 note_emscripten_memcpy_fast_path(memcpy_fast_path_hits);
                 Value::UNDEFINED
@@ -1687,33 +1486,6 @@ impl<H: Host> Vm<H> {
             indices,
             copy_within_atom,
         ))
-    }
-
-    /// The compiled callout's opt-in raw-i32 admission path. It reloads the
-    /// captured view here on every call and shares W-08's complete memory guard.
-    pub(super) fn try_emscripten_memcpy_same_memory_raw_capture(
-        &mut self,
-        view_environment: Value,
-        view_slot: usize,
-        current_memory: Value,
-        indices: [i32; 3],
-        raw_i32_fast_path_hits: *mut u64,
-    ) -> bool {
-        let view = self
-            .heap
-            .environment_slot(view_environment, view_slot)
-            .unwrap_or(Value::UNDEFINED);
-        let copy_within_atom = self.intern_atom("copyWithin");
-        let hit = self.try_emscripten_memcpy_same_memory_raw(
-            view,
-            current_memory,
-            indices,
-            copy_within_atom,
-        );
-        if hit {
-            note_emscripten_memcpy_raw_i32_hit(raw_i32_fast_path_hits);
-        }
-        hit
     }
 
     fn try_emscripten_memcpy_same_memory_raw(
