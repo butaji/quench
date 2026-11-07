@@ -112,6 +112,13 @@ pub(super) fn convert(function: &mut ir::Function) -> usize {
         let Some(right) = arm(function, &cfg, &used, blocks[1].block(&function.dfg.value_lists)) else { continue };
         let join = left.exit.block(&function.dfg.value_lists);
         if join != right.exit.block(&function.dfg.value_lists) || join == head { continue; }
+        // A branch whose two edges reach one block gives that block one predecessor
+        // branch, so both arms name the same blocks; removing them twice would unlink the
+        // whole layout. The CFG counts no edge into the entry block either.
+        let entry = function.layout.entry_block();
+        if left.blocks.iter().any(|block| right.blocks.contains(block))
+            || left.blocks.iter().chain(&right.blocks).any(|block| Some(*block) == entry)
+        { continue; }
         let pairs: Vec<_> = left.exit.args(&function.dfg.value_lists).zip(right.exit.args(&function.dfg.value_lists)).collect();
         if pairs.iter().any(|(a,b)| !matches!((a,b), (ir::BlockArg::Value(_), ir::BlockArg::Value(_)))) { continue; }
         let selects = pairs.iter().filter(|(a,b)| match (a,b) {
@@ -264,6 +271,38 @@ mod tests {
                 Operation::Bitwise | Operation::RepresentedBitwise | Operation::CompareSelect | Operation::DeadCompareSelect)));
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
         }
+    }
+
+    #[test]
+    fn a_branch_whose_edges_share_one_arm_keeps_its_blocks() {
+        #[cfg(feature = "jit")]
+        let publication = super::super::CodePublication::ExecutableMemory;
+        #[cfg(not(feature = "jit"))]
+        let publication = super::super::CodePublication::RelocatableObject;
+        let isa = super::super::target_isa_for("speed", publication).unwrap();
+        let mut signature = ir::Signature::new(isa.default_call_conv());
+        signature.params.push(ir::AbiParam::new(ir::types::I32));
+        signature.returns.push(ir::AbiParam::new(ir::types::I32));
+        let mut function = ir::Function::with_name_signature(ir::UserFuncName::user(0, 0), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let [entry, arm, join] = [(); 3].map(|_| builder.create_block());
+        builder.append_block_params_for_function_params(entry);
+        builder.append_block_param(join, ir::types::I32);
+        builder.switch_to_block(entry);
+        let input = builder.block_params(entry)[0];
+        builder.ins().brif(input, arm, &[], arm, &[]);
+        builder.switch_to_block(arm);
+        let value = builder.ins().bxor_imm_u(input, 1);
+        builder.ins().jump(join, &[value.into()]);
+        builder.switch_to_block(join);
+        let result = builder.block_params(join)[0];
+        builder.ins().return_(&[result]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        assert_eq!(convert(&mut function), 0);
+        assert_eq!(function.layout.entry_block(), Some(entry));
+        cranelift_codegen::verify_function(&function, &*isa).unwrap();
     }
 
     #[test]
