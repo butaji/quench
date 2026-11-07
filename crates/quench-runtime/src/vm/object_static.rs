@@ -3,17 +3,8 @@ use super::object_keys::EnumerableOwnPropertyKind;
 use super::object_symbols::PropertyCopyKind;
 use super::property_key::PropertyKey;
 use super::*;
-
-/// The own keys a for-in last listed from a receiver's shape (`Vm::own_for_in_keys`), with
-/// the receiver, that shape and the collection epoch: while the receiver keeps the shape,
-/// in the same epoch (which no reused handle or compacted shape shares), each listed key is
-/// still an own enumerable property (`Vm::for_in_own_key_listed`).
-pub(super) struct ForInOwnKeys {
-    object: Value,
-    shape: u32,
-    epoch: u64,
-    keys: Vec<Value>,
-}
+mod for_in_keys;
+pub(super) use for_in_keys::ForInOwnKeys;
 
 impl<H: Host> Vm<H> {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
@@ -475,12 +466,7 @@ impl<H: Host> Vm<H> {
         }
         let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
         let shape = self.object_data(receiver)?.shape();
-        self.for_in_own_keys = Some(ForInOwnKeys {
-            object: receiver,
-            shape,
-            epoch: self.heap.collection_epoch(),
-            keys: keys.clone(),
-        });
+        self.for_in_own_keys = Some(ForInOwnKeys::new(receiver, shape, self.heap.collection_epoch(), keys.clone()));
         Some(keys)
     }
 
@@ -490,12 +476,7 @@ impl<H: Host> Vm<H> {
     /// without a lookup. Any other key or object is left to the lookup.
     pub(super) fn for_in_own_key_listed(&self, source: Value, key: Value) -> bool {
         self.for_in_own_keys.as_ref().is_some_and(|listed| {
-            listed.object == source
-                && listed.epoch == self.heap.collection_epoch()
-                && self
-                    .object_data(source)
-                    .is_some_and(|data| data.shape() == listed.shape && !data.has_side_descriptors())
-                && listed.keys.contains(&key)
+            self.object_data(source).is_some_and(|data| !data.has_side_descriptors() && listed.lists(source, data.shape(), self.heap.collection_epoch(), key))
         })
     }
 
