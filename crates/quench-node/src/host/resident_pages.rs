@@ -423,12 +423,11 @@ pub fn release_read_only_code_and_data() {}
 /// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
 /// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
 /// code generator, which a release would only refault, and each release reads the whole
-/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
-/// releases the read-only pages, timed apart from the collections' releases, which come far
-/// more often, and sooner once their resident pages pass a budget
-/// (`CompileRelease::over_budget`): a run that reports its result once at the end first calls its reporting code
-/// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
-/// RegExp).
+/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). First calls
+/// and lane derivations release nothing: a run's code refaulted after each release, and
+/// JetStream 3 without those releases faulted about half as often, ran 5-12% less CPU on its
+/// startup tests (prismjs-startup-es6 0.43 -> 0.38 s, crypto 0.24 -> 0.21) and peaked at most
+/// 1-2 MB higher (Babylon 12.9 -> 14.6 MB), 2026-11-07.
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     match phase {
         // The entry's analysis and code generation release whatever the pace says
@@ -446,26 +445,8 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
             }
             release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
         }
-        quench_runtime::CompilePhase::FirstCall => {
-            release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
-        }
         quench_runtime::CompilePhase::Encoding => {
             release_once_per_interval(CompileRelease::Encoding, release_read_only_code_and_data)
-        }
-        // A run's lane views derive in bursts once its warm-up calls are over, with no compile
-        // boundary between them, and a burst kept the deriver's, the lanes' and the general
-        // loop's code resident beside the heap: 1.25 MB of file pages in one collection
-        // interval at V8-v7 RayTrace's peak. Only over the budget: releasing on the interval
-        // as well raised Richards and DeltaBlue by 84-140 KiB. Bolted static x86_64,
-        // memory-first, pinned, two rounds of 3 runs, 2026-10-28, worst runs against none:
-        // RayTrace 2904 -> 2776-2812 KiB, Crypto 2908-3088 -> 2812-2908, RegExp 5284-5340 ->
-        // 5156-5284, NavierStokes 3884-4012 -> 3836-3884, DeltaBlue `--jit` 2988 -> 2804-2916,
-        // Richards 2396 -> 2416; Scores within the runs' spread.
-        quench_runtime::CompilePhase::LaneDerivation => {
-            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            if CompileRelease::LaneDerivation.over_budget() {
-                release_read_only_pages();
-            }
         }
     }
 }
@@ -497,17 +478,13 @@ pub fn after_program_kept() {
 #[derive(Clone, Copy)]
 enum CompileRelease {
     CodeGeneration,
-    FirstCall,
     Encoding,
     Kept,
-    /// Constructed only by the Linux page releases (`at_compile_phase`).
-    #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
-    LaneDerivation,
 }
 
 impl CompileRelease {
     #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
-    const COUNT: usize = 5;
+    const COUNT: usize = 3;
 
     /// The releases that may come inside their interval once resident code passes the budget
     /// (`over_budget`). A binary's first run compiles and keeps every bootstrap script back
@@ -521,7 +498,7 @@ impl CompileRelease {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn releases_over_budget(self) -> bool {
         match self {
-            Self::FirstCall | Self::CodeGeneration | Self::Kept | Self::LaneDerivation => true,
+            Self::CodeGeneration | Self::Kept => true,
             Self::Encoding => false,
         }
     }
@@ -534,7 +511,7 @@ fn compile_release_interval() -> std::time::Duration {
 }
 
 /// Under a policy that returns pages at collections, the resident file pages past which a
-/// first call, a code generation or a kept program releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
+/// code generation or a kept program releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
 /// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
 /// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
 /// of heap at 50-80 ms).
@@ -576,7 +553,7 @@ static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = st
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 impl CompileRelease {
-    /// Whether a first call, a code generation or a kept program releases inside its
+    /// Whether a code generation or a kept program releases inside its
     /// interval: the resident file pages passed
     /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
     /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
@@ -617,7 +594,7 @@ const STATM_RESIDENT_SHARED_FIELD: usize = 2;
 const STATM_RESIDENT_FIELD: usize = 1;
 
 /// The bytes of resident file-backed pages (`STATM_PATH`), read through one descriptor kept
-/// open: a budget check runs at first calls, hundreds to thousands in a run.
+/// open: a budget check runs at each paced compile phase.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn resident_file_bytes() -> Option<usize> {
     resident_statm_bytes(STATM_RESIDENT_SHARED_FIELD)

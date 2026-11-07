@@ -1241,7 +1241,7 @@ file-lines crates/quench-node-test/tests/shared_regressions.rs 634
 file-lines crates/quench-node/src/aot/graph/loader_bindings.rs 636
 file-lines crates/quench-node/src/host/hmr.rs 843
 file-lines crates/quench-node/src/host/node_host.rs 580
-file-lines crates/quench-node/src/host/resident_pages.rs 1282
+file-lines crates/quench-node/src/host/resident_pages.rs 1259
 file-lines crates/quench-node/src/host/shared_vm.rs 3276
 file-lines crates/quench-node/src/host/shared_vm/commonjs.rs 3365
 file-lines crates/quench-node/src/host/startup_snapshot.rs 616
@@ -1367,12 +1367,12 @@ file-lines crates/quench-regexp/src/lib.rs 2986
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2526
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4398
+file-lines crates/quench-runtime/src/bytecode.rs 4395
 file-lines crates/quench-runtime/src/bytecode/binary.rs 1804
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1540
-file-lines crates/quench-runtime/src/compile.rs 4465
+file-lines crates/quench-runtime/src/compile.rs 4459
 file-lines crates/quench-runtime/src/compile/ast.rs 1306
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
@@ -1638,7 +1638,6 @@ function-lines crates/quench-node/src/host/node_host.rs::SharedNodeState::reset_
 function-lines crates/quench-node/src/host/node_host/snapshot.rs::SharedNodeState::read_snapshot 67
 function-lines crates/quench-node/src/host/node_host/snapshot.rs::SharedNodeState::write_snapshot 171
 function-lines crates/quench-node/src/host/node_host/snapshot.rs::tests::restored_module_paths_use_the_receiving_process 54
-function-lines crates/quench-node/src/host/resident_pages.rs::at_compile_phase 51
 function-lines crates/quench-node/src/host/resident_pages.rs::loaded_segments 54
 function-lines crates/quench-node/src/host/resident_pages.rs::map_read_only_file 43
 function-lines crates/quench-node/src/host/resident_pages.rs::map_touched_pages_only 50
@@ -2488,7 +2487,6 @@ function-lines crates/quench-runtime/src/bytecode.rs::Function::forwarded_this_m
 function-lines crates/quench-runtime/src/bytecode.rs::Function::kept_arguments 58
 function-lines crates/quench-runtime/src/bytecode.rs::Function::super_forwarding 138
 function-lines crates/quench-runtime/src/bytecode.rs::ImmediateRole::binding_time 63
-function-lines crates/quench-runtime/src/bytecode.rs::ResidualProgram::built_record 43
 function-lines crates/quench-runtime/src/bytecode/binary.rs::decode_program 269
 function-lines crates/quench-runtime/src/bytecode/binary.rs::encode_program 228
 function-lines crates/quench-runtime/src/bytecode/binary.rs::read_function 294

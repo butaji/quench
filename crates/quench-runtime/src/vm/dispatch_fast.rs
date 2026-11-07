@@ -350,9 +350,8 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// Its bodies no run of which completed before they went (`LaneView::drop_body`): each
-    /// doubles the next one's warm-up, and `TIERS.lane_body.max_wasted` of them decline it.
-    wasted: std::cell::Cell<u8>,
+    /// What its bodies cost and earned so far (`LaneBodyHistory`).
+    history: std::cell::Cell<LaneBodyHistory>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
@@ -594,6 +593,8 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 /// Script activation admission groups two base granules.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
+mod getters;
+use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
 
@@ -623,6 +624,7 @@ mod lane_body_stats;
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
+use lane_body_tier::LaneBodyHistory;
 use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
 
@@ -862,7 +864,7 @@ impl LaneView {
             if *entries >= self.warmup_entries() {
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                *body = match (!self.wasted_enough()).then(|| specialize(&generic)).flatten() {
+                *body = match self.affords_compile().then(|| specialize(&generic)).flatten() {
                     Some(published) => {
                         let method = published.lease().expect("a body just published is live");
                         // A body whose entry would not pay for itself serves native callers
@@ -924,9 +926,9 @@ impl LaneView {
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
     fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
-        // A function whose bodies went unused warms its next one fully.
+        // A function whose bodies lifecycle edges discarded warms as any entry does.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
-            && self.wasted.get() == 0
+            && self.history.get().lifetimes == 0
         {
             *entries = TIERS.lane_body.warmup_entries - 1;
         }
@@ -6960,7 +6962,7 @@ fn lane_getter_activation<H: Host>(
     }) else {
         return Err(exit(ip));
     };
-    lane_activate_getter(cx, r, ip, getter, base)
+    lane_read_getter(cx, r, ip, i, getter, base)
 }
 
 /// The activation of `getter` with receiver `base` and no arguments for the read record at
@@ -7110,44 +7112,6 @@ fn lane_cached_field<H: Host>(
             lane_cached_field_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).env })
         }),
     }
-}
-
-/// A read whose site caches an accessor (`Vm::cached_field_getter`) whose getter is a pure
-/// native read (`Vm::pure_native_getter_value`) or a frameless read target, answered as the
-/// getter's call would return (`lane_call_read`): `[[Get]]` calls it on the base with no
-/// arguments, and neither runs guest code. `None` leaves the read to the general path, which
-/// calls the getter.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-#[inline(never)]
-unsafe fn lane_getter_read<H: Host>(
-    cx: *mut LaneContext<H>,
-    object: Value,
-    atom: crate::bytecode::Atom,
-    site: u16,
-) -> Option<Value> {
-    let getter = {
-        let vm = unsafe { vm(cx) };
-        vm.cached_field_getter(object, atom, vm.field_cache_index(site))?
-    };
-    if let Some(value) = (unsafe { vm(cx) }).pure_native_getter_value(getter, object) {
-        return Some(value);
-    }
-    let target = lane_script_target(cx, getter)?;
-    if target.entry == CallEntry::Reads {
-        // A getter only the general path has called has not run its read in the lane yet: it
-        // takes the kind its first run would.
-        // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
-        let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        if unsafe { (*entry).handler } == lane_returning_field_first::<H, NOT_LEAF> as *const () {
-            requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
-        }
-    } else if !target.entry.answered_by_read() {
-        return None;
-    }
-    let this = lane_direct_call_this(unsafe { vm(cx) }, &target, object)?;
-    unsafe { lane_call_read(cx, &target, ReadArguments::NONE, this) }
 }
 
 /// `lane_cached_field` past its probe. Out of line so that no handler inlining the probe
@@ -12285,6 +12249,8 @@ impl<H: Host> Vm<H> {
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
+        // Only a function the JS tier never claims (`LaneView::claim_for_tier`) runs as a leaf.
+        let tier_may_claim = self.js_tier_may_claim(code, program, function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
@@ -12315,7 +12281,7 @@ impl<H: Host> Vm<H> {
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
                     .inspect(|&form| {
-                        if !self.js_tier_runs() {
+                        if !tier_may_claim {
                             // SAFETY: the program store keeps a derived view alive with its program.
                             unsafe { &*view }.specialize_leaf_returns::<H>(form);
                         }
@@ -12328,7 +12294,7 @@ impl<H: Host> Vm<H> {
             && !body.rest
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
-            && self.js_tier_may_claim(code, program, function)
+            && tier_may_claim
             // SAFETY: as below.
             && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.lane_tier_unclaimed())
         {
@@ -12384,10 +12350,8 @@ impl<H: Host> Vm<H> {
             } else if cross {
                 CallEntry::Activates
             } else {
-                // A leaf runs the records of the view the JavaScript tier would claim
-                // (`LaneView::claim_for_tier`), so only a VM whose tier never runs calls it as one.
                 match shape.leaf {
-                    Some(form) if !self.js_tier_runs() => CallEntry::leaf(form),
+                    Some(form) if !tier_may_claim => CallEntry::leaf(form),
                     _ => shape.entry,
                 }
             },
@@ -21445,7 +21409,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), wasted: std::cell::Cell::new(0),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(),
         retired: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),

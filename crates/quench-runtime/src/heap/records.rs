@@ -7,10 +7,10 @@ mod primitive_bench;
 mod vacancy_tests;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod reservation;
+use reservation::Reservation;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
-use std::alloc::Layout;
-use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
 #[cfg(feature = "profile-memory")]
 use std::mem::size_of;
@@ -128,8 +128,7 @@ const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 /// allocation and sweep, but resolving a live locator never walks it.
 pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> {
     base: NonNull<MaybeUninit<T>>,
-    reserved: bool,
-    reservation_failed: bool,
+    reservation: Reservation,
     blocks: Vec<RecordBlock>,
     next_id: u32,
     /// Where the downward scan for reusable IDs continues; 0 once none remain below it.
@@ -169,8 +168,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
     fn default() -> Self {
         Self {
             base: NonNull::dangling(),
-            reserved: false,
-            reservation_failed: false,
+            reservation: Reservation::Unreserved,
             blocks: Vec::new(),
             next_id: 0,
             free_cursor: 0,
@@ -198,7 +196,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// safepoint. In particular, a record's owned suballocations may change when the VM runs.
     #[inline]
     pub(super) fn base_ptr(&self) -> Option<*const T> {
-        self.reserved
+        self.is_reserved()
             .then(|| self.base.as_ptr().cast::<T>().cast_const())
     }
 }
@@ -375,7 +373,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let id = if self.free_word != 0 {
             self.take_free_word_id()
         } else if self.free_cursor == 0
-            && self.reserved
+            && self.is_reserved()
             && (self.next_id as usize) < CAPACITY
             && Self::split_id(self.next_id).0 < self.blocks.len()
         {
@@ -502,27 +500,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         self.young_words.push(self.free_word_base);
     }
 
-    fn ensure_reserved(&mut self) -> bool {
-        if self.reserved {
-            return true;
-        }
-        if self.reservation_failed {
-            return false;
-        }
-        let Ok(layout) = Layout::array::<MaybeUninit<T>>(CAPACITY) else {
-            self.reservation_failed = true;
-            return false;
-        };
-        // SAFETY: the layout is a nonzero record range. The mapping is kept
-        // for the arena lifetime and memory is initialized a block at a time.
-        let Some(base) = NonNull::new(unsafe { alloc(layout) }.cast()) else {
-            self.reservation_failed = true;
-            return false;
-        };
-        self.base = base;
-        self.reserved = true;
-        true
-    }
 
     /// # Safety
     /// `id` must come from a live direct Value of this record family. Sweep removes the
@@ -1119,38 +1096,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 }
 
-impl<T, const CAPACITY: usize> Drop for RecordSpace<T, CAPACITY> {
-    fn drop(&mut self) {
-        if !self.reserved {
-            return;
-        }
-        let layout = Layout::array::<MaybeUninit<T>>(CAPACITY)
-            .expect("record-space layout was validated at reservation");
-        for (block_index, block) in self.blocks.iter().enumerate() {
-            for (word_index, word) in block.occupied.iter().copied().enumerate() {
-                let mut live = word;
-                while live != 0 {
-                    let bit = live.trailing_zeros() as usize;
-                    let id = (block_index * RECORDS_PER_BLOCK
-                        + word_index * OCCUPANCY_WORD_BITS
-                        + bit) as RecordId;
-                    // SAFETY: every set bit denotes exactly one initialized record.
-                    unsafe {
-                        self.base
-                            .as_ptr()
-                            .add(id as usize)
-                            .as_mut()
-                            .unwrap()
-                            .assume_init_drop()
-                    };
-                    live &= live - 1;
-                }
-            }
-        }
-        // SAFETY: this was allocated with the layout recomputed above.
-        unsafe { dealloc(self.base.as_ptr().cast(), layout) };
-    }
-}
 
 #[cfg(test)]
 mod tests {
