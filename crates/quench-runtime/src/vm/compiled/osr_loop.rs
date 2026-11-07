@@ -1880,9 +1880,8 @@ fn admit_region(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    // A region that leaves at its header runs no native code: entering it only costs.
-    if let Some(first) = instructions.first().filter(|first| exits_before_effects(first.op())) {
-        return Err(RegionAnalysisFailure { reason: RegionRejection::UnsupportedInstruction(first.op()), pc: header });
+    if let Err(offset) = iteration::iterates_natively(&instructions, header) {
+        return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op()), header, offset));
     }
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects,
@@ -2838,8 +2837,6 @@ fn lowered_natively(op: Op) -> bool {
 fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
 /// The register a native run defines at an instruction: an exit's definition is the VM's.
 fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at.op())) }
-
-
 
 /// The region PCs control continues at from the instruction at `pc`, and the PCs outside it
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
@@ -7139,6 +7136,8 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
     }
 }
 
+#[path = "osr_loop/iteration.rs"]
+mod iteration;
 #[cfg(test)]
 #[path = "osr_loop/coverage_tests.rs"]
 mod coverage_tests;
