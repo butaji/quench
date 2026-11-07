@@ -33,7 +33,7 @@ pub(crate) trait ClosureReadSource {
     }
     /// Whether `slot` of an environment of `function` in `program` is a root projection of a
     /// global var or module import, which every read goes through
-    /// (`RootSlotRule::Projection`), rather than a binding.
+    /// (`RootSlotRule::GlobalVar`, `RootSlotRule::Import`), rather than a binding.
     fn slot_is_projection(&self, program: u32, function: u32, slot: u16) -> bool;
 }
 

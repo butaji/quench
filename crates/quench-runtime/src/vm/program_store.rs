@@ -1747,6 +1747,28 @@ impl ProgramStore {
         Some(id)
     }
 
+    /// What `slot` of `id`'s root environment holds for the reads through it
+    /// (`RootSlotRule`), derived once per program.
+    pub(crate) fn root_slot(&self, id: ProgramId, slot: u16) -> crate::bytecode::RootSlotRule {
+        use crate::bytecode::RootSlotRule;
+        let Some(entry) = self.entry(id) else {
+            return RootSlotRule::Import;
+        };
+        let import = |slot: usize| entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
+        let rules = entry.root_slots.get_or_init(|| {
+            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+            (0..locals)
+                .map(|slot| if import(slot) { RootSlotRule::Import } else { entry.residual.root_slot_rule(slot) })
+                .collect()
+        });
+        match rules.get(usize::from(slot)) {
+            Some(rule) => *rule,
+            // A slot past the root's named locals is a temporary, the binding itself.
+            None if import(usize::from(slot)) => RootSlotRule::Import,
+            None => RootSlotRule::Binding,
+        }
+    }
+
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
     /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
     /// through it.
@@ -1757,24 +1779,10 @@ impl ProgramStore {
         lexical_slots_are_bindings: bool,
     ) -> bool {
         use crate::bytecode::RootSlotRule;
-        let Some(entry) = self.entry(id) else {
-            return false;
-        };
-        let rules = entry.root_slots.get_or_init(|| {
-            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
-            (0..locals)
-                .map(|slot| {
-                    let import = entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
-                    if import { RootSlotRule::Projection } else { entry.residual.root_slot_rule(slot) }
-                })
-                .collect()
-        });
-        match rules.get(usize::from(slot)).copied() {
-            Some(RootSlotRule::Binding) => true,
-            Some(RootSlotRule::GlobalLexical) => lexical_slots_are_bindings,
-            Some(RootSlotRule::Projection) => false,
-            // A slot past the root's named locals is a temporary, the binding itself.
-            None => !entry.module_imports.iter().any(|(local, _)| *local == slot),
+        match self.root_slot(id, slot) {
+            RootSlotRule::Binding => true,
+            RootSlotRule::GlobalLexical(_) => lexical_slots_are_bindings,
+            RootSlotRule::GlobalVar(_) | RootSlotRule::Import => false,
         }
     }
 
@@ -3346,6 +3354,13 @@ impl ProgramStore {
         }
     }
 
+    /// Drops every lane view's field hints (`LaneView::clear_field_hints`).
+    pub(super) fn clear_field_hints(&self) {
+        for entry in self.programs.iter().flatten() {
+            entry.lane_views.clear_field_hints();
+        }
+    }
+
     /// A program's lane views by function, derived on first use.
     pub(super) fn lane_views(
         &self,
@@ -4041,6 +4056,12 @@ impl LaneViews {
     fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
             view.invalidate_shape_bindings();
+        }
+    }
+
+    fn clear_field_hints(&self) {
+        for view in self.arena.borrow().iter().flatten() {
+            view.clear_field_hints();
         }
     }
 
