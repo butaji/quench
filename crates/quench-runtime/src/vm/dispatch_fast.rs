@@ -13290,7 +13290,7 @@ script_handler! {
             return exit(ip);
         }
         if !lane_activation_room(vm, &target) {
-            return lane_script_call_frame::<H>(ip);
+            return lane_script_call_frame::<H>(ip, usize::from(target.room));
         }
         let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
             return exit(ip);
@@ -13387,8 +13387,9 @@ script_handler! {
             }
             None => {
                 r.set(done_read.a, Value::TRUE);
-                // The exit jump runs as its own record: a jump absorbing the move at its
-                // target (`JumpFusions::THROUGH`) records the distance past that move.
+                // The exit runs as its own record, a `Jump` or the threaded test of the `done`
+                // just written: a jump absorbing the move at its target (`JumpFusions::THROUGH`)
+                // makes that move before landing past it.
                 next!(cx, r, unsafe { ip.add(form.exit()) }, Carried::script(cx))
             }
         }
@@ -16428,7 +16429,7 @@ fn lane_activate<H: Host>(
         );
     }
     if !lane_activation_room(vm, target) {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room)));
     }
     // SAFETY: the call's window of `r` holds its `argc` values.
     let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
@@ -17470,7 +17471,7 @@ fn lane_activate_environment<H: Host>(
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < usize::from(target.room) + extra
     {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room) + extra));
     }
     // The rest array, made before the window is: the values past the other parameters,
     // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
@@ -17926,7 +17927,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < fill_room::<ACTIVATION_FILL_BLOCK>(window_size)
     {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, fill_room::<ACTIVATION_FILL_BLOCK>(window_size)));
     }
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
@@ -18040,18 +18041,19 @@ unsafe fn lane_keep_arguments(
 /// registers.
 #[cold]
 #[inline(never)]
-fn lane_script_call_frame<H: Host>(ip: Ip) -> Ip {
+fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     let cx = lane_context::<H>();
     let vm = unsafe { vm(cx) };
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < LANE_SCRIPT_WINDOW;
+    // The callee's own room, which a function of many registers makes larger than a common
+    // window: reserving less would send each of its calls at this depth here again.
+    let room = room.max(LANE_SCRIPT_WINDOW);
+    let values_full = stack.values.capacity() - stack.values.len() < room;
     let activations_full = stack.activations.len() == stack.activations.capacity();
     vm.materialize_lane_activations(cx);
     if values_full {
         let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack
-            .values
-            .reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
+        vm.lane_stack.values.reserve((2 * capacity).max(room));
     }
     if activations_full {
         let capacity = vm.lane_stack.activations.capacity();

@@ -161,6 +161,8 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     promoted: Vec<RecordId>,
     /// What minor sweeps found of the aged records since the collector last took it.
     aged_fates: AgedFates,
+    /// How many ids `withhold` keeps from reuse.
+    withheld: usize,
 }
 
 impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
@@ -182,6 +184,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             minor_words: Vec::new(),
             promoted: Vec::new(),
             aged_fates: AgedFates::default(),
+            withheld: 0,
         }
     }
 }
@@ -208,6 +211,9 @@ struct RecordBlock {
     /// Young records that survived one minor collection (`PromotionAge::Second`): unmarked,
     /// swept by the next minor collection, which frees or promotes them.
     aged: [u64; BLOCK_WORDS],
+    /// Freed ids no allocation takes until `RecordSpace::release_withheld`
+    /// (`RecordSpace::withhold`).
+    withheld: [u64; BLOCK_WORDS],
 }
 
 /// Authoritative record-mark layout for native write-barrier guards.
@@ -306,6 +312,7 @@ impl RecordBlock {
     fn new() -> Self {
         Self {
             occupied: [0; BLOCK_WORDS],
+            withheld: [0; BLOCK_WORDS],
             marked: [0; BLOCK_WORDS],
             aged: [0; BLOCK_WORDS],
         }
@@ -488,7 +495,8 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let word_index = record_index / OCCUPANCY_WORD_BITS;
         let bit = record_index % OCCUPANCY_WORD_BITS;
         let below_and_at = u64::MAX >> (OCCUPANCY_WORD_BITS - 1 - bit);
-        self.free_word = !self.blocks[block_index].occupied[word_index] & below_and_at;
+        let block = &self.blocks[block_index];
+        self.free_word = !(block.occupied[word_index] | block.withheld[word_index]) & below_and_at;
         self.free_word_base = id - bit as RecordId;
         self.free_cursor = self.free_word_base;
         self.young_words.push(self.free_word_base);
@@ -1050,12 +1058,11 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let word_index = record_index / OCCUPANCY_WORD_BITS;
             let bit_count = record_index % OCCUPANCY_WORD_BITS + 1;
             let valid_bits = u64::MAX >> (OCCUPANCY_WORD_BITS - bit_count);
-            let occupied = self
+            let block = self
                 .blocks
                 .get(block_index)
-                .expect("every allocated ID belongs to an initialized record block")
-                .occupied[word_index];
-            let free_bits = !occupied & valid_bits;
+                .expect("every allocated ID belongs to an initialized record block");
+            let free_bits = !(block.occupied[word_index] | block.withheld[word_index]) & valid_bits;
             if free_bits != 0 {
                 let bit = OCCUPANCY_WORD_BITS - 1 - free_bits.leading_zeros() as usize;
                 return Some(
@@ -1071,6 +1078,36 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     pub(super) fn allocated_bytes(&self) -> usize {
         self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
             + self.blocks.capacity() * size_of::<RecordBlock>()
+    }
+
+    /// Keeps the freed `id` from reuse until `release_withheld`, so a Value naming the
+    /// record it held names no other record meanwhile; how many ids are withheld.
+    pub(super) fn withhold(&mut self, id: RecordId) -> usize {
+        let (block_index, record_index) = Self::split_id(id);
+        let Some(block) = self.blocks.get_mut(block_index) else {
+            return self.withheld;
+        };
+        debug_assert!(!block.is_occupied(record_index), "only a freed id is withheld");
+        let word_index = record_index / OCCUPANCY_WORD_BITS;
+        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
+        if block.withheld[word_index] & mask == 0 {
+            block.withheld[word_index] |= mask;
+            self.withheld += 1;
+        }
+        self.withheld
+    }
+
+    /// Makes every withheld id reusable again, scanning down from the high water.
+    pub(super) fn release_withheld(&mut self) {
+        if self.withheld == 0 {
+            return;
+        }
+        for block in &mut self.blocks {
+            block.withheld = [0; BLOCK_WORDS];
+        }
+        self.withheld = 0;
+        self.free_cursor = self.next_id;
+        self.free_word = 0;
     }
 
     pub(super) fn reusable_ids(&self) -> usize {

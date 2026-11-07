@@ -1361,7 +1361,7 @@ impl<H: Host> Vm<H> {
                     ProxyKind::Object
                 };
                 Ok(self.heap.alloc(Cell::Proxy {
-                    object: Box::new(Self::empty_object(self.object_proto)),
+                    object: Box::new(crate::heap::Object::proxy(self.object_proto)),
                     kind,
                     target,
                     handler,
