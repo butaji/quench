@@ -468,16 +468,16 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         self.with_call_roots([generator, value, promise], |vm| {
-            if let Some(record) = vm.generator_record_mut(generator) {
-                record.state = GeneratorState::Executing;
-            }
+            // A completed generator stays completed when its awaited return value throws.
+            let before = vm.generator_record_mut(generator).map(|record| std::mem::replace(&mut record.state, GeneratorState::Executing));
             let awaited = match vm.promise_for_value(p, value) {
                 Ok(promise) => promise,
                 Err(error) => {
                     let reason = error
                         .thrown_value()
                         .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
-                    if let Some(record) = vm.generator_record_mut(generator) {
+                    if let (Some(record), Some(before)) = (vm.generator_record_mut(generator), before) {
+                        record.state = before;
                         record.stop();
                     }
                     vm.async_generator_throw_ready(p, generator, reason, promise)?;
