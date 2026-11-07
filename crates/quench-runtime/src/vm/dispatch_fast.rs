@@ -630,6 +630,9 @@ mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
 mod lane_body_stats;
+#[path = "lane_leaves.rs"]
+mod lane_leaves;
+use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
 
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
@@ -852,46 +855,6 @@ impl LaneBody {
         let lifetimes = lifetimes.saturating_add(1);
         if lifetimes > LANE_BODY_MAX_LIFETIMES { return LaneBody::Declined; }
         LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE, lifetimes }
-    }
-}
-
-/// The most distinct places a body's leaves may go for them to be its specialization's
-/// feedback; past them they are scattered.
-const LANE_LEAVE_SITES: usize = 4;
-
-/// Where a specialized body's leaves went: at few exits, each once named, or scattered.
-#[derive(Clone, Copy, PartialEq)]
-enum LaneLeaves {
-    Few([Option<super::compiled::LaneExit>; LANE_LEAVE_SITES]),
-    Scattered,
-}
-
-impl LaneLeaves {
-    const NONE: Self = Self::Few([None; LANE_LEAVE_SITES]);
-
-    fn with(self, exit: super::compiled::LaneExit) -> Self {
-        let Self::Few(mut exits) = self else { return self };
-        if exits.contains(&Some(exit)) { return self; }
-        match exits.iter_mut().find(|slot| slot.is_none()) {
-            Some(slot) => { *slot = Some(exit); Self::Few(exits) }
-            None => Self::Scattered,
-        }
-    }
-
-    /// These and `other`'s exits together.
-    fn union(self, other: Self) -> Self {
-        other.exits().fold(self, Self::with)
-    }
-
-    /// Whether every exit these name is one of `other`'s: nothing new where they are few.
-    fn within(&self, other: &Self) -> bool {
-        matches!(self, Self::Few(_)) && self.exits().all(|exit| other.exits().any(|known| known == exit))
-    }
-
-    /// The exits these name: none where scattered.
-    fn exits(&self) -> impl Iterator<Item = super::compiled::LaneExit> + '_ {
-        let exits: &[_] = match self { Self::Few(exits) => exits, Self::Scattered => &[] };
-        exits.iter().flatten().copied()
     }
 }
 
@@ -1738,6 +1701,12 @@ impl CallEntry {
     #[inline(always)]
     fn reads(self) -> bool {
         matches!(self, Self::Reads | Self::ReadsElement | Self::ReadsCapture | Self::ReadsThis)
+    }
+
+    /// A body whose call a read answers (`lane_call_read`): its own read, or a forwarded one.
+    #[inline(always)]
+    fn answered_by_read(self) -> bool {
+        self.reads() || self == Self::ForwardsRead
     }
 }
 
@@ -7270,7 +7239,7 @@ unsafe fn lane_getter_read<H: Host>(
         if unsafe { (*entry).handler } == lane_returning_field_first::<H, NOT_LEAF> as *const () {
             requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
         }
-    } else if !target.entry.reads() && target.entry != CallEntry::ForwardsRead {
+    } else if !target.entry.answered_by_read() {
         return None;
     }
     let this = lane_direct_call_this(unsafe { vm(cx) }, &target, object)?;
@@ -16986,7 +16955,7 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
-    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
+    use super::compiled::LANE_CALL_MISSED;
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
@@ -17006,17 +16975,11 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let target = unsafe { &*target };
     let argc = ImmediateLayout::argument_count(i.imm());
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return LANE_CALL_MISSED };
-    // A target whose body is a read completes with the read's hit, as the lane's own call
-    // does (`lane_script_call`), its value in the call's register, which the body reads.
-    if !target.entry.activates() {
-        let passed = ReadArguments { registers: r, base: ImmediateLayout::call_window_base(i.imm()), passed: argc };
-        // SAFETY: as `lane_call_read`.
-        let Some(value) = (unsafe { lane_answered_read(cx, ip, target, passed, this) }) else { return LANE_CALL_MISSED };
-        r.set(i.a & crate::bytecode::REGISTER_MASK, value);
-        return LANE_CALL_COMPLETED;
-    }
-    if argc > target.params
-        || argc > FIXED_ARGUMENT_COPIES
+    // SAFETY: as `lane_call_read`.
+    if target.entry.answered_by_read() { return unsafe { lane_body_read_call(cx, ip, target, argc, this) }; }
+    // Any other entry than a plain activation (a frame, kept arguments) takes the lane's call.
+    if !target.entry.activates()
+        || argc > target.params.min(FIXED_ARGUMENT_COPIES)
         || !lane_activation_room(vm, target)
         || lane_crosses::<H, false>(cx, target)
     {
@@ -17025,6 +16988,22 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
     lane_body_activate(cx, r, ip, target, passed, argc, this, false)
+}
+
+/// `lane_body_call` of a target whose body is a read: the read's hit completes it, as the
+/// lane's own call does (`lane_script_call`), its value in the call's register, which the
+/// body reads.
+///
+/// # Safety
+/// As `lane_call_read`; `ip` is the call record.
+#[inline(always)]
+unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16, this: Value) -> u64 {
+    let (r, i) = unsafe { ((*cx).registers, &*ip) };
+    let passed = ReadArguments { registers: r, base: ImmediateLayout::call_window_base(i.imm()), passed: argc };
+    // SAFETY: the caller's contract.
+    let Some(value) = (unsafe { lane_answered_read(cx, ip, target, passed, this) }) else { return super::compiled::LANE_CALL_MISSED };
+    r.set(i.a & crate::bytecode::REGISTER_MASK, value);
+    super::compiled::LANE_CALL_COMPLETED
 }
 
 /// A lane body's `new`, as the lane's own construction does (`lane_script_construct`): the

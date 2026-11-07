@@ -3053,7 +3053,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_gett
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 149
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_begin_array_iteration 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_activate 62
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_left 52
