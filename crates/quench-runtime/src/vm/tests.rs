@@ -2259,6 +2259,35 @@ fn array_results_survive_collections_in_proxy_traps() {
 }
 
 #[test]
+fn lane_for_in_exit_runs_the_move_fused_into_its_exit_jump() {
+    // A long body keeps the loop's exit an unthreaded `Jump` (its targets outgrow the narrow
+    // immediate during rewriting), which the lane fuses with the callee `Move` it lands on;
+    // leaving the loop must still run that move (babel-wtb: `makePredicate is not a function`).
+    let padding = "x = x + 1;\n".repeat(3000);
+    let source = format!(
+        "function run() {{ function pick(v) {{ return v + 1; }} var x = 0;\n{padding}\
+         var keys = {{ a: 1, b: 2, c: 3 }}, total = 0;\n\
+         for (var key in keys) {{ total += keys[key]; }}\n\
+         return pick(total); }}\n\
+         var out = 0; for (var i = 0; i < 300; i++) out += run();\n\
+         var result = String(out);"
+    );
+    assert_eq!(global_text(&source, "result"), "2100");
+}
+
+#[test]
+fn retracing_a_wide_shape_chain_carries_its_lookup_index() {
+    // The second wrapper of a long string follows the first one's cached dictionary
+    // transitions; each step must reuse the index the first built, not derive one per
+    // shape (SunSpider tagcloud: quadratic time and over 4 GB).
+    let source = "var text = 'x'.repeat(20000);\n\
+         String.prototype.wrapped = function () { return ('(' + this + ')').length; };\n\
+         var lengths = [text.wrapped(), text.wrapped(), text.wrapped()];\n\
+         var result = lengths.join();";
+    assert_eq!(global_text(source, "result"), "20002,20002,20002");
+}
+
+#[test]
 fn proxy_reads_never_take_a_plain_object_read_cache() {
     // A proxy's own object has the shape of `{}`; a read site that cached `{}` must still
     // ask the proxy's handler (postcss-wtb: `new obj.constructor()` built a plain Object).
