@@ -11851,7 +11851,6 @@ script_handler! {
         if argc > target.params
             || argc > FIXED_ARGUMENT_COPIES
             || !lane_activation_room(vm, target)
-            || lane_crosses::<H, false>(cx, target)
         {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
@@ -12007,7 +12006,6 @@ script_handler! {
                 || !lane_activation_room(vm, target)
                 || (returns && !lane_returning_call_admitted(cx))
                 || vm.with_scope_entered
-                || lane_crosses::<H, false>(cx, target)
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
@@ -12113,7 +12111,6 @@ script_handler! {
         if ImmediateLayout::argument_count(i.imm()) > target.params
             || (returns && !lane_returning_call_admitted(cx))
             || vm.with_scope_entered
-            || lane_crosses::<H, false>(cx, &target)
             || vm.host.observes_promise_lifecycle()
         {
             return exit(ip);
@@ -14714,20 +14711,19 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     // activate callees of the running program alone. Another program's callee, once
     // resolved, is held apart (`cross_call_entry`) for the callers that activate across
     // programs; resolving it again would only find it so.
-    // The cached entry is tested in place and copied once.
-    let active = vm.active_program;
-    let admits = move |target: &ScriptCallTarget| {
-        target.program == active && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
-    };
+    // The cached entry is tested in place and copied once; `script_call_holds` admitted it
+    // for the active program already.
+    let activates = |target: &ScriptCallTarget| !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles);
     if let Some(entry) = vm.script_call_entry(callee) {
         // SAFETY: the entry is read before anything else touches the cache.
         let target = unsafe { &*entry };
-        return admits(target).then_some(*target);
+        return activates(target).then_some(*target);
     }
     if vm.cross_call_entry(callee).is_some() {
         return None;
     }
-    vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(admits)
+    let active = vm.active_program;
+    vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program == active && activates(target))
 }
 
 /// Make `program` the lane's running program, as a call into or a return to one of its
@@ -15411,7 +15407,6 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     if argc > target.params
         || argc > FIXED_ARGUMENT_COPIES
         || !lane_activation_room(vm, target)
-        || lane_crosses::<H, false>(cx, target)
     {
         return LANE_CALL_MISSED;
     }
@@ -15468,7 +15463,6 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         || argc > target.params
         || argc > FIXED_ARGUMENT_COPIES
         || !lane_activation_room(vm, &target)
-        || lane_crosses::<H, false>(cx, &target)
     {
         return LANE_CALL_MISSED;
     }
@@ -15629,17 +15623,13 @@ fn lane_body_left<H: Host>(
     }
 }
 
-/// Whether activating `target` leaves the running program. Every activation tests it, so an
-/// instantiation whose callers route only same-program targets to it (`MAY_CROSS` false)
-/// still activates a cross-program target exactly, on its cold branch: a routing mistake
-/// costs speed, not the program tables the callee runs with.
+/// Whether activating `target` leaves the running program. A target from
+/// `LaneStack::script_targets` never does: `Vm::script_call_holds` admitted it for the VM's
+/// active program, which is the lane's (`lane_enter_program` sets both), so the fast call
+/// forms take that fact as proven (`MAY_CROSS` false) and only the general activation asks.
 #[inline(always)]
 fn lane_crosses<H: Host, const MAY_CROSS: bool>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
-    let cross = target.program != unsafe { (*cx).program };
-    if !MAY_CROSS && cross {
-        std::hint::cold_path();
-    }
-    cross
+    MAY_CROSS && target.program != unsafe { (*cx).program }
 }
 
 /// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
@@ -15717,8 +15707,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
-    debug_assert!(GENERAL || !lane_crosses::<H, true>(cx, target));
-    let cross = GENERAL && lane_crosses::<H, true>(cx, target);
+    let cross = lane_crosses::<H, GENERAL>(cx, target);
     let activation = Activation {
         function: target.function,
         call: ip,
@@ -16216,8 +16205,8 @@ fn lane_planned_receiver<H: Host>(
 /// activation or frame kept: the activation's registers and the callee's first record, or
 /// the record to continue at when the call takes the general path. Out of line, so the
 /// common activation keeps its code. Without `MAY_CROSS` its callers route the running
-/// program's targets, as every path but a plain call's makes them (`lane_script_target`);
-/// a cross target takes the cold branch of `lane_crosses`.
+/// program's targets, as every path but a plain call's makes them (`lane_script_target`),
+/// so it takes that fact as proven.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(

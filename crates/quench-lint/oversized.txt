@@ -769,8 +769,8 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::handler_for 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 17
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_environment 16
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 22
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 13
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 21
+complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 12
+complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 20
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_fits 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native 14
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_complete_activation 16
@@ -1425,7 +1425,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 657
 file-lines crates/quench-runtime/src/vm/date.rs 1337
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1972
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 21599
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 21588
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 2924
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -3030,8 +3030,8 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_envi
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_getter 53
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 149
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_activate 62
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 44
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 69
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 43
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 68
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_left 52
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_frame 56
@@ -3042,7 +3042,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_kee
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_native 54
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_direct_callees 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_dispatch 42
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_enter_window 60
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_enter_window 59
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_fields_fit 58
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_forwarded_construction 52
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_construct 124
