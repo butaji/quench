@@ -25,6 +25,8 @@ mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
+mod inline_storage;
+use inline_storage::widen_inline_storage;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
@@ -43,7 +45,7 @@ pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
-pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries};
+pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
@@ -221,9 +223,6 @@ pub(crate) use pacing::PromotionAge;
 const MARKED_PROTOTYPE_WAYS: usize = 2;
 #[inline(always)]
 fn payload_unit() -> usize {
-    #[cfg(feature = "gc-tuning")]
-    return *PAYLOAD_BYTES_PER_ALLOCATION_TUNED;
-    #[cfg(not(feature = "gc-tuning"))]
     PAYLOAD_BYTES_PER_ALLOCATION
 }
 /// The fewest allocations after which a collection is full on a small heap: the first
@@ -235,13 +234,7 @@ pub(crate) fn full_collection_allocation_bound(policy: MemoryPolicy) -> usize {
 }
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
-#[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
-/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
-#[cfg(feature = "gc-tuning")]
-static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
-});
 /// The fewest cells for which a collection runs on the parallel pool: live slots and live
 /// records for a mark (`Heap::parallel_mark`), which visits what is live, and allocated slots
 /// for a sweep (`sweep_full_parallel`), which visits every slot. Below it a full mark takes a
@@ -702,7 +695,7 @@ pub(crate) struct GcProfile {
     #[cfg(feature = "profile-aggregate")]
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
     #[cfg(feature = "profile-aggregate")]
-    pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
+    pub allocated_size_buckets: [[u64; crate::profile::SIZE_BUCKETS]; CellKind::COUNT],
     #[cfg(feature = "profile-aggregate")]
     pub roots: u64,
     #[cfg(feature = "profile-aggregate")]
@@ -755,7 +748,7 @@ impl Default for GcProfile {
             #[cfg(feature = "profile-aggregate")]
             allocated_payload_bytes: [0; CellKind::COUNT],
             #[cfg(feature = "profile-aggregate")]
-            allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            allocated_size_buckets: [[0; crate::profile::SIZE_BUCKETS]; CellKind::COUNT],
             #[cfg(feature = "profile-aggregate")]
             roots: 0,
             #[cfg(feature = "profile-aggregate")]
@@ -1274,7 +1267,7 @@ impl Heap {
                 .entry(cell.profile_variant_name())
                 .or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+            self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
@@ -1612,7 +1605,7 @@ impl Heap {
             self.gc_profile.allocated_kinds[kind] += 1;
             *self.allocated_variants.entry("string").or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
-            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+            self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
         self.charge_materialized_text();
         let payload = string.flat_unit_bytes();
@@ -2779,15 +2772,6 @@ impl Heap {
                 aged,
             },
         );
-        #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
-        if full && crate::trace::Channel::Gc.on() {
-            // Diagnostic recount of the payload ledger after a full sweep.
-            let mut exact = 0;
-            self.for_each_live_cell(|cell| exact += cell.payload_bytes());
-            self.array_records.for_each_live(|_, array| exact += array_payload_bytes(array));
-            eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
-        }
-        #[cfg(feature = "gc-tuning")]
         if crate::trace::Channel::Gc.on() {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
@@ -3827,14 +3811,6 @@ impl Heap {
 
     /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
     /// values move to the arena. The caller has applied the write barrier.
-    #[cold]
-    fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
-        let (data, properties) = self
-            .object_and_arena_mut(object)
-            .expect("property owner is an object");
-        let length = properties.len(data.properties());
-        widen_inline_storage(data, properties, data.shape(), length, slot, value);
-    }
     #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
         &mut self,
@@ -4598,7 +4574,7 @@ impl Heap {
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-                Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+                Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
                 Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::Environment { slots, scope, .. } => {
                     let with_objects = scope.with_objects();
@@ -4609,19 +4585,6 @@ impl Heap {
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
-    }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
-    pub(super) fn size_bucket(bytes: usize) -> usize {
-        match bytes {
-            0 => 0,
-            1..=7 => 1,
-            8..=15 => 2,
-            16..=31 => 3,
-            32..=63 => 4,
-            64..=127 => 5,
-            128..=255 => 6,
-            _ => 7,
-        }
     }
 }
 #[cfg(test)]
@@ -4680,22 +4643,6 @@ fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id
     owners.push((start, record_id));
 }
 
-/// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
-/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
-fn widen_inline_storage(
-    data: &mut Object,
-    properties: &mut ValueArena,
-    shape: u32,
-    length: usize,
-    slot: usize,
-    value: Value,
-) {
-    let mut values = data.inline_properties().expect("inline storage");
-    values[slot] = value;
-    let moved = properties.with_values(shape, &values[..length]);
-    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
-    properties.release(previous);
-}
 
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.

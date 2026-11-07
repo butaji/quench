@@ -115,7 +115,7 @@ Options:
   --ops N             operations per probe (default 20000)
   --repeat N          runs per probe and engine, median reported (default 3)
   --probe ID          repeatable probe id (default: all)
-  --quench PATH       quench-node binary (default target/production/quench-node)
+  --quench PATH       quench-node binary (default target/release/quench-node)
   --node PATH         Node binary (default the running node)
   --bun PATH          Bun binary (default $BUN_BIN, then bun on PATH)
   --json PATH         write the measurements as JSON
@@ -207,7 +207,7 @@ function main() {
       "measuring wall time only, which is not comparable across engines\n");
   }
   const binaries = {
-    quench: resolveBinary(options.quench, [path.join(root, "target/production/quench-node")]),
+    quench: resolveBinary(options.quench, [path.join(root, "target/release/quench-node")]),
     node: resolveBinary(options.node, [process.execPath]),
     bun: resolveBinary(options.bun, [process.env.BUN_BIN, "bun", path.join(os.homedir(), ".bun/bin/bun")]),
   };

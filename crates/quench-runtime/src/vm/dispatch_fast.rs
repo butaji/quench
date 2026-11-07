@@ -595,6 +595,11 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
+mod lane_stack_growth;
+mod loop_fields;
+use loop_fields::lane_loop_field_stores;
+mod construct_plan;
+use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
@@ -1961,58 +1966,6 @@ impl std::ops::Index<usize> for ScriptTargets {
 const FUNCTION_TARGETS: usize = 64;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
 
-/// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
-/// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
-/// that prototype alone determine, ends at `shape`, its fields the arguments for
-/// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
-/// While the prototype layout keeps `epoch` (`prototype_layout_epoch`), which every
-/// collection advances, those adds would hit again with the same transitions, so the object
-/// can be allocated finished.
-#[derive(Clone, Copy)]
-struct ConstructPlan {
-    callee: Value,
-    epoch: u64,
-    /// The callee's own layout that fixes where its `prototype` lives
-    /// (`Vm::function_prototype_layout`), which a construct reads it through.
-    callee_layout: (u32, usize),
-    prototype: Value,
-    shape: u32,
-    /// The receiver's header (`ConstructPlan::derive_header`): of inline storage when its
-    /// fields fit the inline slots, else of an arena run.
-    header: InlineObjectHeader,
-    kind: ConstructPlanKind,
-    fields: u8,
-    parameters: [u16; CONSTRUCT_PLAN_FIELDS],
-    /// Fields whose store defaults a falsy argument (`InitializerStore::fallback`), one bit
-    /// per field index, each taking `fallbacks` at its index then.
-    defaulted: u8,
-    /// Fields whose store writes a constant (`InitializerValue::Constant`), one bit per field
-    /// index, each taking `fallbacks` at its index whatever is passed.
-    constant: u8,
-    fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
-    /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
-    forwarded: Option<ForwardedResolution>,
-    /// For a class whose constructor only constructs its parent (`lane_super_construction`),
-    /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
-    /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
-    super_parent: Value,
-}
-
-/// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ConstructPlanKind {
-    /// An initializer constructor's plan (`lane_initialize_fields`) whose fields are the
-    /// arguments as passed.
-    Passed,
-    /// An initializer constructor's plan with defaulted fields (`ConstructPlan::defaulted`).
-    Defaulted,
-    /// A forwarding constructor's plan (`lane_planned_receiver`), which holds only with its
-    /// forwarding (`lane_forwarded_fields`).
-    Forwarding,
-}
-
 /// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
 /// a construct plan (`ConstructPlan::forwarded`). While the plan holds, the prototype layout
 /// epoch is unchanged, so the plan's prototype keeps the method's data slot and the method's
@@ -2044,110 +1997,6 @@ const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
 const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
-
-impl ConstructPlan {
-    /// This plan, holding from the current prototype layout epoch, with its receiver
-    /// header derived from its prototype and shape.
-    fn finish(self) -> Self {
-        Self {
-            epoch: crate::heap::prototype_layout_epoch(),
-            ..self.derive_header()
-        }
-    }
-
-    /// This plan with the header its receiver starts with, of its prototype and shape: inline
-    /// storage when its fields fit the inline slots, else an arena run.
-    fn derive_header(self) -> Self {
-        let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
-            InlineObjectHeader::of(self.prototype, self.shape)
-        } else {
-            InlineObjectHeader::of_run(self.prototype, self.shape)
-        };
-        Self { header, ..self }
-    }
-
-    /// The value of a field of a plan whose stores default nothing (`ConstructPlanKind::Passed`):
-    /// a constant field's constant, else the argument its parameter names.
-    #[inline(always)]
-    fn passed_value(&self, field: usize, argument: impl Fn(u16) -> Value) -> Value {
-        if self.constant & (1 << field) != 0 { self.fallbacks[field] } else { argument(self.parameters[field]) }
-    }
-
-    /// This plan's field values in order, `undefined` past them: the argument each field's
-    /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
-    /// value, or a constant field's constant, as its store computes it.
-    fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
-        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
-            if self.constant & (1 << field) != 0 {
-                *value = self.fallbacks[field];
-                continue;
-            }
-            let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
-            *value = initializer_value(vm, argument(self.parameters[field]), fallback);
-        }
-        values
-    }
-
-    /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
-    /// past them, which is how unused inline slots start: gathered into the receiver's inline
-    /// slots where they fit, else into the arena run's values.
-    #[inline(always)]
-    fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
-        let fields = usize::from(self.fields);
-        if fields <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            for (index, slot) in inline.iter_mut().enumerate().take(fields) {
-                *slot = field(index);
-            }
-            return heap.alloc_object_from_header(self.header, self.prototype, inline);
-        }
-        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        for (index, value) in values.iter_mut().enumerate().take(fields) {
-            *value = field(index);
-        }
-        heap.alloc_object_from_run_header(self.header, self.prototype, &values, fields)
-    }
-
-    /// This plan extended by the field `store` adds, `None` once it names all it can.
-    fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
-        let field = usize::from(self.fields);
-        let slot = self.parameters.get_mut(field)?;
-        match store.value {
-            crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
-                *slot = parameter;
-                if let Some(fallback) = fallback {
-                    self.kind = ConstructPlanKind::Defaulted;
-                    self.defaulted |= 1 << field;
-                    self.fallbacks[field] = Value::number(fallback);
-                }
-            }
-            crate::bytecode::InitializerValue::Constant(_) => {
-                self.constant |= 1 << field;
-                self.fallbacks[field] = value;
-            }
-        }
-        self.fields += 1;
-        Some(self)
-    }
-}
-
-const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
-    callee: Value::UNDEFINED,
-    epoch: NO_CONSTRUCT_PLAN_EPOCH,
-    callee_layout: (0, 0),
-    prototype: Value::UNDEFINED,
-    shape: 0,
-    header: InlineObjectHeader::EMPTY,
-    kind: ConstructPlanKind::Passed,
-    fields: 0,
-    parameters: [0; CONSTRUCT_PLAN_FIELDS],
-    defaulted: 0,
-    constant: 0,
-    fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
-    forwarded: None,
-    super_parent: Value::UNDEFINED,
-};
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -8278,7 +8127,7 @@ script_handler! {
             || site.declines.get() >= TIERS.loops.max_declines
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
         {
-            lane_loop_retire::<H>(cx, ip, site);
+            lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         let region = match site.region.get() {
@@ -8838,8 +8687,8 @@ fn lane_loop_run<H: Host>(
     }
     match outcome {
         LoopOutcome::NotEntered(widening) => {
-            if let Some(widening) = widening {
-                tier.widened.insert(widening);
+            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
+            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
                 publication.retire();
             }
             LoopContinuation::Jump
@@ -8878,8 +8727,6 @@ fn lane_loop_entry<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
-    // SAFETY: the running program outlives this lane's OSR entry setup.
-    let code = unsafe { &*(*cx).code };
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         for slot in &region.captures {
@@ -8967,29 +8814,7 @@ fn lane_loop_entry<H: Host>(
             entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len())?;
         }
     }
-    // A raw field slot stays valid for this native run because OSR regions make no calls or
-    // allocations, and the receiver is unchanged and rooted in its register. Every miss exits before the
-    // store through the interpreter's exact SetField PC.
-    // SAFETY: the runtime cache probe proves a primary own-data slot. `osr_loop::admit_region`
-    // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
-    // stores remain Numbers; a store-only field may also receive a rooted entry value.
-    for field in &region.field_store_sites {
-        let object = match field.receiver {
-            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
-            super::compiled::FieldReceiver::Register(register) => r.get(register),
-            super::compiled::FieldReceiver::Field(_) => return None,
-        };
-        let writes = region.field_store_type(field);
-        let pointer = unsafe {
-            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, writes)
-        }?;
-        // Numeric cells cannot create heap edges. Reference-capable stores log their
-        // owner once at admission; nothing collects before the run ends.
-        if !writes.is_subtype(crate::typed_ir::Type::NUMBER) {
-            vm.heap.object_store_mut(object, object)?;
-        }
-        entry.push_field_store(pointer);
-    }
+    lane_loop_field_stores(cx, r, region, entry)?;
     if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap.native_property_values();
@@ -12094,11 +11919,7 @@ impl<H: Host> Vm<H> {
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
-    fn resolve_script_call_target(
-        &mut self,
-        code: &ResidualProgram,
-        callee: Value,
-    ) -> Option<ScriptCallTarget> {
+    fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         #[cfg(feature = "profile-lane-exits")]
@@ -12232,7 +12053,6 @@ impl<H: Host> Vm<H> {
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
-        // Only a function the JS tier never claims (`LaneView::claim_for_tier`) runs as a leaf.
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
@@ -12263,6 +12083,7 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
+                    // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
                     .filter(|_| !tier_may_claim)
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
@@ -12330,9 +12151,7 @@ impl<H: Host> Vm<H> {
             } else if cross {
                 CallEntry::Activates
             } else {
-                // Leaf-ness is the view's, fixed at its first resolution with its returns:
-                // whether the tier may claim it changes later, and a leaf call of a view whose
-                // returns were not specialized returns into the wrong activation.
+                // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
                 shape.leaf.map_or(shape.entry, CallEntry::leaf)
             },
             capture,
@@ -15425,7 +15244,7 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     {
         return None;
     }
-    let values = plan.values(vm, argument);
+    let values = plan.values(vm, argument)?;
     Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -15458,6 +15277,8 @@ fn lane_record_forwarded_fields<H: Host>(
         parameters: fields.parameters,
         defaulted: fields.defaulted,
         constant: fields.constant,
+        computed: fields.computed,
+        operators: fields.operators,
         fallbacks: fields.fallbacks,
         forwarded: Some(ForwardedResolution {
             initializer: Some(initializer),
@@ -17302,17 +17123,8 @@ fn lane_add_initializer_fields<H: Host>(
         return false;
     };
     for store in stores {
-        let value = match store.value {
-            crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
-                initializer_value(vm, argument(parameter), fallback.map(Value::number))
-            }
-            // The running program is `code` (`Vm::active_constant`).
-            crate::bytecode::InitializerValue::Constant(constant) => {
-                match constant.value(|index| vm.active_constant(index)) {
-                    Some(value) => value,
-                    None => return false,
-                }
-            }
+        let Some(value) = initializer_store_value(vm, store, &argument) else {
+            return false;
         };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
             return false;
@@ -17320,16 +17132,6 @@ fn lane_add_initializer_fields<H: Host>(
         each(store, value);
     }
     true
-}
-
-/// The value an initializer store (`InitializerStore`) gives its field from the parameter's
-/// `passed` value: `fallback` in place of a falsy one where the store has it, else as passed.
-#[inline(always)]
-fn initializer_value<H: Host>(vm: &Vm<H>, passed: Value, fallback: Option<Value>) -> Value {
-    match fallback {
-        Some(fallback) if !vm.truthy(passed) => fallback,
-        _ => passed,
-    }
 }
 
 /// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
@@ -17390,7 +17192,7 @@ fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: 
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, argument);
+    let values = plan.values(vm, argument)?;
     Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -17654,17 +17456,9 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     // The callee's own room, which a function of many registers makes larger than a common
     // window: reserving less would send each of its calls at this depth here again.
     let room = room.max(LANE_SCRIPT_WINDOW);
-    let values_full = stack.values.capacity() - stack.values.len() < room;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(room);
     vm.materialize_lane_activations(cx);
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(room));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, room);
     exit(ip)
 }
 
@@ -17788,19 +17582,9 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     let count = usize::from(code.function(usize::from(i.b)).registers);
     let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < window;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(window);
     vm.materialize_lane_activations(cx);
-    // Only a lack of room grows the stack, so its size follows the deepest
-    // window and activation count a lane has actually needed.
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(window));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, window);
     let caller = unsafe { (*cx).frame };
     // SAFETY: `ip` is a record of the active view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
@@ -20369,10 +20153,10 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && kind == crate::bytecode::ProgramKind::Wasm {
-                // A Wasm run makes no frameless script call (`LaneContext::script_calls`), so
-                // its import calls take the general path, and the JavaScript call handler,
-                // which reads the context a JavaScript view carries, never runs in Wasm.
+            } else if wasm && matches!(op, Op::Call | Op::StoreCapture) {
+                // Their handlers read the context a JavaScript view carries where a Wasm view
+                // carries its memory; Wasm makes no frameless script call (`script_calls`), and
+                // stores a capture only for the rare `data.drop` and `elem.drop`.
                 None
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)]

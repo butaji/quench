@@ -1066,11 +1066,11 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         }
         out.source_positions(&function.source_positions);
         let plain = match function.plain_locals.get() {
-            Some(plain) => plain.to_vec(),
-            None => function.plain_local_slots(superinstructions),
+            Some(words) => words.to_vec(),
+            None => function.plain_local_slots(superinstructions).words().to_vec(),
         };
-        for byte in plain.chunks(u8::BITS as usize) {
-            out.u8(byte.iter().enumerate().fold(0, |bits, (bit, &plain)| bits | (u8::from(plain) << bit)));
+        for byte in 0..usize::from(function.locals).div_ceil(u8::BITS as usize) {
+            out.u8((plain[byte / 8] >> (byte % 8 * 8)) as u8);
         }
         out.u32(derived_facts);
 }
@@ -1234,16 +1234,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let registers = input.u16()?;
-        let dispatch = match input.u8()? {
-            0 => DispatchClass::General,
-            1 => DispatchClass::Numeric,
-            _ => return Err("invalid residual dispatch class".into()),
-        };
-        let covered = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid residual register root coverage".into()),
-        };
+        let dispatch = input.dispatch_class()?;
+        let covered = input.flag("register root coverage")?;
         let dead_call_results = input.list(BinaryReader::u32)?;
         if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
             return Err("invalid residual dead call results".into());
@@ -1316,15 +1308,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let plain_locals: crate::heap::ThinBoxSlice<bool> = {
-            let mut plain = Vec::with_capacity(usize::from(locals));
-            for _ in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
-                let bits = input.u8()?;
-                plain.extend((0..u8::BITS).map(|bit| bits & (1 << bit) != 0));
-            }
-            plain.truncate(usize::from(locals));
-            plain.into()
-        };
+        let plain_bytes = (0..usize::from(locals).div_ceil(u8::BITS as usize)).map(|_| input.u8()).collect::<Result<Vec<_>, _>>()?;
+        let plain_locals: crate::heap::ThinBoxSlice<u64> = crate::bitset::words_from_le_bytes(usize::from(locals), &plain_bytes).into();
         let derived_facts = input.u32()?;
         let function = Function {
             parent,
@@ -1406,11 +1391,7 @@ fn read_function_header(input: &mut BinaryReader<'_>) -> Result<super::FunctionH
         None
     };
     let length = input.u16()?;
-    let dispatch = match input.u8()? {
-        0 => DispatchClass::General,
-        1 => DispatchClass::Numeric,
-        _ => return Err("invalid residual dispatch class".into()),
-    };
+    let dispatch = input.dispatch_class()?;
     Ok(super::FunctionHeader {
         parent,
         name,
@@ -1531,6 +1512,14 @@ impl<'a> BinaryReader<'a> {
     /// A one-byte boolean, named by `what` in its error.
     fn flag(&mut self, what: &str) -> Result<bool, String> {
         match self.u8()? { 0 => Ok(false), 1 => Ok(true), _ => Err(format!("invalid residual {what} flag")) }
+    }
+    /// A function's dispatch class, written as its discriminant.
+    fn dispatch_class(&mut self) -> Result<DispatchClass, String> {
+        match self.u8()? {
+            byte if byte == DispatchClass::General as u8 => Ok(DispatchClass::General),
+            byte if byte == DispatchClass::Numeric as u8 => Ok(DispatchClass::Numeric),
+            _ => Err("invalid residual dispatch class".into()),
+        }
     }
     fn source_positions(&mut self) -> Result<super::SourcePositions, String> {
         let len = self.u32()? as usize;

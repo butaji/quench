@@ -55,6 +55,20 @@ pub(crate) struct WasmJsIntrinsics {
     pub(crate) js_tag: Value,
 }
 
+impl WasmJsIntrinsics {
+    /// Where `constructor`'s new objects find their prototype; a tag cell has no object part.
+    fn prototype_slot(&mut self, constructor: Native) -> Option<&mut Value> {
+        Some(match constructor {
+            Native::WasmModule => &mut self.module,
+            Native::WasmInstance => &mut self.instance,
+            Native::WasmMemory => &mut self.memory,
+            Native::WasmTable => &mut self.table,
+            Native::WasmGlobal => &mut self.global,
+            _ => return None,
+        })
+    }
+}
+
 impl Default for WasmJsIntrinsics {
     fn default() -> Self {
         Self {
@@ -138,6 +152,7 @@ const INTERFACES: &[Interface] = &[
             Some(Native::WasmGlobalValueSetter),
         )],
     },
+    Interface { name: "Tag", constructor: Native::WasmTag, statics: &[], methods: &[], getters: &[] },
 ];
 
 const NAMESPACE_FUNCTIONS: &[(&str, Native)] = &[
@@ -184,7 +199,7 @@ pub(super) fn is_wasm_js_native(native: Native) -> bool {
             | Native::WasmGlobal
             | Native::WasmGlobalValueGetter
             | Native::WasmGlobalValueSetter
-            | Native::WasmGlobalValueOf
+            | Native::WasmGlobalValueOf | Native::WasmTag
             | Native::WasmExportedFunction
     )
 }
@@ -196,7 +211,7 @@ pub(super) fn is_wasm_js_constructor(native: Native) -> bool {
             | Native::WasmInstance
             | Native::WasmMemory
             | Native::WasmTable
-            | Native::WasmGlobal
+            | Native::WasmGlobal | Native::WasmTag
     )
 }
 
@@ -216,7 +231,7 @@ pub(super) const fn wasm_js_native_length(native: Native) -> Option<f64> {
         | Native::WasmTableGet
         | Native::WasmTableSet
         | Native::WasmGlobal
-        | Native::WasmGlobalValueSetter
+        | Native::WasmGlobalValueSetter | Native::WasmTag
         | Native::WasmCompileError
         | Native::WasmLinkError
         | Native::WasmRuntimeError => 1.0,
@@ -230,18 +245,8 @@ pub(super) const fn wasm_js_native_length(native: Native) -> Option<f64> {
     })
 }
 
-fn kind_name(kind: ExternalKind) -> &'static str {
-    match kind {
-        ExternalKind::Func | ExternalKind::FuncExact => "function",
-        ExternalKind::Table => "table",
-        ExternalKind::Memory => "memory",
-        ExternalKind::Global => "global",
-        ExternalKind::Tag => "tag",
-    }
-}
-
 /// The reference types a `WebAssembly.Table` descriptor names.
-fn descriptor_reference_type(name: &str) -> Option<wasmparser::RefType> {
+pub(super) fn descriptor_reference_type(name: &str) -> Option<wasmparser::RefType> {
     Some(match name {
         "anyfunc" => wasmparser::RefType::FUNCREF,
         "externref" => wasmparser::RefType::EXTERNREF,
@@ -329,14 +334,9 @@ impl<H: Host> Vm<H> {
                     },
                 )?;
             }
-            let slot = match interface.constructor {
-                Native::WasmModule => &mut self.wasm_js.module,
-                Native::WasmInstance => &mut self.wasm_js.instance,
-                Native::WasmMemory => &mut self.wasm_js.memory,
-                Native::WasmTable => &mut self.wasm_js.table,
-                _ => &mut self.wasm_js.global,
-            };
-            *slot = prototype;
+            if let Some(slot) = self.wasm_js.prototype_slot(interface.constructor) {
+                *slot = prototype;
+            }
             self.set_builtin_value_named(namespace, interface.name, constructor)?;
         }
         self.install_wasm_errors(program, namespace)?;
@@ -445,7 +445,7 @@ impl<H: Host> Vm<H> {
                 let mut values = Vec::with_capacity(descriptors.len());
                 for (name, kind) in descriptors {
                     values.push(
-                        self.wasm_descriptor(p, &[("name", &name), ("kind", kind_name(kind))])?,
+                        self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
                     );
                 }
                 Ok(self.new_array(values))
@@ -485,7 +485,7 @@ impl<H: Host> Vm<H> {
                         &[
                             ("module", &module),
                             ("name", &name),
-                            ("kind", kind_name(kind)),
+                            ("kind", crate::WasmExternKind::from(kind).name()),
                         ],
                     )?);
                 }
@@ -688,23 +688,8 @@ impl<H: Host> Vm<H> {
                     initial_value,
                 )
             }
-            Native::WasmGlobal => {
-                let descriptor = self.wasm_descriptor_object(p, arg(0))?;
-                let mutable = self.wasm_descriptor_member(p, descriptor, "mutable")?;
-                let mutable = self.truthy(mutable);
-                let ty = self.wasm_descriptor_member(p, descriptor, "value")?;
-                let ty = self.to_string(p, ty)?;
-                let Some(ty) = descriptor_value_type(&ty) else {
-                    return Err(
-                        self.type_error(p, "WebAssembly.Global(): invalid value type".into())
-                    );
-                };
-                let value = match args.get(1) {
-                    Some(value) if !value.is_undefined() => self.js_to_wasm(p, *value, ty, None)?,
-                    _ => self.wasm_global_default(ty),
-                };
-                Ok(self.alloc_wasm_global(value, ty, crate::WasmTypes::default(), mutable))
-            }
+            Native::WasmGlobal => self.construct_wasm_global(p, arg(0), arg(1)),
+            Native::WasmTag => self.construct_wasm_tag(p, arg(0)),
             _ => unreachable!("not a WebAssembly constructor"),
         }
     }
@@ -1902,6 +1887,27 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    fn construct_wasm_global(
+        &mut self,
+        p: &ResidualProgram,
+        descriptor: Value,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let descriptor = self.wasm_descriptor_object(p, descriptor)?;
+        let mutable = self.wasm_descriptor_member(p, descriptor, "mutable")?;
+        let mutable = self.truthy(mutable);
+        let ty = self.wasm_descriptor_member(p, descriptor, "value")?;
+        let ty = self.to_string(p, ty)?;
+        let Some(ty) = descriptor_value_type(&ty) else {
+            return Err(self.type_error(p, "WebAssembly.Global(): invalid value type".into()));
+        };
+        let value = match value.is_undefined() {
+            false => self.js_to_wasm(p, value, ty, None)?,
+            true => self.wasm_global_default(ty),
+        };
+        Ok(self.alloc_wasm_global(value, ty, crate::WasmTypes::default(), mutable))
+    }
+
     fn wasm_global_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -1914,22 +1920,6 @@ impl<H: Host> Vm<H> {
             _ => Err(self.type_error(p, "receiver is not a WebAssembly.Global".into())),
         }
     }
-}
-
-/// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
-/// exception through Wasm. Every realm makes the same one.
-pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
-    let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
-        [wasmparser::ValType::EXTERNREF],
-        [],
-    )]);
-    (declarations, 0)
-}
-
-/// `WebAssembly.JSTag`'s cell (`js_tag_type`).
-pub(crate) fn js_tag_cell() -> Cell {
-    let (declarations, ty) = js_tag_type();
-    Cell::WasmTag { declarations: Box::new(declarations), ty }
 }
 
 #[cfg(test)]
