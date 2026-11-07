@@ -557,8 +557,8 @@ pub(crate) struct ProgramReplay {
     pub(super) exits: Box<[TableCursors]>,
     /// The functions a replay can compile, by id.
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
-    /// The scopes each nested first-call stub's chunk compiles against, by the stub's id.
-    pub(crate) first_calls: FxHashMap<u32, std::rc::Rc<super::first_call::FirstCallScopes>>,
+    /// The scopes each nested first-call stub's chunk compiles against, sorted by the stub's id.
+    pub(crate) first_calls: Box<[(u32, std::rc::Rc<super::first_call::FirstCallScopes>)]>,
     /// The cache sites the load shared by name (`Compiler::name_shared_cache_site`).
     pub(super) name_shared_sites: super::NameSharedSiteMap,
     /// In verifying builds, the records of released functions, which their replays must equal.

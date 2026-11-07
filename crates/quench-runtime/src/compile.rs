@@ -3517,7 +3517,7 @@ impl<'a> Compiler<'a> {
                         NameSharedSites::Replay(sites) => (*sites).clone(),
                     },
                     functions: replays,
-                    first_calls: std::mem::take(&mut self.first_call.nested).into_iter().collect(),
+                    first_calls: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
                     #[cfg(feature = "verify-replay")]
                     released: released
                         .iter()

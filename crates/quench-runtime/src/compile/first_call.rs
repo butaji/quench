@@ -118,7 +118,7 @@ impl Engine {
         // character before its place, so the function itself starts where it did.
         let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
         let (snippet, start) = if anonymous && span.start > 0 { (std::borrow::Cow::Owned(format!("({snippet})")), span.start - 1) } else { (std::borrow::Cow::Borrowed(snippet), span.start) };
-        let outer = program.replay.as_deref().and_then(|replay| replay.first_calls.get(&function)).map(|scopes| (span.start, scopes));
+        let outer = program.replay.as_deref().and_then(|replay| replay.first_calls.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| &replay.first_calls[at].1)).map(|scopes| (span.start, scopes));
         let window = ChunkWindow { source, start, outer, line_starts, utf16_excess };
         Self::specialize_script_shaped(&snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
@@ -127,11 +127,14 @@ impl Engine {
 /// The rest parameter that holds a stub's arguments.
 const STUB_ARGUMENTS: &str = "\0quench:first-call-args";
 
+/// Functions by their starts in the program's text: sparse offsets, so a set hashes them.
+type Starts = FxHashSet<u32>;
+
 impl ParsedProgramShape<'_> {
     /// The starts of the function declarations of `program`, of this shape, that may compile
     /// as first-call stubs: an eval's whose functions compile again from their text alone
     /// (`replayable`), when its root is sloppy and declares no lexical binding.
-    pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> FxHashSet<u32> {
+    pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
         let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
         let lexical = program.body.iter().any(|statement| match statement {
             Statement::VariableDeclaration(declaration) => !declaration.kind.is_var(),
@@ -148,12 +151,12 @@ impl ParsedProgramShape<'_> {
 /// The anonymous function expressions of a top-level statement's expressions, outside every
 /// function and class: their free names are the root's, all global. Anonymous, a chunk tells
 /// one from a declaration by its text (`specialize_first_call_chunk`).
-struct TopLevelFunctions(FxHashSet<u32>);
+struct TopLevelFunctions(Starts);
 
 impl TopLevelFunctions {
     /// The starts of `program`'s named function declarations and of the anonymous function
     /// expressions of its expression statements and variable initializers.
-    fn of(program: &Program<'_>) -> FxHashSet<u32> {
+    fn of(program: &Program<'_>) -> Starts {
         let mut roots = Self(FxHashSet::default());
         for statement in &program.body {
             match statement {
@@ -185,7 +188,7 @@ impl<'a> oxc_ast_visit::Visit<'a> for TopLevelFunctions {
 #[derive(Default)]
 pub(super) struct Stubs<'a> {
     /// The starts of the root's function declarations that may compile as stubs.
-    pub(super) roots: FxHashSet<u32>,
+    pub(super) roots: Starts,
     /// The source of the program a chunk compiles from, which the chunk shares.
     pub(super) kept_source: Option<&'a crate::bytecode::ProgramSource>,
     /// Nested functions may compile as stubs: the source is an indirect eval's.

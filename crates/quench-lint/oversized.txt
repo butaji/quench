@@ -1296,9 +1296,11 @@ dod-dense-hash crates/quench-runtime/src/compile/ast/environment_clones.rs 1
 dod-dense-hash crates/quench-runtime/src/compile/call_only.rs 2
 dod-dense-hash crates/quench-runtime/src/compile/capture_scope.rs 3
 dod-dense-hash crates/quench-runtime/src/compile/early.rs 5
-dod-dense-hash crates/quench-runtime/src/compile/first_call.rs 7
+dod-dense-hash crates/quench-runtime/src/compile/first_call.rs 4
+dod-dense-hash crates/quench-runtime/src/compile/first_call/nested.rs 1
 dod-dense-hash crates/quench-runtime/src/compile/free_names.rs 2
-dod-dense-hash crates/quench-runtime/src/compile/lazy_bodies.rs 7
+dod-dense-hash crates/quench-runtime/src/compile/lazy_bodies.rs 5
+dod-dense-hash crates/quench-runtime/src/compile/lazy_bodies/reparse.rs 2
 dod-dense-hash crates/quench-runtime/src/compile/locals.rs 10
 dod-dense-hash crates/quench-runtime/src/compile/replay.rs 5
 dod-dense-hash crates/quench-runtime/src/heap.rs 1
