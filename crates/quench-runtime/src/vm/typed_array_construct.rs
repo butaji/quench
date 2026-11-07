@@ -467,7 +467,7 @@ impl<H: Host> Vm<H> {
         {
             // Prepare the derived lookup for repeated array-like element reads.
             // Getters still run normally; mutations select a new immutable shape.
-            self.shape_entries(shape);
+            self.shape_entry_count(shape);
         }
         Ok(TypedArrayInitialization::ArrayLike(length))
     }
