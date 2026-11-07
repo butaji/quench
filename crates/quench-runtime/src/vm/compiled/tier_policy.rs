@@ -50,6 +50,10 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
+    /// The bodies a function may lose without any run of theirs completing before it
+    /// declines: a shape compaction or a dead native call drops a body, and one that never
+    /// completed paid its compile for nothing. Each such body doubles the next one's warm-up.
+    pub(in crate::vm) max_wasted: u8,
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
@@ -135,6 +139,7 @@ const MEASURED: Tiers = Tiers {
         trial_runs: 1024,
         reoptimize_exits: 64,
         max_recompiles: 4,
+        max_wasted: 2,
         min_instructions: 24,
     },
     js_function: JsFunction {
@@ -201,6 +206,8 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TIERS.lane_body;
         assert!(lane.warmup_entries > 0 && lane.trial_runs > 0);
+        // The warm-up doubles per wasted body and must not overflow its counter.
+        assert!(u32::from(lane.warmup_entries) << lane.max_wasted <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
         let looks = TIERS.js_function.promotion_looks;
