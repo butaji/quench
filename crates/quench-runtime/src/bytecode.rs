@@ -3850,6 +3850,8 @@ pub struct ResidualProgram {
     /// What each function's closures read of the environments they close over, when the
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
+    /// The scopes each nested first-call stub's chunk compiles against, by stub id.
+    pub(crate) first_calls: FirstCalls,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -4282,6 +4284,8 @@ mod native_metadata;
 pub use native_metadata::NativeProgramNamespace;
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
+/// Nested first-call stubs by id, each with the scopes its chunk compiles against.
+pub(crate) type FirstCalls = Box<[(u32, std::rc::Rc<crate::compile::FirstCallScopes>)]>;
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
 #[cfg(test)]

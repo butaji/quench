@@ -12,7 +12,7 @@ use std::rc::Rc;
 pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
 
 /// One scope level a stub's function closes over: its bindings by name and slot.
-pub(super) type ScopeLevel = Rc<[(Box<str>, u16)]>;
+pub(crate) type ScopeLevel = Rc<[(Box<str>, u16)]>;
 
 /// What a nested stub's chunk compiles its function against: the scopes it closes over,
 /// innermost first, and the strictness it inherits.
@@ -74,6 +74,15 @@ impl<'f> FreeNameCheck<'f> {
 }
 
 impl FirstCallScopes {
+    pub(crate) fn new(levels: Box<[ScopeLevel]>, strict: bool) -> Self {
+        Self { levels, strict }
+    }
+
+    /// The scopes the function closes over, innermost first, and its inherited strictness.
+    pub(crate) fn parts(&self) -> (&[ScopeLevel], bool) {
+        (&self.levels, self.strict)
+    }
+
     /// The chain the chunk's function closes over, its names interned in `atoms`.
     fn chain(&self, atoms: &mut CompilerAtoms<'_>) -> ScopeChain {
         ScopeChain::new(

@@ -234,6 +234,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            first_calls: Box::default(),
     }
 }
 
@@ -358,6 +359,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            first_calls: Box::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();

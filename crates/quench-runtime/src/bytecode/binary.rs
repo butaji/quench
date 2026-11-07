@@ -393,6 +393,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         }
     }
     write_closure_reads(&mut out, program.closure_reads.as_deref());
+    write_first_calls(&mut out, &program.first_calls);
     let order = match out.atoms {
         AtomEncoding::Program => {
             header.strings(&program.atoms);
@@ -726,7 +727,7 @@ fn decode_program(
         }
         Ok(Superinstruction::new(code))
     })?;
-    let closure_reads = read_closure_reads(&mut input)?;
+    let (closure_reads, first_calls) = (read_closure_reads(&mut input)?, read_first_calls(&mut input)?);
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
@@ -753,6 +754,7 @@ fn decode_program(
         undefined_constant: Default::default(),
         load_encoding: Default::default(),
         closure_reads,
+        first_calls,
     };
     Ok(program)
 }
@@ -802,6 +804,49 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
         return Err("invalid residual closure reads parent".into());
     }
     Ok(Some(std::rc::Rc::new(super::ClosureReads { functions: functions.into_boxed_slice() })))
+}
+
+/// A program's nested first-call stubs: the scope levels they close over, each once, then per
+/// stub its id, its strictness and its levels' indices, innermost first.
+fn write_first_calls(out: &mut BinaryWriter, calls: &super::FirstCalls) {
+    let mut levels: Vec<&crate::compile::ScopeLevel> = Vec::new();
+    let mut indices = Vec::with_capacity(calls.len());
+    for (_, scopes) in calls.iter() {
+        let (chain, _) = scopes.parts();
+        indices.push(chain.iter().map(|level| match levels.iter().position(|known| std::rc::Rc::ptr_eq(known, level)) {
+            Some(at) => at as u32,
+            None => { levels.push(level); (levels.len() - 1) as u32 }
+        }).collect::<Vec<u32>>());
+    }
+    out.u32(levels.len() as u32);
+    for level in levels {
+        out.u32(level.len() as u32);
+        for (name, slot) in level.iter() {
+            out.string(name);
+            out.u16(*slot);
+        }
+    }
+    out.u32(calls.len() as u32);
+    for ((id, scopes), chain) in calls.iter().zip(indices) {
+        out.u32(*id);
+        out.bool(scopes.parts().1);
+        out.u32(chain.len() as u32);
+        chain.into_iter().for_each(|at| out.u32(at));
+    }
+}
+
+fn read_first_calls(input: &mut BinaryReader<'_>) -> Result<super::FirstCalls, String> {
+    let levels: Vec<crate::compile::ScopeLevel> =
+        input.list(|input| Ok(input.list(|input| Ok((Box::from(input.string()?), input.u16()?)))?.into()))?;
+    let calls = input.list(|input| {
+        let (id, strict) = (input.u32()?, input.bool()?);
+        let chain = input.list(|input| levels.get(input.u32()? as usize).cloned().ok_or_else(|| "invalid residual first-call scope".to_string()))?;
+        Ok((id, std::rc::Rc::new(crate::compile::FirstCallScopes::new(chain.into_boxed_slice(), strict))))
+    })?;
+    if calls.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        return Err("invalid residual first-call order".into());
+    }
+    Ok(calls.into_boxed_slice())
 }
 
 /// The body's entry for a deferred record, `record` of `region`: its length, its place and its

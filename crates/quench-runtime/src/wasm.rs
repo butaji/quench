@@ -997,6 +997,7 @@ impl Engine {
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            first_calls: Box::default(),
         };
         program
             .validate()
