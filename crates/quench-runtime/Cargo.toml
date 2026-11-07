@@ -43,7 +43,7 @@ bench-primitives = []
 # Opt-in allocator routing for direct backing-growth measurements only.
 bench-alloc-routes = ["bench-primitives"]
 # Recompiles each replayable function after its program loads and logs any difference
-# (`QUENCH_REPLAY_LOG`); verification builds only.
+# (`QUENCH_TRACE=replay=<path>`); verification builds only.
 verify-replay = []
 
 [dependencies]

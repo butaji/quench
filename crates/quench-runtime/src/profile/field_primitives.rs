@@ -57,7 +57,7 @@ impl Census {
     }
 
     pub(crate) fn report(&self) {
-        if std::env::var_os("QUENCH_FIELD_PRIMITIVE_COUNTS").is_some() {
+        if crate::trace::Channel::FieldPrimitives.on() {
             eprintln!(
                 "{{\"kind\":\"quench-field-primitives\",\"names\":{:?},\"counts\":{:?}}}",
                 Path::NAMES,

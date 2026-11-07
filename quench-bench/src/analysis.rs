@@ -8,34 +8,31 @@ use std::{
 use crate::{now_ns, sha256};
 
 pub(crate) const MIN_QUALIFYING_ROUNDS: usize = 11;
-pub(crate) const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
+const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
 const BOOTSTRAP_REPLICATES: usize = 100_000;
 const BOOTSTRAP_INTERVAL_LEVEL: f64 = 0.95;
 const BOOTSTRAP_BASE_SEED: u64 = 0x51A7_BEEF_CAFE_2C31;
 const MINIMUM_SCORE_RATIO: f64 = 1.20;
 const V8_V7_MAXIMUM_RSS_RATIO: f64 = 0.80;
 const QUENCH: &str = "quench";
-const SELECTIVE_HANDOFF_OFF: &str = "quench_selective_handoff_off";
-const SELECTIVE_HANDOFF_ON: &str = "quench_selective_handoff_on";
-const SELECTIVE_HANDOFF_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 
 #[derive(Clone, Copy)]
-struct DiagnosticAbConfig {
-    report_kind: &'static str,
-    off_engine: &'static str,
-    on_engine: &'static str,
-    switch_env: &'static str,
-    off_value: &'static str,
-    on_value: &'static str,
-    fixture_name: &'static str,
-    minimum_rounds: usize,
+pub(crate) struct DiagnosticAbConfig {
+    pub(crate) report_kind: &'static str,
+    pub(crate) off_engine: &'static str,
+    pub(crate) on_engine: &'static str,
+    pub(crate) switch_env: &'static str,
+    pub(crate) off_value: &'static str,
+    pub(crate) on_value: &'static str,
+    pub(crate) fixture_name: &'static str,
+    pub(crate) minimum_rounds: usize,
 }
 
-static SELECTIVE_HANDOFF_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
+pub(crate) static SELECTIVE_HANDOFF_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
     report_kind: "jit_wasm_selective_handoff_ab_diagnostic",
-    off_engine: SELECTIVE_HANDOFF_OFF,
-    on_engine: SELECTIVE_HANDOFF_ON,
-    switch_env: SELECTIVE_HANDOFF_ENV,
+    off_engine: "quench_selective_handoff_off",
+    on_engine: "quench_selective_handoff_on",
+    switch_env: "QUENCH_WASM_JIT_SELECTIVE",
     off_value: "0",
     on_value: "1",
     fixture_name: "gcc-loops-wasm",
@@ -1434,8 +1431,7 @@ impl XorShift64 {
 mod tests {
     use super::{
         ArtifactInput, CorpusInput, DiagnosticAbConfig, EngineInput, FixtureInput, HostInput,
-        RoundInput, SELECTIVE_HANDOFF_CONFIG, SELECTIVE_HANDOFF_ENV,
-        SELECTIVE_HANDOFF_OFF, SELECTIVE_HANDOFF_ON, SampleInput, SuiteInput,
+        RoundInput, SELECTIVE_HANDOFF_CONFIG, SampleInput, SuiteInput,
         analyze_diagnostic_ab_fixture, median, median_log_ratio,
         maximum_rss_ratio, paired_bootstrap_log_ratio_interval, rss_ratio_qualifies,
         score_ratio_qualifies, MINIMUM_SCORE_RATIO,
@@ -1813,8 +1809,8 @@ mod tests {
             .comparisons
             .get("quench_selective_handoff_on_vs_quench_selective_handoff_off")
             .expect("direct path on/off comparison");
-        assert_eq!(on_vs_off.candidate_engine, SELECTIVE_HANDOFF_ON);
-        assert_eq!(on_vs_off.reference_engine, SELECTIVE_HANDOFF_OFF);
+        assert_eq!(on_vs_off.candidate_engine, SELECTIVE_HANDOFF_CONFIG.on_engine);
+        assert_eq!(on_vs_off.reference_engine, SELECTIVE_HANDOFF_CONFIG.off_engine);
         assert!((on_vs_off.score.median_ratio - 1.1).abs() < 1e-12);
         assert!((on_vs_off.max_rss.median_ratio - 0.9).abs() < 1e-12);
         assert!(
@@ -1832,10 +1828,10 @@ mod tests {
         invalid_provenance
             .engines
             .iter_mut()
-            .find(|engine| engine.name == SELECTIVE_HANDOFF_ON)
+            .find(|engine| engine.name == SELECTIVE_HANDOFF_CONFIG.on_engine)
             .unwrap()
             .environment
-            .insert(SELECTIVE_HANDOFF_ENV.into(), "0".into());
+            .insert(SELECTIVE_HANDOFF_CONFIG.switch_env.into(), "0".into());
         assert!(validate_diagnostic_ab(&invalid_provenance, SELECTIVE_HANDOFF_CONFIG).is_err());
 
         let mut mismatched_output = diagnostic_ab_input();
@@ -1903,18 +1899,18 @@ mod tests {
             "jit_wasm_selective_handoff_ab_diagnostic"
         );
         assert_eq!(selected.minimum_rounds, 3);
-        assert_eq!(selected.off_engine, SELECTIVE_HANDOFF_OFF);
-        assert_eq!(selected.on_engine, SELECTIVE_HANDOFF_ON);
-        assert_eq!(SELECTIVE_HANDOFF_ENV, "QUENCH_WASM_JIT_SELECTIVE");
+        assert_eq!(selected.off_engine, SELECTIVE_HANDOFF_CONFIG.off_engine);
+        assert_eq!(selected.on_engine, SELECTIVE_HANDOFF_CONFIG.on_engine);
+        assert_eq!(SELECTIVE_HANDOFF_CONFIG.switch_env, "QUENCH_WASM_JIT_SELECTIVE");
 
         let mut invalid_switch = diagnostic_ab_input_for(&SELECTIVE_HANDOFF_CONFIG);
         invalid_switch
             .engines
             .iter_mut()
-            .find(|engine| engine.name == SELECTIVE_HANDOFF_ON)
+            .find(|engine| engine.name == SELECTIVE_HANDOFF_CONFIG.on_engine)
             .unwrap()
             .environment
-            .insert(SELECTIVE_HANDOFF_ENV.into(), "0".into());
+            .insert(SELECTIVE_HANDOFF_CONFIG.switch_env.into(), "0".into());
         assert!(validate_diagnostic_ab(&invalid_switch, SELECTIVE_HANDOFF_CONFIG).is_err());
     }
 

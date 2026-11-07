@@ -637,7 +637,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
                         else {
                             return false;
                         };
-                        is_i32_number(*value)
+                        super::compiled::facts::is_int32_number(*value)
                     }
                     _ => false,
                 });
@@ -654,7 +654,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
             Op::LoadConst => {
                 let is_i32 = matches!(
                     program.constants.get(instruction.constant_index()),
-                    Some(Constant::Number(value)) if is_i32_number(*value)
+                    Some(Constant::Number(value)) if super::compiled::facts::is_int32_number(*value)
                 );
                 if let Some(slot) = registers.get_mut(destination()) {
                     *slot = is_i32;
@@ -683,13 +683,6 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
         }
     }
     found
-}
-
-pub(super) fn is_i32_number(value: f64) -> bool {
-    value.is_finite()
-        && value.fract() == 0.0
-        && value >= f64::from(i32::MIN)
-        && value <= f64::from(i32::MAX)
 }
 
 fn compile_capture_number(

@@ -78,6 +78,9 @@ mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
+#[path = "compiled/direct_call.rs"]
+mod direct_call;
+use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
 pub(super) use osr_loop::{
@@ -5293,7 +5296,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // No guest code or collector ran, so all entry identities remain rooted and live.
             unsafe { (&mut *payload.entry).refresh_array_backing(&*payload.region, old, elements, length, capacity) };
             let due = vm.heap.should_collect();
-            if payload.diagnostics_enabled && std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if payload.diagnostics_enabled && crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_ARRAY_RESERVE function={} length={length} capacity={capacity} gc_due={due}", payload.function);
             }
             // Collection is never performed with native SSA values unrooted. A debt exit
@@ -6554,8 +6557,7 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
+    crate::trace::Channel::WasmJit.on()
 }
 
 impl CompiledProgram {
@@ -6823,11 +6825,11 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
 /// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
 /// for disassembly at `BASE` (diagnostics only).
 fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
-    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+    if !crate::trace::Channel::PerfMap.on() {
         return;
     }
     use std::io::Write;
@@ -7092,7 +7094,7 @@ pub(super) fn compile_osr_region(
     })
 }
 
-/// The process's peak resident set in KiB, for `QUENCH_JS_JIT_PEAK_TRACE`.
+/// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 #[cfg(feature = "gc-tuning")]
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
@@ -7130,12 +7132,11 @@ fn loop_tier_region_budget_spent() -> bool {
     COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
-/// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
+/// The directory the `jit-dump` trace channel names: each loop region
 /// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
 /// instruction-level profiles to native code.
 fn native_dump_directory() -> Option<&'static std::path::Path> {
-    static DIRECTORY: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    DIRECTORY.get_or_init(|| std::env::var_os("QUENCH_JS_JIT_DUMP").map(std::path::PathBuf::from)).as_deref()
+    crate::trace::Channel::JitDump.value().map(std::path::Path::new)
 }
 
 /// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
@@ -9743,6 +9744,7 @@ impl CompiledJsFunction {
                 NativeNumberResult::Float64 => Value::number(f64::from_bits(result)),
             }));
         }
+        if let Some(result) = self.call_leaf(arguments) { return Some(result); }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
             interrupt: interrupt.atomic_flag(),
@@ -14632,7 +14634,7 @@ impl<H: Host> Vm<H> {
             self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
             self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
             if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
-                && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+                && !arguments.iter().all(|value| facts::is_int32_number(*value))
             {
                 return None;
             }
@@ -15320,7 +15322,7 @@ impl<H: Host> Vm<H> {
         if numeric && int32_bitwise_candidate {
             numeric = arguments
                 .iter()
-                .all(|value| super::js_compiled::is_i32_number(*value));
+                .all(|value| facts::is_int32_number(*value));
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
@@ -15455,7 +15457,7 @@ impl<H: Host> Vm<H> {
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
                 #[cfg(feature = "gc-tuning")]
-                let peak_before = (std::env::var_os("QUENCH_JS_JIT_PEAK_TRACE").is_some())
+                let peak_before = crate::trace::Channel::JitPeak.on()
                     .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
                 #[cfg(feature = "gc-tuning")]
@@ -15521,7 +15523,7 @@ impl<H: Host> Vm<H> {
         if compiled.is_int32_identity()
             && !arguments
                 .first()
-                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+                .is_some_and(|value| facts::is_int32_number(*value))
         {
             if !compiled.is_general_dispatch() {
                 *specialized_guard_miss = true;
@@ -15729,6 +15731,7 @@ impl<H: Host> Vm<H> {
             compiled: Rc::downgrade(compiled),
             return_pc,
             return_register: terminal.register_a(),
+            leaf: LeafCall::of(compiled),
         })
     }
 
@@ -15741,6 +15744,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         parameters: &[Value],
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        if let Some(entered) = entry.run_leaf(parameters) { return entered; }
         let compiled = entry.compiled.upgrade()?;
         let result = direct_call(&compiled, parameters, &self.execution_interrupt)?;
         let value = match result {
@@ -16884,46 +16888,6 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 
-fn direct_call(
-    compiled: &CompiledJsFunction,
-    arguments: &[Value],
-    interrupt: &crate::ExecutionInterrupt,
-) -> Option<CompiledJsCallResult> {
-    let int32_identity = compiled.is_int32_identity();
-    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for (index, argument) in arguments.iter().take(compiled.params()).enumerate() {
-        // An integer Value is an int32 Number by representation; any other Number is
-        // checked where the body's guards require one.
-        let value = match argument.as_int() {
-            Some(integer) => f64::from(integer),
-            None => {
-                let value = argument.as_number()?;
-                let int32 = compiled.requires_signed_int32_arguments() || (int32_identity && index == 0);
-                if int32 && !super::js_compiled::is_i32_number(value) {
-                    return None;
-                }
-                value
-            }
-        };
-        numeric_arguments.push(value);
-    }
-    // Only a body that polls reads the poll page.
-    let poll_page = (compiled.native_entry_mode() == NativeEntryMode::Resumable)
-        .then(|| native_poll_page(interrupt))
-        .flatten();
-    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
-        CompiledJsResult::Number(value) => Some(CompiledJsCallResult::Value(value)),
-        CompiledJsResult::Int32Identity { value, .. } => Some(CompiledJsCallResult::Value(Value::number(value))),
-        CompiledJsResult::Boolean(value) => {
-            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
-        }
-        CompiledJsResult::StringReturnPc(return_pc) => {
-            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
-        }
-        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
-    }
-}
-
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
 /// artifact, held weakly so that the tier retiring it ends the direct run,
 /// and the `Return` its result completes. The artifact owns the input signature.
@@ -16931,6 +16895,8 @@ pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
     return_pc: usize,
     return_register: crate::bytecode::Register,
+    /// The artifact's plain leaf call, copied out so a run reads no artifact field.
+    leaf: Option<LeafCall>,
 }
 
 impl DirectTierEntry {

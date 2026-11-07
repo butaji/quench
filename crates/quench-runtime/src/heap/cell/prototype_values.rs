@@ -8,6 +8,9 @@ use std::rc::Rc;
 // layout change retires all of it (`advance_prototype_layout_epoch`), so the code itself checks
 // nothing per read. Guest heaps and their native publications are thread-confined (Rc
 // ownership): another thread's prototype writes never retire this thread's code.
+//
+// Interpreter caches hold the same dependency (`watch_prototype_values`): no epoch is compared
+// per use.
 thread_local! {
     static PROTOTYPE_VALUE_READERS: std::cell::RefCell<crate::code_dependencies::CodeReaders> =
         std::cell::RefCell::new(crate::code_dependencies::CodeReaders::default());

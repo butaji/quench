@@ -144,7 +144,7 @@ enum FieldCacheRead {
     Hit(FieldCacheHit),
 }
 
-/// A census of shape creations by transition key (`QUENCH_SHAPE_TRACE`, `profile-memory`):
+/// A census of shape creations by transition key (`QUENCH_TRACE=shapes`, `profile-memory`):
 /// which operations keep making a shape instead of finding it in the cached child index.
 #[cfg(feature = "profile-memory")]
 mod shape_trace {
@@ -535,7 +535,7 @@ impl<H: Host> Vm<H> {
         storage_len: usize,
     ) -> u32 {
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_SHAPE_TRACE").is_some() {
+        if crate::trace::Channel::Shapes.on() {
             // Which transitions keep missing the cached child index, by key: a shape a
             // repeated operation re-creates names the key that fails to dedupe.
             let label = match &transition {
@@ -5063,7 +5063,7 @@ impl<H> Vm<H> {
         super::shape_layouts(&self.shapes)
     }
 
-    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_JS_JIT_STATS`): the
+    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_TRACE=js-jit`): the
     /// polymorphic sites by how many receiver shapes they recorded, how many name only own
     /// fields and of those how many find the field at one slot in every shape (a layout whose
     /// subclasses share their parent's prefix reads them at a fixed offset), and how many name

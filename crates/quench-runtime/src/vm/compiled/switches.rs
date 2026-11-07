@@ -67,15 +67,13 @@ pub(in crate::vm) static WASM_JIT_ROOT_FIRST: Switch = Switch::new("QUENCH_WASM_
 /// exits can be tested independently of profitability. Diagnostic only; never set by score
 /// harnesses.
 pub(in crate::vm) static JS_JIT_UNPRICED_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH", false);
-/// Per-function JIT diagnostics and the reports they print at exit.
-pub(in crate::vm) static JS_JIT_STATS: Switch = Switch::new("QUENCH_JS_JIT_STATS", false);
 pub(in crate::vm) static JS_JIT_GENERAL_DISPATCH: Switch = Switch::new("QUENCH_JS_JIT_GENERAL_DISPATCH", false);
 pub(in crate::vm) static JS_JIT_LANE_METHODS: Switch = Switch::new("QUENCH_JS_JIT_LANE_METHODS", false);
 
 #[cfg(test)]
 const ALL: &[&Switch] = &[
     &WASM_JIT_SELECTIVE, &WASM_JIT_ROOT_ONLY, &WASM_JIT_ROOT_FIRST,
-    &JS_JIT_UNPRICED_GENERAL_DISPATCH, &JS_JIT_STATS, &JS_JIT_GENERAL_DISPATCH, &JS_JIT_LANE_METHODS,
+    &JS_JIT_UNPRICED_GENERAL_DISPATCH, &JS_JIT_GENERAL_DISPATCH, &JS_JIT_LANE_METHODS,
 ];
 
 #[cfg(test)]
