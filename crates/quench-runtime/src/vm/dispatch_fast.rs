@@ -2649,13 +2649,13 @@ const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
 #[inline(always)]
-fn capture_reads(capture: *const usize) -> *const usize {
+pub(super) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
 #[inline(always)]
-fn capture_stores(capture: *const usize) -> Option<*const usize> {
+pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
     (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture))
 }
 
@@ -3666,7 +3666,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray) {
+    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::ForInStart | Op::IteratorClose | Op::AppendArray) {
         return Resumed::Exit(exit(ip));
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
@@ -3743,6 +3743,7 @@ const fn lane_steps_in_place(op: Op) -> bool {
             | Op::ToPropertyKey
             | Op::CopyDataProperties
             | Op::GetIterator
+            | Op::ForInStart
             | Op::RequireIteratorResult
             | Op::IteratorClose
             | Op::IteratorCleanupPush
@@ -12380,7 +12381,7 @@ impl<H: Host> Vm<H> {
     /// The capture slots a frameless target whose closure has environment `env` reads
     /// (`ScriptCallTarget::capture`), tagged `CAPTURE_STORES` when they admit every store,
     /// whose barrier this takes once.
-    fn target_capture(
+    pub(super) fn target_capture(
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,
@@ -12605,6 +12606,7 @@ script_handler! {
         if ARGC > target.params || vm.with_scope_entered || !lane_activation_room(vm, target) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
         let stack = &mut vm.lane_stack;
         // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
         // the leaf is materialized: no collection runs before.
@@ -14115,72 +14117,8 @@ fn lane_native_value<H: Host>(
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
 }
 
-/// `charCodeAt` of a flat string at an integer index: the unit there, or NaN outside the
-/// string. `None` for any other receiver or index, which the native coerces, and for a
-/// rope, which it flattens.
-#[inline(always)]
-fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
-    let (units, index) = (vm.heap.string(receiver)?.existing_flat()?, index.as_int()?);
-    Some(
-        usize::try_from(index)
-            .ok()
-            .and_then(|index| units.unit(index))
-            .map_or(Value::NAN, |unit| Value::integer(i32::from(unit))),
-    )
-}
-
-/// `charAt` of a flat string at an integer index of an ASCII unit: the unit's shared string
-/// (`Vm::ascii_unit_string`). Any other receiver, index or unit takes the native.
-fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
-    let index = usize::try_from(index.as_int()?).ok()?;
-    let unit = vm.heap.string(receiver)?.existing_flat()?.unit(index)?;
-    vm.ascii_unit_string(unit)
-}
-
-script_handler! {
-    /// A `Call` site whose callee was `String.prototype.charCodeAt` (`lane_script_call_resolve`):
-    /// that call of a string at an integer index in place (`string_char_code_at`). Any other
-    /// callee, receiver or index, or a call returning its result, takes `lane_native_call`.
-    fn lane_call_char_code_at<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let is_char_code_at = matches!(
-            vm.heap.function(r.get(i.b)),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::StringCharCodeAt), .. })
-        );
-        // SAFETY: the call's window is registers of the running function.
-        let index = unsafe { lane_call_window(r, i) }.first().copied();
-        let Some(value) = index
-            .filter(|_| is_char_code_at && i.a & crate::bytecode::RETURN_REGISTER == 0)
-            .and_then(|index| string_char_code_at(vm, r.get(i.c), index))
-        else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-/// The handler a `Call` site whose callee resolved to `native` takes from then on
-/// (`lane_script_call_resolve`): a native whose common case the lane makes in place has its
-/// own handler, which tests the callee's identity once and hands any other call to
-/// `lane_native_call`, the handler of every other native. A call returning its result
-/// completes its caller, which only `lane_native_call` makes. An array callback method's site
-/// whose result nothing reads (`result_dead`, asked only there) takes the form that may
-/// discard it (`lane_call_array_callback`'s `DISCARDS`).
-fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return lane_native_call::<H>;
-    }
-    match native {
-        Native::StringCharCodeAt => lane_call_char_code_at::<H>,
-        Native::ArrayPush => lane_call_array_push::<H>,
-        Native::ArrayPop => lane_call_array_pop::<H>,
-        native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
-        native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,
-        native if native.is_array_callback() => lane_call_array_callback::<H, false>,
-        _ => lane_native_call::<H>,
-    }
-}
+mod native_calls;
+use native_calls::{for_in_next_handler, native_call_handler, string_char_at_ascii, string_char_code_at};
 
 /// Whether liveness proves the result register of the running function's call record `i`
 /// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
@@ -14746,8 +14684,8 @@ fn lane_promise_native<H: Host>(
 /// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), for-in's per-key
-/// check (`Vm::plain_for_in_key_is_enumerable`), `Object.hasOwn`, `Object.is`, `Symbol.for`
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
+/// `Object.is`, `Symbol.for`
 /// of a string, and the Map and Set mutators on their own collections
 /// (`Vm::plain_collection_mutation`), a DataView element get or set that raises nothing
 /// (`Vm::plain_data_view_access`), and a Date getter of a Date (`Vm::plain_date_get`). `None` leaves any other call to `lane_call_native`.
@@ -14783,7 +14721,6 @@ fn lane_pure_native<H: Host>(
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         native if super::date::date_reads(*native) => vm.plain_date_get(*native, receiver),
-        Native::ForInKeyIsEnumerable => vm.plain_for_in_key_is_enumerable(code, *args.first()?, *args.get(1)?),
         Native::ObjectHasOwn => vm.plain_own_property_query(
             code,
             Native::ObjectPrototypeHasOwnProperty,
@@ -17076,9 +17013,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
@@ -17247,9 +17182,7 @@ fn lane_activate_environment<H: Host>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
     Ok((callee_registers, base))
 }
 
@@ -17687,9 +17620,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     Ok((callee_registers, start))
 }
@@ -19785,10 +19716,28 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     })
 }
 
+/// The handlers of the jumps (`other_handler`): their direction decides whether they run a
+/// safepoint.
+const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
+    match op {
+        Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
+        Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
+        Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
+        Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
+        Op::ForInNext => Some(for_in_next_handler::<H>()),
+        Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
+        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
+        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
+        _ => None,
+    }
+}
+
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
+        Op::JumpBinaryFalse | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::ForInNext | Op::WasmBranchTable | Op::WasmJumpI32Zero
+        | Op::WasmJumpI32NonZero => jump_handler::<H, BACKWARD, ACC>(op),
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreName => Some(lane_store_name_first::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
@@ -19820,19 +19769,12 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
-        Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
         Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
-        Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
-        Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
-        Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Op::Unary => Some(lane_unary::<H>),
         Op::StoreCapture => Some(lane_store_capture::<H>),
-        Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
-        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmSimd => Some(lane_wasm_simd::<H>),
@@ -23438,9 +23380,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
             "a returning activation's context is its own"
         );
         let vm = vm(cx);
-        if vm.programs.js_jit_diagnostics_enabled() {
-            vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
-        }
+        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
         // SAFETY: the program store keeps a derived view alive with its program.
         (*entry.view).start()
     }
@@ -23495,9 +23435,7 @@ unsafe fn lane_enter_filled<H: Host>(
         (*cx).env = entry.env;
         (*cx).capture = entry.capture;
     }
-    if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
-    }
+    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
     // SAFETY: the program store keeps a derived view alive with its program.
     unsafe { (*entry.view).start() }
 }

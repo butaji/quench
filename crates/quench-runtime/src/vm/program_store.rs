@@ -2406,12 +2406,12 @@ impl ProgramStore {
         self.record_js_jit_counter_entry(id, function, Some(numeric), parameter_count);
     }
 
+    #[inline]
     pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) {
-        let parameter_count = self
-            .entry(id)
-            .and_then(|entry| entry.residual.function_get(function as usize))
-            .map_or(0, |function| function.params);
-        self.record_js_jit_counter_entry(id, function, None, parameter_count);
+        if self.js_jit_diagnostics.is_some() {
+            let params = self.entry(id).and_then(|entry| entry.residual.function_get(function as usize)).map_or(0, |body| body.params);
+            self.record_js_jit_counter_entry(id, function, None, params);
+        }
     }
 
     fn record_js_jit_counter_entry(

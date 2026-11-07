@@ -41,7 +41,21 @@ pub(super) enum CodePublication {
     Stencil,
 }
 
-pub(super) fn target_isa(_opt_level: &str) -> Option<Arc<TargetIsa>> {
+/// The Cranelift opt level of JavaScript JIT code. Measured on JetStream 3 `--jit` (2 interleaved
+/// rounds, TOD-1467, 2026-11-07): while lane bodies compiled on the main thread, `none` won
+/// +4.5% over the JavaScript tests; once they compiled on the code-generator thread, `none` for
+/// main-thread compiles measured +1.2% and for every compile -0.1%, both within noise, and the
+/// Wasm tests lost 5-6%. The single-pass register allocator lost 2.7% (Wasm -25%), and
+/// `unwind_info=false` measured nothing.
+const JS_JIT_OPT_LEVEL: &str = "speed";
+
+/// The executable-memory ISA of every JavaScript JIT tier.
+pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
+    target_isa_at(JS_JIT_OPT_LEVEL)
+}
+
+/// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
+pub(super) fn target_isa_at(_opt_level: &str) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
     { target_isa_for(_opt_level, CodePublication::ExecutableMemory) }
     #[cfg(not(feature = "jit"))]
@@ -222,7 +236,7 @@ mod tests {
 
     #[test]
     fn symbolic_calls_survive_compilation() {
-        let isa = target_isa("speed").expect("host target");
+        let isa = target_isa().expect("host target");
         compile_function(function(&*isa, true), &*isa, None, |compiled, function| {
             assert!(!compiled.buffer.relocs().is_empty());
             assert!(compiled.buffer.relocs().iter().any(|relocation| {
@@ -245,7 +259,7 @@ mod tests {
 
     #[test]
     fn code_budget_is_checked_before_publication_and_admits_exact_size() {
-        let isa = target_isa("speed").expect("host target");
+        let isa = target_isa().expect("host target");
         let size = compile_function(function(&*isa, false), &*isa, None, |code, _| {
             Ok(code.code_buffer().len())
         })
@@ -262,7 +276,7 @@ mod tests {
 
     #[test]
     fn publication_failure_is_preserved() {
-        let isa = target_isa("speed").expect("host target");
+        let isa = target_isa().expect("host target");
         let result = compile_function(function(&*isa, false), &*isa, None, |_, _| {
             Err::<(), _>(NativeCompileRejection::Publish)
         });
@@ -275,7 +289,7 @@ mod execution_only_tests {
     #[test]
     fn executable_code_publication_is_unavailable_without_jit() {
         for level in ["none", "speed", "speed_and_size"] {
-            assert!(super::target_isa(level).is_none());
+            assert!(super::target_isa_at(level).is_none());
         }
     }
 }

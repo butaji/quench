@@ -1880,6 +1880,10 @@ fn admit_region(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
+    // A region that leaves at its header runs no native code: entering it only costs.
+    if let Some(first) = instructions.first().filter(|first| exits_before_effects(first.op())) {
+        return Err(RegionAnalysisFailure { reason: RegionRejection::UnsupportedInstruction(first.op()), pc: header });
+    }
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects,
     ) {
@@ -2111,7 +2115,7 @@ fn admit_register_roles(
     // An indexed register the region defines, other than one holding a field's value at
     // every read (`paths`), holds no entry array: each access reads the array it holds then
     // (`LoopRegion::dynamic_arrays`). Its every definition reads an element or field or
-    // moves one, whose value stays tagged; any other is refused.
+    // moves one, whose value stays tagged; any other but an exit's, never run natively, is refused.
     let mut dynamic_arrays = std::collections::BTreeSet::new();
     for register in instructions
         .iter()
@@ -2122,7 +2126,7 @@ fn admit_register_roles(
         let mut definitions = instructions
             .iter()
             .enumerate()
-            .filter(|(_, instruction)| instruction.defined_register() == Some(register))
+            .filter(|(_, instruction)| native_definition(**instruction) == Some(register))
             .peekable();
         if definitions.peek().is_none() {
             continue;
@@ -2590,15 +2594,12 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        // The ordinary lane owns these VM/effectful operations. Admit their surrounding
-        // region but leave at the exact PC so it can perform binding lookup, call resolution,
-        // activation, allocation, GC, and throws with the complete interpreter state
-        // materialized.
+        // The interpreter runs every other instruction at its exact PC, with the whole state
+        // written back (binding lookup, calls, allocation, GC, throws).
         op if exits_before_effects(op) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        Op::Return => {}
-        Op::Jump => {}
+        Op::Return | Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
@@ -2818,33 +2819,27 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 
 /// The value register an instruction defines, numeric or tagged.
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
-    matches!(
-        instruction.op(),
-        Op::LoadConst
-            | Op::Move
-            | Op::LoadCapture
-            | Op::Binary
-            | Op::NumericAdd
-            | Op::NumericMultiply
-            | Op::IncDec
-            | Op::Unary
-            | Op::ToNumeric
-            | Op::GetIndex
-            | Op::GetField
-            | Op::LoadEnvLocal
-    )
+    use Op::*;
+    matches!(instruction.op(), LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply | IncDec
+        | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal)
     .then(|| instruction.result_register())
 }
 
-/// These instructions resume in the VM before their effects; native control never
-/// reaches their bytecode fallthrough. Keep analysis and emission on that same boundary.
-fn exits_before_effects(op: Op) -> bool {
-    matches!(
-        op,
-        Op::RequireIteratorResult | Op::LoadName | Op::LoadNameCall
-            | Op::LoadNameTypeof | Op::Call | Op::CallArray
-    )
+/// The instructions this tier lowers to native code (`admit`, `Lowering::instruction`).
+/// Every other one leaves at its exact PC before its effects and the interpreter runs its own
+/// definition, so the tier covers every opcode; analysis and emission keep that boundary.
+fn lowered_natively(op: Op) -> bool {
+    use Op::*;
+    admitted_store(op) || matches!(op, LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply
+        | ToNumeric | IncDec | Unary | RequireObjectCoercible | GetIndex | GetField | SetIndex | LoadEnvLocal
+        | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
 }
+
+fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
+/// The register a native run defines at an instruction: an exit's definition is the VM's.
+fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at.op())) }
+
+
 
 /// The region PCs control continues at from the instruction at `pc`, and the PCs outside it
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
@@ -7145,6 +7140,10 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 }
 
 #[cfg(test)]
+#[path = "osr_loop/coverage_tests.rs"]
+mod coverage_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn array_entry_descriptor_boundaries_preserve_layout_and_rejection() {
@@ -7231,7 +7230,7 @@ mod tests {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
                 native_field_loads: &loads, widened: &widened,
             };
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             let (native, _) = lower_verified(verify_region(&region, &observation).unwrap(),
                 &observation, &*isa, None, false).unwrap();
             let shape_loads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -7336,7 +7335,7 @@ mod tests {
             register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let verified = verify_region(&region, &observation).unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
         let mut verified = verify_region(&region, &observation).unwrap();
@@ -7369,7 +7368,7 @@ mod tests {
         };
         let verified = verify_region(&region, &observation).unwrap();
         assert_eq!(verified.obligations[1], DefinitionObligation::NumberLoad);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
     }
 
@@ -7395,7 +7394,7 @@ mod tests {
         let comparison = verified.webs.defined(&region, 0);
         assert_eq!(verified.values[comparison].unwrap().ty, Type::language(crate::ValueType::Boolean));
         assert_eq!(verified.obligations[1], DefinitionObligation::None);
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
 
         // Same tagged machine representation, incompatible semantic type:
@@ -7426,7 +7425,7 @@ mod tests {
             let verified = verify_region(&region, &observation).unwrap();
             let result = verified.webs.defined(&region, 1);
             assert_eq!(verified.values[result].unwrap().ty, Type::TYPEOF_INDEX);
-            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::super::jit_backend::target_isa().unwrap();
             assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
         }
     }

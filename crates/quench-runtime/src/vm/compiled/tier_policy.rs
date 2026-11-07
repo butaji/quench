@@ -176,9 +176,8 @@ pub(in crate::vm) struct PolicyTiers {
     /// interpreted peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988
     /// interpreted, Crypto at 4000 and 3128 (static BOLT x86_64, memory-first, median of 5,
     /// 2026-10-24). Compiling at `none`, without the e-graph pass, saved only 576 KiB on
-    /// Crypto and 648 on NavierStokes (`tod137-loop-tier-opt-level-…`). Throughput compiles
-    /// at `speed`.
-    pub(in crate::vm) loop_opt_level: Option<&'static str>,
+    /// Crypto and 648 on NavierStokes (`tod137-loop-tier-opt-level-…`).
+    pub(in crate::vm) loop_tier: bool,
     /// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
     /// tier, and the loop tier's site analysis) compile. Memory-first compiles none, on the
     /// owner's direction that it may trade Score for memory under `--jit` (TOD-123). Under
@@ -193,8 +192,8 @@ pub(in crate::vm) struct PolicyTiers {
 
 /// One row per memory policy, in `MemoryPolicy` order.
 const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
-    PolicyTiers { loop_opt_level: Some("speed"), js_function_tiers: true },
-    PolicyTiers { loop_opt_level: None, js_function_tiers: false },
+    PolicyTiers { loop_tier: true, js_function_tiers: true },
+    PolicyTiers { loop_tier: false, js_function_tiers: false },
 ];
 
 /// What `policy` lets the tiers compile.
@@ -222,7 +221,7 @@ mod tests {
         for policy in crate::MemoryPolicy::ALL {
             let row = by_policy(policy);
             // The loop tier's site analysis belongs to the function tiers.
-            assert!(row.loop_opt_level.is_none() || row.js_function_tiers, "{policy:?}");
+            assert!(!row.loop_tier || row.js_function_tiers, "{policy:?}");
         }
     }
 }
