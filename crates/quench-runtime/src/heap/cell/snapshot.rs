@@ -272,9 +272,8 @@ fn write_view_length(writer: &mut Writer, length: ViewLength) {
 }
 
 fn read_view_length(reader: &mut Reader<'_>) -> SnapshotResult<ViewLength> {
-    let tracking = reader.bool()?;
-    let length = reader.u64()? as usize;
-    Ok(if tracking { ViewLength::TRACKING } else { ViewLength::fixed(length) })
+    let (tracking, length) = (reader.bool()?, reader.u64()? as usize);
+    Ok(ViewLength::new(length, tracking))
 }
 
 fn write_module_source(writer: &mut Writer, module: &crate::ModuleSource) {
