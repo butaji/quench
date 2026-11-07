@@ -46,7 +46,81 @@ fn icu_ordering(
         return None;
     }
     let collator = recent_collator(locale, options)?;
-    Some(ordering_number(collator.compare(left, right)))
+    if let Some(order) = collator.ascii.as_ref().and_then(|weights| weights.compare(left.as_bytes(), right.as_bytes())) {
+        return Some(ordering_number(order));
+    }
+    Some(ordering_number(collator.icu.compare(left, right)))
+}
+
+/// A collator with its printable-ASCII weights where they decide its comparisons
+/// (`AsciiWeights::of`).
+struct RecentCollator {
+    icu: CollatorBorrowed<'static>,
+    ascii: Option<AsciiWeights>,
+}
+
+/// The collation weights of printable ASCII (0x20..=0x7E) under a tertiary-strength
+/// collation in which each such character is one collation element with a primary weight,
+/// with no contraction among them: the root collation, and English's. Comparing two such
+/// strings is then comparing their primary weights in order, the shorter first on a tie, and,
+/// for equal primaries, their full weights in order (ASCII has one secondary weight). The
+/// weights are ranks the collator itself gives the characters, so they agree with it.
+struct AsciiWeights {
+    /// Rank of each character's primary weight; 0 for a character the weights do not cover.
+    primary: [u8; 128],
+    /// Rank of each character among all of them.
+    full: [u8; 128],
+}
+
+impl AsciiWeights {
+    /// Whether the weights decide comparisons under `locale` and `options`: English or root
+    /// with no extension, and default options.
+    fn covers(locale: &str, options: &CollatorOptions<'_>) -> bool {
+        let language = locale.split('-').next().unwrap_or_default();
+        let default = !options.ignore_punctuation
+            && options.sensitivity == "variant"
+            && options.usage == "sort"
+            && !options.numeric
+            && options.case_first == "false";
+        default && matches!(language, "en" | "und") && !locale.contains("-u-")
+    }
+
+    fn of(icu: &CollatorBorrowed<'static>, locale: &str, options: &CollatorOptions<'_>) -> Option<Self> {
+        if !Self::covers(locale, options) {
+            return None;
+        }
+        let text = |unit: u8| char::from(unit).to_string();
+        let mut units = (0x20u8..=0x7E).collect::<Vec<_>>();
+        units.sort_by(|left, right| icu.compare(&text(*left), &text(*right)));
+        let base = Collator::try_new(CollatorPreferences::default(), {
+            let mut base = IcuOptions::default();
+            base.strength = Some(Strength::Primary);
+            base
+        })
+        .ok()?;
+        let mut weights = Self { primary: [0; 128], full: [0; 128] };
+        let mut primary = 0;
+        for (index, unit) in units.iter().enumerate() {
+            if index > 0 && base.compare(&text(units[index - 1]), &text(*unit)) != std::cmp::Ordering::Equal {
+                primary += 1;
+            }
+            weights.primary[usize::from(*unit)] = primary + 1;
+            weights.full[usize::from(*unit)] = index as u8 + 1;
+        }
+        Some(weights)
+    }
+
+    /// The order of `left` and `right`, `None` unless both are printable ASCII.
+    fn compare(&self, left: &[u8], right: &[u8]) -> Option<std::cmp::Ordering> {
+        let weight = |unit: u8| self.primary.get(usize::from(unit)).copied().filter(|weight| *weight != 0);
+        if !left.iter().chain(right).all(|unit| weight(*unit).is_some()) {
+            return None;
+        }
+        let primaries = left.iter().map(|unit| self.primary[usize::from(*unit)]);
+        let order = primaries.cmp(right.iter().map(|unit| self.primary[usize::from(*unit)]));
+        let full = |text: &[u8]| text.iter().map(|unit| self.full[usize::from(*unit)]).collect::<Vec<_>>();
+        Some(order.then_with(|| full(left).cmp(&full(right))))
+    }
 }
 
 fn build_collator(locale: &str, options: &CollatorOptions<'_>) -> Option<CollatorBorrowed<'static>> {
@@ -106,7 +180,7 @@ impl CollatorKey {
 }
 
 thread_local! {
-    static COLLATORS: std::cell::RefCell<Vec<(CollatorKey, Option<std::rc::Rc<CollatorBorrowed<'static>>>)>> =
+    static COLLATORS: std::cell::RefCell<Vec<(CollatorKey, Option<std::rc::Rc<RecentCollator>>)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -114,7 +188,7 @@ thread_local! {
 fn recent_collator(
     locale: &str,
     options: &CollatorOptions<'_>,
-) -> Option<std::rc::Rc<CollatorBorrowed<'static>>> {
+) -> Option<std::rc::Rc<RecentCollator>> {
     COLLATORS.with(|recent| {
         let mut recent = recent.borrow_mut();
         if let Some(index) = recent.iter().position(|(key, _)| key.matches(locale, options)) {
@@ -123,7 +197,8 @@ fn recent_collator(
             recent.insert(0, entry);
             return collator;
         }
-        let collator = build_collator(locale, options).map(std::rc::Rc::new);
+        let collator = build_collator(locale, options)
+            .map(|icu| std::rc::Rc::new(RecentCollator { ascii: AsciiWeights::of(&icu, locale, options), icu }));
         let key = CollatorKey {
             locale: locale.to_owned(),
             ignore_punctuation: options.ignore_punctuation,
@@ -239,5 +314,45 @@ fn ordering_number(ordering: std::cmp::Ordering) -> f64 {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ASCII weights order every pair of printable strings up to two characters long,
+    /// and longer mixed ones, as the collator does.
+    #[test]
+    fn ascii_weights_agree_with_the_collator() {
+        let options = CollatorOptions { ignore_punctuation: false, sensitivity: "variant", usage: "sort", numeric: false, case_first: "false" };
+        for locale in ["en-US", "en", "und"] {
+            let icu = build_collator(locale, &options).unwrap();
+            let weights = AsciiWeights::of(&icu, locale, &options).unwrap();
+            let mut texts = vec![String::new()];
+            for first in 0x20u8..=0x7E {
+                texts.push(char::from(first).to_string());
+                for second in 0x20u8..=0x7E {
+                    texts.push([char::from(first), char::from(second)].iter().collect());
+                }
+            }
+            let mut seed = 0x2545_f491_u32;
+            for _ in 0..4000 {
+                let length = 3 + seed as usize % 6;
+                let text = (0..length).map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    char::from(b"aAbB-_ .0129zZ'xX"[seed as usize % 17])
+                });
+                texts.push(text.collect());
+            }
+            for (index, left) in texts.iter().enumerate().step_by(23) {
+                for right in texts.iter().skip(index % 5).step_by(7) {
+                    assert_eq!(weights.compare(left.as_bytes(), right.as_bytes()), Some(icu.compare(left, right)), "{locale}: {left:?} {right:?}");
+                }
+            }
+        }
+        assert!(AsciiWeights::of(&build_collator("da", &options).unwrap(), "da", &options).is_none());
     }
 }
