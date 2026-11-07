@@ -94,11 +94,17 @@ mod general_elements;
 mod frameless;
 mod exact_budget;
 mod general_getter;
+mod general_binary;
 pub(super) use frameless::{ChainFrame, Frameless};
 use exact_budget::PcLowering;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
+#[cfg(unix)]
+#[path = "compiled/fault_handler.rs"]
+mod fault_handler;
+#[cfg(unix)]
+pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
@@ -546,7 +552,7 @@ pub(super) fn js_general_dispatch_shape(function: &Function) -> Option<bool> {
     let mut acyclic = true;
     for (pc, packed) in function.code.iter().enumerate() {
         let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-        if matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+        if instruction.op().is_js_jump() {
             let target = usize::try_from(instruction.jump_target()).ok()?;
             acyclic &= target > pc;
         }
@@ -2041,25 +2047,26 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
     let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
-    let callee = if instruction.op() == Op::GetField { entry.callee } else { vm.read(caller, instruction.register_b()) };
-    let (window, receiver, completion) = match instruction.op() {
-        Op::Construct => {
-            let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { unreachable!() };
-            vm.construct_target = Some(super::ConstructionTarget { callee, new_target: callee });
-            (window, entry.this, super::CallCompletion::Constructor(entry.this))
-        }
-        // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-        Op::GetField => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
-        _ => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
+    // The activation the instruction's exact step pushes (`Vm::push_in_loop_activation`): a
+    // getter's of its read (`general_getter`), a construction's or a call's.
+    let getter = instruction.op() == Op::GetField;
+    let callee = if getter { entry.callee } else { vm.read(caller, instruction.register_b()) };
+    let construction = (instruction.op() == Op::Construct).then(|| instruction.construct_arguments());
+    let (window, receiver, completion) = match construction {
+        Some(crate::bytecode::ConstructArguments::Registers(window)) => (window, entry.this, super::CallCompletion::Constructor(entry.this)),
+        Some(crate::bytecode::ConstructArguments::Array(_)) => unreachable!("a frameless construction passes registers"),
+        None if getter => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
+        None => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
     };
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
-    vm.frames[caller].pc = entry.call_pc as usize + 1;
-    vm.frames[caller].pc_is_resume = true;
-    let guard = vm.push_general_user_frame(program, entry.function, env, receiver,
-        unsafe { &*passed }, super::CallContext::user_function(entry.function, callee));
-    vm.construct_target = None;
-    let guard = guard.map_err(|error| (entry.call_pc, error))?;
+    let target = (vm.frames[caller].program, entry.function, env);
+    // SAFETY: the caller's window outlives the callee's setup.
+    let pushed = vm.push_in_loop_activation(program, caller, entry.call_pc as usize + 1, target, callee, receiver,
+        unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
+    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (entry.call_pc, error))? else {
+        unreachable!("an in-loop push pushes a frame")
+    };
     let frame = vm.frames.last_mut().expect("recovered inline frame");
     let count = frame.registers.len();
     // SAFETY: the chain's registers hold the frame's register count of live values.
@@ -2336,7 +2343,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
-        if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
+        if instruction.op().control_flow_layout().jumps() {
             let target = instruction.jump_target() as usize;
             if target <= pc && matches!(unit.origins.get(target), Some(lane_unit::Origin::Caller(_))) {
                 headers.push(target);
@@ -2388,7 +2395,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // them from its entry up to the first opaque operation. An inlined callee's loop that
     // indexes arrays stays the callee's own region, which views its arrays at its header.
     let array_loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        instruction.op().control_flow_layout().jumps()
             && instruction.jump_target() as usize <= pc
             && unit.instructions[instruction.jump_target() as usize..=pc].iter()
                 .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
@@ -2683,7 +2690,7 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
         if static_global_names
-            && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
+            && instruction.op().loads_name()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
@@ -2826,15 +2833,7 @@ pub(super) fn lower_js_general_dispatch(
             && let Some(receiver) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
-            let exact = JsExactFallback {
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            };
+            let exact = JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc };
             emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact, narrow_table);
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
@@ -3657,8 +3656,9 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
-        // An exact-only PC (`PcLowering::Exact`), which `exact_budget` counts.
-        emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
+        // An exact-only PC (`PcLowering::Exact`), which `exact_budget` counts, unless a general lowering takes it.
+        general_dispatch_native_pcs[pc] = general_binary::lower_rest(&mut builder, program, (instruction, next), &register_offset,
+            (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) as u8;
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
@@ -3859,10 +3859,7 @@ pub(super) fn js_general_dispatch_cache_key(
         // Name fast-path admission checks the current program's atom text.
         // Include that text because two programs may encode different names at
         // the same atom index while sharing identical bytecode.
-        if matches!(
-            instruction.op(),
-            Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-        ) {
+        if instruction.op().loads_name() {
             let name = program.atoms.get(instruction.atom_index() as usize)?;
             if name.len()
                 > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
@@ -6227,10 +6224,9 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
-/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
-/// for disassembly at `BASE` (diagnostics only).
-fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+/// With `QUENCH_TRACE=perf-map`, names each function's code (`kind-index`) in `/tmp/perf-PID.map`
+/// and writes the code to `/tmp/quench-jit-PID-BASE.bin` for disassembly at `BASE` (diagnostics).
+fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
     if !crate::trace::Channel::PerfMap.on() {
         return;
     }
@@ -6242,7 +6238,7 @@ fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
         .open(format!("/tmp/perf-{pid}.map"))
     {
         for &(offset, len, index) in spans {
-            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+            let _ = writeln!(map, "{:x} {len:x} {kind}-{index}", base + offset);
         }
     }
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
@@ -6463,6 +6459,7 @@ fn compile_and_publish_entry(
 ) -> Option<(CodeMemory, Entry)> {
     compile_native_function(function, isa, max_code_bytes, |code| {
         let memory = CodeMemory::new(code)?;
+        write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
         // SAFETY: callers lower the function with `native_entry_signature`.
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
         Some((memory, entry))
@@ -6714,6 +6711,8 @@ struct JsStepDispatch {
     element_set: usize,
     /// The receiver a frameless construction allocates and the value it yields (`frameless`).
     construct_receiver: usize, construct_result: usize,
+    /// A binary operation of number or string operands (`general_binary`).
+    binary: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
@@ -7560,7 +7559,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0, field_getter: 0,
-                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -7711,7 +7710,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7754,6 +7753,7 @@ impl JsStepDispatch {
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         (self.construct_receiver, self.construct_result) = frameless::construct_helpers::<H>();
+        self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
             general_elements::general_element_set::<H> as *const () as usize);
         let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));
@@ -8215,7 +8215,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let is_call = matches!(current_instruction.op(), Op::Call | Op::CallArray);
+            let is_call = current_instruction.op().is_ordinary_call();
             let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
@@ -9604,7 +9604,7 @@ fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option
     for (latch, instruction) in instructions.iter().enumerate() {
         let layout = instruction.op().control_flow_layout();
         if !plan.reachable(latch)
-            || !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            || !layout.jumps()
         {
             continue;
         }
@@ -12352,31 +12352,6 @@ const FAULT_POLL_SUPPORTED: bool = cfg!(any(
     all(target_arch = "aarch64", target_os = "macos"),
 ));
 
-/// Compose a host's POSIX signal delivery with owned native-fault recovery.
-/// Prepare before installing the host observer, then let recovery consume its
-/// owned faults before enqueuing ordinary host signal notifications.
-#[cfg(unix)]
-pub struct NativeFaultHandler;
-
-#[cfg(unix)]
-impl NativeFaultHandler {
-    pub fn prepare(signal: i32) {
-        if matches!(signal, libc::SIGSEGV | libc::SIGBUS) { let _ = guard_support(); }
-    }
-
-    /// # Safety
-    /// Arguments must be the original POSIX SA_SIGINFO handler arguments on
-    /// the interrupted thread. No locks, allocation or guest callbacks occur.
-    pub unsafe fn resume(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) -> bool {
-        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-        if signal == libc::SIGSEGV { return unsafe { resume_guard_fault(info, context) }; }
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-        if matches!(signal, libc::SIGSEGV | libc::SIGBUS) { return unsafe { guard_aarch64::resume_fault(info, context) }; }
-        let _ = (signal, info, context);
-        false
-    }
-}
-
 // SAFETY: immutable executable code, shared by every thread.
 unsafe impl Send for GuardSupport {}
 unsafe impl Sync for GuardSupport {}
@@ -13884,7 +13859,7 @@ impl<H: Host> Vm<H> {
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
-        write_perf_map(base, &bytes, &spans);
+        write_perf_map("wasm-function", base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))

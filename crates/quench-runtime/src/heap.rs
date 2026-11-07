@@ -542,21 +542,6 @@ macro_rules! mark_bits {
 }
 use mark_bits;
 
-/// The objects marked as prototypes (`Heap::prototypes`).
-#[derive(Debug)]
-enum PrototypeRegistry {
-    /// Each one, weakly, with its subject in the dependency table (`Dependencies::watch`).
-    Known(Vec<(Value, u32)>),
-    /// Some were marked where no registry saw it.
-    Unknown,
-}
-
-impl Default for PrototypeRegistry {
-    fn default() -> Self {
-        Self::Known(Vec::new())
-    }
-}
-
 /// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
 pub(crate) const ASCII_UNITS: usize = 0x80;
 
@@ -663,8 +648,9 @@ pub(crate) struct Heap {
     marked_prototypes: [Option<Value>; MARKED_PROTOTYPE_WAYS],
     /// Every object ever marked as a prototype, held weakly: a collection advances
     /// `prototype_layout_epoch` only when one of them died, since only a dead prototype's
-    /// record can be reused under a proof that names it (`retire_dead_prototypes`).
-    prototypes: PrototypeRegistry,
+    /// record can be reused under a proof that names it (`retire_dead_prototypes`). Each is
+    /// held with its subject in the dependency table (`Dependencies::watch`).
+    prototypes: Vec<(Value, u32)>,
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
     peak_live: usize,
@@ -1119,8 +1105,7 @@ impl Heap {
     /// The registered prototypes, direct objects, of exact shape `shape`; none where the
     /// registry does not know every prototype.
     pub(crate) fn prototypes_of_shape(&self, shape: u32) -> impl Iterator<Item = Value> + '_ {
-        let known = match &self.prototypes { PrototypeRegistry::Known(prototypes) => &prototypes[..], _ => &[] };
-        known.iter().map(|(prototype, _)| *prototype).filter(move |prototype| {
+        self.prototypes.iter().map(|(prototype, _)| *prototype).filter(move |prototype| {
             prototype.direct_object_index().is_some() && self.object(*prototype).is_some_and(|object| object.exact_shape() == shape)
         })
     }
@@ -1146,8 +1131,8 @@ impl Heap {
         if let Some(watch) = watch {
             object.watch_as(watch);
         }
-        if let (Some(subject), PrototypeRegistry::Known(prototypes)) = (subject, &mut self.prototypes) {
-            prototypes.push((prototype, subject));
+        if let Some(subject) = subject {
+            self.prototypes.push((prototype, subject));
         }
         self.marked_prototypes.rotate_right(1);
         self.marked_prototypes[0] = Some(prototype);
@@ -2169,48 +2154,34 @@ impl Heap {
     /// object record's id is withheld from reuse instead, until `WITHHELD_PROTOTYPE_IDS` are;
     /// a sweep that freed no other prototype keeps the proofs.
     fn retire_dead_prototypes(&mut self) {
-        let retire = match std::mem::take(&mut self.prototypes) {
-            PrototypeRegistry::Unknown => {
-                self.prototypes = PrototypeRegistry::Unknown;
-                self.dependencies.retire_all();
-                true
-            }
-            PrototypeRegistry::Known(mut prototypes) => {
-                let mut died_subjects = Vec::new();
-                let mut died_unrecorded = false;
-                let mut withheld = 0;
-                prototypes.retain(|&(prototype, subject)| {
-                    let live = self.is_live(prototype);
-                    if !live {
-                        died_subjects.push(subject);
-                        // A dead object record's id is withheld instead: no object takes its
-                        // Value, so no proof can name another object by it, as a class
-                        // declared in a hot function leaves one dead prototype per call.
-                        match prototype.direct_object_index() {
-                            Some(id) => withheld = self.object_records.withhold(id),
-                            None => died_unrecorded = true,
-                        }
-                    }
-                    live
-                });
-                for subject in died_subjects {
-                    self.dependencies.release(subject);
+        let mut died_subjects = Vec::new();
+        let mut died_unrecorded = false;
+        let mut withheld = 0;
+        let mut prototypes = std::mem::take(&mut self.prototypes);
+        prototypes.retain(|&(prototype, subject)| {
+            let live = self.is_live(prototype);
+            if !live {
+                died_subjects.push(subject);
+                // A dead object record's id is withheld instead: no object takes its
+                // Value, so no proof can name another object by it, as a class
+                // declared in a hot function leaves one dead prototype per call.
+                match prototype.direct_object_index() {
+                    Some(id) => withheld = self.object_records.withhold(id),
+                    None => died_unrecorded = true,
                 }
-                self.prototypes = PrototypeRegistry::Known(prototypes);
-                died_unrecorded || withheld > WITHHELD_PROTOTYPE_IDS
             }
-        };
+            live
+        });
+        for subject in died_subjects {
+            self.dependencies.release(subject);
+        }
+        self.prototypes = prototypes;
+        let retire = died_unrecorded || withheld > WITHHELD_PROTOTYPE_IDS;
         if retire {
             // Every proof made under the old epoch retires, so the withheld ids are free again.
             advance_prototype_layout_epoch();
             self.object_records.release_withheld();
         }
-    }
-
-    /// A restored heap's prototypes were marked before it was written: which they are is
-    /// unknown, so every collection retires the proofs (`PrototypeRegistry::Unknown`).
-    pub(crate) fn forget_prototypes(&mut self) {
-        self.prototypes = PrototypeRegistry::Unknown;
     }
 
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
@@ -4255,11 +4226,11 @@ impl Heap {
             | Cell::TemporalPlainMonthDay { object: value, .. }
             | Cell::TemporalPlainYearMonth { object: value, .. }
             | Cell::TemporalZonedDateTime { object: value, .. }
-            | Cell::TemporalInstant { object: value, .. } => object(value),
+            | Cell::TemporalInstant { object: value, .. }
+            | Cell::WasmTag { object: value, .. } => object(value),
             Cell::BigInt(_)
             | Cell::Symbol(_)
             | Cell::Error(_)
-            | Cell::WasmTag { .. }
             | Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Host(_),
                 ..

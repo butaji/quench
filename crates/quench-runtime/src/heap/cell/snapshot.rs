@@ -180,7 +180,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         private_elements,
         stack_data,
         element_facts,
-        // A restored heap's prototypes watch nothing (`Heap::forget_prototypes`).
+        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`).
         watch: _,
     } = extras;
     if external_address.is_some() {
@@ -717,8 +717,8 @@ impl Cell {
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
             }
-            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.as_ref().clone(), *ty) => {
-                writer.u8(tag::JS_TAG);
+            Self::WasmTag { object, declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
+                writer.u8(tag::JS_TAG); write_object(writer, object)?;
             }
             Self::WasmBits64(_)
             | Self::WasmV128(_)
@@ -842,7 +842,7 @@ impl Cell {
                 }
                 Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
             }
-            tag::JS_TAG => crate::vm::js_tag_cell(),
+            tag::JS_TAG => crate::vm::js_tag_cell(boxed_object(reader)?),
             tag::BIGINT => Self::bigint(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?)),
             tag::SYMBOL => Self::Symbol(SymbolData {
                 description: reader.option_string()?.map(String::into_boxed_str),

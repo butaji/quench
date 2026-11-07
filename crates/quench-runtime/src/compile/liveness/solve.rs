@@ -102,7 +102,7 @@ pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
 /// enclosing handler: a call that throws, or a suspension point (an awaited rejection, a
 /// generator's `throw` or `return`).
 fn resumes_into_handler(op: Op) -> bool {
-    op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
+    op.control_flow_layout() == ControlFlowLayout::Call || op.suspends()
 }
 
 pub(crate) fn add_suspended_exception_roots<M: LiveMask>(function: &Function, live: &mut [M]) {

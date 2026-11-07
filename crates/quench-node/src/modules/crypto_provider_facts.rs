@@ -490,3 +490,8 @@ mod tests {
         }
     }
 }
+
+/// Whether a key is an RSA key, with or without the PSS restriction.
+pub(crate) fn is_rsa(id: openssl::pkey::Id) -> bool {
+    matches!(id, openssl::pkey::Id::RSA | openssl::pkey::Id::RSA_PSS)
+}

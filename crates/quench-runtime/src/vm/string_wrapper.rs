@@ -47,3 +47,6 @@ impl<H: Host> Vm<H> {
         self.string_index_value(object, index)
     }
 }
+
+#[cfg(test)]
+mod tests;
