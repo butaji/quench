@@ -194,8 +194,8 @@ mod object_integrity;
 mod object_keys;
 mod object_static;
 mod object_symbols;
-#[cfg(test)]
-mod object_tests;
+#[cfg(test)] mod lane_loop_tests;
+#[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;

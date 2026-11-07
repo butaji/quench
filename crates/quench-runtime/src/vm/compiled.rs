@@ -7817,14 +7817,14 @@ unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: 
     object.to_bits()
 }
 
-/// A lane body's array literal of `length` holes, as the lane's own
-/// (`dispatch_fast::lane_make_array`); `DELETED` where a collection is due, as
-/// `lane_new_object`.
-unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64) -> u64 {
-    // SAFETY: as `lane_new_object`.
+/// A lane body's array literal of `length` holes, or of the `elements` its definitions
+/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
+/// `DELETED` where a collection is due, as `lane_new_object`.
+unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let array = vm.hole_array(length as usize);
+    let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     array.to_bits()

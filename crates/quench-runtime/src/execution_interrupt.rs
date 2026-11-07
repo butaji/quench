@@ -42,13 +42,19 @@ impl PollPage {
         let hint = Self::HINT as *mut libc::c_void;
         #[cfg(target_os = "macos")]
         let hint = std::ptr::null_mut();
+        // Code addresses the page by a 32-bit displacement: every VM's must lie low, also once
+        // the hint is taken (`MAP_32BIT`).
+        #[cfg(target_os = "linux")]
+        let low = libc::MAP_32BIT;
+        #[cfg(target_os = "macos")]
+        let low = 0;
         // SAFETY: an anonymous private read-only page; the result is checked.
         let pointer = unsafe {
             libc::mmap(
                 hint,
                 bytes,
                 libc::PROT_READ,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | low,
                 -1,
                 0,
             )
