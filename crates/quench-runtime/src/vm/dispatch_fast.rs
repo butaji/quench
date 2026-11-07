@@ -350,9 +350,8 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// Its bodies no run of which completed before they went (`LaneView::drop_body`): each
-    /// doubles the next one's warm-up, and `TIERS.lane_body.max_wasted` of them decline it.
-    wasted: std::cell::Cell<u8>,
+    /// What its bodies cost and earned so far (`LaneBodyHistory`).
+    history: std::cell::Cell<LaneBodyHistory>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
@@ -625,6 +624,7 @@ mod lane_body_stats;
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
+use lane_body_tier::LaneBodyHistory;
 use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
 
@@ -864,7 +864,7 @@ impl LaneView {
             if *entries >= self.warmup_entries() {
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                *body = match (!self.wasted_enough()).then(|| specialize(&generic)).flatten() {
+                *body = match self.affords_compile().then(|| specialize(&generic)).flatten() {
                     Some(published) => {
                         let method = published.lease().expect("a body just published is live");
                         // A body whose entry would not pay for itself serves native callers
@@ -926,9 +926,9 @@ impl LaneView {
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
     fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(&[super::compiled::LaneExit]) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
-        // A function whose bodies went unused warms its next one fully.
+        // A function whose bodies lifecycle edges discarded warms as any entry does.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
-            && self.wasted.get() == 0
+            && self.history.get().lifetimes == 0
         {
             *entries = TIERS.lane_body.warmup_entries - 1;
         }
@@ -21409,7 +21409,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), wasted: std::cell::Cell::new(0),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(),
         retired: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
