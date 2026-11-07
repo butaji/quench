@@ -102,6 +102,9 @@ mod control_flow;
 pub(crate) mod initialization;
 mod initializer_stores;
 pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue};
+mod environment_clone;
+pub use environment_clone::{EnvironmentClone, EnvironmentClones};
+pub(crate) use environment_clone::Resets;
 mod field_store;
 pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
@@ -1448,7 +1451,7 @@ pub struct Function {
     pub binding_sites: crate::heap::ThinBoxSlice<BindingSite>,
     pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
-    pub environment_clones: crate::heap::ThinBoxSlice<EnvironmentClone>,
+    pub environment_clones: EnvironmentClones,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -3297,16 +3300,6 @@ impl Operand {
     }
 }
 
-/// A CloneEnv plan. The clone owns the `fresh` slots, copied from the source
-/// environment, and the `reset` slots, cleared: block bindings out of scope at
-/// the clone's site, whose next scope entry initializes them again. Every other
-/// slot is shared with its owner. Both lists are sorted local slots.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EnvironmentClone {
-    pub fresh: Vec<u16>,
-    pub reset: Vec<u16>,
-}
-
 #[derive(Clone, Debug)]
 pub struct ModuleRequest {
     pub source: String,
@@ -4148,7 +4141,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 135;
+    pub const FORMAT_VERSION: u8 = 136;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -16,7 +16,7 @@ pub(in crate::vm) enum PcLowering {
     Stepped = 2,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "aot"))]
 mod tests {
     use super::PcLowering;
     use std::collections::BTreeMap;

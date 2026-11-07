@@ -68,8 +68,8 @@ struct LexicalScope {
     pub(super) with_depth: u16,
     /// Its capture layer as of the unslotted epoch (`capture::CaptureMemos`).
     capture_layer: Option<(u32, Rc<super::capture_scope::CaptureLayer>)>,
-    /// Its bindings' local slots, sorted, as of the same epoch (`lexical_slots`).
-    slots: Option<(u32, Rc<[u16]>)>,
+    /// Its bindings' local slots as of the same epoch (`ClonePlans::scope_slots`).
+    slots: Option<(u32, u32)>,
 }
 
 pub(super) struct FinallyContext {
@@ -926,7 +926,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     fn lexical_scope_slots(&mut self) -> Vec<u16> {
         match self.lexical_scopes.len().checked_sub(1) {
-            Some(innermost) => self.lexical_slots(innermost).to_vec(),
+            Some(innermost) => self.lexical_scope_slots_of(innermost).to_vec(),
             None => Vec::new(),
         }
     }

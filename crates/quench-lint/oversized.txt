@@ -488,13 +488,13 @@ complexity crates/quench-runtime/src/bytecode.rs::intrinsic_name_native 15
 complexity crates/quench-runtime/src/bytecode/binary.rs::decode_program 37
 complexity crates/quench-runtime/src/bytecode/binary.rs::encode_program 43
 complexity crates/quench-runtime/src/bytecode/binary.rs::read_function 46
-complexity crates/quench-runtime/src/bytecode/binary.rs::write_function 27
+complexity crates/quench-runtime/src/bytecode/binary.rs::write_function 24
 complexity crates/quench-runtime/src/bytecode/control_flow.rs::is_bounded 12
 complexity crates/quench-runtime/src/bytecode/disassemble.rs::write_index_immediate 12
 complexity crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_value 29
 complexity crates/quench-runtime/src/bytecode/initialization.rs::accesses 12
 complexity crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 20
-complexity crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 127
+complexity crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 125
 complexity crates/quench-runtime/src/bytecode/validate.rs::field_domains_in_bounds 28
 complexity crates/quench-runtime/src/bytecode/validate.rs::immediate_domains_in_bounds 46
 complexity crates/quench-runtime/src/bytecode/validate.rs::promoted_local_layout_is_valid 34
@@ -537,7 +537,7 @@ complexity crates/quench-runtime/src/compile/early.rs::validate_block 17
 complexity crates/quench-runtime/src/compile/early.rs::validate_modifier_groups 13
 complexity crates/quench-runtime/src/compile/early.rs::validate_nested 28
 complexity crates/quench-runtime/src/compile/early.rs::validate_strict_statements 23
-complexity crates/quench-runtime/src/compile/frame_registers.rs::drop_unread_self_binding 15
+complexity crates/quench-runtime/src/compile/frame_registers.rs::drop_unread_self_binding 14
 complexity crates/quench-runtime/src/compile/frame_registers.rs::promote 51
 complexity crates/quench-runtime/src/compile/locals.rs::Compiler<'_>::collect_locals_into 47
 complexity crates/quench-runtime/src/compile/native_sources/constructors.rs::Discovery<'_>::expression 18
@@ -1456,11 +1456,11 @@ file-lines crates/quench-regexp/src/lib.rs 2986
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2526
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4308
-file-lines crates/quench-runtime/src/bytecode/binary.rs 1793
+file-lines crates/quench-runtime/src/bytecode.rs 4301
+file-lines crates/quench-runtime/src/bytecode/binary.rs 1780
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
-file-lines crates/quench-runtime/src/bytecode/validate.rs 1534
+file-lines crates/quench-runtime/src/bytecode/validate.rs 1526
 file-lines crates/quench-runtime/src/compile.rs 4458
 file-lines crates/quench-runtime/src/compile/ast.rs 1099
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
@@ -1574,7 +1574,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 512
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3352
-file-lines crates/quench-runtime/src/vm/tests.rs 26545
+file-lines crates/quench-runtime/src/vm/tests.rs 26540
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 964
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
@@ -2576,8 +2576,8 @@ function-lines crates/quench-runtime/src/bytecode.rs::Function::super_forwarding
 function-lines crates/quench-runtime/src/bytecode.rs::ImmediateRole::binding_time 63
 function-lines crates/quench-runtime/src/bytecode/binary.rs::decode_program 269
 function-lines crates/quench-runtime/src/bytecode/binary.rs::encode_program 228
-function-lines crates/quench-runtime/src/bytecode/binary.rs::read_function 279
-function-lines crates/quench-runtime/src/bytecode/binary.rs::write_function 156
+function-lines crates/quench-runtime/src/bytecode/binary.rs::read_function 274
+function-lines crates/quench-runtime/src/bytecode/binary.rs::write_function 148
 function-lines crates/quench-runtime/src/bytecode/closure_reads.rs::ClosureReads::derive 47
 function-lines crates/quench-runtime/src/bytecode/control_flow.rs::is_bounded 47
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_field 44
@@ -2595,7 +2595,7 @@ function-lines crates/quench-runtime/src/bytecode/tests.rs::eval_binding_declara
 function-lines crates/quench-runtime/src/bytecode/tests.rs::load_encoded_records_decode_as_records_compiled_again 57
 function-lines crates/quench-runtime/src/bytecode/tests.rs::one_function_program 86
 function-lines crates/quench-runtime/src/bytecode/tests.rs::source_lines_share_javascript_boundaries_and_preserve_wrapper_origins 49
-function-lines crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 431
+function-lines crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 423
 function-lines crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate_selective_capture_owners 48
 function-lines crates/quench-runtime/src/bytecode/validate.rs::field_domains_in_bounds 77
 function-lines crates/quench-runtime/src/bytecode/validate.rs::immediate_domains_in_bounds 122
@@ -2681,7 +2681,7 @@ function-lines crates/quench-runtime/src/compile/early.rs::validate_modifier_gro
 function-lines crates/quench-runtime/src/compile/early.rs::validate_nested 77
 function-lines crates/quench-runtime/src/compile/early.rs::validate_strict_statements 80
 function-lines crates/quench-runtime/src/compile/frame_registers.rs::drop_unread_self_binding 46
-function-lines crates/quench-runtime/src/compile/frame_registers.rs::promote 262
+function-lines crates/quench-runtime/src/compile/frame_registers.rs::promote 256
 function-lines crates/quench-runtime/src/compile/liveness.rs::general_uses 46
 function-lines crates/quench-runtime/src/compile/liveness.rs::tests::branch_roots_are_derived_from_successor_uses 70
 function-lines crates/quench-runtime/src/compile/locals.rs::Compiler<'_>::collect_locals_into 313
@@ -5091,7 +5091,7 @@ magic crates/quench-runtime/src/bytecode/binary.rs::write_function 3
 magic crates/quench-runtime/src/bytecode/instruction.rs::Instr::c 1
 magic crates/quench-runtime/src/bytecode/instruction.rs::Instr::try_new 1
 magic crates/quench-runtime/src/bytecode/instruction.rs::Instr::wide_from_fields 2
-magic crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 4
+magic crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 3
 magic crates/quench-runtime/src/compile.rs::Compiler<'a>::dispatch_class 2
 magic crates/quench-runtime/src/compile.rs::Engine::analyze_static_module 1
 magic crates/quench-runtime/src/compile.rs::Engine::static_module_exports 1
