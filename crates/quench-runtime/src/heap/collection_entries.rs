@@ -62,6 +62,17 @@ fn folded_hash(hash: u64) -> u32 {
     (hash ^ (hash >> u32::BITS)) as u32
 }
 
+/// The SameValueZero hash of a number key: both zeros and every NaN hash alike. A small
+/// integer's bits end in dozens of zeros, which a multiplicative hash would keep at the
+/// bottom, where the index picks buckets, so splitmix64's output function (Steele, Lea and
+/// Flood, OOPSLA 2014) mixes every bit into every other.
+pub(crate) fn number_key_hash(number: f64) -> u64 {
+    let bits = if number == 0.0 { 0 } else if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() };
+    let x = (bits ^ (bits >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
 /// The table hash of a folded hash: hashbrown picks buckets from the low bits and tags
 /// from the high bits, so the folded bits fill both halves.
 fn table_hash(folded: u32) -> u64 {
