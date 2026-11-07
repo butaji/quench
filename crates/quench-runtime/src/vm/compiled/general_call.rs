@@ -156,7 +156,10 @@ fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut 
     vm.frames[caller].pc = pc;
     vm.frames[caller].pc_is_resume = false;
     if let Err(error) = vm.check_execution_interrupt() { return stop(dispatch, pc, Err(error)); }
+    #[cfg(feature = "native-execution")]
     let guarded = vm.native_guarded_call(program, dispatch.program_id, caller, instruction);
+    #[cfg(not(feature = "native-execution"))]
+    let guarded: Option<Value> = None;
     let pushed = if guarded.is_none() {
         let Some(step) = vm.try_inline_user_call(program, caller, instruction, next) else { return USER_CALL_MISSED };
         Some(step)
