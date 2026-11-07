@@ -272,7 +272,7 @@ impl<H: Host> Vm<H> {
                 let value = self
                     .root_value(imports[name.index as usize])
                     .ok_or_else(|| JsError::wasm_link("invalid Wasm tag import root"))?;
-                let Some(Cell::WasmTag { declarations, ty }) = self.heap.get(value) else {
+                let Some(Cell::WasmTag { declarations, ty, .. }) = self.heap.get(value) else {
                     return Err(JsError::wasm_link("incompatible import type"));
                 };
                 if !declarations.equivalent(
@@ -332,10 +332,8 @@ impl<H: Host> Vm<H> {
         values.extend(std::iter::repeat_n(Value::UNDEFINED, module.elements.len()));
         for (tag, imported) in module.tags.iter().zip(tags) {
             values.push(imported.unwrap_or_else(|| {
-                self.heap.alloc(Cell::WasmTag {
-                    declarations: Box::new(module.signatures.declarations.clone()),
-                    ty: tag.ty,
-                })
+                let object = Box::new(Self::empty_object(self.wasm_js.tag));
+                self.heap.alloc(Cell::WasmTag { object, declarations: module.signatures.declarations.clone(), ty: tag.ty })
             }));
         }
         // Imported function slots end the resource layout; ref.func derives their base.

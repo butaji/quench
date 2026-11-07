@@ -517,8 +517,8 @@ impl<H: Host> Vm<H> {
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
-        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag } = wasm_js;
-        [*module, *instance, *memory, *table, *global, *js_tag].snap(&mut writer)?;
+        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
+        [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
         write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
@@ -611,8 +611,8 @@ impl<H: Host> Vm<H> {
             self.function_values.insert(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
-        let [module, instance, memory, table, global, js_tag] = <[Value; 6]>::unsnap(&mut reader)?;
-        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag };
+        let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
+        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
         self.set_instanceof_has_instance_holder(holder);
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
