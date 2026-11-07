@@ -146,6 +146,18 @@ pub(super) unsafe extern "C" fn general_user_call<H: Host>(vm: u64, residual: u6
     status
 }
 
+/// A guarded linked call's result, which only native builds link (`Vm::native_guarded_call`).
+#[cfg(feature = "native-execution")]
+fn guarded_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, caller: usize,
+    instruction: WideInstruction) -> Option<Value> {
+    vm.native_guarded_call(program, dispatch.program_id, caller, instruction)
+}
+
+#[cfg(not(feature = "native-execution"))]
+fn guarded_call<H: Host>(_: &mut Vm<H>, _: &ResidualProgram, _: &JsStepDispatch, _: usize, _: WideInstruction) -> Option<Value> {
+    None
+}
+
 fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch, pc: usize) -> u64 {
     // A frameless activation's call runs in its frame, which only its exact step makes.
     if vm.frameless.inside(dispatch) { return USER_CALL_MISSED; }
@@ -156,7 +168,7 @@ fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut 
     vm.frames[caller].pc = pc;
     vm.frames[caller].pc_is_resume = false;
     if let Err(error) = vm.check_execution_interrupt() { return stop(dispatch, pc, Err(error)); }
-    let guarded = vm.native_guarded_call(program, dispatch.program_id, caller, instruction);
+    let guarded = guarded_call(vm, program, dispatch, caller, instruction);
     let pushed = if guarded.is_none() {
         let Some(step) = vm.try_inline_user_call(program, caller, instruction, next) else { return USER_CALL_MISSED };
         Some(step)
