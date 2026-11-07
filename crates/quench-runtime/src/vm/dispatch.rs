@@ -75,7 +75,7 @@ impl<H: Host> Vm<H> {
         if i.op() == Op::Call && i.call_window().count == 0 {
             let generator = self.read(f, i.register_c());
             if self.steps_as_generator(generator, callee) {
-                return self.try_in_loop_generator_step(f, pc, callee, generator, i.result_register(), false);
+                return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
             }
         }
         let entry = self.in_loop_call_entry(p, callee)?;
