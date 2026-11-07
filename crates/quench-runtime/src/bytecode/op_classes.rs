@@ -14,6 +14,11 @@ impl Op {
         matches!(self, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
     }
 
+    /// A plain register copy: its result takes register B's value.
+    pub(crate) const fn copies_register(self) -> bool {
+        matches!(self, Op::Move)
+    }
+
     /// A suspension point: an `await`, or a `yield` of a generator.
     pub(crate) const fn suspends(self) -> bool {
         matches!(self, Op::Await | Op::Yield | Op::YieldStar)
