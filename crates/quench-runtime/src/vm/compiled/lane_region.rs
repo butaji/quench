@@ -3344,6 +3344,20 @@ impl Lowering<'_, '_> {
         let operator = instruction.binary_operator();
         let exit = self.guard_exit(state, pc as u32);
         use crate::vm::staged::NumberOperator;
+        // An arithmetic or bitwise operation a previous body left at met operands its Number
+        // view did not take: it completes through the VM's own operation, which leaves only
+        // for what needs guest code, instead of leaving at every such operand.
+        if !returns && self.generic.contains(&pc)
+            && matches!(NumberOperator::from_js_instruction(instruction.op(), operator), Some(NumberOperator::Arithmetic(_) | NumberOperator::Bitwise(_)))
+        {
+            let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+            let operator = self.ins().iconst(types::I64, i64::from(operator));
+            let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.binary_any, &[operator, left, right]);
+            let computed = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut self.builder, computed, exit);
+            self.set_tagged(state, destination, value);
+            return Some(true);
+        }
         match NumberOperator::from_js_instruction(instruction.op(), operator) {
             // The interpreter's own Number arithmetic and bitwise operators, run on the
             // register state (`staged::step`); `None` for a constant no Number.

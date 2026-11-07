@@ -2060,6 +2060,8 @@ pub(super) struct LaneHelpers {
     argument_get: usize,
     /// An environment activation's window locals and closures past its registers
     /// (`dispatch_fast::lane_body_window_load`, `lane_body_window_store`, `lane_body_window_closure`).
+    /// A Binary of any operands the VM computes without guest code (`lane_binary_any`).
+    binary_any: usize,
     window_load: usize,
     window_store: usize,
     window_closure: usize,
@@ -6983,6 +6985,15 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
         || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, layout).is_some())
 }
 
+/// A lane body's `left operator right` where the VM computes it without guest code
+/// (`Vm::number_binary`), its slow path completing the operation instead of leaving:
+/// `Value::DELETED` for any other, which leaves the body at the operation.
+unsafe extern "C" fn lane_binary_any<H: Host>(vm: u64, _residual: u64, operator: u64, left: u64, right: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the operation runs no guest code and allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    vm.number_binary(operator as u32, Value::from_bits(left), Value::from_bits(right)).map_or(Value::DELETED.to_bits(), Value::to_bits)
+}
+
 /// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
 /// for one the lane's own read would not take, which leaves the body at the read.
 unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
@@ -7272,6 +7283,7 @@ impl<H: Host> Vm<H> {
             materialize_pair: lane_materialize_pair::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             arguments_length: super::dispatch_fast::lane_body_arguments_length::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
             argument_get: super::dispatch_fast::lane_body_argument_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            binary_any: lane_binary_any::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
             window_load: super::dispatch_fast::lane_body_window_load::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             window_store: super::dispatch_fast::lane_body_window_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
             window_closure: super::dispatch_fast::lane_body_window_closure::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
