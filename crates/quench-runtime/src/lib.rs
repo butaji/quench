@@ -17,6 +17,8 @@ pub mod units {
     pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
     pub const OCTAL_RADIX: u32 = 8;
+    /// A fraction's scale as a percentage.
+    pub const PERCENT: f64 = 100.0;
     /// The UTF-16 code units of the line terminators text readers split on.
     pub const LINE_FEED: u16 = b'\n' as u16;
     pub const CARRIAGE_RETURN: u16 = b'\r' as u16;
@@ -37,6 +39,7 @@ mod bytecode;
 mod compile;
 mod code_dependencies;
 mod heap;
+mod jit_coverage;
 mod host;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;
