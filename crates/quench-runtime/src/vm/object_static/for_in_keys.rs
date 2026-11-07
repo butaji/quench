@@ -68,7 +68,7 @@ impl<H: Host> Vm<H> {
 
     /// The state's object, snapshot, key at the cursor and cursor; `None` past the last key.
     #[inline(always)]
-    pub(in crate::vm) fn for_in_peek(&self, state: Value) -> Option<(Value, Value, Value, usize)> {
+    fn for_in_peek(&self, state: Value) -> Option<(Value, Value, Value, usize)> {
         let elements = self.heap.array(state)?.elements();
         let cursor = usize::try_from(elements.get(CURSOR)?.as_int()?).ok()?;
         let (object, keys) = (elements[OBJECT], elements[KEYS]);
@@ -78,7 +78,7 @@ impl<H: Host> Vm<H> {
 
     /// Moves the state's cursor past `cursor`.
     #[inline(always)]
-    pub(in crate::vm) fn for_in_advance(&mut self, state: Value, cursor: usize) {
+    fn for_in_advance(&mut self, state: Value, cursor: usize) {
         let next = Value::integer(i32::try_from(cursor + 1).expect("for-in snapshot fits an index"));
         let array = self.heap.array_mut(state).expect("for-in state");
         if !array.replace_in_place(CURSOR, next) {
@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
     /// stores no attributes beside it: then each of its keys is still an own enumerable
     /// property of `object`, as a step asks, without a lookup.
     #[inline(always)]
-    pub(in crate::vm) fn for_in_snapshot_current(&self, object: Value, keys: Value) -> bool {
+    fn for_in_snapshot_current(&self, object: Value, keys: Value) -> bool {
         let Some(listed) = self.for_in_own_keys.as_ref() else { return false };
         self.object_data(object)
             .filter(|data| !data.has_side_descriptors())

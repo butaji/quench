@@ -108,10 +108,7 @@ impl<H: Host> Vm<H> {
             active_constants: &[],
             active_field_entries: std::ptr::null(),
             active_program: ProgramId::MAIN,
-            #[cfg(any(feature = "profile-aggregate", feature = "profile-field-primitives"))]
-            profile: Profile::default(),
-            #[cfg(not(any(feature = "profile-aggregate", feature = "profile-field-primitives")))]
-            profile: Profile,
+            profile: Default::default(),
             shape_slot_memo: Default::default(),
             plain_copy_shapes: Default::default(),
             plain_assign_shapes: Default::default(),
@@ -124,7 +121,7 @@ impl<H: Host> Vm<H> {
             array_iteration_proof: None,
             array_species_proof: None,
             for_in_own_keys: None,
-            json_output: Vec::new(),
+            json_plain: Default::default(),
             species_slot_proof: Default::default(),
             promise_species_proof: Default::default(),
             enumerable_keys: Default::default(),
@@ -144,6 +141,7 @@ impl<H: Host> Vm<H> {
             atom_classes: vec![],
             intrinsic_natives: Vec::new(),
             native_families: Vec::new(),
+            first_chunks: Default::default(),
             dynamic_strings: None,
             typeof_names: [Value::UNDEFINED; super::TYPEOF_NAMES],
             symbol_registry: FxHashMap::default(),
