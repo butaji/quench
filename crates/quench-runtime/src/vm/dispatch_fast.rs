@@ -1044,18 +1044,18 @@ impl LaneView {
         }
     }
 
-    /// A specialized body whose publication a lifecycle edge retired
-    /// (`ProgramStore::retire_dead_native_calls`) warms again: its prologue takes back the
-    /// tier's handler.
+    /// A specialized body whose publication a lifecycle edge (`ProgramStore::retire_dead_native_calls`)
+    /// or a read site's new cache entry (`Vm::field_site_readers`) retired warms again, within
+    /// `LANE_BODY_MAX_RECOMPILES`: its prologue takes back the tier's handler.
     fn settle_retired_body(&self) {
         // SAFETY: as `lane_body`; settling runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized { method, tier_prologue, .. } = body
+        if let LaneBody::Specialized { method, tier_prologue, recompiles, stuck, .. } = body
             && !method.is_published()
         {
             // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
-            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
+            *body = if *recompiles < LANE_BODY_MAX_RECOMPILES { LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck: *stuck } } else { LaneBody::Declined };
         }
     }
 

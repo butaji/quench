@@ -1113,9 +1113,9 @@ impl<H: Host> Vm<H> {
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
     fn note_field_cache_write(&mut self, site: usize) {
-        let limit = self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE;
+        self.programs.retire_field_site_readers(site);
         if let Some(sites) = &mut self.field_cache_writes {
-            if sites.len() < limit {
+            if sites.len() < self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE {
                 sites.push(site as u32);
             } else {
                 self.field_cache_writes = None;

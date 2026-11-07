@@ -27,6 +27,8 @@ use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/packed_ranges.rs"]
 mod packed_ranges;
+#[path = "lane_region/global_reads.rs"]
+mod global_reads;
 use crate::typed_ir::IntRange;
 
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
@@ -333,7 +335,7 @@ struct Lowering<'a, 'f> {
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
-    global_reads: &'a BTreeSet<usize>,
+    global_reads: &'a BTreeMap<usize, Option<Value>>,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts,
@@ -1229,7 +1231,7 @@ pub(super) fn compile(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeSet<usize>,
+    global_reads: &BTreeMap<usize, Option<Value>>,
     vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1258,7 +1260,7 @@ pub(super) fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeSet<usize>,
+    global_reads: &BTreeMap<usize, Option<Value>>,
     vm: VmFacts,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -2530,23 +2532,7 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, coercible, exit);
                 Some(true)
             }
-            Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains(&pc) => {
-                let exit = self.guard_exit(state, pc as u32);
-                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
-                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
-                let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
-                let value = emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site]);
-                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, hit, exit);
-                self.set_tagged(state, instruction.result_register(), value);
-                // A call's receiver is `undefined` for a binding of the global scope.
-                if instruction.op() == Op::LoadNameCall {
-                    let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-                    self.define(state, instruction.register_b(), undefined,
-                        RegisterFact::definition(Type::immediate(Value::UNDEFINED), Representation::Tagged));
-                }
-                Some(true)
-            }
+            Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
@@ -5449,7 +5435,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
             let addresses = (*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize);
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
+                &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
                 Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
@@ -5583,7 +5569,7 @@ mod tests {
                 == Some(super::super::super::operations::NumberArithmetic::Divide)).unwrap().operand_c().register_index().unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(),
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(),
             &[], None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense).expect("inductive native loop");
         let fault_poll = region.fault_poll;
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -5794,7 +5780,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
+            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
@@ -5841,7 +5827,7 @@ mod tests {
         assert_ne!(header, 0);
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None,
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None,
             &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5870,7 +5856,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
+            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
@@ -5928,7 +5914,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5965,7 +5951,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
-                &fields, &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
+                &fields, &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa,
                 Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5992,7 +5978,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeSet::new(),
+        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeMap::new(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -6022,7 +6008,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeSet::new(),
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeMap::new(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -6049,7 +6035,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeSet::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);

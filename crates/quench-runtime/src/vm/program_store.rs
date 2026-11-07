@@ -6,6 +6,7 @@ use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
+mod lane_publication;
 mod snapshot;
 
 #[derive(Default)]
@@ -933,8 +934,8 @@ struct OwnedScript {
 }
 
 pub(crate) struct ProgramStore {
-    /// Weak native-call proofs; guest functions are never rooted by compiled code.
-    native_call_bindings: std::cell::RefCell<Vec<Weak<super::compiled::PublishedLaneMethod>>>,
+    /// The published lane bodies, by the facts that retire them (`lane_publication`).
+    lane_publications: lane_publication::LanePublications,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -992,7 +993,7 @@ pub(crate) struct ProgramStore {
 impl Default for ProgramStore {
     fn default() -> Self {
         Self {
-            native_call_bindings: Default::default(),
+            lane_publications: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
@@ -1037,58 +1038,6 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
-    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod, heap: &mut crate::heap::Heap)
-        -> Option<Rc<super::compiled::PublishedLaneMethod>>
-    {
-        let calls = !method.inlined.is_empty() || !method.direct.is_empty();
-        let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
-        let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
-        for dependency in &published.lease().expect("new publication").slot_dependencies {
-            if !heap.subscribe_slot(*dependency, &code) {
-                published.retire();
-                return None;
-            }
-        }
-        if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
-        Some(published)
-    }
-
-    /// Retires each published body whose code names a callee that died: an inlined one, or a
-    /// direct one, whose body's own retirement retires its direct callers in turn.
-    ///
-    /// # Safety
-    /// Collection has stopped native execution before guest locators can be reused.
-    pub(super) unsafe fn retire_dead_native_calls(&self, live: impl Fn(Value) -> bool) {
-        let mut bindings = self.native_call_bindings.borrow_mut();
-        loop {
-            let before = bindings.len();
-            bindings.retain(|weak| {
-                let Some(code) = weak.upgrade() else { return false; };
-                let Some(method) = code.lease() else { return false; };
-                // Function bindings depend on the owned program definition,
-                // not a particular closure locator. Realm/reset retirement
-                // still uses this inventory for both binding kinds.
-                let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || !callee.method.is_published());
-                if dead {
-                    code.retire();
-                }
-                !dead
-            });
-            if bindings.len() == before { break; }
-        }
-    }
-
-    /// # Safety
-    /// Realm/heap transition excludes execution using the old realm's guest locators.
-    pub(super) unsafe fn retire_native_calls(&self) {
-        for weak in self.native_call_bindings.borrow_mut().drain(..) {
-            if let Some(code) = weak.upgrade() {
-                code.retire();
-            }
-        }
-    }
-
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
