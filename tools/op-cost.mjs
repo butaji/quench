@@ -102,6 +102,31 @@ const OPERATIONS = [
     64 * 6,
     N / 64,
   ],
+  // Built-ins and protocols the JetStream rows spend their library time in (cross-row
+  // callgrind census, 2026-11-07): their cost is the runtime's, not the dispatch loop's.
+  ["spread", "var a = [1, 2, 3, 4, 5, 6, 7, 8];", ["a"], "var b = [...a]; acc = (acc + b[i & 7]) | 0;", 30],
+  ["object-keys", "", [], "acc = (acc + Object.keys({ p: i, q: 1 }).length) | 0;", 40],
+  [
+    "array-map",
+    "var a = [1, 2, 3, 4, 5, 6, 7, 8]; function inc(v) { return v + 1; }",
+    ["a", "inc"],
+    "acc = (acc + a.map(inc)[i & 7]) | 0;",
+    70,
+  ],
+  ["date-new", "", [], "acc = (acc + new Date(i).getTime()) | 0;", 20],
+  ["regexp-test", "var r = /a(b+)c/; var s = 'xxabbbc';", ["r", "s"], "if (r.test(s)) acc = (acc + 1) | 0;", 60],
+  ["string-build", "", [], "acc = (acc + ('k' + (i & 1023)).length) | 0;", 30],
+  ["to-upper", "var s = 'abcdefgh';", ["s"], "acc = (acc + s.toUpperCase().charCodeAt(i & 7)) | 0;", 40],
+  ["string-split", "var s = 'a,b,c,d';", ["s"], "acc = (acc + s.split(',').length) | 0;", 60],
+  [
+    "getter-read",
+    "class F { constructor() { this._d = 3; } get d() { return this._d; } } var o = new F();",
+    ["o"],
+    "acc = (acc + o.d) | 0;",
+    4,
+  ],
+  ["typed-store", "var u = new Uint8Array(256);", ["u"], "u[i & 255] = i; acc = (acc + u[(i + 1) & 255]) | 0;", 5],
+  ["for-in", "var o = { a: 1, b: 2, c: 3 };", ["o"], "for (var k in o) acc = (acc + o[k]) | 0;", 20],
 ];
 
 
