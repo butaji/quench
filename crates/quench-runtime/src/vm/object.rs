@@ -4832,7 +4832,7 @@ impl<H: Host> Vm<H> {
         shape: u32,
         transition: ShapeTransition,
     ) -> u32 {
-        let key = self.transition_cache_key(shape, transition);
+        let key = transition.cache_key();
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();
             let next = if last != NO_LAST_CHILD
