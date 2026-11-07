@@ -46,15 +46,16 @@ pub(super) fn lower_global_read(
 ///
 /// # Safety
 /// `vm`, `residual` and `payload` are the running VM, residual and payload, live and unborrowed for the call.
-pub(super) unsafe extern "C" fn general_global_get<H: Host>(vm: u64, residual: u64, _payload: u64, read: u64) -> u64 {
+pub(super) unsafe extern "C" fn general_global_get<H: Host>(vm: u64, residual: u64, payload: u64, read: u64) -> u64 {
     let (atom, site) = ((read >> u16::BITS) as crate::bytecode::Atom, read as u16);
     // SAFETY: as the caller promises; the probe reads caches and never allocates.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
-    if vm.realm.global_lexical_declarations.contains(&atom) { return Value::DELETED.to_bits(); }
+    let (vm, residual, payload) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    if !payload.names_global || vm.realm.global_lexical_declarations.contains(&atom) { return Value::DELETED.to_bits(); }
     match vm.cached_field_hit(residual, vm.realm.globals, site) {
         super::super::object::FieldCacheProbe::Hit(value) => {
-            // SAFETY: the payload is the running entry's.
-            #[cfg(test)] unsafe { (*(_payload as *mut JsStepDispatch)).global_name_cache_hits += 1; }
+            #[cfg(test)] { payload.global_name_cache_hits += 1; }
             value.to_bits()
         }
         _ => Value::DELETED.to_bits(),
