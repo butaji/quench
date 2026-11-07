@@ -442,7 +442,7 @@ impl<H: Host> Vm<H> {
                 maximum: ty.maximum,
             }),
             element_type: ty.element_type,
-            declarations: Box::new(declarations),
+            declarations,
         }))
     }
 
@@ -709,12 +709,9 @@ impl<H: Host> Vm<H> {
                             None => None,
                         };
                         let descriptor = descriptor.map(|value| self.encode_wasm_value(value));
-                        self.wasm_struct_new(
-                            &module.signatures.declarations,
-                            index,
-                            fields,
-                            descriptor,
-                        )
+                        let field = |_: &Self, index: usize| fields.as_ref().map_or(Value::UNDEFINED, |fields| fields[index]);
+                        let values = fields.as_ref().map(|fields| (fields.len(), &field as &dyn Fn(&Self, usize) -> Value));
+                        self.wasm_struct_new(&module.signatures.declarations, index, values, descriptor)
                         .map(crate::WasmValue::GcRef)
                         .map_err(|error| {
                             let diagnostic =
