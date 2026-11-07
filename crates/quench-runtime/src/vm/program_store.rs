@@ -3784,22 +3784,6 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
     let minimum = TIERS.js_function.promotion_looks
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
-    #[cfg(feature = "gc-tuning")]
-    {
-        // Measurement builds may require more entries before the specialized tier compiles
-        // (`QUENCH_JS_JIT_PROMOTION_SCALE`), to test an admission threshold against a fixture
-        // whose compiled artifacts are never entered.
-        static SCALE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        let scale = *SCALE.get_or_init(|| {
-            std::env::var("QUENCH_JS_JIT_PROMOTION_SCALE")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1)
-        });
-        let minimum = u32::from(minimum).saturating_mul(scale).min(u32::from(u8::MAX));
-        return Some(u32::from(numeric) >= minimum);
-    }
-    #[cfg(not(feature = "gc-tuning"))]
     Some(numeric >= minimum)
 }
 

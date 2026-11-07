@@ -6960,18 +6960,6 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
-    #[cfg(feature = "gc-tuning")]
-    {
-        // Measurement builds may turn the function tiers off under any policy
-        // (`QUENCH_JS_JIT_TIERS=0`), to separate their `--jit` peak from the loop tier's.
-        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let enabled = *ENABLED.get_or_init(|| {
-            std::env::var("QUENCH_JS_JIT_TIERS").map_or(true, |value| value != "0")
-        });
-        if !enabled {
-            return false;
-        }
-    }
     tier_policy::by_policy(policy).js_function_tiers
 }
 
@@ -6983,10 +6971,6 @@ pub(super) fn compile_osr_region(
     policy: crate::MemoryPolicy,
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
-    #[cfg(feature = "gc-tuning")]
-    if loop_tier_region_budget_spent() {
-        return None;
-    }
     let isa = super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
@@ -7020,7 +7004,6 @@ pub(super) fn compile_osr_region(
 }
 
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
-#[cfg(feature = "gc-tuning")]
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
@@ -7037,24 +7020,6 @@ fn process_peak_rss_kib() -> i64 {
     {
         usage.ru_maxrss
     }
-}
-
-/// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
-/// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
-/// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`PolicyTiers::loop_tier`).
-#[cfg(feature = "gc-tuning")]
-fn loop_tier_region_budget_spent() -> bool {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COMPILED: AtomicUsize = AtomicUsize::new(0);
-    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    let limit = *LIMIT.get_or_init(|| {
-        std::env::var("QUENCH_LOOP_TIER_MAX_REGIONS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(usize::MAX)
-    });
-    COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
 /// The directory the `jit-dump` trace channel names: each loop region
@@ -15202,11 +15167,9 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
-                #[cfg(feature = "gc-tuning")]
                 let peak_before = crate::trace::Channel::JitPeak.on()
                     .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
-                #[cfg(feature = "gc-tuning")]
                 if let Some(before) = peak_before {
                     let after = process_peak_rss_kib();
                     eprintln!(
