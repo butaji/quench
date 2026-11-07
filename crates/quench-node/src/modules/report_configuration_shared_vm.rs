@@ -784,7 +784,7 @@ struct Usage {
 /// `ru_maxrss` is in kibibytes.
 const RSS_UNIT_BYTES: f64 = 1024.0;
 pub(crate) const MICROS_PER_SECOND: f64 = 1_000_000.0;
-const PERCENT: f64 = 100.0;
+use quench_runtime::units::PERCENT;
 
 fn rusage(who: libc::c_int) -> Result<Usage, RootedError> {
     // SAFETY: getrusage fills the zeroed rusage it is given.
