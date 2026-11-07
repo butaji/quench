@@ -155,6 +155,43 @@ mod tests {
         assert_eq!(report.failed, 0, "{report:?}");
     }
 
+    /// A loop of loads makes the function's lane view carry its memory: an atomic access
+    /// whose memory binding a register already holds, and a `data.drop` in such a view, each
+    /// once read the wrong slot (a global as the address; the memory as the lane context).
+    #[test]
+    fn atomic_windows_and_drops_run_beside_held_bindings() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("proposals/threads");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("held.wast"),
+            r#"
+(module
+  (memory 1 1 shared)
+  (data $d "abcd")
+  (global $g (mut i32) (i32.const 7))
+  (func (export "rmw") (result i32)
+    (drop (i32.load (i32.const 0)))
+    (drop (global.get $g))
+    (i32.atomic.rmw.add (i32.const 0) (global.get $g)))
+  (func (export "drops") (param i32) (result i32)
+    (local $i i32)
+    (loop $again
+      (data.drop $d)
+      (i32.store (i32.const 8) (i32.add (i32.load (i32.const 8)) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $again (i32.lt_u (local.get $i) (local.get 0))))
+    (i32.load (i32.const 8))))
+(assert_return (invoke "rmw") (i32.const 0))
+(assert_return (invoke "rmw") (i32.const 7))
+(assert_return (invoke "drops" (i32.const 1000)) (i32.const 1000))
+"#,
+        )
+        .expect("write");
+        let report = TestSuite::new(root.path()).run_all();
+        assert_eq!((report.total, report.passed), (4, 4), "{report:?}");
+    }
+
     #[test]
     fn names_and_legacy_are_scored_as_directives() {
         let root = testsuite_root();

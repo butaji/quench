@@ -3,7 +3,7 @@
 # order"): trains the static x86_64 link order and the BOLT profile on the binary being laid
 # out, relinks with the order, and rewrites the relinked binary's block layout with llvm-bolt.
 #
-# usage: tools/bolt-layout.sh [--pgo PROFDATA] [PROFILE]   (default: production)
+# usage: tools/bolt-layout.sh [--pgo PROFDATA] [PROFILE]   (default: release)
 #
 # With --pgo, every build here is the profile-guided build of tools/pgo-build.sh --static
 # (the same flags, the given merged profile), so the order and the BOLT profile are trained on
@@ -42,7 +42,7 @@ if [[ "${1:-}" == "--pgo" ]]; then
     profdata="$(realpath "$2")"
     shift 2
 fi
-profile="${1:-production}"
+profile="${1:-release}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 host="$(rustc -vV | sed -n 's/^host: //p')"
 llvm_bolt="${LLVM_BOLT:-$(command -v llvm-bolt || echo /usr/lib/llvm-20/bin/llvm-bolt)}"

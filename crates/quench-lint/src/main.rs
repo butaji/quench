@@ -1,11 +1,12 @@
 //! Fails when the repository says the same thing twice (`duplicates`) or decides the same case
 //! analysis twice (`decision_trees`), when a function or file outgrows the manifesto's size
 //! laws (`shape`), when a hot path hashes, scans or allocates (`hot_path`), when the engine
-//! tests a guest program's own names (`guest_names`), or when a body spells an unnamed
-//! number (`magic`).
+//! tests a guest program's own names (`guest_names`), when a body spells an unnamed number
+//! (`magic`), or when data is laid out against data-oriented design (`data_layout`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
 
+mod data_layout;
 mod decision_trees;
 mod duplicates;
 mod guest_names;

@@ -699,7 +699,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-            Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
             Cell::Environment { slots, scope, .. } => {
                 slots.len() * size_of::<super::EnvironmentSlot>()
                     + scope.boxed_bytes()

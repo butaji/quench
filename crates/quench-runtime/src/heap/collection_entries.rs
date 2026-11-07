@@ -21,7 +21,9 @@ const MIN_COMPACTED_HOLES: usize = 16;
 const HOLE: Value = Value::DELETED;
 
 mod lazy;
+mod weak;
 pub(crate) use lazy::Entries;
+pub(crate) use weak::{WeakMapEntries, WeakSetEntries};
 
 pub(crate) trait CollectionEntry: Copy {
     fn key(&self) -> Value;
@@ -199,19 +201,19 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             .map(|offset| (slot + offset, self.slots[slot + offset]))
     }
 
-    /// The slot of the entry whose key `same` accepts. `hash` gives SameValueZero-equal keys
-    /// equal hashes; `key_hash` is the probe key's.
+    /// The slot of the entry whose key is `key` or one `same` accepts. `hash` gives
+    /// SameValueZero-equal keys equal hashes; `key_hash` is `key`'s. Identical bits are
+    /// SameValueZero (a NaN included), so `same` runs only for keys spelled differently.
     pub(crate) fn position(
         &self,
+        key: Value,
         key_hash: u64,
         hash: impl Fn(Value) -> u64,
         same: impl Fn(Value) -> bool,
     ) -> Option<usize> {
+        let matches = |candidate: Value| candidate == key || (candidate != HOLE && same(candidate));
         if self.slots.len() <= LINEAR_SCAN_ENTRIES {
-            return self
-                .slots
-                .iter()
-                .position(|entry| entry.key() != HOLE && same(entry.key()));
+            return self.slots.iter().position(|entry| matches(entry.key()));
         }
         let mut index = self.index.borrow_mut();
         let index = index.get_or_insert_with(|| {
@@ -226,7 +228,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         let folded = folded_hash(key_hash);
         index
             .find(table_hash(folded), |entry| {
-                entry.hash == folded && same(self.slots[entry.slot as usize].key())
+                entry.hash == folded && matches(self.slots[entry.slot as usize].key())
             })
             .map(|entry| entry.slot as usize)
     }

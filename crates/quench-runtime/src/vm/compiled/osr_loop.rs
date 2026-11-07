@@ -238,7 +238,7 @@ impl LoopRegion {
     fn tagged_definition(&self, offset: u32) -> bool {
         self.lifetime_roles.as_ref().map_or_else(
             || self.instructions[offset as usize].defined_register()
-                .is_some_and(|register| self.tagged.contains(&register)),
+                .is_some_and(|register| self.tagged.contains(&register) || self.dynamic_arrays.contains(&register)),
             |roles| roles.tagged_definitions.contains(&offset),
         )
     }
@@ -2114,8 +2114,8 @@ fn admit_register_roles(
         .collect();
     // An indexed register the region defines, other than one holding a field's value at
     // every read (`paths`), holds no entry array: each access reads the array it holds then
-    // (`LoopRegion::dynamic_arrays`). Its every definition reads an element or field or
-    // moves one, whose value stays tagged; any other but an exit's, never run natively, is refused.
+    // (`LoopRegion::dynamic_arrays`). Its every definition reads an element, field, capture or
+    // environment local, or moves one, whose value stays tagged; any other but an exit's is refused.
     let mut dynamic_arrays = std::collections::BTreeSet::new();
     for register in instructions
         .iter()
@@ -2132,7 +2132,7 @@ fn admit_register_roles(
             continue;
         }
         if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move))
+            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move | Op::LoadCapture | Op::LoadEnvLocal))
         {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
