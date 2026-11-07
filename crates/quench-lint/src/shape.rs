@@ -23,7 +23,8 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
     if lines > MAX_FILE_LINES {
         measures.insert(format!("file-lines {file}"), lines);
     }
-    let mut functions = Functions { file, scope: Vec::new(), measures, seen: BTreeMap::new() };
+    let hot = crate::hot_path::is_hot(file);
+    let mut functions = Functions { file, scope: Vec::new(), measures, seen: BTreeMap::new(), hot };
     functions.visit_file(syntax);
 }
 
@@ -34,6 +35,8 @@ struct Functions<'a> {
     measures: &'a mut Measures,
     /// How often each qualified name has occurred, to tell same-named functions apart.
     seen: BTreeMap<String, usize>,
+    /// Whether the hot-path cost model applies: a hot module, outside its tests.
+    hot: bool,
 }
 
 impl Functions<'_> {
@@ -54,6 +57,9 @@ impl Functions<'_> {
         if decisions.0 + 1 > MAX_COMPLEXITY {
             self.measures.insert(format!("complexity {subject}"), decisions.0 + 1);
         }
+        if self.hot {
+            crate::hot_path::scan(&subject, body, self.measures);
+        }
         self.visit_block(body);
         self.scope.pop();
     }
@@ -67,7 +73,10 @@ impl Functions<'_> {
 
 impl<'ast> Visit<'ast> for Functions<'_> {
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        let hot = self.hot;
+        self.hot &= !is_test(&item.attrs);
         self.function(&item.sig.ident, item.span(), &item.block);
+        self.hot = hot;
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
@@ -81,7 +90,10 @@ impl<'ast> Visit<'ast> for Functions<'_> {
     }
 
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        let hot = self.hot;
+        self.hot &= !is_test(&item.attrs);
         self.scoped(item.ident.to_string(), |this| syn::visit::visit_item_mod(this, item));
+        self.hot = hot;
     }
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
@@ -92,6 +104,14 @@ impl<'ast> Visit<'ast> for Functions<'_> {
     fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
         self.scoped(item.ident.to_string(), |this| syn::visit::visit_item_trait(this, item));
     }
+}
+
+/// Whether an item exists only for tests (`#[test]`, `#[cfg(test)]`, `#[cfg(all(test, ..))]`).
+fn is_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        let text = attr.to_token_stream().to_string();
+        text == "# [test]" || text.starts_with("# [cfg (test") || text.starts_with("# [cfg (all (test")
+    })
 }
 
 /// Counts a body's decision points; a nested function is its own body.
@@ -129,12 +149,21 @@ pub fn render(measures: &Measures) -> String {
     listing
 }
 
+/// How to bring a new offender within its law.
+fn remedy(subject: &str) -> &'static str {
+    if subject.starts_with("hot-") {
+        "hot paths do O(1) work and allocate nothing: decide earlier, index a flat array, reuse a buffer"
+    } else {
+        "split it along a domain seam"
+    }
+}
+
 /// Prints each departure from the recorded list; returns how many there are.
 pub fn compare(recorded: &Measures, current: &Measures) -> usize {
     let mut departures = 0;
     for (subject, &measure) in current {
         match recorded.get(subject) {
-            None => println!("oversized: {subject} is {measure}; split it along a domain seam"),
+            None => println!("oversized: {subject} is {measure}; {}", remedy(subject)),
             Some(&limit) if measure > limit => println!("oversized: {subject} grew from {limit} to {measure}"),
             Some(_) => continue,
         }
