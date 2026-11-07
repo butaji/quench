@@ -60,6 +60,12 @@ impl JsBigInt {
         }
     }
 
+    /// Whether the digits are all in the value, so dropping it releases nothing.
+    #[inline(always)]
+    pub(crate) fn is_inline(&self) -> bool {
+        !Self::spills(self.len as usize)
+    }
+
     #[inline(always)]
     pub(crate) fn is_zero(&self) -> bool {
         self.len == 0
