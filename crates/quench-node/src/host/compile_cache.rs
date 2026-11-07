@@ -17,8 +17,6 @@
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::path::PathBuf;
 
-/// Names the cache directory; an empty value turns the cache off.
-pub const COMPILE_CACHE_ENV: &str = "QUENCH_COMPILE_CACHE";
 /// The cache's directory under the user's cache home (`XDG_CACHE_HOME`, or `~/.cache`).
 const CACHE_SUBDIRECTORY: &str = "quench/compile";
 /// The cache home under `HOME` when `XDG_CACHE_HOME` is unset.
@@ -39,15 +37,11 @@ pub(crate) struct CompileCache {
 
 impl CompileCache {
     pub(crate) fn from_environment() -> Self {
-        let directory = match std::env::var_os(COMPILE_CACHE_ENV) {
-            Some(directory) if directory.is_empty() => None,
-            Some(directory) => Some(PathBuf::from(directory)),
-            None => std::env::var_os("XDG_CACHE_HOME")
-                .filter(|home| !home.is_empty())
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(DEFAULT_CACHE_HOME)))
-                .map(|home| home.join(CACHE_SUBDIRECTORY)),
-        };
+        let directory = std::env::var_os("XDG_CACHE_HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(DEFAULT_CACHE_HOME)))
+            .map(|home| home.join(CACHE_SUBDIRECTORY));
         let build = build_identity();
         Self { directory: build.and(directory), build: build.unwrap_or_default() }
     }

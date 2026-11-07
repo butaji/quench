@@ -377,7 +377,7 @@ mod tests {
             "bound-fields.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let arithmetic = Rc::new(std::cell::Cell::new(0_u64));
         let mut code = Vec::new();
         let mut operands = Vec::new();
@@ -481,7 +481,7 @@ mod tests {
             "typed-fields.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let regions = lower_regions(&program, 1, &*isa);
         let region = regions
             .iter()
@@ -519,7 +519,7 @@ mod tests {
             "field-copy.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_regions(&program, 1, &*isa).is_empty());
     }
 
@@ -530,7 +530,7 @@ mod tests {
             "field-increment.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let regions = lower_regions(&program, 1, &*isa);
         assert!(!regions.is_empty());
         assert!(regions.iter().all(|region| region.fields.is_empty()));
@@ -542,7 +542,7 @@ mod tests {
             "function subject(o, other, x) { const v=(x+1)*(x-1); const left=o.left; o=other; const right=o.right; const sum=left+right; return sum+v; }",
             "changing-fields.js",
         ).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(
             lower_regions(&program, 1, &*isa)
                 .iter()
@@ -567,7 +567,7 @@ mod tests {
                     .is_some_and(|name| &program.atoms[name as usize] == "region")
             })
             .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let regions = lower_regions(&program, id as u32, &*isa);
         let region = regions
             .iter()

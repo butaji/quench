@@ -571,7 +571,7 @@ pub(super) fn compile_js_numeric_region(
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let native = lower_js_numeric_region(
         program,
         function_id,
@@ -606,7 +606,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
-    let isa = super::jit_backend::target_isa("speed")?;
+    let isa = super::jit_backend::target_isa()?;
     let region = lane_region::lower(program, function_id, &unit,
         LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
@@ -2911,7 +2911,7 @@ pub(super) fn compile_js_general_dispatch(
     function_id: u32,
     unresolved_names_are_global: bool,
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
-    let isa = super::jit_backend::target_isa("speed")
+    let isa = super::jit_backend::target_isa()
         .ok_or("target-isa-unavailable")?;
     let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
         program, function_id, unresolved_names_are_global, &*isa,
@@ -6953,9 +6953,9 @@ pub(super) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
-/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_opt_level`).
+/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
 pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).loop_opt_level.is_some()
+    tier_policy::by_policy(policy).loop_tier
 }
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
@@ -6987,7 +6987,7 @@ pub(super) fn compile_osr_region(
     if loop_tier_region_budget_spent() {
         return None;
     }
-    let isa = super::jit_backend::target_isa(tier_policy::by_policy(policy).loop_opt_level?)?;
+    let isa = super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -7042,7 +7042,7 @@ fn process_peak_rss_kib() -> i64 {
 /// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
 /// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
 /// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`PolicyTiers::loop_opt_level`).
+/// (`PolicyTiers::loop_tier`).
 #[cfg(feature = "gc-tuning")]
 fn loop_tier_region_budget_spent() -> bool {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15743,7 +15743,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = super::jit_backend::target_isa(opt_level)?;
+        let isa = super::jit_backend::target_isa_at(opt_level)?;
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
@@ -16742,7 +16742,7 @@ mod tests {
     #[test]
     fn native_narrow_store_encoding_matches_shared_values() {
         use crate::value::NarrowLayout as N;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I64));
         signature.returns.push(AbiParam::new(types::I64));
@@ -16847,7 +16847,7 @@ mod tests {
     #[test]
     fn native_narrow_decoder_matches_value_bits() {
         use crate::value::NarrowLayout as N;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I32));
         signature.returns.push(AbiParam::new(types::I64));
@@ -16927,7 +16927,7 @@ mod tests {
         const ASR_KIND: u32 = 0b10 << SHIFT_KIND_OFFSET;
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLSH");
         use crate::vm::operations::NumberBitwise;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let width = ty.bits();
             let mask = u64::MAX >> (u64::BITS - width);
@@ -17053,7 +17053,7 @@ mod tests {
         "#;
         let program = crate::Engine::specialize(source, "countdown-dependencies.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "countdown_dependencies").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let coupled = module.functions.into_iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
                 if name == "countdown_dependencies_function_1" => Some(function), _ => None,
@@ -17075,7 +17075,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn private_store_commits_preserve_overlapping_bytes_and_zero_trips() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         let mut function = ir::Function::with_name_signature(UserFuncName::testcase("private_store_commit"), signature);
@@ -17124,7 +17124,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn conditional_xor_masks_preserve_integer_words_and_bit_positions() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word = u64::MAX >> (u64::BITS - ty.bits());
             let sign = 1_u64 << (ty.bits() - 1);
@@ -17193,7 +17193,7 @@ mod tests {
         "#);
         let program = crate::Engine::specialize(&source, "conditional-countdown.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "conditional_countdown").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let function = module.functions.into_iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
                 if name == "conditional_countdown_function_1" => Some(function), _ => None,
@@ -17234,7 +17234,7 @@ mod tests {
         "#;
         let program = crate::Engine::specialize(source, "inline-receiver.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "inline_receiver").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let function = module.functions.into_iter().find_map(|function| match function {
             super::super::native_object::NativeFunction::Definition { name, function }
                 if name == "inline_receiver_function_1" => Some(function), _ => None,
@@ -17330,7 +17330,7 @@ mod tests {
 
     #[test]
     fn masked_integer_conditions_preserve_width_polarity_and_other_uses() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word_mask = u64::MAX >> (u64::BITS - ty.bits());
             let sign_bit = 1_u64 << (ty.bits() - 1);
@@ -17377,7 +17377,7 @@ mod tests {
 
     #[test]
     fn rotated_countdown_preserves_empty_loops_and_early_exit_values() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
           for observe_counter in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
@@ -17713,7 +17713,7 @@ mod tests {
         const STORE_SOURCE_OFFSET: u32 = 42;
         let update_label = ir::ValueLabel::from_u32(UPDATE_LABEL);
         let store_location = ir::SourceLoc::new(STORE_SOURCE_OFFSET);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 5]);
@@ -17822,7 +17822,7 @@ mod tests {
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLCP");
         const FEEDBACK: u64 = 0xD008;
         const UNTOUCHED: u64 = 0x55;
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 5]);
@@ -17933,7 +17933,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
         let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0).into_iter().next().unwrap();
         let native = &region.function;
         let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -18027,7 +18027,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
         let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0).into_iter().next().unwrap();
         assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -18204,7 +18204,7 @@ mod tests {
     #[cfg(feature = "aot")]
     fn linked_optimized_test_program(program: ResidualProgram) -> crate::NativeJsProgram<crate::test_host::TestHost> {
         let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
@@ -18433,7 +18433,7 @@ mod tests {
                     .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, 0);
             assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
             assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
@@ -18544,7 +18544,7 @@ mod tests {
                 else { crate::Engine::specialize(source, "field-values.cjs") }.unwrap();
             let pair = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pair")).unwrap();
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
             let regions = lower_static_typed_regions(&program, pair as u32, &[], &*isa, 0);
             assert!(!regions.is_empty() && FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0,
@@ -18896,7 +18896,7 @@ mod tests {
                 &|function| program.function_get(function as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1);
             assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).is_empty());
             let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default());
@@ -18929,7 +18929,7 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "walk")).unwrap();
             let targets = static_call_targets(&program);
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).is_empty());
             let native = linked_optimized_test_program(program);
             let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
@@ -18987,7 +18987,7 @@ mod tests {
             let (caller, consume) = (named("run"), named("consume"));
             let call = program.function(consume).instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
             let targets = static_call_targets(&program);
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0)
                 .into_iter().next().expect("non-leaf prefix has exact one-frame recovery");
             assert!(!region.function.sized_stack_slots.is_empty(), "callee state must have recovery homes");
@@ -19078,7 +19078,7 @@ mod tests {
                 assert!(unit.frames.iter().any(|frame| frame.parent.is_some()), "exercise nested recovery planning");
 
             }
-            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let isa = super::super::jit_backend::target_isa().unwrap();
             let mut region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, 0).into_iter().next().unwrap();
             let consume = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
@@ -19495,7 +19495,7 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn bound_field_arena_preserves_slot_bounds() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for bound in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 4]);
@@ -19545,7 +19545,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "var before=0,after=0; var receiver={value:0,a:1,b:2}; function write(x){before++;receiver.value=x;after++;} for(let i=0;i<200;i++)write(i); write(0.5);",
             "untyped-native-write.js").unwrap();
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
@@ -19662,7 +19662,7 @@ mod tests {
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
 
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 4]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -20018,7 +20018,7 @@ mod tests {
 
     #[test]
     fn scalar_core_binds_poll_pointer_before_loop_but_keeps_atomic_reads() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
         let mut native = ir::Function::with_name_signature(UserFuncName::testcase("bound_poll"), signature);
         let mut context = FunctionBuilderContext::new();
@@ -20170,7 +20170,7 @@ mod tests {
         -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>)
     {
         let sites = super::super::specialize::instruction_sites(super::super::specialize::Division::Offline, program.function(function_id as usize));
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = None;
         let native = super::super::native_graph::lower_body(&sites, function_id, &*isa, None,
             |builder, site, context, result| {
@@ -20383,7 +20383,7 @@ mod tests {
             for (source, expected) in sources.iter().zip(["pbr", "p"]) {
                 let program = if typescript { crate::Engine::specialize_typescript(source, "bounded.cts") }
                     else { crate::Engine::specialize(source, "bounded.cjs") }.unwrap();
-                let isa = super::super::jit_backend::target_isa("speed").unwrap();
+                let isa = super::super::jit_backend::target_isa().unwrap();
                 let mut owners = Vec::new();
                 let mut entries = Vec::new();
                 for id in 0..program.function_count() {
@@ -21162,7 +21162,7 @@ mod tests {
     #[test]
     #[cfg(all(target_arch = "x86_64", unix))]
     fn native_value_index_offset_preserves_large_indices() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.push(AbiParam::new(types::I64));
@@ -21192,7 +21192,7 @@ mod tests {
     #[test]
     #[cfg(all(target_arch = "x86_64", unix))]
     fn native_checked_signed_multiply_preserves_product_and_overflow() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I16, types::I32, types::I64] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 3]);
@@ -21238,7 +21238,7 @@ mod tests {
     fn native_vector_rotations_preserve_near_matches_and_unaligned_accesses() {
         #[derive(Clone, Copy, Debug)]
         enum Shape { Rotate, DistinctInputs, SignedRight, NonComplementaryShift }
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         // A baseline x86-64 target has no optional SSSE3: it must retain
         // the existing shifts/OR lowering while producing the same values.
         let baseline = cranelift_codegen::isa::lookup(isa.triple().clone())
@@ -21313,7 +21313,7 @@ mod tests {
 
     #[test]
     fn native_alias_regions_preserve_overlapping_untagged_accesses() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         for tagged_load in [false, true] {
             for tagged_store in [false, true] {
                 let mut signature = Signature::new(isa.default_call_conv());
@@ -21357,7 +21357,7 @@ mod tests {
 
     #[test]
     fn native_unsigned_widening_multiply_preserves_lane_products() {
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::jit_backend::target_isa().unwrap();
         // Exhaust both single-input shuffle encodings and all lane selectors,
         // including the unaffected cases, against scalar unsigned products.
         for shuffle in std::iter::once(None).chain(
