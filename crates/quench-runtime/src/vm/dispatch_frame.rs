@@ -2002,13 +2002,13 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) || instruction.op().is_field_store() {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         // A store names its cache site and field, which tell a shared overflow site
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
-                        let store = matches!(instruction.op(), Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField)
+                        let store = instruction.op().is_field_store()
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
                             .or_else(|| {
                                 matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
@@ -2320,22 +2320,13 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
-                Op::SetField | Op::SetFieldStrict => {
+                // `this.x = v` is the same cached write with an authoritative `this`.
+                op if op.is_field_store()
+                    && let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
+                        .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
                         p,
-                        self.read(frame, ins.register_b()),
-                        ins.atom_index(),
-                        self.read(frame, ins.register_a()),
-                        ins.cache_site_index(),
-                    ) {
-                        continue;
-                    }
-                }
-                // `this.x = v` with an authoritative `this` is the same cached write.
-                Op::SetThisField | Op::SetThisFieldStrict if self.frames[frame].fixed_this => {
-                    if self.cached_field_write_hit(
-                        p,
-                        self.frames[frame].this,
+                        receiver,
                         ins.atom_index(),
                         self.read(frame, ins.register_a()),
                         ins.cache_site_index(),
@@ -2629,13 +2620,8 @@ impl<H: Host> Vm<H> {
                     }
                 },
                 Ok(StepResult::Continue) => {}
-                Ok(StepResult::PushFrame {
-                    destination,
-                    call_guard,
-                    completion,
-                }) => {
-                    // A callee of another program became active when its frame was pushed;
-                    // the loop executes that program until the callee returns.
+                Ok(StepResult::PushFrame { destination, call_guard, completion }) => {
+                    // A callee of another program became active; the loop runs it until it returns.
                     let callee_program = self.frames[frame + 1].program;
                     let caller_program = if callee_program == executing_program {
                         None
@@ -2672,6 +2658,8 @@ impl<H: Host> Vm<H> {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                    // An entry is a safepoint: else a due collection waits for a loop, every call a frame.
+                    self.maybe_collect(unsafe { &*executing_residual });
                 }
                 Ok(StepResult::ResumeFrames(recovered)) => {
                     pending_calls.extend(recovered.calls);

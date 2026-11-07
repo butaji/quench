@@ -280,9 +280,9 @@ fn transfer(
                 set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
-                ControlFlowLayout::Fallthrough if matches!(op, Op::Nop | Op::LoadThis | Op::LoadCapture
-                    | Op::GetField | Op::GetIndex | Op::SetField | Op::SetFieldStrict
-                    | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex) => Flow::Next,
+                ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op), (true, _)
+                    | (_, Op::Nop | Op::LoadThis | Op::LoadCapture | Op::GetIndex
+                    | Op::SetIndex)) => Flow::Next,
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }

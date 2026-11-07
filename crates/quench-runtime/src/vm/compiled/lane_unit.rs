@@ -259,7 +259,7 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<S
             let mut definitions = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
                 // A stored or literal-defined data property holding a closure names its body.
-                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::DefineField)
+                if instruction.op().field_store().map_or(instruction.op() == Op::DefineField, |store| store.receiver == crate::bytecode::StoreReceiver::Register)
                     && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
                         observe(&mut methods[instruction.atom_index() as usize], id);
                     }
@@ -343,9 +343,8 @@ const MAX_INLINING_DEPTH: usize = 5;
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
     match instruction.op() {
-        Op::Return => plain,
-        Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
-        | Op::JumpBinaryFalse => plain,
+        Op::Return | Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
+        | Op::JumpBinaryFalse | Op::GetIndex | Op::SetIndex => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
         Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
@@ -356,7 +355,7 @@ fn inlinable(instruction: WideInstruction) -> bool {
             Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
         },
-        Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
+        op if op.is_field_store() => plain,
         // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
         // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
         Op::Unary => plain,
@@ -375,7 +374,8 @@ fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[Wi
     if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
     if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
-        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex | Op::Call => false,
+        Op::SetIndex | Op::Call => false,
+        op if op.is_field_store() => false,
         Op::IncDec => instruction.numeric_local_target().is_none(),
         Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.

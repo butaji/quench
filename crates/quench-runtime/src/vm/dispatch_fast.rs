@@ -28,7 +28,7 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::{
-    FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
+    FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
@@ -1801,11 +1801,11 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
             // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
             // place (`lane_set_field_in_place`) or on the general path, either of which makes
             // the leaf an activation first.
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => {
+            op if op.is_field_store() => {
                 if private(instruction.imm()) {
                     return None;
                 }
-                if matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict) { CONTEXT_LEAF } else { PLAIN_LEAF }
+                if instruction.field_store_register().is_some() { PLAIN_LEAF } else { CONTEXT_LEAF }
             }
             // A global name's first load finds the running function (`lane_load_name_first`),
             // which makes the leaf an activation first; its later loads read the realm alone.
@@ -7391,10 +7391,8 @@ fn lane_set_field_in_place<H: Host>(
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    let strict = match decoded_instruction(body, body.code[pc]).op() {
-        Op::SetFieldStrict | Op::SetThisFieldStrict => true,
-        Op::SetField | Op::SetThisField => false,
-        _ => return Resumed::Exit(exit(ip)),
+    let Some(FieldStore { strict, .. }) = decoded_instruction(body, body.code[pc]).op().field_store() else {
+        return Resumed::Exit(exit(ip));
     };
     let (atom, value, site) = (i.imm(), r.get(i.a), i.c);
     if lane_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)).is_none() {
@@ -12632,7 +12630,6 @@ macro_rules! lane_plain_activation {
         if argc > target.params
             || argc > FIXED_ARGUMENT_COPIES
             || !lane_activation_room(vm, target)
-            || lane_crosses::<H, false>(cx, target)
         {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
@@ -13075,7 +13072,6 @@ script_handler! {
                 || !lane_activation_room(vm, target)
                 || (returns && !lane_returning_call_admitted(cx))
                 || vm.with_scope_entered
-                || lane_crosses::<H, false>(cx, target)
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
@@ -13181,7 +13177,6 @@ script_handler! {
         if ImmediateLayout::argument_count(i.imm()) > target.params
             || (returns && !lane_returning_call_admitted(cx))
             || vm.with_scope_entered
-            || lane_crosses::<H, false>(cx, &target)
             || vm.host.observes_promise_lifecycle()
         {
             return exit(ip);
@@ -16245,18 +16240,19 @@ fn lane_script_target_in<H: Host>(
     // activate callees of the running program alone. Another program's callee, once
     // resolved, is held apart (`cross_call_entry`) for the callers that activate across
     // programs; resolving it again would only find it so.
-    // The cached entry is tested and used in place.
-    let active = vm.active_program;
-    let admits = move |target: &ScriptCallTarget| target.program == active && lane_admits_activation(target);
+    // The cached entry is tested and used in place; `script_call_holds` admitted it for the
+    // active program already.
     if let Some(entry) = vm.script_call_entry(callee) {
         // SAFETY: the entry is read before anything else touches the cache.
         let target = unsafe { &*entry };
-        return admits(target).then_some(target);
+        return lane_admits_activation(target).then_some(target);
     }
     if vm.cross_call_entry(callee).is_some() {
         return None;
     }
-    *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(admits);
+    let active = vm.active_program;
+    *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
+        .filter(|target| target.program == active && lane_admits_activation(target));
     resolved.as_ref()
 }
 
@@ -16944,7 +16940,6 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     if !target.entry.activates()
         || argc > target.params.min(FIXED_ARGUMENT_COPIES)
         || !lane_activation_room(vm, target)
-        || lane_crosses::<H, false>(cx, target)
     {
         return LANE_CALL_MISSED;
     }
@@ -17017,7 +17012,6 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         || argc > target.params
         || argc > FIXED_ARGUMENT_COPIES
         || !lane_activation_room(vm, &target)
-        || lane_crosses::<H, false>(cx, &target)
     {
         return LANE_CALL_MISSED;
     }
@@ -17178,17 +17172,13 @@ fn lane_body_left<H: Host>(
     }
 }
 
-/// Whether activating `target` leaves the running program. Every activation tests it, so an
-/// instantiation whose callers route only same-program targets to it (`MAY_CROSS` false)
-/// still activates a cross-program target exactly, on its cold branch: a routing mistake
-/// costs speed, not the program tables the callee runs with.
+/// Whether activating `target` leaves the running program. A target from
+/// `LaneStack::script_targets` never does: `Vm::script_call_holds` admitted it for the VM's
+/// active program, which is the lane's (`lane_enter_program` sets both), so the fast call
+/// forms take that fact as proven (`MAY_CROSS` false) and only the general activation asks.
 #[inline(always)]
 fn lane_crosses<H: Host, const MAY_CROSS: bool>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
-    let cross = target.program != unsafe { (*cx).program };
-    if !MAY_CROSS && cross {
-        std::hint::cold_path();
-    }
-    cross
+    MAY_CROSS && target.program != unsafe { (*cx).program }
 }
 
 /// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
@@ -17266,8 +17256,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
-    debug_assert!(GENERAL || !lane_crosses::<H, true>(cx, target));
-    let cross = GENERAL && lane_crosses::<H, true>(cx, target);
+    let cross = lane_crosses::<H, GENERAL>(cx, target);
     let activation = Activation {
         function: target.function,
         call: ip,
@@ -17772,8 +17761,8 @@ fn lane_planned_receiver<H: Host>(
 /// activation or frame kept: the activation's registers and the callee's first record, or
 /// the record to continue at when the call takes the general path. Out of line, so the
 /// common activation keeps its code. Without `MAY_CROSS` its callers route the running
-/// program's targets, as every path but a plain call's makes them (`lane_script_target`);
-/// a cross target takes the cold branch of `lane_crosses`.
+/// program's targets, as every path but a plain call's makes them (`lane_script_target`),
+/// so it takes that fact as proven.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
@@ -20026,8 +20015,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
-        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H, false>),
-        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H, false>),
+        op if matches!(op.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
+        op if matches!(op.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::ToPropertyKey => Some(lane_to_property_key::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),

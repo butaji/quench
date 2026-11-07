@@ -3375,11 +3375,10 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        let store_receiver = match instruction.op() {
-            Op::SetField | Op::SetFieldStrict => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
-            Op::SetThisField | Op::SetThisFieldStrict => Some(JsFieldReceiver::FixedThis),
-            _ => None,
-        };
+        let store_receiver = instruction.op().field_store().and_then(|store| match store.receiver {
+            crate::bytecode::StoreReceiver::Register => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
+            crate::bytecode::StoreReceiver::This => Some(JsFieldReceiver::FixedThis),
+        });
         if let Some(receiver) = store_receiver
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -8053,7 +8052,7 @@ impl<H: Host> Vm<H> {
                 }),
                 None => Vec::new(),
             },
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
+            op if op.is_field_store() => vec![(instruction.cache_site_index(), false)],
             _ => Vec::new(),
         }
     }
