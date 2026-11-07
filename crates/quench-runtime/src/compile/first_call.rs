@@ -1,6 +1,6 @@
-//! First-call stubs: a top-level function declaration, or an anonymous function expression a
-//! top-level statement assigns to a property, whose body was parsed lazily and that nothing
-//! at load calls compiles as a stub, which compiles the function's source as a
+//! First-call stubs: a top-level function declaration, or an anonymous function expression
+//! of a top-level statement, whose body was parsed lazily and that nothing at load calls
+//! compiles as a stub, which compiles the function's source as a
 //! program of its own on the function's first call (`Op::CallFirstChunk`). The load then
 //! checks the body's syntax and nothing more, as V8's preparser does.
 //!
@@ -11,6 +11,7 @@
 //! a chunk costs its function's text, not the program's.
 use super::*;
 use program_shape::ParsedProgramShape;
+use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
 
 impl ReplayViews {
@@ -132,49 +133,44 @@ impl ParsedProgramShape<'_> {
         if !replayable || !matches!(self, Self::Eval(..)) || strict || lexical {
             return FxHashSet::default();
         }
-        let mut roots = FxHashSet::default();
+        TopLevelFunctions::of(program)
+    }
+}
+
+/// The anonymous function expressions of a top-level statement's expressions, outside every
+/// function and class: their free names are the root's, all global. Anonymous, a chunk tells
+/// one from a declaration by its text (`specialize_first_call_chunk`).
+struct TopLevelFunctions(FxHashSet<u32>);
+
+impl TopLevelFunctions {
+    /// The starts of `program`'s named function declarations and of the anonymous function
+    /// expressions of its expression statements and variable initializers.
+    fn of(program: &Program<'_>) -> FxHashSet<u32> {
+        let mut roots = Self(FxHashSet::default());
         for statement in &program.body {
-            stub_roots(statement, &mut roots);
-        }
-        roots
-    }
-}
-
-/// The functions of a root's `statement` that may compile as stubs: a declaration, or the
-/// functions an expression assigns to properties.
-fn stub_roots(statement: &Statement<'_>, roots: &mut FxHashSet<u32>) {
-    match statement {
-        Statement::FunctionDeclaration(function) => {
-            roots.insert(function.span.start);
-        }
-        Statement::ExpressionStatement(statement) => member_assigned_functions(&statement.expression, roots),
-        _ => {}
-    }
-}
-
-/// The anonymous function expressions `expression` assigns to properties, `a.b = function () {}`
-/// and chains of them: no binding names them, so a stub of one is the function to every
-/// reader, and its body resolves its free names globally, as the root's.
-fn member_assigned_functions(expression: &Expression<'_>, roots: &mut FxHashSet<u32>) {
-    match expression {
-        Expression::AssignmentExpression(assignment)
-            if assignment.operator == oxc_syntax::operator::AssignmentOperator::Assign
-                && assignment.left.as_member_expression().is_some() =>
-        {
-            match &assignment.right {
-                Expression::FunctionExpression(function) if function.id.is_none() => {
-                    roots.insert(function.span.start);
+            match statement {
+                Statement::FunctionDeclaration(function) if function.id.is_some() => {
+                    roots.0.insert(function.span.start);
                 }
-                right => member_assigned_functions(right, roots),
+                Statement::ExpressionStatement(statement) => roots.visit_expression(&statement.expression),
+                Statement::VariableDeclaration(declaration) => roots.visit_variable_declaration(declaration),
+                _ => {}
             }
         }
-        Expression::SequenceExpression(sequence) => {
-            for expression in &sequence.expressions {
-                member_assigned_functions(expression, roots);
-            }
-        }
-        _ => {}
+        roots.0
     }
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for TopLevelFunctions {
+    fn visit_function(&mut self, function: &oxc_ast::ast::Function<'a>, _: oxc_syntax::scope::ScopeFlags) {
+        if function.is_expression() && function.id.is_none() {
+            self.0.insert(function.span.start);
+        }
+    }
+
+    fn visit_arrow_function_expression(&mut self, _: &oxc_ast::ast::ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {}
 }
 
 /// What a compilation knows of first-call stubs (`Compiler::first_call`).
@@ -209,7 +205,7 @@ impl Compiler<'_> {
             && self.replay_target.is_none()
             && !function.r#async
             && !function.generator
-            && !function.body.as_ref().is_some_and(|body| self.invoked_functions.contains(&body.span.start))
+            && !self.invoked_functions.contains(&function.span.start)
     }
 
     /// `function` compiled as its first-call stub: a function of its name, length,
