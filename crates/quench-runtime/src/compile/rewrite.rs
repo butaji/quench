@@ -362,33 +362,30 @@ impl CodeLiveness {
         Some(Self { transfers, live })
     }
 
-    /// The liveness of the code after `coalesce_distant_producer_moves` coalesced `spans`. A
-    /// span is a block (one entry, falling through, no handler) where nothing between the
-    /// producer and the move touches either register, so only the live sets after the producer
-    /// change: `src` is no longer read there and `dst` holds the value instead, live up to the
-    /// move exactly when it is live after it. The producer's own live set is unchanged.
-    fn coalesced(
-        self,
-        spans: &[CoalescedSpan],
-        changed: &[usize],
+    /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
+    /// block (one entry, falling through, no handler) where nothing between the producer and
+    /// the move touches either register, so only the live sets after the producer change:
+    /// `src` is no longer read there and `dst` holds the value instead, live up to the move
+    /// exactly when it is live after it. The producer's own live set is unchanged.
+    fn coalesce(
+        &mut self,
+        span: &CoalescedSpan,
         function: &BcFunction,
         methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
-    ) -> CodeFacts {
-        let mut live = self.live;
-        for span in spans {
-            for live in &mut live[span.producer + 1..=span.target] {
-                *live = (*live & !span.source) | span.destination_out;
-            }
+    ) {
+        for live in &mut self.live[span.producer + 1..=span.target] {
+            *live = (*live & !span.source) | span.destination_out;
         }
-        let mut transfers = self.transfers;
-        update_transfers(&mut transfers, changed, function, methods, field_sites, superinstructions);
-        debug_assert!(
-            liveness::analyze_transfers(function, &transfers) == live,
-            "coalesced liveness matches the code"
+        update_transfers(
+            &mut self.transfers,
+            &[span.producer, span.target],
+            function,
+            methods,
+            field_sites,
+            superinstructions,
         );
-        CodeFacts::Live(Self { transfers, live })
     }
 
     /// The facts to hand on after the instructions at `changed` were rewritten in place.
@@ -491,8 +488,9 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// a move. Writing `dst` earlier is unobservable when the span between the two is one
 /// handler-free basic block that neither reads nor writes `dst` or `src`, `src` is dead
 /// after the move, and neither register is promoted local storage (which legacy
-/// `f.arguments` reflection reads). Spans coalesced in one pass are disjoint, so each
-/// candidate's liveness facts are unaffected by the others.
+/// `f.arguments` reflection reads). Each coalesced span updates the transfer masks and live
+/// sets it changes before the next move is read (`CodeLiveness::coalesce`), so spans may
+/// nest and chain within one pass.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -508,11 +506,10 @@ fn coalesce_distant_producer_moves(
     {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
-    let CodeLiveness { transfers, live } = &analysis;
     let protected = protected_positions(
         &function.code,
         &function.wide,
@@ -524,9 +521,10 @@ fn coalesce_distant_producer_moves(
         .local_registers
         .iter()
         .fold(0, |mask, entry| mask | register_bit(entry.register));
-    let mut claimed_until = 0;
     let mut changed = Vec::new();
-    let mut spans = Some(Vec::new());
+    // A move of a register onto itself may have kept the register live upstream, so after
+    // one is dropped the live sets are derived anew and no span is coalesced on stale ones.
+    let mut live_exact = true;
     for target in 0..function.code.len() {
         let mov = function.code[target];
         if mov.op() != Op::Move || mov.is_wide() || protected[target] {
@@ -534,54 +532,35 @@ fn coalesce_distant_producer_moves(
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
         let pair = register_bit(source) | register_bit(destination);
-        // A move of a register onto itself changes nothing anything could observe. Its read
-        // may have kept the register live upstream, so the liveness is derived anew.
         if source == destination {
             function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
             changed.push(target);
-            spans = None;
+            live_exact = false;
             continue;
         }
-        if pair.count_ones() != 2
+        if !live_exact
+            || pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(function, live, target, mov.as_wide()) & register_bit(source)
+            || liveness::live_out(function, &analysis.live, target, mov.as_wide()) & register_bit(source)
                 != 0
         {
             continue;
         }
-        // Spans coalesced earlier in this pass end before `claimed_until`, so the
-        // instructions scanned here still have the masks recorded in `transfers`.
-        let Some(producer) = (claimed_until..target).rev().find(|&pc| {
-            let (read, written) = transfers[pc];
-            (read | written) & pair != 0
-        }) else {
+        let Some(producer) = block_producer(function, &protected, &analysis.transfers, target, pair) else {
             continue;
         };
         let instruction = function.code[producer];
-        if instruction.is_wide() {
-            continue;
-        }
-        let span_is_block = (producer + 1..=target).all(|pc| !protected[pc])
-            && (producer..target).all(|pc| {
-                let instruction = fixed_width(function.code[pc], &function.wide);
-                let op = instruction.op();
-                matches!(
-                    op.control_flow_layout(),
-                    crate::bytecode::ControlFlowLayout::Fallthrough
-                        | crate::bytecode::ControlFlowLayout::Call
-                ) && !instruction.returns_from_frame()
-            })
-            && function
+        if instruction.is_wide()
+            || !function
                 .handlers
                 .iter()
-                .all(|handler| handler.end as usize <= producer || handler.start as usize > target);
-        if !span_is_block
+                .all(|handler| handler.end as usize <= producer || handler.start as usize > target)
             || !fuses(instruction.op(), Op::Move, |recipe| {
                 matches!(recipe, Recipe::ProducerMove)
             })
             || instruction.result_register() != source
-            || transfers[producer].1 != register_bit(source)
-            || transfers[producer].0 & pair != 0
+            || analysis.transfers[producer].1 != register_bit(source)
+            || analysis.transfers[producer].0 & pair != 0
         {
             continue;
         }
@@ -589,24 +568,55 @@ fn coalesce_distant_producer_moves(
         retargeted.set_result_register(destination);
         function.code[producer] = retargeted;
         function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
-        claimed_until = target + 1;
         changed.extend([producer, target]);
-        if let Some(spans) = &mut spans {
-            spans.push(CoalescedSpan {
-                producer,
-                target,
-                source: register_bit(source),
-                destination_out: register_bit(destination) & live[target + 1],
-            });
+        let span = CoalescedSpan {
+            producer,
+            target,
+            source: register_bit(source),
+            destination_out: register_bit(destination) & analysis.live[target + 1],
+        };
+        analysis.coalesce(&span, function, methods, field_sites, superinstructions);
+    }
+    if live_exact {
+        debug_assert!(
+            liveness::analyze_transfers(function, &analysis.transfers) == analysis.live,
+            "coalesced liveness matches the code"
+        );
+        *current = Some(CodeFacts::Live(analysis));
+        return !changed.is_empty();
+    }
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+}
+
+/// The producer a `Move` at `target` of a register in `pair` coalesces with: the nearest
+/// instruction before it that reads or writes either register, when everything from it to
+/// the move is one basic block (no instruction after it is a jump target or handler boundary,
+/// and none from it to the move leaves the block).
+fn block_producer(
+    function: &BcFunction,
+    protected: &[bool],
+    transfers: &[(RegisterSet, RegisterSet)],
+    target: usize,
+    pair: RegisterSet,
+) -> Option<usize> {
+    for pc in (0..target).rev() {
+        if protected[pc + 1] {
+            return None;
+        }
+        let instruction = fixed_width(function.code[pc], &function.wide);
+        if !matches!(
+            instruction.op().control_flow_layout(),
+            crate::bytecode::ControlFlowLayout::Fallthrough | crate::bytecode::ControlFlowLayout::Call
+        ) || instruction.returns_from_frame()
+        {
+            return None;
+        }
+        let (read, written) = transfers[pc];
+        if (read | written) & pair != 0 {
+            return Some(pc);
         }
     }
-    match spans {
-        Some(spans) if !changed.is_empty() => {
-            *current = Some(analysis.coalesced(&spans, &changed, function, methods, field_sites, superinstructions));
-            true
-        }
-        _ => hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current),
-    }
+    None
 }
 
 /// A `src = producer; ...; dst = Move src` that `coalesce_distant_producer_moves` turned into
