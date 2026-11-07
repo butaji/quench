@@ -3816,7 +3816,7 @@ pub(crate) enum Cell {
         payload: Box<Vec<Value>>,
     },
     /// A tag retains its original declaration; identity is independent of type equality.
-    WasmTag { declarations: Box<crate::WasmTypes>, ty: u32 },
+    WasmTag { object: Box<Object>, declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
     WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<WasmGcFields> },
     /// The native callable's immutable host operation and structural signature.

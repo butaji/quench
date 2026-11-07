@@ -3,6 +3,10 @@ use quench_runtime::{NativeImageSupport, native_link};
 use std::{collections::BTreeSet, path::Path};
 pub use native_link::NativeLinkAudit;
 
+/// The linker driver arguments `quench-node`'s own binaries link with (`link_layout.rs`):
+/// native images get the same executable kind and trained function order.
+const EXECUTABLE_LINK_ARGS: &[&str] = include!(concat!(env!("OUT_DIR"), "/executable_link_args.rs"));
+
 /// Node's SDK contract over the shared native executable publisher.
 pub struct NativeSupport(native_link::NativeSupport);
 impl NativeSupport {
@@ -10,7 +14,8 @@ impl NativeSupport {
         Self::from_cargo_report_with_support(report, NativeImageSupport::Static)
     }
     pub fn from_cargo_report_with_support(report: &str, support: NativeImageSupport) -> Result<Self, String> {
-        native_link::NativeSupport::from_cargo_report(report, "quench_node", support).map(Self)
+        native_link::NativeSupport::from_cargo_report(report, "quench_node", support)
+            .map(|support| Self(support.with_executable_link_args(EXECUTABLE_LINK_ARGS)))
     }
     pub fn report(&self) -> serde_json::Value {
         let mut report = self.0.report();
