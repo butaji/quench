@@ -7405,6 +7405,25 @@ impl<H: Host> Vm<H> {
         captures: *const crate::heap::EnvironmentSlots,
         lane_context: *mut (),
     ) -> LaneExit {
+        self.run_lane_method_with(method, start, direct_calls, program, residual, registers, receiver, captures, lane_context, false)
+    }
+
+    /// `run_lane_method`; `nested` inside a running body's helper call
+    /// (`run_nested_lane_method`), whose entry's heap bases still stand.
+    #[allow(clippy::too_many_arguments)]
+    fn run_lane_method_with(
+        &mut self,
+        method: &LaneMethod,
+        start: LaneStart,
+        direct_calls: bool,
+        program: ProgramId,
+        residual: &ResidualProgram,
+        registers: *mut Value,
+        receiver: Value,
+        captures: *const crate::heap::EnvironmentSlots,
+        lane_context: *mut (),
+        nested: bool,
+    ) -> LaneExit {
         let frame = lane_frame();
         // A tagged pointer's slots also admit the body's stores (`dispatch_fast::CAPTURE_STORES`).
         let (captures, capture_stores) = super::dispatch_fast::capture_split(captures);
@@ -7432,7 +7451,9 @@ impl<H: Host> Vm<H> {
             .install(&mut *dispatch);
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
             (*dispatch).vm = (self as *mut Self).addr();
-            (*dispatch).refresh_lane_bases(self, program, &mut (*frame).program);
+            if !nested {
+                (*dispatch).refresh_lane_bases(self, program, &mut (*frame).program);
+            }
             // A run starts with no native frames; its direct calls place their callees past
             // the stack's values.
             let (top, end, activations) = self.lane_stack_spare();
@@ -7533,7 +7554,7 @@ impl<H: Host> Vm<H> {
             let dispatch = &(*frame).dispatch;
             (LaneEntry::of(dispatch), (dispatch.native_top, dispatch.native_end))
         };
-        let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
+        let exit = self.run_lane_method_with(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context, true);
         // SAFETY: as above; the callee's run may have grown the scratch window. The caller's
         // free stack is its own again: the callee's run placed its direct callees from where
         // its activation ended, past the caller's, where the caller's next direct call's
