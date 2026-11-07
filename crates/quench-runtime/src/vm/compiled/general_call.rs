@@ -17,9 +17,32 @@ const USER_CALL_COMPLETED: i64 = 0;
 const USER_CALL_STOPPED: i64 = 1;
 const USER_CALL_MISSED: u64 = 2;
 
+/// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture
+/// (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
+/// is native, or `None` where only the exact step applies. A call stays in a fallback
+/// island's batch: native code only resumes past it.
+pub(super) fn lower_shortcut(
+    builder: &mut FunctionBuilder<'_>,
+    (program, function): (&ResidualProgram, &Function),
+    (pc, instruction, next): (usize, WideInstruction, ir::Block),
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> Option<bool> {
+    if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact) {
+        return Some(true);
+    }
+    if lower_call(builder, program, function, (pc, instruction, next), register_offset, (arguments, payload), exact) {
+        return Some(false);
+    }
+    (instruction.op() == Op::SetIndex
+        && super::general_elements::lower_store(builder, (instruction, next), register_offset, (arguments, payload), exact))
+        .then_some(true)
+}
+
 /// Lowers the plain call at `pc` through its shortcuts, the exact step taking any miss;
 /// false where only the exact step applies.
-pub(super) fn lower_call(
+fn lower_call(
     builder: &mut FunctionBuilder<'_>,
     program: &ResidualProgram,
     function: &Function,

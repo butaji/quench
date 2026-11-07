@@ -3200,12 +3200,6 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        if instruction.op() == Op::SetIndex && let Some(next) = next
-            && general_elements::lower_store(&mut builder, (instruction, next), &register_offset, (arguments, payload),
-                &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
-            general_dispatch_native_pcs[pc] = 1;
-            continue;
-        }
         if instruction.op() == Op::GetIndex
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -3281,14 +3275,10 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        if let Some(next) = next && general_capture::lower_capture(&mut builder, (instruction, next), &register_offset, (arguments, payload),
+        if let Some(next) = next && let Some(native) = general_call::lower_shortcut(&mut builder, (program, function),
+            (pc, instruction, next), &register_offset, (arguments, payload),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
-            general_dispatch_native_pcs[pc] = 1;
-            continue;
-        }
-        if let Some(next) = next && general_call::lower_call(&mut builder, program, function, (pc, instruction, next), &register_offset,
-            (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
-            // A call stays in a fallback island's batch: native code only resumes past it.
+            general_dispatch_native_pcs[pc] = u8::from(native);
             continue;
         }
         // A direct array's `length` is its record's; any other receiver reads the field as
