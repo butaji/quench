@@ -2288,6 +2288,31 @@ fn retracing_a_wide_shape_chain_carries_its_lookup_index() {
 }
 
 #[test]
+fn hot_loop_keeps_branch_table_entries_as_jumps() {
+    // A string switch enters its cases through a table of jump records; a `continue` case
+    // makes one a loop's backward jump. The loop tier must not install its site on that
+    // record, whose offset the table reads (babel-minify-wtb under --jit: SIGSEGV).
+    let program = Engine::specialize(
+        "var states = ['a', 'b', 'c', 'd'];\n\
+         function run(n) { var i = 0, total = 0;\n\
+           while (i < n) { switch (states[i++ & 3]) {\n\
+             case 'a': total += 1; continue; case 'b': total += 2; continue;\n\
+             case 'c': continue; case 'd': total += 4; continue; case 'e': return -1; } }\n\
+           return total; }\n\
+         var out = 0; for (var k = 0; k < 2000; k++) out += run(1000);\n\
+         var result = String(out);",
+        "branch-table-loop.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&program, value).unwrap().to_string(), "3500000");
+}
+
+#[test]
 fn proxy_reads_never_take_a_plain_object_read_cache() {
     // A proxy's own object has the shape of `{}`; a read site that cached `{}` must still
     // ask the proxy's handler (postcss-wtb: `new obj.constructor()` built a plain Object).
