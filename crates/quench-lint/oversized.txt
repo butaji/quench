@@ -1501,9 +1501,9 @@ file-lines crates/quench-runtime/src/wasm/control.rs 1087
 file-lines crates/quench-runtime/src/wasm/gc.rs 685
 file-lines crates/quench-runtime/src/wasm/inline.rs 694
 file-lines crates/quench-runtime/src/wasm/memory.rs 835
-file-lines crates/quench-runtime/src/wasm/scalar.rs 786
+file-lines crates/quench-runtime/src/wasm/scalar.rs 777
 file-lines crates/quench-runtime/src/wasm/simd.rs 935
-file-lines crates/quench-runtime/src/wasm/types.rs 507
+file-lines crates/quench-runtime/src/wasm/types.rs 506
 file-lines crates/quench-test262/src/bin/compare-runs.rs 525
 file-lines crates/quench-test262/src/bin/run-all.rs 977
 file-lines crates/quench-test262/src/bin/run-stages.rs 567
@@ -4101,7 +4101,7 @@ function-lines crates/quench-runtime/src/wasm/integer.rs::super::Lowering<'_>::w
 function-lines crates/quench-runtime/src/wasm/memory.rs::super::Lowering<'_>::bulk_memory_operator 56
 function-lines crates/quench-runtime/src/wasm/memory.rs::super::Lowering<'_>::memory_operator 115
 function-lines crates/quench-runtime/src/wasm/reference.rs::Lowering<'_>::reference_operator 142
-function-lines crates/quench-runtime/src/wasm/scalar.rs::WasmSignatures::intern 64
+function-lines crates/quench-runtime/src/wasm/scalar.rs::WasmSignatures::intern 50
 function-lines crates/quench-runtime/src/wasm/scalar.rs::signature_pool_tests::accepts_uses_pool_identity_only_as_a_sufficient_fast_path 41
 function-lines crates/quench-runtime/src/wasm/scalar.rs::signature_pool_tests::equal_function_facts_share_one_signature_and_unused_types_do_not_become_functions 111
 function-lines crates/quench-runtime/src/wasm/simd.rs::BitKernel::apply 47
