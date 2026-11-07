@@ -64,6 +64,9 @@ pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
+mod program_shape;
+pub(crate) use program_shape::EvalContext;
+use program_shape::ParsedProgramShape;
 mod object_registers;
 pub(crate) mod regexp;
 pub(crate) mod program_profile;
@@ -302,25 +305,6 @@ impl DynamicFunctionKind {
     pub(crate) fn source(self, parameters: &str, body: &str) -> String {
         format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}", self.source_prefix())
     }
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct EvalContext {
-    pub in_function: bool,
-    pub home_atom: Option<Atom>,
-    pub super_calls: bool,
-    pub class_initializer: bool,
-}
-
-#[derive(Clone, Copy)]
-enum ParsedProgramShape {
-    Any,
-    /// A script whose functions keep their records: a host script whose program keeps only
-    /// part of its compiled text (a static body), from which they cannot compile again, or an
-    /// application's entry, whose own functions mostly run.
-    KeptRecords,
-    DynamicFunction { parameter_list_end: usize },
-    Eval(EvalContext, Option<Span>),
 }
 
 pub(crate) struct EvalRegExpLiteral {
@@ -1089,7 +1073,7 @@ impl Engine {
         // not compile with them compiles eagerly, which reports its own diagnostics.
         // TypeScript admission currently validates runtime-changing syntax over the
         // complete AST, including declarations inside functions, before execution.
-        if matches!(expected_shape, ParsedProgramShape::Any)
+        if expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)
             && !source_type.is_typescript()
             && lazy_bodies::enabled()
             && let Ok(program) = compile(true)
@@ -1350,10 +1334,10 @@ impl Engine {
             compiler.free_names = free_names;
         }
         compiler.source_type = source_type;
-        // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
-        // parsing, that their source text alone does not give back. A released function
-        // compiles again from its replay on first call (`ResidualProgram::function`).
-        compiler.replayable_source = matches!(expected_shape, ParsedProgramShape::Any);
+        // Eval code in its caller's context and dynamic functions compile from a wrapper, or a
+        // tree changed after parsing, that their text alone does not give back. A released
+        // function compiles again from its replay on first call (`ResidualProgram::function`).
+        compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;

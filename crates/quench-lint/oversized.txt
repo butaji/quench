@@ -1369,7 +1369,7 @@ file-lines crates/quench-runtime/src/bytecode/binary.rs 1798
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1538
-file-lines crates/quench-runtime/src/compile.rs 4442
+file-lines crates/quench-runtime/src/compile.rs 4426
 file-lines crates/quench-runtime/src/compile/ast.rs 1310
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
