@@ -151,32 +151,16 @@ impl<H: Host> Vm<H> {
         self.atom_string_kept(atom, keep)
     }
 
-    /// `atom`'s string, kept for the next request when `keep` holds. Program atoms are kept
-    /// always; a dynamic atom is kept only where its kind bounds how many there can be, as a
-    /// function's name is.
+    /// `atom`'s string: the one the heap records as spelling it (`Heap::atom_string`), or a
+    /// new one registered there. A kept string is a root; program atoms are kept always, a
+    /// dynamic atom only where its kind bounds how many there can be, as a function's name
+    /// is. Any other atom's string lives as long as something else holds it.
     fn atom_string_kept(&mut self, atom: Atom, keep: bool) -> Value {
-        if keep {
-            if let Some(&value) = self.atom_strings.get(&atom) {
-                return value;
-            }
-            let value = self.heap.alloc_string(self.atom_value(atom));
-            self.atom_strings.insert(atom, value);
+        if let Some(value) = self.heap.atom_string(atom, keep) {
             return value;
-        }
-        if let Some(&value) = self.atom_strings.get(&atom) {
-            return value;
-        }
-        let slot = atom as usize & (super::ATOM_STRING_CACHE_SIZE - 1);
-        if let Some(recent) = &self.recent_atom_strings
-            && recent[slot].0 == atom
-        {
-            return recent[slot].1;
         }
         let value = self.heap.alloc_string(self.atom_value(atom));
-        self.recent_atom_strings
-            .get_or_insert_with(|| {
-                Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
-            })[slot] = (atom, value);
+        self.heap.register_string_atom(value, atom, keep);
         value
     }
 

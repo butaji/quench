@@ -1066,11 +1066,11 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         }
         out.source_positions(&function.source_positions);
         let plain = match function.plain_locals.get() {
-            Some(plain) => plain.to_vec(),
-            None => function.plain_local_slots(superinstructions),
+            Some(words) => words.to_vec(),
+            None => function.plain_local_slots(superinstructions).words().to_vec(),
         };
-        for byte in plain.chunks(u8::BITS as usize) {
-            out.u8(byte.iter().enumerate().fold(0, |bits, (bit, &plain)| bits | (u8::from(plain) << bit)));
+        for byte in 0..usize::from(function.locals).div_ceil(u8::BITS as usize) {
+            out.u8((plain[byte / 8] >> (byte % 8 * 8)) as u8);
         }
         out.u32(derived_facts);
 }
@@ -1316,14 +1316,15 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let plain_locals: crate::heap::ThinBoxSlice<bool> = {
-            let mut plain = Vec::with_capacity(usize::from(locals));
-            for _ in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
+        let plain_locals: crate::heap::ThinBoxSlice<u64> = {
+            let mut plain = crate::bitset::BitSet::new(usize::from(locals));
+            for byte in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
                 let bits = input.u8()?;
-                plain.extend((0..u8::BITS).map(|bit| bits & (1 << bit) != 0));
+                for bit in (0..8).filter(|bit| bits & (1 << bit) != 0) {
+                    plain.checked_insert(byte * 8 + bit);
+                }
             }
-            plain.truncate(usize::from(locals));
-            plain.into()
+            plain.words().to_vec().into()
         };
         let derived_facts = input.u32()?;
         let function = Function {

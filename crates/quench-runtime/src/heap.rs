@@ -22,6 +22,7 @@ pub(crate) use dependencies::{
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
+mod weak_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
@@ -44,6 +45,7 @@ mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, number_key_hash};
+pub(crate) use weak_entries::{WeakMapEntries, WeakSetEntries};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
@@ -4598,7 +4600,7 @@ impl Heap {
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-                Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+                Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
                 Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::Environment { slots, scope, .. } => {
                     let with_objects = scope.with_objects();

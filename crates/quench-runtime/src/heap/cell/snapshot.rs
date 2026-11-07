@@ -605,8 +605,8 @@ impl Cell {
             Self::WeakMap { object, entries } => {
                 writer.u8(tag::WEAK_MAP);
                 write_object(writer, object)?;
-                writer.len(entries.ordered.len());
-                for (key, value) in &entries.ordered {
+                writer.len(entries.len());
+                for (key, value) in entries.iter() {
                     writer.value(*key);
                     writer.value(*value);
                 }
@@ -614,7 +614,7 @@ impl Cell {
             Self::WeakSet { object, entries } => {
                 writer.u8(tag::WEAK_SET);
                 write_object(writer, object)?;
-                writer.values(entries);
+                writer.values(&entries.to_vec());
             }
             Self::WeakRef { object, target } => {
                 writer.u8(tag::WEAK_REF);
@@ -799,10 +799,12 @@ impl Cell {
             tag::WEAK_MAP => {
                 let object = boxed_object(reader)?;
                 let ordered = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let indices = ordered.iter().enumerate().map(|(index, (key, _))| (*key, index)).collect();
-                Self::WeakMap { object, entries: Box::new(WeakMapEntries { ordered, indices }) }
+                Self::WeakMap { object, entries: Box::new(WeakMapEntries::from_entries(ordered)) }
             }
-            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(reader.values()?) },
+            tag::WEAK_SET => Self::WeakSet {
+                object: boxed_object(reader)?,
+                entries: Box::new(WeakSetEntries::from_entries(reader.values()?)),
+            },
             tag::WEAK_REF => Self::WeakRef {
                 object: boxed_object(reader)?,
                 target: reader.option_value()?.map(|value| WeakHandle { value }),

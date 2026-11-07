@@ -1070,10 +1070,8 @@ impl<H: Host> Vm<H> {
             | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),
             Native::WeakMapGet => {
                 self.validate_weak_map_receiver(p, this)?;
+                // A value that cannot be held weakly was never added: identity alone decides.
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !self.is_weak_key_value(key) {
-                    return Ok(Value::UNDEFINED);
-                }
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
@@ -1086,38 +1084,26 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
-                entries.insert(key, value);
+                entries.insert((key, value));
                 Ok(this)
             }
             Native::WeakMapHas => {
                 self.validate_weak_map_receiver(p, this)?;
+                // A value that cannot be held weakly was never added: identity alone decides.
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !self.is_weak_key_value(key) {
-                    return Ok(Value::FALSE);
-                }
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
-                Ok(if entries.get(key).is_some() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                Ok(Value::boolean(entries.contains(key)))
             }
             Native::WeakMapDelete => {
                 self.validate_weak_map_receiver(p, this)?;
+                // A value that cannot be held weakly was never added: identity alone decides.
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !self.is_weak_key_value(key) {
-                    return Ok(Value::FALSE);
-                }
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
-                Ok(if entries.remove(key) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                Ok(Value::boolean(entries.remove(key)))
             }
             Native::WeakMapGetOrInsert => {
                 self.validate_weak_map_receiver(p, this)?;
@@ -1134,7 +1120,7 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "WeakMap method called on incompatible receiver".into())
                     );
                 };
-                entries.insert(key, value);
+                entries.insert((key, value));
                 Ok(value)
             }
             Native::WeakMapGetOrInsertComputed => {
@@ -1156,51 +1142,30 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "WeakMap method called on incompatible receiver".into())
                     );
                 };
-                entries.insert(key, value);
+                entries.insert((key, value));
                 Ok(value)
             }
             Native::WeakSetAdd => {
                 self.validate_weak_set_receiver(p, this)?;
                 let value = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let exists = self.weak_set_entry_index(this, value).is_some();
-                let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(
-                        self.type_error(p, "WeakSet method called on incompatible receiver".into())
-                    );
-                };
-                if !exists {
-                    entries.push(value);
+                if let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) {
+                    entries.insert(value);
                 }
                 Ok(this)
             }
             Native::WeakSetHas => {
                 self.validate_weak_set_receiver(p, this)?;
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !self.is_weak_key_value(value) {
-                    return Ok(Value::FALSE);
-                }
-                Ok(if self.weak_set_entry_index(this, value).is_some() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                Ok(Value::boolean(self.weak_set_has(this, value)))
             }
             Native::WeakSetDelete => {
                 self.validate_weak_set_receiver(p, this)?;
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !self.is_weak_key_value(value) {
-                    return Ok(Value::FALSE);
-                }
-                let Some(index) = self.weak_set_entry_index(this, value) else {
-                    return Ok(Value::FALSE);
+                let removed = match self.heap.get_mut(this) {
+                    Some(Cell::WeakSet { entries, .. }) => entries.remove(value),
+                    _ => false,
                 };
-                let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(
-                        self.type_error(p, "WeakSet method called on incompatible receiver".into())
-                    );
-                };
-                entries.remove(index);
-                Ok(Value::TRUE)
+                Ok(Value::boolean(removed))
             }
             Native::WeakRefDeref => {
                 let Some(Cell::WeakRef { target, .. }) = self.heap.get(this) else {
@@ -1291,30 +1256,21 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
-        let boolean = |found: bool| if found { Value::TRUE } else { Value::FALSE };
         match (native, self.heap.get(receiver)?) {
             (Native::MapGet, Cell::Map { entries, .. }) => Some(
                 self.map_entry_index(receiver, key)
                     .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
             ),
             (Native::MapHas, Cell::Map { .. }) => {
-                Some(boolean(self.map_entry_index(receiver, key).is_some()))
+                Some(Value::boolean(self.map_entry_index(receiver, key).is_some()))
             }
             (Native::SetHas, Cell::Set { .. }) => {
-                Some(boolean(self.set_entry_index(receiver, key).is_some()))
+                Some(Value::boolean(self.set_entry_index(receiver, key).is_some()))
             }
             // A value that cannot be held weakly is never a key.
-            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(if self.is_weak_key_value(key) {
-                entries.get(key).unwrap_or(Value::UNDEFINED)
-            } else {
-                Value::UNDEFINED
-            }),
-            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => {
-                Some(boolean(self.is_weak_key_value(key) && entries.get(key).is_some()))
-            }
-            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(boolean(
-                self.is_weak_key_value(key) && self.weak_set_entry_index(receiver, key).is_some(),
-            )),
+            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
+            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
+            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(Value::boolean(self.weak_set_has(receiver, key))),
             _ => None,
         }
     }
@@ -1502,13 +1458,10 @@ impl<H: Host> Vm<H> {
             Err(self.type_error(p, "weak collection keys must be objects".into()))
         }
     }
-    fn weak_set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
-        let Some(Cell::WeakSet { entries, .. }) = self.heap.get(set) else {
-            return None;
-        };
-        entries
-            .iter()
-            .position(|candidate| self.same_value_zero(*candidate, value))
+    /// Whether the WeakSet `set` holds `value`. A value that cannot be held weakly was never
+    /// added, so identity alone decides.
+    fn weak_set_has(&self, set: Value, value: Value) -> bool {
+        matches!(self.heap.get(set), Some(Cell::WeakSet { entries, .. }) if entries.contains(value))
     }
 }
 

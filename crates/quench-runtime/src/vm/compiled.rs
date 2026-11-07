@@ -446,7 +446,7 @@ fn js_numeric_control_flow(function: &Function) -> Option<numeric_flow::Bits> {
     let length = function.code.len();
     if length == 0 { return None; }
     let mut reachable = numeric_flow::Bits::new(length);
-    reachable.insert(0)?;
+    reachable.checked_insert(0)?;
     let mut has_branch = false;
     let mut has_local_state = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
@@ -465,7 +465,7 @@ fn js_numeric_control_flow(function: &Function) -> Option<numeric_flow::Bits> {
             JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore);
         let mut valid = true;
         crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
-            if successor <= pc || reachable.insert(successor).is_none() { valid = false; }
+            if successor <= pc || reachable.checked_insert(successor).is_none() { valid = false; }
         });
         if !valid { return None; }
     }
@@ -673,7 +673,7 @@ pub(super) fn lower_js_numeric_region(
             .ins()
             .load(types::F64, MemFlagsData::trusted(), arguments, offset);
         body.write(index as u16, crate::WasmType::F64, value);
-        registers.insert(index)?;
+        registers.checked_insert(index)?;
     }
     let mut incoming = numeric_flow::Incoming::new(function.code.len(), &registers)?;
     body.builder.ins().jump(blocks[0]?, &[]);
@@ -833,7 +833,7 @@ pub(super) fn lower_js_numeric_region(
                 *locals.get_mut(instruction.local_slot())? = Some(value);
                 if let Some(register) = instruction.optional_register_b() {
                     body.write(register, crate::WasmType::F64, value);
-                    registers.insert(usize::from(register))?;
+                    registers.checked_insert(usize::from(register))?;
                 }
                 None
             }
@@ -983,7 +983,7 @@ pub(super) fn lower_js_numeric_region(
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
             body.write(destination as u16, crate::WasmType::F64, value);
-            registers.insert(destination)?;
+            registers.checked_insert(destination)?;
         }
         if !terminal {
             if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough {
@@ -2718,7 +2718,7 @@ pub(super) struct OnlineFacts<'a> {
 impl OnlineFacts<'_> {
     /// Whether a method cache names `atom` now.
     pub(super) fn names(&self, atom: Atom) -> bool {
-        self.method_cache_atoms.contains(atom)
+        self.method_cache_atoms.contains(atom as usize)
     }
 }
 

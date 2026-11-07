@@ -1274,13 +1274,6 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     push: InLoopPush::Body,
 };
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
-/// Slots of `Vm::string_atoms`, a power of two.
-const STRING_ATOM_CACHE_SIZE: usize = 256;
-/// Slots of `Vm::recent_atom_strings`, a power of two: as many as `string_atoms` keeps the
-/// other way.
-const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
-/// An empty `Vm::recent_atom_strings` slot: no atom has this id.
-const NO_RECENT_ATOM: Atom = Atom::MAX;
 /// The code units below which a unit is ASCII.
 #[derive(Clone, Copy)]
 struct StringConcatCache {
@@ -1979,10 +1972,6 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: builtins::NativeTable,
-    /// One shared string value per program atom a function name spells (`atom_string`):
-    /// strings are immutable, so every closure of a plan can hold the same name value.
-    /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
-    atom_strings: FxHashMap<Atom, Value>,
     // Boxed: frames move between this stack, `frame_pool` and suspended generators by pointer.
     #[allow(clippy::vec_box)]
     frames: Vec<Box<Frame>>,
@@ -2134,14 +2123,6 @@ pub(crate) struct Vm<H> {
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
-    /// String values recently interned as property keys, and their atoms
-    /// (`Vm::string_key_atom`); collection empties it.
-    string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
-    /// The strings `Vm::atom_string` recently made for atoms whose strings it does not keep
-    /// (`atom_strings`), by atom, direct-mapped; collection empties it, as `string_atoms`.
-    /// A program compiled at run time spells its property names with such atoms, and
-    /// `Object.keys` of its objects had made each key's string again on every call.
-    recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
     /// The slots of a bound function's target, receiver and arguments in the shape its
     /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
@@ -3143,7 +3124,7 @@ impl<H: Host> Vm<H> {
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
-        self.atom_strings.clear();
+        self.heap.clear_string_atoms();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -3162,8 +3143,6 @@ impl<H: Host> Vm<H> {
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
-        self.string_atoms = None;
-        self.recent_atom_strings = None;
         self.clear_call_targets();
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();

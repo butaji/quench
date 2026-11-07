@@ -3,6 +3,8 @@
 //! with its dead zone closed, on every path and every handler edge, observes no TDZ and can
 //! be read and written as a plain frame local.
 
+use crate::bitset::BitSet;
+
 use super::{
     ControlEdge, FieldLayout, Function, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Superinstruction, WideInstruction,
@@ -21,34 +23,6 @@ enum Access {
     Opaque,
 }
 
-/// Dense candidate bitsets, one row per program point.
-struct Rows {
-    words: usize,
-    bits: Vec<u64>,
-}
-
-impl Rows {
-    fn new(points: usize, words: usize) -> Self {
-        Self { words, bits: vec![0; points * words] }
-    }
-
-    fn row(&self, point: usize) -> &[u64] {
-        &self.bits[point * self.words..(point + 1) * self.words]
-    }
-
-    /// Joins `state` into `point`'s row; true when the row grew.
-    fn join(&mut self, point: usize, state: &[u64]) -> bool {
-        let row = &mut self.bits[point * self.words..(point + 1) * self.words];
-        let mut grew = false;
-        for (word, incoming) in row.iter_mut().zip(state) {
-            let next = *word | incoming;
-            grew |= next != *word;
-            *word = next;
-        }
-        grew
-    }
-}
-
 /// Of `candidates`, the slots that no read can reach while maybe-uninitialized. Function
 /// entry leaves a slot initialized unless `uninitialized_at_entry` names it, as for a
 /// register that replaces a slot and starts with whatever its pooled frame held; after that
@@ -56,16 +30,15 @@ impl Rows {
 pub(crate) fn initialized_before_reads(
     function: &Function,
     superinstructions: &[Superinstruction],
-    candidates: &[bool],
-    uninitialized_at_entry: &[bool],
-) -> Vec<bool> {
-    let mut proven = candidates.to_vec();
+    candidates: &BitSet,
+    uninitialized_at_entry: &BitSet,
+) -> BitSet {
+    let mut proven = candidates.clone();
     let dense: Vec<Option<usize>> = {
         let mut next = 0;
-        candidates
-            .iter()
-            .map(|&candidate| {
-                candidate.then(|| {
+        (0..candidates.len())
+            .map(|slot| {
+                candidates.contains(slot).then(|| {
                     next += 1;
                     next - 1
                 })
@@ -81,11 +54,11 @@ pub(crate) fn initialized_before_reads(
     let blocks = BasicBlocks::of(function, &decoded);
     // States are kept per basic block, not per instruction: a row per instruction grows with
     // code length times candidates (lucide-react's 1.2 MB bundle: tens of MiB, TOD-140).
-    let mut maybe_uninitialized = Rows::new(blocks.count, words);
+    let mut maybe_uninitialized = crate::bitset::BitRows::new(blocks.count, count);
     let mut entry = vec![0; words];
     for (slot, index) in dense.iter().enumerate() {
         if let Some(index) = index
-            && uninitialized_at_entry.get(slot) == Some(&true)
+            && uninitialized_at_entry.contains(slot)
         {
             entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
         }
@@ -109,9 +82,9 @@ pub(crate) fn initialized_before_reads(
                     match access {
                         Access::Uninitialize => state[word] |= bit,
                         Access::Initialize => state[word] &= !bit,
-                        Access::Read if state[word] & bit != 0 => proven[slot] = false,
+                        Access::Read if state[word] & bit != 0 => proven.remove(slot),
                         Access::Read => {}
-                        Access::Opaque => proven[slot] = false,
+                        Access::Opaque => proven.remove(slot),
                     }
                     abrupt[word] |= state[word];
                 };
@@ -174,8 +147,8 @@ struct BasicBlocks {
 impl BasicBlocks {
     fn of(function: &Function, decoded: &[WideInstruction]) -> Self {
         let end = decoded.len();
-        let mut leader = vec![false; end + 1];
-        leader[0] = true;
+        let mut leader = BitSet::new(end + 1);
+        leader.insert(0);
         for (pc, &instruction) in decoded.iter().enumerate() {
             let mut only_falls_through = true;
             let mut falls_through = false;
@@ -184,18 +157,16 @@ impl BasicBlocks {
                     falls_through = true;
                 } else {
                     only_falls_through = false;
-                    if let Some(leader) = leader.get_mut(successor) {
-                        *leader = true;
-                    }
+                    leader.checked_insert(successor);
                 }
             });
             if !(only_falls_through && falls_through) {
-                leader[pc + 1] = true;
+                leader.insert(pc + 1);
             }
         }
         let mut starts = Vec::new();
         let mut block_at = vec![None; end + 1];
-        for (pc, _) in leader.iter().enumerate().filter(|(_, leader)| **leader) {
+        for pc in leader.iter() {
             block_at[pc] = Some(starts.len() as u32);
             starts.push(pc);
         }
@@ -216,7 +187,7 @@ impl BasicBlocks {
 }
 
 /// The local slots `instruction` touches, in execution order.
-fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut access: impl FnMut(usize, Access)) {
+fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut access: impl FnMut(usize, Access)) {
     for &field in InstructionField::ALL {
         if matches!(
             instruction.op().field_layout(field),
@@ -240,7 +211,7 @@ fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut a
             // For a slot uninitialized at entry the question is only whether a value was
             // written: a plain slot's assigning store never meets a dead zone
             // (`plain_local_slots`).
-            Op::StoreLocalPlain if uninitialized_at_entry.get(slot) == Some(&true) => {
+            Op::StoreLocalPlain if uninitialized_at_entry.contains(slot) => {
                 access(slot, Access::Initialize)
             }
             Op::StoreLocal | Op::StoreLocalPlain => access(

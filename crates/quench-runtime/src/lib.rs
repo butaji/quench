@@ -32,6 +32,7 @@ pub use execution_interrupt::ExecutionInterrupt;
 #[cfg(unix)]
 pub use vm::NativeFaultHandler;
 mod bigint;
+mod bitset;
 mod bytecode;
 mod compile;
 mod code_dependencies;

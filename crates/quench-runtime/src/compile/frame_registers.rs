@@ -66,13 +66,13 @@ pub(super) fn drop_unread_self_binding<'a>(
 /// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
     function: &mut Function,
-    mut eligible: Vec<bool>,
+    mut eligible: crate::bitset::BitSet,
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
     // A by-name read inside `with` resolves a local through its frame slot.
-    if !eligible.contains(&true)
+    if eligible.is_empty()
         || function.contains_with_statement(|atom| atom_name(atom) == Some(WITH_ENTER_BINDING))
     {
         return;
@@ -81,7 +81,7 @@ pub(super) fn promote<'a>(
     // `arguments` (`Function::reflects_live_parameters`), which keep their slot.
     for (slot, atom) in function.local_atoms.iter().enumerate() {
         if atom_name(*atom as usize) == Some(ARGUMENTS_NAME) {
-            eligible[slot] = false;
+            eligible.remove(slot);
         }
     }
     // Parameters arrive in their slots, and these slots are named outside the code: the
@@ -90,7 +90,7 @@ pub(super) fn promote<'a>(
     // unobservable clones, leaving their plans unreferenced). A handler's thrown value
     // follows its slot into a register (`ThrownValueSlot::Register`).
     let parameters = usize::from(function.params).min(eligible.len());
-    eligible[..parameters].fill(false);
+    (0..parameters).for_each(|slot| eligible.remove(slot));
     let cloned = function
         .instructions()
         .chain(
@@ -132,15 +132,9 @@ pub(super) fn promote<'a>(
             })
         }));
     for slot in named {
-        if let Some(eligible) = eligible.get_mut(usize::from(slot)) {
-            *eligible = false;
-        }
+        eligible.remove(usize::from(slot));
     }
-    let mut exclude = |slot: usize| {
-        if let Some(eligible) = eligible.get_mut(slot) {
-            *eligible = false;
-        }
-    };
+    let mut exclude = |slot: usize| eligible.remove(slot);
     for instruction in function.instructions() {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
             for member in superinstructions[instruction.superinstruction_index()].code {
@@ -202,11 +196,9 @@ pub(super) fn promote<'a>(
     let uncovered = function.registers >= ROOT_MAP_REGISTERS;
     // A slot no instruction or handler names (a local compilation already promoted) needs no
     // register: nothing reads or writes it, and each register costs every activation a fill.
-    let mut accessed = vec![false; eligible.len()];
+    let mut accessed = crate::bitset::BitSet::new(eligible.len());
     let mut access = |slot: usize| {
-        if let Some(accessed) = accessed.get_mut(slot) {
-            *accessed = true;
-        }
+        accessed.checked_insert(slot);
     };
     for instruction in function.instructions() {
         instruction.addressed_local_slots().for_each(|slot| access(usize::from(slot)));
@@ -219,8 +211,8 @@ pub(super) fn promote<'a>(
     let mut next = function.registers;
     let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
     for (slot, register) in registers.iter_mut().enumerate() {
-        if eligible[slot]
-            && accessed[slot]
+        if eligible.contains(slot)
+            && accessed.contains(slot)
             && (uncovered || next < ROOT_MAP_REGISTERS)
             && next <= Operand::PAYLOAD_MASK
             && next <= REGISTER_MASK
@@ -236,7 +228,7 @@ pub(super) fn promote<'a>(
     let register = |slot: usize| registers.get(slot).copied().flatten();
     // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
     // a promoted slot some read can reach before any store gets `undefined` on entry.
-    let promoted: Vec<bool> = registers.iter().map(Option::is_some).collect();
+    let promoted = crate::bitset::BitSet::from_fn(registers.len(), |slot| registers[slot].is_some());
     let written_first = initialization::initialized_before_reads(
         function,
         superinstructions,
@@ -247,7 +239,7 @@ pub(super) fn promote<'a>(
     let mut code = Vec::with_capacity(old.len());
     for (slot, target) in registers.iter().enumerate() {
         if let Some(target) = *target
-            && !written_first[slot]
+            && !written_first.contains(slot)
         {
             let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
             code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));

@@ -23,6 +23,7 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
     if lines > MAX_FILE_LINES {
         measures.insert(format!("file-lines {file}"), lines);
     }
+    crate::data_layout::scan(file, syntax, measures);
     let hot = crate::hot_path::is_hot(file);
     let mut functions = Functions { file, scope: Vec::new(), measures, seen: BTreeMap::new(), hot, test: false };
     functions.visit_file(syntax);
@@ -114,7 +115,7 @@ impl<'ast> Visit<'ast> for Functions<'_> {
 }
 
 /// Whether an item exists only for tests (`#[test]`, `#[cfg(test)]`, `#[cfg(all(test, ..))]`).
-fn is_test(attrs: &[syn::Attribute]) -> bool {
+pub fn is_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         let text = attr.to_token_stream().to_string();
         text == "# [test]" || text.starts_with("# [cfg (test") || text.starts_with("# [cfg (all (test")
@@ -160,6 +161,12 @@ pub fn render(measures: &Measures) -> String {
 fn remedy(subject: &str) -> &'static str {
     if subject.starts_with("guest-name ") {
         "no special case for one program: derive the behavior from semantics, never from a guest name"
+    } else if subject.starts_with("dod-bool-array ") {
+        "flags belong in a bitset: one bit per flag, scanned a word at a time"
+    } else if subject.starts_with("dod-dense-hash ") {
+        "a dense id indexes a flat array; pack frequent flags into the index's high bits"
+    } else if subject.starts_with("dod-cache ") {
+        "a cache hides a slow core path: make the core path cheap and delete the cache"
     } else if subject.starts_with("hot-") {
         "hot paths do O(1) work and allocate nothing: decide earlier, index a flat array, reuse a buffer"
     } else {

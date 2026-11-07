@@ -1456,7 +1456,7 @@ pub struct Function {
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
-    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<bool>>,
+    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// Lazily derived `declared_atoms`; never serialized.
     pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
@@ -2014,30 +2014,23 @@ impl Function {
     /// temporal dead zone (`initialization`). Compilation specializes these slots'
     /// operations, validation re-derives the same proof, and the interpreter memoizes it in
     /// `plain_locals` to read plain local operands directly.
-    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> Vec<bool> {
-        let mut plain = vec![false; usize::from(self.locals)];
+    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> crate::bitset::BitSet {
+        let locals = usize::from(self.locals);
         if !self.plain_local_context_is_safe() {
-            return plain;
+            return crate::bitset::BitSet::new(locals);
         }
-        let mut dead_zone = vec![false; usize::from(self.locals)];
-        for instruction in self.instructions() {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = dead_zone.get_mut(instruction.local_slot())
-            {
-                *slot = true;
+        let plain = crate::bitset::BitSet::from_fn(locals, |slot| self.plain_local_slot_is_safe(slot));
+        let mut dead_zone = crate::bitset::BitSet::new(locals);
+        for instruction in self.instructions().filter(|instruction| instruction.op() == Op::InitializeTdz) {
+            if plain.contains(instruction.local_slot()) {
+                dead_zone.insert(instruction.local_slot());
             }
         }
-        for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain = self.plain_local_slot_is_safe(slot);
-        }
-        for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
-            *dead_zone &= plain[slot];
-        }
-        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone, &[]);
-        for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain &= !dead_zone[slot] || initialized[slot];
-        }
-        plain
+        let initialized =
+            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &Default::default());
+        crate::bitset::BitSet::from_fn(locals, |slot| {
+            plain.contains(slot) && (!dead_zone.contains(slot) || initialized.contains(slot))
+        })
     }
 
     fn declared_atoms(&self) -> &DeclaredAtomSets {
@@ -2871,7 +2864,7 @@ impl Function {
         if !self.handlers.is_empty() {
             return false;
         }
-        let mut reached = vec![false; instructions.len()];
+        let mut reached = crate::bitset::BitSet::new(instructions.len());
         let mut work = Vec::new();
         for &pass in passes {
             crate::bytecode::for_each_instruction_successor(pass, instructions[pass], |next| work.push(next));
@@ -2880,7 +2873,7 @@ impl Function {
             let Some(instruction) = instructions.get(pc) else {
                 continue;
             };
-            if std::mem::replace(&mut reached[pc], true) {
+            if !reached.insert(pc) {
                 continue;
             }
             if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
@@ -2944,13 +2937,9 @@ impl Function {
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)]
     pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
-        self.plain_locals
-            .get_or_init(|| {
-                self.plain_local_slots(tables.superinstructions()).into()
-            })
-            .get(slot)
-            .copied()
-            .unwrap_or(false)
+        let words =
+            self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
+        crate::bitset::words_contain(words, slot)
     }
 
     pub(crate) fn plain_local_slot_is_safe(&self, slot: usize) -> bool {

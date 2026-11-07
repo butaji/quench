@@ -41,20 +41,20 @@ pub(crate) fn for_each_instruction_successor(
 
 pub(super) fn is_bounded(function: &Function) -> bool {
     let code = &function.code;
-    let mut reachable = vec![false; code.len()];
+    let mut reachable = crate::bitset::BitSet::new(code.len());
     let mut work = vec![0usize];
     work.extend(function.handlers.iter().flat_map(|handler| {
         std::iter::once(handler.target as usize)
             .chain(handler.return_target.map(|target| target as usize))
     }));
     while let Some(pc) = work.pop() {
-        if pc >= code.len() || reachable[pc] {
+        if pc >= code.len() || reachable.contains(pc) {
             if pc >= code.len() {
                 return false;
             }
             continue;
         }
-        reachable[pc] = true;
+        reachable.insert(pc);
         let Some(instruction) = instruction_at(function, code[pc]) else {
             return false;
         };
