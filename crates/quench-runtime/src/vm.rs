@@ -1570,7 +1570,7 @@ impl DictionaryTrigger {
     }
 }
 struct ShapeLookupIndex {
-    /// The shape's live properties in definition order, with their slots.
+    /// The shape's properties in definition order with their slots; deleted ones are `VACANT_SLOT`.
     entries: Vec<(property_key::PropertyKey, u32)>,
     /// Positions in `entries`, hashed by key: the pairs themselves are stored once.
     positions: hashbrown::HashTable<u32>,
