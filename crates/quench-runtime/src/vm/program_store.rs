@@ -985,10 +985,6 @@ pub(crate) struct ProgramStore {
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
-    /// Keep idle GeneralDispatch artifacts for equivalent dynamic functions
-    /// when `QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE` is enabled (default on).
-    js_general_artifact_cache_enabled: bool,
-    js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
 }
@@ -1034,13 +1030,6 @@ impl Default for ProgramStore {
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
-            js_general_artifact_cache_enabled: std::env::var_os(
-                "QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE",
-            )
-            .is_none_or(|value| value != "0"),
-            js_jit_dataview_float64_enabled:
-                std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
-                    .is_none_or(|value| value != "0"),
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
         }
@@ -2237,10 +2226,6 @@ impl ProgramStore {
             .map(|counters| counters.captured_store_fast_entries)
     }
 
-    pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
-        self.js_jit_dataview_float64_enabled
-    }
-
     pub(super) fn note_js_jit_dataview_float64(&mut self, setter: bool) {
         if self.js_jit_diagnostics.is_none() {
             return;
@@ -3273,10 +3258,6 @@ impl ProgramStore {
         Some(cached.compiled.clone())
     }
 
-    pub(super) fn js_general_artifact_cache_enabled(&self) -> bool {
-        self.js_general_artifact_cache_enabled
-    }
-
     fn release_js_general_artifact_reference(
         &mut self,
         compiled: &Rc<super::compiled::CompiledJsFunction>,
@@ -3908,8 +3889,7 @@ impl Drop for ProgramStore {
         }
         let _ = writeln!(
             stderr,
-            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"enabled\":{},\"get_entries\":{},\"set_entries\":{}}}",
-            self.js_jit_dataview_float64_enabled,
+            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"get_entries\":{},\"set_entries\":{}}}",
             self.js_jit_dataview_float64_get_entries,
             self.js_jit_dataview_float64_set_entries
         );

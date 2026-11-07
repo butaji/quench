@@ -1573,8 +1573,9 @@ impl<H: Host> Vm<H> {
 
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
     /// shape and slot, which `record_field_entry_hit` reads while the shape holds. `None` for
-    /// any other object, a dictionary's storage, an accessor or an absent name.
-    pub(super) fn own_data_field_hint(&self, object: Value, atom: Atom) -> Option<FieldCache> {
+    /// any other object, a dictionary's storage, an accessor or an absent name; with `STORES`,
+    /// also a read-only property, which a store through the hint may not replace.
+    pub(super) fn own_data_field_hint<const STORES: bool>(&self, object: Value, atom: Atom) -> Option<FieldCache> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         // An exotic object's or a dictionary's exact shape is no shape (`Object::exact_shape`).
         let shape = receiver.exact_shape();
@@ -1582,7 +1583,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let slot = self.shape_slot(shape, atom)?;
-        if self.slot_attributes(receiver, slot)?.accessor {
+        let attributes = self.slot_attributes(receiver, slot)?;
+        if attributes.accessor || (STORES && !attributes.writable) {
             return None;
         }
         Some(FieldCache::own(shape, u16::try_from(slot).ok()?))

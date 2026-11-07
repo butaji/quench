@@ -621,13 +621,17 @@ impl AtomSet {
             && self.words.get(index / Self::WORD_BITS).is_some_and(|word| word >> (index % Self::WORD_BITS) & 1 != 0)
     }
 
-    fn insert(&mut self, atom: Atom) {
+    /// Adds `atom`; whether it was absent.
+    fn insert(&mut self, atom: Atom) -> bool {
         let index = atom as usize;
         let word = index / Self::WORD_BITS;
         if word >= self.words.len() {
             self.words.resize(word + 1, 0);
         }
-        self.words[word] |= 1 << (index % Self::WORD_BITS);
+        let bit = 1 << (index % Self::WORD_BITS);
+        let absent = self.words[word] & bit == 0;
+        self.words[word] |= bit;
+        absent
     }
 
     fn clear(&mut self) {
@@ -643,7 +647,9 @@ impl AtomSet {
 
 impl Extend<Atom> for AtomSet {
     fn extend<I: IntoIterator<Item = Atom>>(&mut self, atoms: I) {
-        atoms.into_iter().for_each(|atom| self.insert(atom));
+        atoms.into_iter().for_each(|atom| {
+            self.insert(atom);
+        });
     }
 }
 
@@ -658,6 +664,10 @@ impl crate::snapshot::Snap for AtomSet {
         Ok(set)
     }
 }
+/// A realm's global lexical bindings in insertion order. A binding is never removed while its
+/// realm is active, so its index names it until the realm switches, and a read that holds the
+/// index and name (`lane_load_root_lexical`) needs no hash.
+type GlobalLexicalBindings = indexmap::IndexMap<Atom, Value, rustc_hash::FxBuildHasher>;
 
 struct Realm {
     globals: Value,
@@ -665,7 +675,7 @@ struct Realm {
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one: a test every
     /// global name load makes (`lane_load_global_name`).
     global_lexical_declarations: AtomSet,
-    global_lexical_bindings: FxHashMap<Atom, Value>,
+    global_lexical_bindings: GlobalLexicalBindings,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
     /// Every inactive realm's global lexical state, keyed by its global, except the realm
     /// last switched away from, which `parked` holds.
@@ -757,7 +767,7 @@ struct PrivateHomeKey {
 #[derive(Default)]
 struct GlobalLexicalState {
     declarations: AtomSet,
-    bindings: FxHashMap<Atom, Value>,
+    bindings: GlobalLexicalBindings,
     immutable_bindings: FxHashSet<Atom>,
 }
 /// An inactive realm with its global lexical state and the prototypes the realm-following
@@ -2476,11 +2486,11 @@ impl<H: Host> Vm<H> {
                 self.bind_global_lexical(atom, Value::DELETED);
             }
         }
-        let declared = self.realm.global_lexical_declarations.len();
-        self.realm
-            .global_lexical_declarations
-            .extend(root.global_lexical_atoms().iter().copied());
-        if self.realm.global_lexical_declarations.len() != declared {
+        let declared = root
+            .global_lexical_atoms()
+            .iter()
+            .fold(false, |declared, &atom| self.realm.global_lexical_declarations.insert(atom) | declared);
+        if declared {
             self.note_global_lexical_names();
         }
         self.realm.immutable_global_lexical_bindings.extend(

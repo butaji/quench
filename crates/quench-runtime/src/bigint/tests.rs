@@ -33,7 +33,7 @@ impl Random {
             [digit as u32, (digit >> 32) as u32]
         }).collect();
         let magnitude = num_bigint::BigUint::from_slice(&digits);
-        let sign = if self.next() % 2 == 0 { num_bigint::Sign::Plus } else { num_bigint::Sign::Minus };
+        let sign = if self.next().is_multiple_of(2) { num_bigint::Sign::Plus } else { num_bigint::Sign::Minus };
         BigInt::from_biguint(sign, magnitude)
     }
 }

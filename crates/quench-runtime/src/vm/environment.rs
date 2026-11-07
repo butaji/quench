@@ -9,6 +9,15 @@ const UNRESOLVABLE_NAME_REFERENCE: Value = Value::UNDEFINED;
 // ResolveName's other bases are objects, so null names this allocation-free base.
 const GLOBAL_LEXICAL_NAME_REFERENCE: Value = Value::NULL;
 
+/// Where a root projection's plain read found its value (`Vm::plain_capture`): a global var's
+/// property on the global object, or a retained global lexical binding at its index in the
+/// realm's bindings.
+#[derive(Clone, Copy)]
+pub(super) enum RootRead {
+    GlobalVar(Atom),
+    GlobalLexical(Atom, usize),
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn own_dynamic_bindings(&self, frame: usize) -> Option<&Vec<(Atom, Value)>> {
         let activation = self.frames.get(frame)?;
@@ -1627,7 +1636,7 @@ impl<H: Host> Vm<H> {
         slots: &crate::heap::EnvironmentSlots,
         root: Option<Option<u32>>,
         slot: u16,
-    ) -> (Option<Value>, Option<Atom>) {
+    ) -> (Option<Value>, Option<RootRead>) {
         use crate::bytecode::RootSlotRule;
         let Some(program) = root else {
             return (self.slot_binding(slots, slot), None);
@@ -1635,12 +1644,14 @@ impl<H: Host> Vm<H> {
         let owner = program.map_or(self.active_program, super::ProgramId::from_raw);
         match self.programs.root_slot(owner, slot) {
             RootSlotRule::Binding => (self.slot_binding(slots, slot), None),
-            RootSlotRule::GlobalLexical(atom) => match self.realm.global_lexical_bindings.get(&atom) {
-                Some(value) => ((!value.is_deleted()).then_some(*value), None),
+            RootSlotRule::GlobalLexical(atom) => match self.realm.global_lexical_bindings.get_full(&atom) {
+                Some((index, _, value)) => {
+                    ((!value.is_deleted()).then_some(*value), Some(RootRead::GlobalLexical(atom, index)))
+                }
                 None => (self.slot_binding(slots, slot), None),
             },
             RootSlotRule::GlobalVar(atom) if self.direct_eval_var_program != Some(owner) => {
-                (self.plain_named_get(self.realm.globals, atom), Some(atom))
+                (self.plain_named_get(self.realm.globals, atom), Some(RootRead::GlobalVar(atom)))
             }
             RootSlotRule::GlobalVar(_) | RootSlotRule::Import => (None, None),
         }
@@ -1799,7 +1810,7 @@ impl<H: Host> Vm<H> {
     /// `cached_direct_capture` that also answers a root projection's plain read
     /// (`plain_capture`), for the interpreter's reads, which take the value however held.
     #[inline(always)]
-    pub(super) fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> (Option<Value>, Option<Atom>) {
+    pub(super) fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> (Option<Value>, Option<RootRead>) {
         self.cached_capture(frame, depth, slot, Self::plain_capture).unwrap_or((None, None))
     }
 
