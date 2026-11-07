@@ -1369,7 +1369,7 @@ file-lines crates/quench-runtime/src/bytecode/binary.rs 1798
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1134
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
 file-lines crates/quench-runtime/src/bytecode/validate.rs 1538
-file-lines crates/quench-runtime/src/compile.rs 4442
+file-lines crates/quench-runtime/src/compile.rs 4443
 file-lines crates/quench-runtime/src/compile/ast.rs 1315
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
@@ -1380,7 +1380,7 @@ file-lines crates/quench-runtime/src/compile/early.rs 2031
 file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 654
 file-lines crates/quench-runtime/src/compile/liveness.rs 778
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
-file-lines crates/quench-runtime/src/compile/replay.rs 1053
+file-lines crates/quench-runtime/src/compile/replay.rs 1061
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1719
 file-lines crates/quench-runtime/src/heap.rs 4590
 file-lines crates/quench-runtime/src/heap/access.rs 878
@@ -1432,7 +1432,7 @@ file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1975
 file-lines crates/quench-runtime/src/vm/environment.rs 2760
 file-lines crates/quench-runtime/src/vm/error.rs 2794
-file-lines crates/quench-runtime/src/vm/eval.rs 1369
+file-lines crates/quench-runtime/src/vm/eval.rs 1374
 file-lines crates/quench-runtime/src/vm/gc.rs 1302
 file-lines crates/quench-runtime/src/vm/generator.rs 1842
 file-lines crates/quench-runtime/src/vm/index.rs 966
@@ -2523,7 +2523,7 @@ function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::collect_body_
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_function 344
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_plain_function 73
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_replayable_object_method 46
-function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish 258
+function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish 259
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish_early 89
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::program 274
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::promoted_local_plan 89
@@ -3141,7 +3141,7 @@ function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::source_call_site_re
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::thrown_value_for 49
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::capture_binding_environment 52
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::direct_eval_private_names 41
-function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 101
+function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 106
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_native_in_realm 58
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_script_source 63
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::prepare_embedding_specialized_script_retaining 85

@@ -1869,7 +1869,7 @@ impl<H: Host> Vm<H> {
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
                                 let receiver = self.frames[frame].registers.get(usize::from(instruction.register_c())).copied().unwrap_or(Value::UNDEFINED);
-                                let target = callee.and_then(|callee| self.forwarded_call(callee, receiver, &[])).map(|(target, _, _)| target);
+                                let target = callee.and_then(|callee| self.forwarded_call(callee, receiver, &[] as &[Value])).map(|forwarded| forwarded.callee);
                                 let described = match target.and_then(|target| self.heap.function(target)) {
                                     Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(target), .. }) => format!("native {target:?}"),
                                     Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
