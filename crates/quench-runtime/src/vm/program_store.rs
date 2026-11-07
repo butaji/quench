@@ -971,27 +971,16 @@ impl Default for ProgramStore {
             } else {
                 WasmModuleCompile::ADAPTIVE
             },
-            general_baseline_priced: !std::env::var_os(
-                "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
-            )
-            .is_some_and(|value| value == "1"),
-            js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
-                .is_some_and(|value| value == "1")
-                .then(FxHashMap::default),
-            js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
-                .is_some_and(|value| value == "1"),
-            js_jit_lane_methods_enabled: std::env::var_os("QUENCH_JS_JIT_LANE_METHODS")
-                .is_some_and(|value| value == "1"),
+            general_baseline_priced: !super::switches::JS_JIT_UNPRICED_GENERAL_DISPATCH.enabled(),
+            js_jit_diagnostics: super::switches::JS_JIT_STATS.enabled().then(FxHashMap::default),
+            js_jit_general_dispatch_enabled: super::switches::JS_JIT_GENERAL_DISPATCH.enabled(),
+            js_jit_lane_methods_enabled: super::switches::JS_JIT_LANE_METHODS.enabled(),
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
-            js_general_artifact_cache_enabled: std::env::var_os(
-                "QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE",
-            )
-            .is_none_or(|value| value != "0"),
+            js_general_artifact_cache_enabled: super::switches::JS_JIT_GENERAL_ARTIFACT_CACHE.enabled(),
             js_jit_dataview_float64_enabled:
-                std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
-                    .is_none_or(|value| value != "0"),
+                super::switches::JS_JIT_DATAVIEW_FLOAT64.enabled(),
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
         }

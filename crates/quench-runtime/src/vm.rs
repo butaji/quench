@@ -19,6 +19,7 @@ mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
 mod tier_policy;
+mod switches;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;

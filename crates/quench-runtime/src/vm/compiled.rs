@@ -4513,14 +4513,6 @@ const TRAPS: [crate::WasmTrap; 6] = [
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
 const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
-const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
-const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
-const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
-const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
-const JIT_AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
-const JIT_REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
-const JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
-const JIT_NUMERIC_FIND_ENV: &str = "QUENCH_JS_JIT_NUMERIC_FIND";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -4530,34 +4522,6 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
-
-/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
-/// compiled call consults several, and reading the environment on each call cost more than
-/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
-struct EnvSwitch {
-    name: &'static str,
-    enabled: std::sync::OnceLock<bool>,
-}
-
-impl EnvSwitch {
-    const fn new(name: &'static str) -> Self {
-        Self { name, enabled: std::sync::OnceLock::new() }
-    }
-
-    fn enabled(&self) -> bool {
-        *self.enabled.get_or_init(|| {
-            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
-        })
-    }
-}
-
-static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
-static JIT_DIRECT_COMPARE_BRANCHES: EnvSwitch = EnvSwitch::new(JIT_DIRECT_COMPARE_BRANCHES_ENV);
-static JIT_AFFINE_PAIR: EnvSwitch = EnvSwitch::new(JIT_AFFINE_PAIR_ENV);
-static JIT_REFERENCE_BODY_CACHE: EnvSwitch = EnvSwitch::new(JIT_REFERENCE_BODY_CACHE_ENV);
-static JIT_EMSCRIPTEN_MEMCPY_LEAF: EnvSwitch = EnvSwitch::new(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV);
-static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
-static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -4581,40 +4545,31 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) fn jit_wasm_selective_enabled() -> bool {
-    JIT_WASM_SELECTIVE.enabled()
+    super::switches::WASM_JIT_SELECTIVE.enabled()
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE.with(std::cell::Cell::get)
-    {
-        return enabled;
-    }
-    JIT_DIRECT_COMPARE_BRANCHES.enabled()
+    super::switches::WASM_JIT_DIRECT_COMPARE_BRANCHES.enabled()
 }
 
 /// Keep the screened affine pair loop opt-in; the benchmark harness can still
 /// run a same-binary, same-host comparison arm with it enabled.
 fn jit_affine_pair_enabled() -> bool {
-    JIT_AFFINE_PAIR.enabled()
+    super::switches::WASM_JIT_AFFINE_PAIR.enabled()
 }
 
 fn jit_reference_body_cache_enabled() -> bool {
-    JIT_REFERENCE_BODY_CACHE.enabled()
+    super::switches::WASM_JIT_REFERENCE_BODY_CACHE.enabled()
 }
 
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
-    JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
+    super::switches::WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
 }
 
 /// Run the guarded numeric hash-map loop by default. Set the environment
 /// variable to `0` to retain the interpreter path for A/B measurement.
 fn jit_numeric_find_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var_os(JIT_NUMERIC_FIND_ENV) {
-        None => true,
-        Some(value) => matches!(value.to_str(), Some("1" | "true")),
-    })
+    super::switches::JS_JIT_NUMERIC_FIND.enabled()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4622,7 +4577,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    JIT_ROOT_ONLY.enabled()
+    super::switches::WASM_JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -4630,7 +4585,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    JIT_ROOT_FIRST.enabled()
+    super::switches::WASM_JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -4644,8 +4599,6 @@ struct WasmJitModeTestOverride {
 #[cfg(test)]
 thread_local! {
     static WASM_JIT_MODE_TEST_OVERRIDE: std::cell::Cell<Option<WasmJitModeTestOverride>> =
-        const { std::cell::Cell::new(None) };
-    static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
     static WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
@@ -4703,23 +4656,8 @@ pub(super) fn with_wasm_jit_mode_for_test<R>(
 }
 
 #[cfg(test)]
-pub(super) fn with_jit_direct_compare_branches_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE
-                .with(|override_mode| override_mode.set(self.0));
-        }
-    }
-
-    let previous = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE
-        .with(|override_mode| override_mode.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
+pub(super) fn with_jit_direct_compare_branches_for_test<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
+    super::switches::with_switch(&super::switches::WASM_JIT_DIRECT_COMPARE_BRANCHES, enabled, run)
 }
 
 fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
@@ -6502,13 +6440,13 @@ impl Drop for CompiledProgram {
             stats.compiled_known_callouts.get(),
             stats.compiled_reference_callouts.get(),
             import_callout_targets,
-            super::wasm_js::emscripten_memcpy_direct_copy_switch(),
+            super::switches::WASM_EMSCRIPTEN_MEMCPY_DIRECT.label(),
             super::wasm_js::emscripten_memcpy_direct_copy_enabled(),
             stats.emscripten_memcpy_fast_path_hits.get(),
-            super::wasm_js::emscripten_memcpy_raw_i32_switch(),
+            super::switches::WASM_EMSCRIPTEN_MEMCPY_RAW_I32.label(),
             super::wasm_js::emscripten_memcpy_raw_i32_enabled(),
             stats.emscripten_memcpy_raw_i32_hits.get(),
-            super::wasm_js::emscripten_memcpy_early_import_switch(),
+            super::switches::WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.label(),
             super::wasm_js::emscripten_memcpy_early_import_enabled(),
             stats.emscripten_memcpy_early_import_hits.get(),
             if jit_emscripten_memcpy_leaf_enabled() {
