@@ -1390,7 +1390,7 @@ file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 654
 file-lines crates/quench-runtime/src/compile/liveness.rs 778
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1053
-file-lines crates/quench-runtime/src/compile/rewrite.rs 1773
+file-lines crates/quench-runtime/src/compile/rewrite.rs 1771
 file-lines crates/quench-runtime/src/heap.rs 4840
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 873
@@ -1421,7 +1421,7 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 628
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 525
 file-lines crates/quench-runtime/src/vm/collections.rs 1534
-file-lines crates/quench-runtime/src/vm/compiled.rs 21835
+file-lines crates/quench-runtime/src/vm/compiled.rs 21833
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 523
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 714
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 6018
@@ -1434,7 +1434,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 657
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24082
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24083
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3047
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1476,7 +1476,7 @@ file-lines crates/quench-runtime/src/vm/program_store.rs 4243
 file-lines crates/quench-runtime/src/vm/promise.rs 6182
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
-file-lines crates/quench-runtime/src/vm/regexp.rs 3566
+file-lines crates/quench-runtime/src/vm/regexp.rs 3434
 file-lines crates/quench-runtime/src/vm/relational.rs 655
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
 file-lines crates/quench-runtime/src/vm/snapshot.rs 988
@@ -1520,12 +1520,12 @@ file-lines crates/quench-test262/src/runtime_host.rs 1240
 file-lines crates/quench-wasm-test/src/shared_wast.rs 795
 file-lines crates/quench-wasm/src/shared.rs 728
 file-lines crates/quench-wasm/src/shared/control_tests.rs 527
-file-lines quench-bench/src/analysis.rs 1953
+file-lines quench-bench/src/analysis.rs 1949
 file-lines quench-bench/src/bin/conformance-compare.rs 721
 file-lines quench-bench/src/bin/task61-fixed-work-guard.rs 1236
 file-lines quench-bench/src/bin/web.rs 583
 file-lines quench-bench/src/contention.rs 680
-file-lines quench-bench/src/main.rs 3674
+file-lines quench-bench/src/main.rs 3670
 function-lines crates/quench-alloc/src/lib.rs::Heap::release_empty 59
 function-lines crates/quench-alloc/src/lib.rs::tests::released_empty_pages_return_zeroed_before_fresh_ones 63
 function-lines crates/quench-intl/src/calendar.rs::calendar_date_add 57
@@ -3562,7 +3562,7 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_proven_symb
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 68
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_split_builtin 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_subject 69
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match 81
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match 77
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match_all 59
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace 174
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace_fast 94
@@ -3570,7 +3570,6 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_sear
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_split 124
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_unobservable_splitter 44
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::replacement_substitution 98
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::steady_string_replace 46
 function-lines crates/quench-runtime/src/vm/regexp.rs::escape_regexp_source 51
 function-lines crates/quench-runtime/src/vm/regexp.rs::regexp_parser_source 55
 function-lines crates/quench-runtime/src/vm/relational.rs::Vm<H>::has_property_key 94

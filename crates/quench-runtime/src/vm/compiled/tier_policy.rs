@@ -75,7 +75,7 @@ pub(in crate::vm) struct JsFunction {
     /// complete-semantics baseline.
     pub(in crate::vm) specialized_guard_misses: u8,
     /// The general baseline's compile cost in interpreted-instruction units: a fixed part and
-    /// a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_JS_JIT_STATS`
+    /// a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_TRACE=js-jit`
     /// against roughly 50 ns per interpreted instruction: requiring jackspeak, about 0.8 ms
     /// plus 32 µs per instruction; npm's semver scenario, 1.4 ms for a four-instruction body
     /// and 40 to 76 µs per instruction for 160 to 200.

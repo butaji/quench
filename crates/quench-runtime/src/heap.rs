@@ -1996,7 +1996,7 @@ impl Heap {
         }
         properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             let after = properties.stats();
             eprintln!(
                 "{{\"kind\":\"quench-property-compaction\",\"values_before\":{},\"values_after\":{},\"capacity_before\":{},\"capacity_after\":{},\"free_ranges_before\":{},\"free_ranges_after\":{}}}",
@@ -2784,7 +2784,7 @@ impl Heap {
             },
         );
         #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
-        if full && std::env::var_os("QUENCH_GC_TRACE").is_some() {
+        if full && crate::trace::Channel::Gc.on() {
             // Diagnostic recount of the payload ledger after a full sweep.
             let mut exact = 0;
             self.for_each_live_cell(|cell| exact += cell.payload_bytes());
@@ -2792,7 +2792,7 @@ impl Heap {
             eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
         }
         #[cfg(feature = "gc-tuning")]
-        if std::env::var_os("QUENCH_GC_TRACE").is_some() {
+        if crate::trace::Channel::Gc.on() {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;

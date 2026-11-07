@@ -706,7 +706,7 @@ fn tagged_registers_with_failure(
             match instruction.op() {
                 Op::LoadConst => {
                     if constants.get(instruction.constant_index()).is_none() {
-                        if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                        if crate::trace::Channel::OsrReject.on() {
                             eprintln!(
                                 "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=missing_constant result={result}"
                             );
@@ -724,7 +724,7 @@ fn tagged_registers_with_failure(
                     tagged.insert(instruction.register_b());
                 }
                 _ => {
-                    if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    if crate::trace::Channel::OsrReject.on() {
                         eprintln!(
                             "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=unsupported_tagged_definition op={:?} result={result}",
                             instruction.op()
@@ -2031,7 +2031,7 @@ fn admit_lifetime_roles(
     }
     let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new())
         .inspect_err(|&failure| {
-            if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
             }
         }).ok()?;
@@ -2133,7 +2133,7 @@ fn admit_register_roles(
     ) {
         Ok(tagged) => tagged,
         Err(failure_offset) => {
-            if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if crate::trace::Channel::OsrReject.on() {
                 for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
                     instruction.op() == Op::JumpBinaryFalse
                 }) {
@@ -2298,7 +2298,7 @@ fn admit_register_roles(
             admission.field_arrays.entry(register).or_insert(false);
         }
         if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays).is_none() {
-            if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if crate::trace::Channel::OsrReject.on() {
                 let constant = (instruction.op() == Op::LoadConst)
                     .then(|| constants.get(instruction.constant_index()).copied());
                 let result = instruction.defined_register();
@@ -2372,7 +2372,7 @@ fn admit_register_roles(
         (!uses.is_empty() && uses.iter().any(|offset| !dynamic_field_reads.contains_key(offset)))
             .then_some((field, write_offset))
     }) {
-        if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+        if crate::trace::Channel::OsrReject.on() {
             eprintln!(
                 "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_receiver_redefined atom={} receiver={:?} write_offset={write_offset}",
                 field.atom,

@@ -5294,7 +5294,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // No guest code or collector ran, so all entry identities remain rooted and live.
             unsafe { (&mut *payload.entry).refresh_array_backing(&*payload.region, old, elements, length, capacity) };
             let due = vm.heap.should_collect();
-            if payload.diagnostics_enabled && std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if payload.diagnostics_enabled && crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_ARRAY_RESERVE function={} length={length} capacity={capacity} gc_due={due}", payload.function);
             }
             // Collection is never performed with native SSA values unrooted. A debt exit
@@ -6555,8 +6555,7 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
+    crate::trace::Channel::WasmJit.on()
 }
 
 impl CompiledProgram {
@@ -6824,11 +6823,11 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
 /// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
 /// for disassembly at `BASE` (diagnostics only).
 fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
-    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+    if !crate::trace::Channel::PerfMap.on() {
         return;
     }
     use std::io::Write;
@@ -7093,7 +7092,7 @@ pub(super) fn compile_osr_region(
     })
 }
 
-/// The process's peak resident set in KiB, for `QUENCH_JS_JIT_PEAK_TRACE`.
+/// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 #[cfg(feature = "gc-tuning")]
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
@@ -7131,12 +7130,11 @@ fn loop_tier_region_budget_spent() -> bool {
     COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
-/// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
+/// The directory the `jit-dump` trace channel names: each loop region
 /// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
 /// instruction-level profiles to native code.
 fn native_dump_directory() -> Option<&'static std::path::Path> {
-    static DIRECTORY: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    DIRECTORY.get_or_init(|| std::env::var_os("QUENCH_JS_JIT_DUMP").map(std::path::PathBuf::from)).as_deref()
+    crate::trace::Channel::JitDump.value().map(std::path::Path::new)
 }
 
 /// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
@@ -15477,7 +15475,7 @@ impl<H: Host> Vm<H> {
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
                 #[cfg(feature = "gc-tuning")]
-                let peak_before = (std::env::var_os("QUENCH_JS_JIT_PEAK_TRACE").is_some())
+                let peak_before = crate::trace::Channel::JitPeak.on()
                     .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
                 #[cfg(feature = "gc-tuning")]

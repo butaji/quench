@@ -968,7 +968,7 @@ impl Default for ProgramStore {
                 WasmModuleCompile::ADAPTIVE
             },
             general_baseline_priced: !super::compiled::switches::JS_JIT_UNPRICED_GENERAL_DISPATCH.enabled(),
-            js_jit_diagnostics: super::compiled::switches::JS_JIT_STATS.enabled().then(FxHashMap::default),
+            js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
             js_jit_general_dispatch_enabled: super::compiled::switches::JS_JIT_GENERAL_DISPATCH.enabled(),
             js_jit_lane_methods_enabled: super::compiled::switches::JS_JIT_LANE_METHODS.enabled(),
             #[cfg(test)]
@@ -2156,7 +2156,7 @@ impl ProgramStore {
         self.js_jit_general_dispatch_enabled
     }
 
-    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
+    /// Records the counters `QUENCH_TRACE=js-jit` enables, for a test to read.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn enable_js_jit_diagnostics(&mut self) {
         self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
@@ -3495,7 +3495,7 @@ impl ProgramStore {
 }
 
 impl ProgramStore {
-    /// Whether dropping the store reports something (`QUENCH_JS_JIT_STATS`).
+    /// Whether dropping the store reports something (`QUENCH_TRACE=js-jit`).
     pub(crate) fn reports_on_drop(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
