@@ -14182,7 +14182,7 @@ impl<H: Host> Vm<H> {
             self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
             self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
             if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
-                && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+                && !arguments.iter().all(|value| facts::is_int32_number(*value))
             {
                 return None;
             }
@@ -14870,7 +14870,7 @@ impl<H: Host> Vm<H> {
         if numeric && int32_bitwise_candidate {
             numeric = arguments
                 .iter()
-                .all(|value| super::js_compiled::is_i32_number(*value));
+                .all(|value| facts::is_int32_number(*value));
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
@@ -15071,7 +15071,7 @@ impl<H: Host> Vm<H> {
         if compiled.is_int32_identity()
             && !arguments
                 .first()
-                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+                .is_some_and(|value| facts::is_int32_number(*value))
         {
             if !compiled.is_general_dispatch() {
                 *specialized_guard_miss = true;
@@ -16449,7 +16449,7 @@ fn direct_call(
             None => {
                 let value = argument.as_number()?;
                 let int32 = compiled.requires_signed_int32_arguments() || (int32_identity && index == 0);
-                if int32 && !super::js_compiled::is_i32_number(value) {
+                if int32 && !facts::is_int32_number(value) {
                     return None;
                 }
                 value
