@@ -1476,7 +1476,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 714
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1052
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1691
-file-lines crates/quench-runtime/src/heap.rs 4740
+file-lines crates/quench-runtime/src/heap.rs 4711
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 4028
@@ -2725,7 +2725,6 @@ function-lines crates/quench-runtime/src/heap.rs::Heap::iterator_edges 60
 function-lines crates/quench-runtime/src/heap.rs::Heap::mark_value 224
 function-lines crates/quench-runtime/src/heap.rs::Heap::profile_allocation 58
 function-lines crates/quench-runtime/src/heap.rs::Heap::reset 54
-function-lines crates/quench-runtime/src/heap.rs::Heap::retire_dead_prototypes 42
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_full_parallel 67
 function-lines crates/quench-runtime/src/heap.rs::Heap::sweep_serial 153
 function-lines crates/quench-runtime/src/heap.rs::ParallelSweepSlab<'slots>::sweep 48
