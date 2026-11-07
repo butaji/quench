@@ -693,20 +693,20 @@ enum TimerDurationWarning {
     NotNumber,
 }
 
+/// Each warning's name and how its message describes the duration, in
+/// [`TimerDurationWarning`] order.
+const TIMER_DURATION_WARNINGS: [(&str, &str); 3] = [
+    ("TimeoutOverflowWarning", "does not fit into a 32-bit signed integer."),
+    ("TimeoutNegativeWarning", "is a negative number."),
+    ("TimeoutNaNWarning", "is not a number."),
+];
+
 impl TimerDurationWarning {
     fn name(self) -> &'static str {
-        match self {
-            Self::Overflow => "TimeoutOverflowWarning",
-            Self::Negative => "TimeoutNegativeWarning",
-            Self::NotNumber => "TimeoutNaNWarning",
-        }
+        TIMER_DURATION_WARNINGS[self as usize].0
     }
     fn detail(self) -> &'static str {
-        match self {
-            Self::Overflow => "does not fit into a 32-bit signed integer.",
-            Self::Negative => "is a negative number.",
-            Self::NotNumber => "is not a number.",
-        }
+        TIMER_DURATION_WARNINGS[self as usize].1
     }
 }
 

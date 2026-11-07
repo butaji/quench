@@ -1,4 +1,3 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
 const BYTE_OFFSET_ARGUMENT: usize = 1;
@@ -92,10 +91,7 @@ impl<H: Host> Vm<H> {
                 }
                 let prototype = if let Some(root) = new_target_root {
                     let new_target = self.heap.root_value(root).unwrap();
-                    let native = TYPED_ARRAY_INSTALLS
-                        .iter()
-                        .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-                        .expect("typed array kinds have constructor rows");
+                    let native = kind.native();
                     self.native_constructor_prototype(p, new_target, native)?
                         .expect("typed array constructors have intrinsic prototypes")
                 } else {
@@ -270,10 +266,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_proto(&self, kind: TypedArrayKind) -> Value {
-        let native = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-            .expect("typed array kinds have constructor rows");
+        let native = kind.native();
         if let Some(prototype) = self
             .realm
             .intrinsics
@@ -381,10 +374,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if constructor.is_undefined() {
-            let native = TYPED_ARRAY_INSTALLS
-                .iter()
-                .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-                .unwrap_or(Native::Uint8Array);
+            let native = kind.native();
             constructor = self.native_value(native);
         }
         if !self.is_constructable(constructor) {

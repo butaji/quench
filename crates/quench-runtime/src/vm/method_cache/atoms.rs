@@ -3,34 +3,7 @@
 use crate::bytecode::Atom;
 
 /// A bit per atom.
-#[derive(Clone, Debug, Default)]
-pub(in crate::vm) struct AtomBits {
-    words: Vec<u64>,
-}
-
-impl AtomBits {
-    #[inline(always)]
-    fn position(atom: Atom) -> (usize, u64) {
-        ((atom / u64::BITS) as usize, 1 << (atom % u64::BITS))
-    }
-
-    #[inline(always)]
-    pub(in crate::vm) fn contains(&self, atom: Atom) -> bool {
-        let (word, bit) = Self::position(atom);
-        self.words.get(word).is_some_and(|bits| bits & bit != 0)
-    }
-
-    /// Sets `atom`'s bit; whether it was clear.
-    fn insert(&mut self, atom: Atom) -> bool {
-        let (word, bit) = Self::position(atom);
-        if word >= self.words.len() {
-            self.words.resize(word + 1, 0);
-        }
-        let new = self.words[word] & bit == 0;
-        self.words[word] |= bit;
-        new
-    }
-}
+pub(in crate::vm) type AtomBits = crate::bitset::BitSet;
 
 /// The atoms method caches may name: a bit per atom, set when an entry for the atom is
 /// recorded and cleared only when every method cache is, so a clear bit proves that no method
@@ -48,19 +21,19 @@ pub(in crate::vm) struct MethodCacheAtoms {
 impl MethodCacheAtoms {
     #[inline(always)]
     pub(in crate::vm) fn contains(&self, atom: Atom) -> bool {
-        self.bits.contains(atom)
+        self.bits.contains(atom as usize)
     }
 
     /// Names `atom`, retiring the code that held it unnamed.
     pub(in crate::vm) fn name(&mut self, atom: Atom) {
-        if self.bits.insert(atom) {
+        if self.bits.insert_growing(atom as usize) {
             self.readers.retire(atom);
         }
     }
 
     /// Unnames every atom: no code held one named, so none retires.
     pub(in crate::vm) fn clear(&mut self) {
-        self.bits.words.fill(0);
+        self.bits.clear();
     }
 
     /// The names now, for a lowering that folds them (`compiled::OnlineFacts`).
@@ -70,7 +43,7 @@ impl MethodCacheAtoms {
 
     /// The bit words, for generated code that tests a name (`emit_js_own_field_set`).
     pub(in crate::vm) fn words(&self) -> &[u64] {
-        &self.bits.words
+        self.bits.words()
     }
 
     /// The code that holds atoms unnamed, which a publication subscribes to.

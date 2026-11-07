@@ -62,18 +62,10 @@ fn replacement(
     if atoms.len() != 2 || atoms[0] == atoms[1] { return None; }
     let transfers = liveness::transfers(function, methods, fields, supers)?;
     let instructions: Vec<_> = function.instructions().collect();
-    let mut edges = Vec::new();
-    let mut starts = Vec::with_capacity(instructions.len() + 1);
-    let mut repeated_allocation = false;
-    for (pc, instruction) in instructions.iter().copied().enumerate() {
-        starts.push(edges.len());
-        function.for_each_successor(pc, instruction, |target, _| {
-            repeated_allocation |= pc >= allocation && target <= allocation;
-            edges.push(target);
-        });
-    }
+    let successors = crate::bytecode::Successors::of(function, &instructions);
+    let repeated_allocation = (allocation..instructions.len())
+        .any(|pc| successors.at(pc).any(|(target, _)| target <= allocation));
     if repeated_allocation { return None; }
-    starts.push(edges.len());
     let mut incoming = vec![None; instructions.len()];
     incoming[0] = Some(Aliases { may: 0, must: 0 });
     loop {
@@ -91,8 +83,8 @@ fn replacement(
                 if before.may & source != 0 { after.may |= destination; }
                 if before.must & source != 0 { after.must |= destination; }
             }
-            for target in &edges[starts[pc]..starts[pc + 1]] {
-                let Some(entry) = incoming.get_mut(*target) else { continue };
+            for (target, _) in successors.at(pc) {
+                let Some(entry) = incoming.get_mut(target) else { continue };
                 let next = entry.map_or(after, |old| Aliases {
                     may: old.may | after.may, must: old.must & after.must,
                 });

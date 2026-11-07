@@ -931,11 +931,7 @@ impl<H: Host> Vm<H> {
         let left = self.temporal_plain_date_slots(p, left)?;
         let right = self.temporal_plain_date_slots(p, right)?;
         let ordering = (left.0, left.1, left.2).cmp(&(right.0, right.1, right.2));
-        Ok(Value::number(match ordering {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        }))
+        Ok(Value::number(f64::from(ordering as i8)))
     }
 
     fn temporal_plain_date_equals(

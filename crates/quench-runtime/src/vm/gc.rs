@@ -706,7 +706,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.atom_strings.values().copied());
+        roots.extend(self.heap.kept_atom_strings().map(|(_, string)| string));
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -943,12 +943,6 @@ impl<H: Host> Vm<H> {
         }
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
-        }
-        if let Some(atoms) = &mut self.string_atoms {
-            atoms.fill((Value::UNDEFINED, 0));
-        }
-        if let Some(strings) = &mut self.recent_atom_strings {
-            strings.fill((super::NO_RECENT_ATOM, Value::UNDEFINED));
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);

@@ -25,6 +25,23 @@ enum Method {
     MatchesGlob,
 }
 
+/// Each method's property name and the host operation that implements it, in [`Method`]
+/// order.
+const METHODS: [(&str, &str); Method::ALL.len()] = [
+    ("join", "pathJoin"),
+    ("resolve", "pathResolve"),
+    ("relative", "pathRelative"),
+    ("basename", "pathBasename"),
+    ("dirname", "pathDirname"),
+    ("extname", "pathExtname"),
+    ("normalize", "pathNormalize"),
+    ("isAbsolute", "pathIsAbsolute"),
+    ("toNamespacedPath", "pathToNamespacedPath"),
+    ("parse", "pathParse"),
+    ("format", "pathFormat"),
+    ("matchesGlob", "pathMatchesGlob"),
+];
+
 impl Flavor {
     const ALL: [Self; 2] = [Self::Posix, Self::Win32];
 
@@ -67,37 +84,11 @@ impl Method {
     ];
 
     fn name(self) -> &'static str {
-        match self {
-            Self::Join => "join",
-            Self::Resolve => "resolve",
-            Self::Relative => "relative",
-            Self::Basename => "basename",
-            Self::Dirname => "dirname",
-            Self::Extname => "extname",
-            Self::Normalize => "normalize",
-            Self::IsAbsolute => "isAbsolute",
-            Self::ToNamespacedPath => "toNamespacedPath",
-            Self::Parse => "parse",
-            Self::Format => "format",
-            Self::MatchesGlob => "matchesGlob",
-        }
+        METHODS[self as usize].0
     }
 
     fn operation_name(self) -> &'static str {
-        match self {
-            Self::Join => "pathJoin",
-            Self::Resolve => "pathResolve",
-            Self::Relative => "pathRelative",
-            Self::Basename => "pathBasename",
-            Self::Dirname => "pathDirname",
-            Self::Extname => "pathExtname",
-            Self::Normalize => "pathNormalize",
-            Self::IsAbsolute => "pathIsAbsolute",
-            Self::ToNamespacedPath => "pathToNamespacedPath",
-            Self::Parse => "pathParse",
-            Self::Format => "pathFormat",
-            Self::MatchesGlob => "pathMatchesGlob",
-        }
+        METHODS[self as usize].1
     }
 
     fn argument_count(self, available: usize) -> usize {

@@ -189,11 +189,7 @@ impl WasmTypes {
         let ValType::Ref(reference) = ty else {
             return None;
         };
-        let (index, exact) = match reference.heap_type() {
-            HeapType::Concrete(UnpackedIndex::Module(index)) => (index, false),
-            HeapType::Exact(UnpackedIndex::Module(index)) => (index, true),
-            _ => return None,
-        };
+        let (index, exact) = super::reference::module_type_index(reference.heap_type())?;
         let declaration = self.get(index as usize)?;
         if declaration.composite_type.shared {
             return None;

@@ -84,3 +84,18 @@ impl Cell {
         }
     }
 }
+
+impl super::Heap {
+    /// The object part of a builtin whose named properties are all ordinary: a collection,
+    /// date, regexp, promise or iterator. No proxy, exotic or integer-indexed object.
+    #[inline(never)]
+    pub(crate) fn ordinary_builtin_object(&self, value: crate::Value) -> Option<&Object> {
+        if value.direct_promise_index().is_some() || value.direct_iterator_index().is_some() {
+            return self.object(value);
+        }
+        let cell = self.get(value)?;
+        matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. }
+            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_))
+            .then(|| cell.object()).flatten()
+    }
+}

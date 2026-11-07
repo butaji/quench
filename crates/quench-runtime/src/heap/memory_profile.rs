@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
-const BUCKETS: usize = 8;
+use crate::profile::{SIZE_BUCKETS as BUCKETS, size_bucket};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AllocationSite {
@@ -170,7 +170,7 @@ impl MemoryProfile {
             .entry(variant_name)
             .or_default() += 1;
         self.allocated_bytes[kind] += bytes as u64;
-        self.size_buckets[kind][Heap::size_bucket(bytes)] += 1;
+        self.size_buckets[kind][size_bucket(bytes)] += 1;
         if self.first_orders[kind] == 0 {
             self.first_orders[kind] = self.clock;
         }
@@ -258,7 +258,7 @@ impl MemoryProfile {
         self.freed_counts[kind] += 1;
         self.freed_bytes[kind] += bytes as u64;
         let lifetime = self.clock - self.births[index];
-        self.lifetime_buckets[kind][Heap::size_bucket(lifetime as usize)] += 1;
+        self.lifetime_buckets[kind][size_bucket(lifetime as usize)] += 1;
         self.record_object_death(index, kind, object_slots);
     }
 
@@ -699,7 +699,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-            Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
             Cell::Environment { slots, scope, .. } => {
                 slots.len() * size_of::<super::EnvironmentSlot>()
                     + scope.boxed_bytes()

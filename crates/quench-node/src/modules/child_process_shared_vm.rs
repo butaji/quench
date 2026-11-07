@@ -611,6 +611,16 @@ pub(crate) fn write_child(
         || Err(std::io::Error::from_raw_os_error(libc::EPIPE)),
         |process| process.stdin.write(bytes, callback),
     );
+    write_outcome(context, result, callback)
+}
+
+/// A child pipe write's answer to JavaScript: `false` while the write is queued (the callback
+/// stays retained for its completion), `true` once written, or the write's error thrown.
+fn write_outcome(
+    context: &mut NativeContext<'_, NodeHost>,
+    result: std::io::Result<bool>,
+    callback: RootId,
+) -> Result<RootId, RootedError> {
     match result {
         Ok(false) => Ok(context.boolean(false)),
         Ok(true) => {
@@ -673,21 +683,7 @@ pub(crate) fn write_extra_child(
         let _ = (id, index, bytes);
         Err(std::io::Error::from_raw_os_error(libc::EPIPE))
     };
-    match result {
-        Ok(false) => Ok(context.boolean(false)),
-        Ok(true) => {
-            context.release_root(callback);
-            Ok(context.boolean(true))
-        }
-        Err(error) => {
-            context.release_root(callback);
-            let error = super::child_process_input_shared_vm::write_error(
-                context,
-                error.raw_os_error().unwrap_or(libc::EIO),
-            )?;
-            Err(context.throw(error))
-        }
-    }
+    write_outcome(context, result, callback)
 }
 
 pub(crate) fn end_child(
