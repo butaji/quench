@@ -4096,14 +4096,9 @@ impl ResidualProgram {
             .register_roots
             .masks
             .get_or_init(|| {
-                crate::compile::liveness::analyze(
-                    function,
-                    self,
-                    &self.field_sites,
-                    &self.superinstructions,
-                )
-                .map(|masks| std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks)))
-                .expect("a covered function's liveness is derivable")
+                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                    .map(std::rc::Rc::new)
+                    .expect("a covered function's liveness is derivable")
             });
         Some(masks)
     }

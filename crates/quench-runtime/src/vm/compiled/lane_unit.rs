@@ -65,6 +65,8 @@ pub(crate) struct Frame {
     /// The call's first argument register.
     pub(crate) window: Register,
     pub(crate) arguments: u16,
+    /// The register the call's completion writes in its parent, dead until then; `None` for a returning call.
+    pub(crate) result: Option<Register>,
     /// The callee's register 0.
     pub(crate) base: Register,
     pub(crate) registers: u16,
@@ -119,15 +121,7 @@ impl Unit {
 
     /// Maximum simultaneous inlined activations, derived from the parent graph.
     pub(crate) fn recovery_depth(&self) -> usize {
-        (0..self.frames.len()).map(|index| {
-            let mut depth = 1;
-            let mut parent = self.frames[index].parent;
-            while let Some(index) = parent {
-                depth += 1;
-                parent = self.frames[index].parent;
-            }
-            depth
-        }).max().unwrap_or(0)
+        (0..self.frames.len()).map(|index| self.chain(index).len()).max().unwrap_or(0)
     }
 
     /// Project the original functions' recovery liveness onto unit registers. A suspended
@@ -156,7 +150,7 @@ impl Unit {
                 Some(parent) => (callees[parent], suspended[parent]),
             };
             let call = frame.call as usize;
-            let around = parent.get(call)? | parent.get(call + 1).unwrap_or(0);
+            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or(0) & !frame.result.map_or(0, |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
             callees.push(program.register_root_masks(frame.target.function)?);
         }
@@ -649,7 +643,7 @@ impl Emitter {
                         callee_register: register(instruction.register_b()),
                         receiver: register(instruction.register_c()),
                         window: register(ImmediateLayout::call_window_base(instruction.imm())),
-                        arguments: ImmediateLayout::argument_count(instruction.imm()),
+                        arguments: ImmediateLayout::argument_count(instruction.imm()), result: (!returns).then_some(call_result),
                         base: callee_base,
                         registers: call.registers,
                         alternative: next,

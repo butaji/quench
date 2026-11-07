@@ -107,6 +107,9 @@ pub(super) struct LaneInstruction {
 /// The callees a call site's history keeps (`LaneStack::call_sites`): a region inlines a site
 /// of at most this many as a guarded switch, the polymorphic inline cache's width.
 const CALL_SITE_TARGETS: usize = 4;
+/// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
+/// polymorphic), so one keeps an entry at 32 bytes instead of 112.
+const INLINE_SITE_TARGETS: usize = 1;
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
@@ -1996,7 +1999,7 @@ pub(super) struct LaneStack {
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
-    call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; CALL_SITE_TARGETS]>>>,
+    call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
     values: Vec<Value>,
     activations: Vec<Activation>,
     /// Wasm activation payload represented by `values` before lane materialization.
@@ -2210,9 +2213,7 @@ impl LaneStack {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
         if !site.contains(&target) {
-            if site.len() == CALL_SITE_TARGETS {
-                site.remove(0);
-            }
+            if site.len() == CALL_SITE_TARGETS { site.remove(0); }
             site.push(target);
         }
     }
@@ -2220,10 +2221,7 @@ impl LaneStack {
     /// Drops the callees a collection swept from the sites' records before any allocation
     /// reuses their records: a body inlining one would take another function for it.
     pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
-        self.call_sites.get_mut().retain(|_, targets| {
-            targets.retain(|target| target.identity().is_none_or(&live));
-            !targets.is_empty()
-        });
+        self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
     fn enter_generation(&mut self, key: (u64, Value)) {
@@ -16365,7 +16363,7 @@ fn lane_body_inlined_activation<H: Host>(
 /// `context` is the running lane's context, whose activation's registers hold the caller's
 /// state; nothing the call runs allocates or collects.
 /// A lane body's read of a capture `packed` names (depth in its high half, slot in its low),
-/// by the lane's own non-effectful lookup (`lane_capture_value`): its value, or
+/// by the lane's own `LoadCapture` lookup (`lane_read_capture_value`): its value, or
 /// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
 pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
     // As `lane_body_call`: static regions recover captures through their semantic operation.
@@ -16376,9 +16374,9 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
         Some(env) => {
             let vm = unsafe { vm(cx) };
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
-            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.plain_capture(unsafe { &*slots }, root, slot).0)
         }
-        None => lane_capture_value(cx, depth, slot),
+        None => lane_read_capture_value::<H, true>(cx, depth, slot).0,
     };
     value
         .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)

@@ -34,59 +34,49 @@ impl ArraySegmentValues {
 }
 
 impl<H: Host> Vm<H> {
+    /// A new struct of declaration `index`: `values` answers its `len` field operands, or
+    /// its fields take their defaults when it is `None`.
     pub(super) fn wasm_struct_new(
         &mut self,
         declarations: &crate::WasmTypes,
         index: u32,
-        values: Option<Vec<Value>>,
+        values: Option<(usize, &dyn Fn(&Self, usize) -> Value)>,
         descriptor: Option<Value>,
     ) -> Result<Value, JsError> {
-        let declarations = declarations.clone();
         let fields = declarations
             .struct_fields(index)
             .ok_or_else(|| JsError::validation("invalid Wasm struct declaration".into()))?;
-        match (declarations.descriptor_type(index), descriptor) {
-            (None, None) => {}
-            (Some(ty), Some(value)) => {
-                if value.is_null() {
-                    return Err(JsError::wasm_trap_error(
-                        crate::WasmTrap::NullDescriptorReference,
-                    ));
-                }
-                if !self.wasm_reference_valid_in(value, ty, Some(&declarations)) {
-                    return Err(JsError::validation("invalid Wasm struct descriptor".into()));
-                }
-            }
-            _ => {
-                return Err(JsError::validation(
-                    "Wasm struct constructor descriptor mismatch".into(),
-                ));
-            }
-        }
-        let mut values = match values {
-            Some(values) if values.len() == fields.len() => values,
-            Some(_) => return Err(JsError::validation("Wasm struct field count mismatch".into())),
-            None => {
-                let mut values = Vec::new();
-                values
-                    .try_reserve_exact(fields.len())
-                    .map_err(|_| JsError::validation("Wasm struct allocation failed".into()))?;
-                for field in fields {
-                    let value = self.wasm_storage_default(field.element_type, &declarations)?;
-                    values.push(value);
-                }
-                values
-            }
+        self.check_wasm_struct_descriptor(declarations, index, descriptor)?;
+        let stored = match values {
+            Some((len, _)) if len != fields.len() => return Err(JsError::validation("Wasm struct field count mismatch".into())),
+            Some((_, value)) => crate::heap::WasmGcFields::try_new(fields.len(), descriptor, |field| {
+                Some(Self::wasm_storage_value(value(self, field), fields[field].element_type))
+            }),
+            None => crate::heap::WasmGcFields::try_new(fields.len(), descriptor, |field| {
+                self.wasm_storage_default(fields[field].element_type, declarations).ok()
+            }),
         };
-        for (value, field) in values.iter_mut().zip(fields) {
-            *value = self.wasm_storage_value(*value, field.element_type, &declarations)?;
-        }
-        Ok(self.heap.alloc(Cell::WasmGc {
-            declarations: Box::new(declarations),
-            ty: index,
-            fields: Box::new(crate::heap::WasmGcFields { values, descriptor }),
-        }))
+        let fields = stored.ok_or_else(|| JsError::validation("Wasm struct allocation failed".into()))?;
+        Ok(self.heap.alloc(Cell::WasmGc { declarations: declarations.clone(), ty: index, fields }))
     }
+
+    fn check_wasm_struct_descriptor(
+        &self,
+        declarations: &crate::WasmTypes,
+        index: u32,
+        descriptor: Option<Value>,
+    ) -> Result<(), JsError> {
+        match (declarations.descriptor_type(index), descriptor) {
+            (None, None) => Ok(()),
+            (Some(_), Some(value)) if value.is_null() => {
+                Err(JsError::wasm_trap_error(crate::WasmTrap::NullDescriptorReference))
+            }
+            (Some(ty), Some(value)) if self.wasm_reference_valid_in(value, ty, Some(declarations)) => Ok(()),
+            (Some(_), Some(_)) => Err(JsError::validation("invalid Wasm struct descriptor".into())),
+            _ => Err(JsError::validation("Wasm struct constructor descriptor mismatch".into())),
+        }
+    }
+
     pub(super) fn wasm_descriptor_matches(
         &self,
         owner: &crate::WasmTypes,
@@ -109,7 +99,7 @@ impl<H: Host> Vm<H> {
             return Ok(target.reference_type().unwrap().is_nullable());
         }
         Ok(
-            matches!(self.heap.get(reference), Some(Cell::WasmGc { fields, .. }) if fields.descriptor == Some(descriptor)),
+            matches!(self.heap.get(reference), Some(Cell::WasmGc { fields, .. }) if fields.descriptor() == Some(descriptor)),
         )
     }
 
@@ -137,7 +127,7 @@ impl<H: Host> Vm<H> {
             ));
         }
         match self.heap.get(reference) {
-            Some(Cell::WasmGc { fields, .. }) if let Some(descriptor) = fields.descriptor => {
+            Some(Cell::WasmGc { fields, .. }) if let Some(descriptor) = fields.descriptor() => {
                 Ok(descriptor)
             }
             _ => Err(JsError::validation("Wasm struct has no descriptor".into())),
@@ -162,32 +152,15 @@ impl<H: Host> Vm<H> {
             }
         })
     }
-    fn wasm_storage_value(
-        &self,
-        value: Value,
-        storage: wasmparser::StorageType,
-        declarations: &crate::WasmTypes,
-    ) -> Result<Value, JsError> {
-        match storage {
-            wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => {
-                let bits = value
-                    .as_int()
-                    .ok_or_else(|| JsError::validation("invalid packed Wasm field".into()))?;
-                let mask = if storage == wasmparser::StorageType::I8 {
-                    i32::from(u8::MAX)
-                } else {
-                    i32::from(u16::MAX)
-                };
-                Ok(Value::integer(bits & mask))
-            }
-            wasmparser::StorageType::Val(ty) => {
-                let ty = declarations
-                    .callable_value_type(ty)
-                    .ok_or_else(|| JsError::validation("unsupported Wasm field".into()))?;
-                self.decode_wasm_value_in(value, ty, Some(declarations))?;
-                Ok(value)
-            }
-        }
+    /// The stored form of a validated operand: packed fields keep their low bits, and other
+    /// values are stored as they are, since validation already proved their type.
+    fn wasm_storage_value(value: Value, storage: wasmparser::StorageType) -> Value {
+        let mask = match storage {
+            wasmparser::StorageType::I8 => i32::from(u8::MAX),
+            wasmparser::StorageType::I16 => i32::from(u16::MAX),
+            wasmparser::StorageType::Val(_) => return value,
+        };
+        Value::integer(value.as_int().expect("validated packed Wasm field") & mask)
     }
 
     pub(super) fn wasm_gc_field(
@@ -243,11 +216,10 @@ impl<H: Host> Vm<H> {
                 JsError::validation("invalid Wasm struct field representation".into())
             });
         }
-        let value = self.wasm_storage_value(
+        let value = Self::wasm_storage_value(
             value.ok_or_else(|| JsError::validation("missing Wasm struct field value".into()))?,
             field.element_type,
-            declarations,
-        )?;
+        );
         let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
             unreachable!("validated live struct")
         };
@@ -276,36 +248,21 @@ impl<H: Host> Vm<H> {
         let fields = match initialization {
             ArrayInitialization::Fixed(mut fields) => {
                 for value in &mut fields {
-                    *value = self.wasm_storage_value(*value, field.element_type, declarations)?;
+                    *value = Self::wasm_storage_value(*value, field.element_type);
                 }
-                fields
+                Some(fields.into())
             }
-            initialization => {
-                let value = match initialization {
-                    ArrayInitialization::Repeated { value, .. } => {
-                        self.wasm_storage_value(value, field.element_type, declarations)?
-                    }
-                    ArrayInitialization::Default(_) => {
-                        self.wasm_storage_default(field.element_type, declarations)?
-                    }
-                    ArrayInitialization::Fixed(_) => unreachable!("fixed elements handled above"),
-                };
-                let mut fields = Vec::new();
-                fields
-                    .try_reserve_exact(count)
-                    .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::ArrayTooLarge))?;
-                fields.resize(count, value);
-                fields
+            ArrayInitialization::Repeated { value, .. } => {
+                let value = Self::wasm_storage_value(value, field.element_type);
+                crate::heap::WasmGcFields::try_new(count, None, |_| Some(value))
+            }
+            ArrayInitialization::Default(_) => {
+                let value = self.wasm_storage_default(field.element_type, declarations)?;
+                crate::heap::WasmGcFields::try_new(count, None, |_| Some(value))
             }
         };
-        Ok(self.heap.alloc(Cell::WasmGc {
-            declarations: Box::new(declarations.clone()),
-            ty: index,
-            fields: Box::new(crate::heap::WasmGcFields {
-                values: fields,
-                descriptor: None,
-            }),
-        }))
+        let fields = fields.ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::ArrayTooLarge))?;
+        Ok(self.heap.alloc(Cell::WasmGc { declarations: declarations.clone(), ty: index, fields }))
     }
 
     fn check_wasm_array_size(count: usize) -> Result<(), JsError> {
@@ -427,7 +384,7 @@ impl<H: Host> Vm<H> {
         input: u32,
         count: u32,
     ) -> Result<(), JsError> {
-        let (field, owner, fields) = self.wasm_array_fields(reference)?;
+        let (field, _, fields) = self.wasm_array_fields(reference)?;
         if !field.mutable {
             return Err(JsError::validation(
                 "immutable Wasm array segment destination".into(),
@@ -438,16 +395,6 @@ impl<H: Host> Vm<H> {
                 .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsArray))?;
         let source =
             self.wasm_array_segment_values(kind, source, field.element_type, input, count)?;
-        // Reference type admission is complete before the first mutation.
-        if let ArraySegmentValues::Elements { source, range } = &source
-            && !range.is_empty() {
-                let Some(Cell::WasmElements(values)) = self.heap.get(*source) else {
-                    unreachable!("checked element segment")
-                };
-                for value in &values[range.clone()] {
-                    self.wasm_storage_value(*value, field.element_type, owner)?;
-                }
-            }
         for (index, destination) in output.enumerate() {
             let value = self.wasm_array_segment_value(&source, index);
             let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
@@ -494,7 +441,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         count: u32,
     ) -> Result<(), JsError> {
-        let (field, owner, fields) = self.wasm_array_fields(reference)?;
+        let (field, _, fields) = self.wasm_array_fields(reference)?;
         if !field.mutable {
             return Err(JsError::validation(
                 "immutable Wasm array fill destination".into(),
@@ -503,7 +450,7 @@ impl<H: Host> Vm<H> {
         let output =
             crate::wasm::memory::checked_range(u64::from(output), count as usize, fields.len())
                 .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsArray))?;
-        let value = self.wasm_storage_value(value, field.element_type, owner)?;
+        let value = Self::wasm_storage_value(value, field.element_type);
         let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
             unreachable!("validated live array")
         };
