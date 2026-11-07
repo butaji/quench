@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
         let array = self.heap.array(value)?;
         if array.proto() != self.array_proto
             || array.has_side_descriptors()
-            || !self.shape_entries(array.shape()).is_empty()
+            || self.shape_entry_count(array.shape()) != 0
         {
             return None;
         }
@@ -120,7 +120,7 @@ impl<H: Host> Vm<H> {
             && !self.shape_may_have_accessors(shape)
             && !self.error_is_error(value)
             && self.boxed_primitive_data(value).is_none()
-            && !self.shape_entries(shape).iter().any(|(key, _)| matches!(key, PropertyKey::Symbol(_)))
+            && !self.shape_entries(shape).any(|(key, _)| matches!(key, PropertyKey::Symbol(_)))
             && constructor.is_none_or(|atom| self.property_shape_slot(shape, PropertyKey::string(atom)).is_none());
         plain.then_some(data)
     }

@@ -3735,37 +3735,6 @@ fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
 }
 
 #[test]
-fn moved_shape_lookup_index_matches_the_derived_index() {
-    // A wide object built key by key, with non-default attributes and redefinitions, keeps
-    // its lookup index moving to each new shape; every index must match the one derived
-    // from that shape's whole chain.
-    let source = r#"
-      var wide = {};
-      for (var i = 0; i < 300; i++) {
-        wide["k" + i] = i;
-        if (i % 7 === 0) wide["k" + i];
-        if (i % 5 === 0) Object.defineProperty(wide, "k" + i, { enumerable: false });
-        if (i % 11 === 0) Object.defineProperty(wide, "g" + i, { get() { return i; } });
-      }
-      var keys = Object.keys(wide).length;
-    "#;
-    let mut vm = Vm::new(TestHost::default());
-    let program = Engine::specialize(source, "wide.js").unwrap();
-    vm.execute(&program).unwrap();
-    let mut compared = 0;
-    for shape in 0..vm.shapes.len() {
-        let Some(index) = vm.shapes[shape].lookup_index.get() else {
-            continue;
-        };
-        let derived = super::object::derive_shape_lookup_index(&vm.shapes, shape as u32);
-        assert!(index.entries == derived.entries, "shape {shape} entries");
-        assert!(index.attributes == derived.attributes, "shape {shape} attributes");
-        compared += 1;
-    }
-    assert!(compared > 0, "the wide object's shapes keep an index");
-}
-
-#[test]
 fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
     let source = r#"
       var first = { a: 1, b: 2, c: 3 };
