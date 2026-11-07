@@ -20445,10 +20445,10 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && kind == crate::bytecode::ProgramKind::Wasm {
-                // A Wasm run makes no frameless script call (`LaneContext::script_calls`), so
-                // its import calls take the general path, and the JavaScript call handler,
-                // which reads the context a JavaScript view carries, never runs in Wasm.
+            } else if wasm && matches!(op, Op::Call | Op::StoreCapture) {
+                // Their handlers read the context a JavaScript view carries where a Wasm view
+                // carries its memory; Wasm makes no frameless script call (`script_calls`), and
+                // stores a capture only for the rare `data.drop` and `elem.drop`.
                 None
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)]

@@ -1148,7 +1148,6 @@ complexity crates/quench-runtime/src/vm/wasm_host.rs::Vm<H>::call_wasm_host 28
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 32
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::construct_wasm_js_native 14
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::emscripten_memcpy_view_capture 20
-complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::install_webassembly 11
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::js_to_wasm_value 14
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::try_emscripten_memcpy_same_memory_raw 11
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::wasm_instantiate 12
@@ -4049,9 +4048,9 @@ function-lines crates/quench-runtime/src/vm/wasm_host.rs::tests::typed_host_impo
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_exported_function 86
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_import 98
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 199
-function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::construct_wasm_js_native 99
+function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::construct_wasm_js_native 84
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::emscripten_memcpy_view_capture 114
-function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::install_webassembly 76
+function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::install_webassembly 71
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::js_to_wasm_value 92
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::try_emscripten_memcpy_same_memory_raw 67
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::wasm_import_function 47

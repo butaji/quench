@@ -608,7 +608,7 @@ const NATIVES: &[Native] = &[
     Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,
     Native::WasmTableSet,
     Native::WasmGlobal, Native::WasmGlobalValueGetter, Native::WasmGlobalValueSetter,
-    Native::WasmGlobalValueOf,
+    Native::WasmGlobalValueOf, Native::WasmTag,
     Native::WasmCompileError, Native::WasmLinkError, Native::WasmRuntimeError, ];
 /// The function objects every realm shares, one per `NATIVES` entry. Each is built on its
 /// first read (`Vm::native_value`): a realm's installation reads fewer than half of them,
