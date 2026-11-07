@@ -50,34 +50,7 @@ members!(Member, "webWritable", [
     AbortRejected,
 ]);
 
-/// A writable stream's state.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum State {
-    Writable,
-    Erroring,
-    Closed,
-    Errored,
-}
-
-impl State {
-    fn from(value: f64) -> Self {
-        match value as u8 {
-            0 => Self::Writable,
-            1 => Self::Erroring,
-            2 => Self::Closed,
-            _ => Self::Errored,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Writable => "writable",
-            Self::Erroring => "erroring",
-            Self::Closed => "closed",
-            Self::Errored => "errored",
-        }
-    }
-}
+pub(crate) use super::states::WritableState as State;
 
 /// A writable stream's, writer's and controller's fields beyond the readable family's.
 pub(crate) mod field {
@@ -192,7 +165,7 @@ pub(crate) fn writer(c: &mut Context<'_>, stream: RootId) -> Outcome {
 /// `writableStreamAbort(stream, reason)`.
 pub(crate) fn abort(c: &mut Context<'_>, stream: RootId, reason: RootId) -> Outcome {
     let current = state(c, stream)?;
-    if matches!(current, State::Closed | State::Errored) {
+    if current.is_finished() {
         return resolved_undefined(c);
     }
     let controller = get(c, stream, CONTROLLER)?;
@@ -218,7 +191,7 @@ pub(crate) fn abort(c: &mut Context<'_>, stream: RootId, reason: RootId) -> Outc
 /// `writableStreamClose(stream)`.
 pub(crate) fn close(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let current = state(c, stream)?;
-    if matches!(current, State::Closed | State::Errored) {
+    if current.is_finished() {
         return rejected_with(c, WebError::InvalidState("WritableStream is closed"));
     }
     let promise = deferred(c)?;

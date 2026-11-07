@@ -596,6 +596,8 @@ const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
 mod lane_stack_growth;
+mod this_binding;
+use this_binding::ThisBinding;
 mod loop_fields;
 use loop_fields::lane_loop_field_stores;
 mod construct_plan;
@@ -1808,21 +1810,6 @@ impl ScriptCallTarget {
     fn settles(&self) -> bool {
         self.entry == CallEntry::Settles
     }
-}
-
-/// How a call of a `ScriptCallTarget` binds `this`, one byte so the entry stays one cache
-/// line: the receiver as is (strict), the receiver boxed or the global for nullish
-/// (sloppy), or for an arrow its environment's `this` (`ScriptCallTarget::lexical_this`),
-/// or the caller's receiver when its environment binds none. An arrow whose binding is
-/// still uninitialized (before `super()`) is never resolved, and an initialized binding
-/// never changes.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum ThisBinding {
-    Sloppy,
-    Strict,
-    Lexical,
-    CallerReceiver,
 }
 
 /// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
@@ -3328,7 +3315,7 @@ script_handler! {
             };
             // It checks the environment before it allocates the copy, so an error leaves the
             // frame for the general path to raise it from.
-            if vm.clone_frame_environment(frame, &plan.fresh, &plan.reset).is_err() {
+            if vm.clone_frame_environment(frame, &plan.fresh, body.environment_clones.resets(plan)).is_err() {
                 return exit(ip);
             }
             note_allocation(vm);
@@ -3374,7 +3361,7 @@ script_handler! {
         };
         // It checks the environment before it allocates the copy, so an error leaves the
         // activation for the general path to raise it from.
-        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, &plan.reset)
+        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, body.environment_clones.resets(plan))
         else {
             return exit(ip);
         };
@@ -11912,7 +11899,7 @@ impl<H: Host> Vm<H> {
         self.resolve_script_call_target(code, callee).is_some_and(|target| target.program == self.active_program
             && target.function == function
             && target.entry.activates_registers_only()
-            && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
+            && target.this_binding.binds_receiver())
     }
 
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
@@ -16049,7 +16036,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
     }).filter(|target| {
         target.program == vm.active_program
             && target.entry.activates_registers_only()
-            && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict)
+            && target.this_binding.binds_receiver()
             && recorded.is_none_or(|recorded| recorded.iter().any(|site| site.identity() == Some(target.callee)))
     });
     match latest {
@@ -20115,7 +20102,7 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if matches!(op, Op::ArgumentsLength | Op::ArgumentGet) {
+            } else if op.reads_arguments() {
                 Some(LaneHandler {
                     handler: if op == Op::ArgumentsLength {
                         lane_frame_arguments::<H, false> as Handler
@@ -22014,7 +22001,7 @@ fn specialize_environment_window<H: Host>(
         {
             return None;
         }
-        let environment = !matches!(op, Op::MakeClosure | Op::CloneEnv) && function.local_slot_uses_environment(own as usize);
+        let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
         let handler: Handler = match (op, environment) {
             (Op::MakeClosure, _) => lane_make_window_closure::<H>,
             (Op::CloneEnv, _) => lane_clone_window_env::<H>,

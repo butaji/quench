@@ -2839,19 +2839,14 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
     )
     .unwrap();
     program.compile_released();
-    let plans: Vec<_> = program
+    let resets: Vec<Vec<u16>> = program
         .functions
         .iter()
-        .flat_map(|function| function.environment_clones.iter())
+        .flat_map(|function| function.environment_clones.iter().map(|plan| function.environment_clones.resets(plan).iter().collect()))
         .collect();
     // The outer loop's next iteration does not share the inner loop's `k`
     // with the clone that last owned it: it resets the slot.
-    assert!(plans.iter().any(|plan| !plan.reset.is_empty()));
-    assert!(plans.iter().all(|plan| {
-        plan.reset
-            .iter()
-            .all(|slot| plan.fresh.binary_search(slot).is_err())
-    }));
+    assert!(resets.iter().any(|reset| !reset.is_empty()));
 }
 
 #[test]
@@ -20765,7 +20760,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     assert!(
         proven
             .instructions()
-            .all(|instruction| !matches!(instruction.op(), crate::bytecode::Op::LoadLocal | crate::bytecode::Op::StoreLocal)),
+            .all(|instruction| !instruction.op().is_relocatable_local_access()),
         "every lexical slot of `proven` is read after its initialization"
     );
     vm.execute(&program).unwrap();

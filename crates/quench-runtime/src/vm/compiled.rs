@@ -102,6 +102,11 @@ use exact_budget::PcLowering;
 use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
+#[cfg(unix)]
+#[path = "compiled/fault_handler.rs"]
+mod fault_handler;
+#[cfg(unix)]
+pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
@@ -1050,7 +1055,7 @@ pub(super) fn js_general_dispatch_shape(function: &Function) -> Option<bool> {
     let mut acyclic = true;
     for (pc, packed) in function.code.iter().enumerate() {
         let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-        if matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+        if instruction.op().is_js_jump() {
             let target = usize::try_from(instruction.jump_target()).ok()?;
             acyclic &= target > pc;
         }
@@ -2842,7 +2847,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
     let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
-        if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
+        if instruction.op().control_flow_layout().jumps() {
             let target = instruction.jump_target() as usize;
             if target <= pc && matches!(unit.origins.get(target), Some(lane_unit::Origin::Caller(_))) {
                 headers.push(target);
@@ -2894,7 +2899,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // them from its entry up to the first opaque operation. An inlined callee's loop that
     // indexes arrays stays the callee's own region, which views its arrays at its header.
     let array_loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        instruction.op().control_flow_layout().jumps()
             && instruction.jump_target() as usize <= pc
             && unit.instructions[instruction.jump_target() as usize..=pc].iter()
                 .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
@@ -3193,7 +3198,7 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
         if static_global_names
-            && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
+            && instruction.op().loads_name()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
@@ -4362,10 +4367,7 @@ pub(super) fn js_general_dispatch_cache_key(
         // Name fast-path admission checks the current program's atom text.
         // Include that text because two programs may encode different names at
         // the same atom index while sharing identical bytecode.
-        if matches!(
-            instruction.op(),
-            Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-        ) {
+        if instruction.op().loads_name() {
             let name = program.atoms.get(instruction.atom_index() as usize)?;
             if name.len()
                 > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
@@ -8822,7 +8824,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let is_call = matches!(current_instruction.op(), Op::Call | Op::CallArray);
+            let is_call = current_instruction.op().is_ordinary_call();
             let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
@@ -10671,7 +10673,7 @@ fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option
     for (latch, instruction) in instructions.iter().enumerate() {
         let layout = instruction.op().control_flow_layout();
         if !plan.reachable(latch)
-            || !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            || !layout.jumps()
         {
             continue;
         }
@@ -13418,31 +13420,6 @@ const FAULT_POLL_SUPPORTED: bool = cfg!(any(
     all(target_arch = "x86_64", target_os = "linux"),
     all(target_arch = "aarch64", target_os = "macos"),
 ));
-
-/// Compose a host's POSIX signal delivery with owned native-fault recovery.
-/// Prepare before installing the host observer, then let recovery consume its
-/// owned faults before enqueuing ordinary host signal notifications.
-#[cfg(unix)]
-pub struct NativeFaultHandler;
-
-#[cfg(unix)]
-impl NativeFaultHandler {
-    pub fn prepare(signal: i32) {
-        if matches!(signal, libc::SIGSEGV | libc::SIGBUS) { let _ = guard_support(); }
-    }
-
-    /// # Safety
-    /// Arguments must be the original POSIX SA_SIGINFO handler arguments on
-    /// the interrupted thread. No locks, allocation or guest callbacks occur.
-    pub unsafe fn resume(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) -> bool {
-        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-        if signal == libc::SIGSEGV { return unsafe { resume_guard_fault(info, context) }; }
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-        if matches!(signal, libc::SIGSEGV | libc::SIGBUS) { return unsafe { guard_aarch64::resume_fault(info, context) }; }
-        let _ = (signal, info, context);
-        false
-    }
-}
 
 // SAFETY: immutable executable code, shared by every thread.
 unsafe impl Send for GuardSupport {}
