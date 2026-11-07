@@ -739,7 +739,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Vec<u8>, JsError> {
         let bytes = match self.heap.get(source) {
             Some(Cell::ArrayBuffer {
-                bytes, detached, shared: false, ..
+                bytes,
+                detached,
+                mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. },
+                ..
             }) => Some(if *detached {
                 Vec::new()
             } else {
@@ -1523,9 +1526,8 @@ impl<H: Host> Vm<H> {
         let buffer_bytes = match self.heap.get(view_buffer) {
             Some(Cell::ArrayBuffer {
                 bytes,
-                shared: false,
                 detached: false,
-                immutable: false,
+                mode: BufferMode::Fixed | BufferMode::Resizable { .. },
                 ..
             }) if bytes.is_wasm_view_of(memory_bytes) => bytes,
             _ => return false,
@@ -1573,7 +1575,7 @@ impl<H: Host> Vm<H> {
             || matches!(
                 self.heap.get(*buffer),
                 Some(Cell::ArrayBuffer {
-                    immutable: true,
+                    mode: BufferMode::Immutable,
                     ..
                 })
             )

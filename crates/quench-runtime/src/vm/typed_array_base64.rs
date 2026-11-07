@@ -62,7 +62,7 @@ impl<H: Host> Vm<H> {
                 if matches!(
                     self.heap.get(buffer),
                     Some(Cell::ArrayBuffer {
-                        immutable: true,
+                        mode: BufferMode::Immutable,
                         ..
                     })
                 ) {

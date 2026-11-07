@@ -12242,10 +12242,8 @@ fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
                     assert!(matches!(
                         vm.heap.get(*buffer),
                         Some(super::Cell::ArrayBuffer {
-                            shared: false,
                             detached: false,
-                            resizable: false,
-                            immutable: false,
+                            mode: crate::heap::BufferMode::Fixed,
                             ..
                         })
                     ));

@@ -547,7 +547,7 @@ impl Cell {
                 writer.u8(tag::ARRAY);
                 object.write_snapshot(writer)?;
             }
-            Self::ArrayBuffer { object, bytes, shared, detached, max_byte_length, resizable, immutable } => {
+            Self::ArrayBuffer { object, bytes, mode, detached } => {
                 let Some((contents, pinned_residue)) = bytes.snapshot_contents() else {
                     return Err(SnapshotError::unsupported("a buffer over Wasm or atomically shared memory"));
                 };
@@ -556,11 +556,11 @@ impl Cell {
                 writer.bytes(contents);
                 writer.bool(pinned_residue.is_some());
                 writer.len(pinned_residue.unwrap_or_default());
-                writer.bool(*shared);
+                writer.bool(mode.is_shared());
                 writer.bool(*detached);
-                writer.u64(*max_byte_length as u64);
-                writer.bool(*resizable);
-                writer.bool(*immutable);
+                writer.u64(mode.max_byte_length(contents.len()) as u64);
+                writer.bool(mode.is_resizable());
+                writer.bool(mode.is_immutable());
             }
             Self::TypedArray { kind, object, buffer, length } => {
                 writer.u8(tag::TYPED_ARRAY);
@@ -749,21 +749,20 @@ impl Cell {
         Ok(match reader.u8()? {
             tag::OBJECT => Self::Object(read_object(reader)?),
             tag::ARRAY => Self::Array { object: ArrayObject::read_snapshot(reader)? },
-            tag::ARRAY_BUFFER => Self::ArrayBuffer {
-                object: boxed_object(reader)?,
-                bytes: {
-                    let contents = reader.bytes()?.to_vec();
-                    let pinned = reader.bool()?;
-                    let residue = reader.len()?;
-                    crate::heap::BufferBytes::restored(contents, pinned.then_some(residue))
-                        .ok_or_else(|| SnapshotError("snapshot buffer lost its observed alignment".into()))?
-                },
-                shared: reader.bool()?,
-                detached: reader.bool()?,
-                max_byte_length: reader.u64()? as usize,
-                resizable: reader.bool()?,
-                immutable: reader.bool()?,
-            },
+            tag::ARRAY_BUFFER => {
+                let object = boxed_object(reader)?;
+                let contents = reader.bytes()?.to_vec();
+                let pinned = reader.bool()?;
+                let residue = reader.len()?;
+                let bytes = crate::heap::BufferBytes::restored(contents, pinned.then_some(residue))
+                    .ok_or_else(|| SnapshotError("snapshot buffer lost its observed alignment".into()))?;
+                let shared = reader.bool()?;
+                let detached = reader.bool()?;
+                let max_byte_length = reader.u64()? as usize;
+                let (resizable, immutable) = (reader.bool()?, reader.bool()?);
+                let mode = crate::heap::BufferMode::new(shared, resizable, immutable, max_byte_length);
+                Self::ArrayBuffer { object, bytes, mode, detached }
+            }
             tag::TYPED_ARRAY => {
                 let kind = typed_array_kind::read(reader)?;
                 Self::TypedArray {

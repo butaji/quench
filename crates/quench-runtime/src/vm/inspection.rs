@@ -99,7 +99,7 @@ impl<H: Host> Vm<H> {
             };
         }
         match self.heap.get(value) {
-            Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
+            Some(Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
             Some(Cell::TypedArray { kind, .. }) => super::typed_array_install::TYPED_ARRAY_INSTALLS
                 .iter()

@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
                 offset,
             }),
             buffer,
-            length: crate::heap::ViewLength::new(length, self.array_buffer_resizable(buffer) && requested_length.is_none()),
+            length: ViewLength::new(length, self.array_buffer_resizable(buffer) && requested_length.is_none()),
         }))
     }
 
@@ -255,10 +255,8 @@ impl<H: Host> Vm<H> {
                 .as_number()?;
             let Cell::ArrayBuffer {
                 bytes,
-                shared: false,
                 detached: false,
-                resizable: false,
-                immutable: false,
+                mode: BufferMode::Fixed,
                 ..
             } = self.heap.buffer_bytes_mut(buffer)?
             else {
@@ -276,9 +274,8 @@ impl<H: Host> Vm<H> {
         } else {
             let Cell::ArrayBuffer {
                 bytes,
-                shared: false,
                 detached: false,
-                resizable: false,
+                mode: BufferMode::Fixed | BufferMode::Immutable,
                 ..
             } = self.heap.get(buffer)?
             else {
@@ -326,7 +323,7 @@ impl<H: Host> Vm<H> {
         let index = data_view_index_of(args.first().copied().unwrap_or(Value::UNDEFINED).immediate_number()?)?;
         if data_view_setter(native)
             && (args.get(1).copied().unwrap_or(Value::UNDEFINED).immediate_number().is_none()
-                || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. })))
+                || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { mode: BufferMode::Immutable, .. })))
         {
             return None;
         }
@@ -389,7 +386,7 @@ impl<H: Host> Vm<H> {
             && matches!(
                 self.heap.get(buffer),
                 Some(Cell::ArrayBuffer {
-                    immutable: true,
+                    mode: BufferMode::Immutable,
                     ..
                 })
             )

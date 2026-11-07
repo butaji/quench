@@ -614,8 +614,8 @@ impl<H: Host> Vm<H> {
             let buffer = self.heap.root_value(*transfer).unwrap();
             let (bytes, max_byte_length, resizable) = match self.heap.get(buffer) {
                 Some(Cell::ArrayBuffer { detached: true, .. }) => (Default::default(), 0, false),
-                Some(Cell::ArrayBuffer { bytes, max_byte_length, resizable, .. }) => {
-                    (bytes.clone(), *max_byte_length, *resizable)
+                Some(Cell::ArrayBuffer { bytes, mode, .. }) => {
+                    (bytes.clone(), mode.max_byte_length(bytes.len()), mode.is_resizable())
                 }
                 _ => unreachable!("validated transfer remains an ArrayBuffer"),
             };
@@ -684,7 +684,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn is_unshared_array_buffer(&self, value: Value) -> bool {
-        matches!(self.heap.get(value), Some(Cell::ArrayBuffer { shared: false, .. }))
+        matches!(self.heap.get(value), Some(Cell::ArrayBuffer { mode: BufferMode::Fixed | BufferMode::Immutable | BufferMode::Resizable { .. }, .. }))
     }
 
     /// `ValueSerializer::TransferArrayBuffer`.
@@ -1101,11 +1101,18 @@ impl<H: Host> Vm<H> {
         buffer: Value,
     ) -> Result<(), JsError> {
         let output = serializer.output.clone();
-        let Some(Cell::ArrayBuffer { bytes, shared, detached, max_byte_length, resizable, immutable, .. }) = self.heap.get(buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, mode, detached, .. }) = self.heap.get(buffer) else {
             unreachable!("dispatched as an ArrayBuffer");
         };
-        let (shareable, shared, detached, length, max_byte_length, resizable, immutable) =
-            (bytes.shared_backing().is_some(), *shared, *detached, bytes.len(), *max_byte_length, *resizable, *immutable);
+        let (shareable, shared, detached, length, max_byte_length, resizable, immutable) = (
+            bytes.shared_backing().is_some(),
+            mode.is_shared(),
+            *detached,
+            bytes.len(),
+            mode.max_byte_length(bytes.len()),
+            mode.is_resizable(),
+            mode.is_immutable(),
+        );
         if shared {
             if !shareable {
                 return Err(self.uncloneable_with(program, hooks, buffer));
@@ -1158,7 +1165,7 @@ impl<H: Host> Vm<H> {
                 // `IsOutOfBounds`).
                 let out_of_bounds = !self.array_buffer_detached(buffer)
                     && self.array_buffer_resizable(buffer)
-                    && !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { shared: true, .. }))
+                    && !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. }))
                     && self.typed_array_out_of_bounds(view);
                 if out_of_bounds {
                     return Err(self.uncloneable_with(program, hooks, view));
@@ -1178,7 +1185,7 @@ impl<H: Host> Vm<H> {
             }
             _ => unreachable!("dispatched as a view"),
         };
-        let backed_by_resizable = self.array_buffer_resizable(buffer) && !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { shared: true, .. }));
+        let backed_by_resizable = self.array_buffer_resizable(buffer) && !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. }));
         put_tag(output, tag::ARRAY_BUFFER_VIEW);
         put_varint(output, u64::from(subtag));
         put_varint(output, offset as u64);
@@ -1542,7 +1549,7 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let clone_id = valid(deserializer.input.borrow_mut().read_uint32())?;
                 let buffer = hooks.shared_array_buffer(self, program, clone_id)?;
-                if !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { shared: true, .. })) {
+                if !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. })) {
                     return Err(ReadFailure::Invalid);
                 }
                 self.wire_add_object(deserializer, id, buffer);
@@ -1623,10 +1630,10 @@ impl<H: Host> Vm<H> {
 
     /// `ReadJSArrayBufferView` over the buffer just read.
     fn wire_read_view(&mut self, deserializer: &mut ValueDeserializer, buffer: Value) -> Read<Value> {
-        let Some(Cell::ArrayBuffer { bytes, shared, resizable, .. }) = self.heap.get(buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, mode, .. }) = self.heap.get(buffer) else {
             return Err(ReadFailure::Invalid);
         };
-        let (buffer_length, shared, resizable) = (bytes.len(), *shared, *resizable);
+        let (buffer_length, shared, resizable) = (bytes.len(), mode.is_shared(), mode.is_resizable());
         let mut input = deserializer.input.borrow_mut();
         let subtag = valid(input.read_byte_varint())?;
         let offset = valid(input.read_uint32())? as usize;
@@ -1650,7 +1657,7 @@ impl<H: Host> Vm<H> {
             self.heap.alloc(Cell::DataView {
                 object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
-                length: crate::heap::ViewLength::new(byte_length, length_tracking),
+                length: ViewLength::new(byte_length, length_tracking),
             })
         } else {
             let kind = valid(VIEW_TAGS.iter().find(|(_, tag)| *tag == subtag).map(|(kind, _)| *kind))?;
@@ -1662,7 +1669,7 @@ impl<H: Host> Vm<H> {
                 kind,
                 object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
-                length: crate::heap::ViewLength::new(byte_length / kind.width(), length_tracking),
+                length: ViewLength::new(byte_length / kind.width(), length_tracking),
             })
         };
         self.wire_add_object(deserializer, id, view);
@@ -1724,11 +1731,8 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes,
-            shared,
+            mode: BufferMode::new(shared, resizable, immutable, max_byte_length),
             detached: false,
-            max_byte_length,
-            resizable,
-            immutable,
         })
     }
 
@@ -1769,14 +1773,14 @@ impl<H: Host> Vm<H> {
         for root in transfers.iter().copied() {
             let value = self.heap.root_value(root).unwrap();
             if self.object_data(value).is_some_and(Object::is_structured_transfer_forbidden)
-                || matches!(self.heap.get(value), Some(Cell::ArrayBuffer { detached, immutable, bytes, .. })
-                    if *detached || *immutable || bytes.is_wasm_view())
+                || matches!(self.heap.get(value), Some(Cell::ArrayBuffer { detached, mode, bytes, .. })
+                    if *detached || mode.is_immutable() || bytes.is_wasm_view())
             {
                 return Err(self.data_clone_error(program, "Cannot transfer object of unsupported type."));
             }
             let valid = matches!(
                 self.heap.get(value),
-                Some(Cell::ArrayBuffer { bytes, shared: false, detached: false, immutable: false, .. }) if !bytes.is_wasm_view()
+                Some(Cell::ArrayBuffer { bytes, detached: false, mode: BufferMode::Fixed | BufferMode::Resizable { .. }, .. }) if !bytes.is_wasm_view()
             );
             if !valid {
                 return Err(self.data_clone_error(program, "Found invalid value in transferList."));
@@ -1909,7 +1913,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Some(Cell::DataView { .. }) => "DataView",
-            Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
+            Some(Cell::ArrayBuffer { mode: BufferMode::Shared | BufferMode::GrowableShared { .. }, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
             Some(Cell::Date { .. }) => "Date",
             Some(Cell::RegExp { .. }) => "RegExp",
