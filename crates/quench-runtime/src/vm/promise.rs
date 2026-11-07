@@ -2280,8 +2280,7 @@ impl<H: Host> Vm<H> {
                         offset: 0,
                     }),
                     buffer,
-                    length,
-                    length_tracking: false,
+                    length: crate::heap::ViewLength::fixed(length),
                 });
                 self.module_namespace_default(value)
             }

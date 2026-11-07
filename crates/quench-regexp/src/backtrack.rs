@@ -8,9 +8,7 @@
 //! once its workspace exists.
 //!
 //! Lookbehind and classes that can match a string of several units are not compiled; such
-//! patterns keep the repository matcher. A search may also stop early when a step budget
-//! is given (`Program::find`), so that a pattern which another exact backend matches in
-//! linear time never backtracks without bound here.
+//! patterns keep the repository matcher.
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -29,13 +27,6 @@ const UNBOUNDED: u32 = u32::MAX;
 
 /// The code units an ASCII bitmap covers.
 const ASCII_UNITS: u32 = ASCII_MAX as u32 + 1;
-
-/// Steps a budgeted search may take per subject unit, plus a fixed allowance, before it
-/// defers to the linear-time backend. Ordinary patterns take a few steps per unit at each
-/// start position they try; exhausting the budget signals backtracking that grows faster
-/// than the subject.
-const BUDGET_STEPS_PER_UNIT: usize = 1024;
-const BUDGET_BASE_STEPS: usize = 1 << 16;
 
 /// The subject a program matches: one unit per position.
 pub(crate) trait Text {
@@ -543,9 +534,6 @@ enum Frame {
 struct Search {
     last: usize,
 }
-
-/// The search ran past its step budget.
-pub(crate) struct Exhausted;
 
 /// A match: the start and end positions and each capture's positions.
 pub(crate) struct Found {
@@ -1459,12 +1447,6 @@ impl Program {
         matches!(&self.prefix, Some(Prefix::Exact(prefix)) if prefix.needle() == literal)
     }
 
-    /// The step budget of a search over `length` units, when a linear-time backend can
-    /// answer it instead.
-    pub(crate) fn budget(length: usize) -> usize {
-        BUDGET_BASE_STEPS.saturating_add(length.saturating_mul(BUDGET_STEPS_PER_UNIT))
-    }
-
     #[inline(always)]
     fn test(&self, test: UnitTest, value: u32) -> bool {
         match test {
@@ -1497,9 +1479,8 @@ impl Program {
         text: &T,
         first: usize,
         sticky: bool,
-        budget: Option<usize>,
-    ) -> Result<Option<Found>, Exhausted> {
-        self.search(text, first, sticky, budget, |registers| {
+    ) -> Option<Found> {
+        self.search(text, first, sticky, |registers| {
             registers[..2 * self.capture_count]
                 .as_chunks::<2>().0.iter()
                 .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
@@ -1513,11 +1494,8 @@ impl Program {
         text: &T,
         first: usize,
         sticky: bool,
-        budget: Option<usize>,
-    ) -> Result<Option<Range<usize>>, Exhausted> {
-        Ok(self
-            .search(text, first, sticky, budget, |_| Vec::new())?
-            .map(|found| found.start..found.end))
+    ) -> Option<Range<usize>> {
+        self.search(text, first, sticky, |_| Vec::new()).map(|found| found.start..found.end)
     }
 
     /// `find`, with the captures of a match built from its registers by `captures`.
@@ -1527,28 +1505,25 @@ impl Program {
         text: &T,
         first: usize,
         sticky: bool,
-        budget: Option<usize>,
         captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
-    ) -> Result<Option<Found>, Exhausted> {
+    ) -> Option<Found> {
         if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
             let last = if sticky { first } else { text.len() };
-            return Ok(self.next_start(text, first, last).map(|start| Found {
+            return self.next_start(text, first, last).map(|start| Found {
                 start,
                 end: start + length,
                 captures: Vec::new(),
-            }));
+            });
         }
         let search = Search {
             last: if sticky { first } else { text.len() },
         };
-        let Some(start) = self.next_start(text, first, search.last) else {
-            return Ok(None);
-        };
+        let start = self.next_start(text, first, search.last)?;
         // An anchored search has the one start, which a first unit outside the anchored
         // pattern's first units fails before a run.
         if let Some(units) = &self.anchored_first {
             if start >= text.len() || !units.contains(text.unit(start)) {
-                return Ok(None);
+                return None;
             }
         }
         WORKSPACE.with_borrow_mut(|workspace| {
@@ -1556,25 +1531,17 @@ impl Program {
             // A failed run restores every register it set, so one reset serves every start.
             registers.clear();
             registers.resize(self.register_count, UNSET);
-            let mut steps = budget.unwrap_or(usize::MAX);
             stack.clear();
             stack.push(Frame::Barrier);
             let (pc, position) = self.entry(text, start);
             let at = (pc, start, position);
-            let found = if budget.is_some() {
-                self.run::<T, true>(text, at, Some(search), registers, stack, &mut steps)?
-            } else {
-                self.run::<T, false>(text, at, Some(search), registers, stack, &mut steps)?
-            };
-            let Some((start, end)) = found else {
-                return Ok(None);
-            };
+            let (start, end) = self.run(text, at, Some(search), registers, stack)?;
             let captures = captures(registers);
-            Ok(Some(Found {
+            Some(Found {
                 start,
                 end,
                 captures,
-            }))
+            })
         })
     }
 
@@ -1640,19 +1607,15 @@ impl Program {
     /// Runs from `pc` at `position` until a `Match` or `LookSucceed`, whose position it
     /// returns, or until backtracking reaches the run's barrier.
     #[allow(clippy::too_many_lines)]
-    /// `BUDGETED` runs count each step against `steps`; an unbudgeted search counts nothing.
-    fn run<T: Text + ?Sized, const BUDGETED: bool>(
+    fn run<T: Text + ?Sized>(
         &self,
         text: &T,
         (mut pc, mut start, mut position): (u32, usize, usize),
         search: Option<Search>,
         registers: &mut [usize],
         stack: &mut Vec<Frame>,
-        steps: &mut usize,
-    ) -> Result<Option<(usize, usize)>, Exhausted> {
+    ) -> Option<(usize, usize)> {
         let length = text.len();
-        // The steps left, held here and written back where the run returns or recurses.
-        let mut left = *steps;
         let set = |registers: &mut [usize], stack: &mut Vec<Frame>, register: u32, value| {
             let slot = &mut registers[register as usize];
             stack.push(Frame::Restore {
@@ -1672,9 +1635,6 @@ impl Program {
             registers[bound + 1] = end;
         };
         loop {
-            if BUDGETED {
-                left = left.checked_sub(1).ok_or(Exhausted)?;
-            }
             let advanced = match self.instructions[pc as usize] {
                 Inst::Unit(test) => {
                     if position < length && self.test(test, text.unit(position)) {
@@ -1887,9 +1847,7 @@ impl Program {
                 Inst::Look { negative, end } => {
                     let base = stack.len();
                     stack.push(Frame::Barrier);
-                    *steps = left;
-                    let found = self.run::<T, BUDGETED>(text, (pc + 1, position, position), None, registers, stack, steps)?;
-                    left = *steps;
+                    let found = self.run(text, (pc + 1, position, position), None, registers, stack);
                     match (found.is_some(), negative) {
                         (true, false) => {
                             // A lookahead is atomic: its choices go, the restores of its
@@ -1921,8 +1879,7 @@ impl Program {
                     }
                 }
                 Inst::LookSucceed | Inst::Match => {
-                    *steps = left;
-                    return Ok(Some((start, position)));
+                    return Some((start, position));
                 }
             };
             if advanced {
@@ -1930,18 +1887,10 @@ impl Program {
             }
             // Backtrack to the latest choice of this run.
             loop {
-                if BUDGETED {
-                    left = left.checked_sub(1).ok_or(Exhausted)?;
-                }
                 match stack.pop() {
                     None | Some(Frame::Barrier) => {
                         // A search moves on to its next start; a run of a body fails.
-                        let next =
-                            search.and_then(|search| self.next_start(text, start + 1, search.last));
-                        let Some(next) = next else {
-                            *steps = left;
-                            return Ok(None);
-                        };
+                        let next = search.and_then(|search| self.next_start(text, start + 1, search.last))?;
                         stack.push(Frame::Barrier);
                         start = next;
                         (pc, position) = self.entry(text, next);
@@ -2306,9 +2255,7 @@ mod tests {
                             .find_units(&units, first)
                             .map(|found| (found.range, found.captures));
                         let actual = program
-                            .find(&units[..], first, false, None)
-                            .ok()
-                            .expect("an unbudgeted search completes")
+                            .find(&units[..], first, false)
                             .map(|found| {
                                 let found = regex.unit_match(
                                     &units,
@@ -2328,19 +2275,17 @@ mod tests {
                         if !regex.flags.unicode {
                             // Outside unicode mode a decoded unit is a code unit.
                             let code_units = subject.encode_utf16().collect::<Vec<_>>();
-                            let wide = program.find(&code_units[..], first, false, None).ok();
-                            let decoded = program.find(&units[..], first, false, None).ok();
+                            let wide = program.find(&code_units[..], first, false);
+                            let decoded = program.find(&units[..], first, false);
                             assert_eq!(
-                                wide.map(raw),
-                                decoded.map(raw),
+                                raw(wide),
+                                raw(decoded),
                                 "/{pattern}/{flags} on code units {subject:?} from {first}"
                             );
                         }
                         if subject.is_ascii() {
                             let bytes = program
-                                .find(subject.as_bytes(), first, false, None)
-                                .ok()
-                                .expect("an unbudgeted search completes")
+                                .find(subject.as_bytes(), first, false)
                                 .map(|found| (found.start..found.end, found.captures));
                             assert_eq!(
                                 bytes, expected,
@@ -2358,11 +2303,11 @@ mod tests {
                                 "/{pattern}/{flags} sticky on {subject:?} at {first}"
                             );
                         };
-                        let decoded = |sticky| program.find(&units[..], first, sticky, None).ok().flatten();
+                        let decoded = |sticky| program.find(&units[..], first, sticky);
                         at_first(&decoded);
                         if subject.is_ascii() {
                             let bytes = subject.as_bytes();
-                            at_first(&|sticky| program.find(bytes, first, sticky, None).ok().flatten());
+                            at_first(&|sticky| program.find(bytes, first, sticky));
                         }
                     }
                 }

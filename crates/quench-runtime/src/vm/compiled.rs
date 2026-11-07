@@ -54,7 +54,6 @@ mod osr_loop;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
-pub(super) mod switches;
 pub(super) mod tier_policy;
 #[cfg(test)]
 mod stable_fact_tests;
@@ -4795,8 +4794,6 @@ const TRAPS: [crate::WasmTrap; 6] = [
     crate::WasmTrap::InvalidConversionToInteger,
 ];
 
-const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
-const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -4812,24 +4809,14 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return Ok(mode.root);
     }
-    static ROOT: std::sync::OnceLock<Result<Option<usize>, ()>> = std::sync::OnceLock::new();
-    *ROOT.get_or_init(|| {
-        let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
-            return Ok(None);
-        };
-        root.to_str()
-            .ok_or(())?
-            .parse::<usize>()
-            .map(Some)
-            .map_err(|_| ())
-    })
+    crate::trace::Dev::WasmRoot.value().map(|root| root.parse::<usize>().map_err(|_| ())).transpose()
 }
 
 /// Whether Wasm modules stay selective for good, compiling only their hot roots
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) fn jit_wasm_selective_enabled() -> bool {
-    switches::WASM_JIT_SELECTIVE.enabled()
+    crate::trace::Dev::WasmSelective.on()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4837,7 +4824,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    switches::WASM_JIT_ROOT_ONLY.enabled()
+    crate::trace::Dev::WasmRootOnly.on()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -4845,7 +4832,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    switches::WASM_JIT_ROOT_FIRST.enabled()
+    crate::trace::Dev::WasmRootFirst.on()
 }
 
 #[cfg(test)]
@@ -4919,10 +4906,7 @@ fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static s
     if root.is_none() {
         return Ok("speed");
     }
-    match std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) {
-        Some(level) => parse_jit_root_opt_level(root_only, Some(level.to_str().ok_or(())?)),
-        None => parse_jit_root_opt_level(root_only, None),
-    }
+    parse_jit_root_opt_level(root_only, crate::trace::Dev::WasmRootOptLevel.value())
 }
 
 fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
@@ -16406,7 +16390,7 @@ impl<H: Host> Vm<H> {
                 }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
-                    // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
+                    // function named by QUENCH_DEV=wasm-root=N. Root-only mode
                     // keeps its callees in the VM; root-first mode allows a
                     // hot callee to enter the existing bounded tier below.
                     let diagnose = jit_diagnostics_enabled();

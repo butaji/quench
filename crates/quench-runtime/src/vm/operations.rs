@@ -1,6 +1,10 @@
 use super::*;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
+mod number_operators;
+pub(crate) use number_operators::static_number_binary;
+use number_operators::*;
+
 /// Shared Number/BigInt content mismatch diagnostic.
 pub(super) const MIXED_BIGINT_TYPES: &str =
     "Cannot mix BigInt and other types, use explicit conversions";
@@ -506,34 +510,6 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     }
 }
 
-/// A comparison operator applied to two numbers, or to two integers, which compare as the
-/// numbers they denote.
-#[inline(always)]
-fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
-    NumberRelation::from_operator(op)
-        .expect("comparison operators end at GreaterEqualThan")
-        .apply(&mut PartialOrderStage, a, b)
-}
-
-const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
-const LAST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::BitwiseAnd as u32;
-const NUMERIC_BINARY_OPERATOR_COUNT: usize =
-    (LAST_NUMERIC_BINARY_OPERATOR - FIRST_NUMERIC_BINARY_OPERATOR + 1) as usize;
-const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] = [
-    BinaryOperator::Addition,
-    BinaryOperator::Subtraction,
-    BinaryOperator::Multiplication,
-    BinaryOperator::Division,
-    BinaryOperator::Remainder,
-    BinaryOperator::Exponential,
-    BinaryOperator::ShiftLeft,
-    BinaryOperator::ShiftRight,
-    BinaryOperator::ShiftRightZeroFill,
-    BinaryOperator::BitwiseOR,
-    BinaryOperator::BitwiseXOR,
-    BinaryOperator::BitwiseAnd,
-];
-
 /// Binary operator `op` of two integers where the integers alone decide its result: a
 /// comparison's boolean through the shared relation definition, or the integer operators'
 /// result (`numeric_integer_result`); `None` for any other operator and for a result the
@@ -574,35 +550,6 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     // Equality, strict equality and the relational operators agree with IEEE 754
     // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
     Some(number_comparison(op, left.as_number()?, right.as_number()?))
-}
-
-#[inline(always)]
-fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
-    let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;
-    let operator = *NUMERIC_BINARY_OPERATORS.get(index)?;
-    (operator as u32 == immediate).then_some(operator)
-}
-
-#[inline(always)]
-fn is_numeric_binary_operator(immediate: u32) -> bool {
-    (FIRST_NUMERIC_BINARY_OPERATOR..=LAST_NUMERIC_BINARY_OPERATOR).contains(&immediate)
-}
-
-#[inline(always)]
-fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64 {
-    if let Some(operation) = NumberArithmetic::from_operator(operator as u32) {
-        return number_arithmetic_result(operation, left, right);
-    }
-    if let Some(operation) = NumberBitwise::from_operator(operator as u32) {
-        let left = number_to_u32(left) as i32;
-        let right = number_to_u32(right) as i32;
-        return number_bitwise_f64_result(operation, left, right);
-    }
-    match operator {
-        BinaryOperator::Remainder => number_remainder(left, right),
-        BinaryOperator::Exponential => exponentiate(left, right),
-        _ => unreachable!("numeric operator table only contains numeric operators"),
-    }
 }
 
 /// Number remainder after operand conversion. Also callable by the shared native

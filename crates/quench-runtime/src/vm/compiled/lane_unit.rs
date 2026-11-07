@@ -259,7 +259,7 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<S
             let mut definitions = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
                 // A stored or literal-defined data property holding a closure names its body.
-                if instruction.op().field_store().map_or(instruction.op() == Op::DefineField, |store| store.receiver == crate::bytecode::StoreReceiver::Register)
+                if instruction.op().field_store().map_or_else(|| instruction.op() == Op::DefineField, |store| store.receiver == crate::bytecode::StoreReceiver::Register)
                     && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
                         observe(&mut methods[instruction.atom_index() as usize], id);
                     }
