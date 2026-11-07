@@ -8,7 +8,7 @@ const MAX_FIXED_POINT_POSITION: i32 = 21;
 const MIN_FIXED_POINT_POSITION: i32 = -6;
 /// Below 2^53 every integer is a double, so its shortest round-trip digits are exactly its
 /// decimal digits, which an integer formatter writes directly.
-const EXACT_INTEGER_MAGNITUDE: f64 = (1u64 << f64::MANTISSA_DIGITS) as f64;
+pub(crate) const EXACT_INTEGER_MAGNITUDE: f64 = (1u64 << f64::MANTISSA_DIGITS) as f64;
 
 /// `value` as Number::toString(10) writes it.
 pub(crate) fn format(value: f64) -> String {
@@ -110,7 +110,7 @@ mod tests {
     /// The layout core's float formatting gives, which this module replaced: its digits are
     /// also the shortest round-trip digits.
     fn reference(value: f64) -> String {
-        const EXACT_INTEGER_MAGNITUDE: f64 = (1u64 << f64::MANTISSA_DIGITS) as f64;
+        use crate::number_to_string::EXACT_INTEGER_MAGNITUDE;
         if value.is_nan() {
             return "NaN".into();
         }

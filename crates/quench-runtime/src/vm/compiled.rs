@@ -7883,7 +7883,7 @@ unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u
     // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
-        .map_or(Value::DELETED.to_bits(), u64::from)
+        .map_or_else(|| Value::DELETED.to_bits(), u64::from)
 }
 
 /// A lane body's fused `typeof` test of a heap value (`Vm::typeof_test_value`): 1 where its
@@ -10703,11 +10703,10 @@ impl<H: Host> Analysis<'_, H> {
             Op::Jump => Some(()),
             Op::WasmBranchTable => {
                 i32_value(state, instruction.a())?;
-                let pc_entries: Vec<_> =
-                    crate::bytecode::branch_table_entries(0, instruction).collect();
+                
                 // Entries are `Jump`s; validation guarantees it for
                 // reachable tables.
-                (!pc_entries.is_empty()).then_some(())
+                (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
             }
             Op::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
@@ -16479,7 +16478,7 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
-                    self.programs.set_compiled(program, compiled.clone());
+                    self.programs.set_compiled(program, compiled);
                     self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 } else if self
@@ -16515,7 +16514,7 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
-                    self.programs.set_compiled(program, compiled.clone());
+                    self.programs.set_compiled(program, compiled);
                     self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 }
@@ -20104,7 +20103,7 @@ mod tests {
             "direct-bitwise-guard.js",
         ).unwrap();
         let function = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "flags")
         }).unwrap() as u32;
         let artifact = super::super::js_compiled::compile(&program, function).unwrap();
@@ -20405,7 +20404,7 @@ mod tests {
             "object-boolean-region.js",
         ).unwrap();
         let id = program.functions.iter().position(|function| {
-            function.header().name.or(function.header().inferred_name)
+            function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "check")
         }).unwrap() as u32;
         let isa = super::super::jit_backend::target_isa_for(

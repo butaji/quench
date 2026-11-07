@@ -733,7 +733,7 @@ mod tests {
         assert_eq!(current_values, (*dense).as_ptr());
         // The header pointer belongs to this ArrayElements value; re-reading it observes the
         // new header/backing after copy-on-write mutation.
-        let mut shared = dense.clone();
+        let mut shared = dense;
         shared.make_mut().push(Value::integer(11));
         let current_values = unsafe {
             shared

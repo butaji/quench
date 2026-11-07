@@ -637,7 +637,7 @@ impl Regex {
         let cr_admitted =
             || !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return();
         let backend = match subject.ascii() {
-            Some(bytes) => match self.range_matcher().or(self.compiled()) {
+            Some(bytes) => match self.range_matcher().or_else(|| self.compiled()) {
                 Some(automata) if cr_admitted() => RangeBackend::Automata { automata, bytes },
                 _ => match self.complete().backtracking.as_ref() {
                     Some(program) => RangeBackend::Backtracking {
@@ -682,7 +682,7 @@ impl Regex {
         }
         if let (Some(bytes), Some(compiled)) = (
             subject.ascii(),
-            self.range_matcher().or(self.compiled()),
+            self.range_matcher().or_else(|| self.compiled()),
         ) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return compiled
@@ -713,7 +713,7 @@ impl Regex {
                 && if captures {
                     self.compiled().is_some()
                 } else {
-                    self.range_matcher().or(self.compiled()).is_some()
+                    self.range_matcher().or_else(|| self.compiled()).is_some()
                 };
             if automata
                 && (!captures || self.capture_names.is_empty())
@@ -1790,7 +1790,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
             let flags = group
                 .modifiers
                 .as_ref()
-                .map_or(ModeFlags::default(), |modifiers| ModeFlags {
+                .map_or_else(ModeFlags::default, |modifiers| ModeFlags {
                     ignore_case: modifier_mode(
                         modifiers.enabling,
                         modifiers.disabling,
@@ -1873,7 +1873,8 @@ fn collect_term_names(term: &ast::Term<'_>, names: &mut Vec<String>) {
     }
 }
 
-fn decode_identifier_escapes(name: &str) -> Option<String> {
+/// A group name with its `\uXXXX` and `\u{...}` escapes decoded; `None` when an escape is malformed.
+pub fn decode_identifier_escapes(name: &str) -> Option<String> {
     let mut units = Vec::new();
     let mut chars = name.chars();
     while let Some(character) = chars.next() {
@@ -2209,7 +2210,7 @@ fn repeat_with(
     if matches!(body, Expr::Literal(_) | Expr::Dot | Expr::Class(_)) {
         return repeat_simple_with(body, input, state, flags, min, max, greedy, continuation);
     }
-    let limit = max.unwrap_or(input.len().saturating_add(1));
+    let limit = max.unwrap_or_else(|| input.len().saturating_add(1));
     if !greedy && count >= min {
         if let Some(found) = continuation(state.clone()) {
             return Some(found);
@@ -2267,7 +2268,7 @@ fn repeat_simple_with(
     greedy: bool,
     continuation: &mut dyn FnMut(State) -> Option<State>,
 ) -> Option<State> {
-    let limit = max.unwrap_or(input.len().saturating_add(1));
+    let limit = max.unwrap_or_else(|| input.len().saturating_add(1));
     let mut positions = Vec::new();
     let mut position = state.position;
     let mut count = 0;
@@ -2544,7 +2545,7 @@ fn reverse_sequence_options(
             output.push(state);
             return;
         }
-        for candidate in reverse_options(&parts[index - 1], input, state.clone(), flags) {
+        for candidate in reverse_options(&parts[index - 1], input, state, flags) {
             visit(parts, index - 1, input, candidate, flags, output);
         }
     }
@@ -2583,7 +2584,7 @@ fn reverse_repeat_options(
     max: Option<usize>,
     greedy: bool,
 ) -> Vec<State> {
-    let limit = max.unwrap_or(input.len().saturating_add(1));
+    let limit = max.unwrap_or_else(|| input.len().saturating_add(1));
     struct Visit<'a> {
         body: &'a Expr,
         input: &'a [Unit],

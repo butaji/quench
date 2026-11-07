@@ -27,8 +27,7 @@ const FIXTURES: &[&str] = &[
     "richards.js",
     "splay.js",
 ];
-const MIN_QUALIFYING_ROUNDS: usize = 11;
-const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
+use analysis::{MIN_DIAGNOSTIC_SCREEN_ROUNDS, MIN_QUALIFYING_ROUNDS};
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const QUENCH_WASM_JIT_SELECTIVE: &str = "QUENCH_WASM_JIT_SELECTIVE";
@@ -1468,7 +1467,7 @@ fn prepare_quench_pair(options: &Options) -> Vec<EngineSpec> {
         env!("CARGO_PKG_VERSION")
     );
     for engine in [&mut baseline, &mut candidate] {
-        engine.version = version.clone();
+        engine.version.clone_from(&version);
         engine.jit_proof_command = vec![engine.executable.display().to_string()];
         engine.jit_proof =
             "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
@@ -3628,7 +3627,7 @@ mod tests {
         assert!(!resume_metadata_matches(&loaded, &root_first));
 
         let selective_ab_path = directory.join("selective-ab-report.json");
-        let mut selective_ab = expected.clone();
+        let mut selective_ab = expected;
         selective_ab.jit_wasm_root_only = false;
         selective_ab.jit_wasm_selective_ab = true;
         write_checkpoint(&selective_ab_path, &selective_ab);

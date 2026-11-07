@@ -7,7 +7,6 @@ use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
-const KINDS: usize = CellKind::NAMES.len();
 const BUCKETS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -34,23 +33,23 @@ pub(crate) struct MemoryProfile {
     birth_bytes: Vec<usize>,
     birth_managed_bytes: Vec<usize>,
     kinds: Vec<u8>,
-    live_counts: [u64; KINDS],
-    live_birth_bytes: [u64; KINDS],
-    peak_counts: [u64; KINDS],
-    peak_birth_bytes: [u64; KINDS],
-    allocated_counts: [u64; KINDS],
+    live_counts: [u64; CellKind::COUNT],
+    live_birth_bytes: [u64; CellKind::COUNT],
+    peak_counts: [u64; CellKind::COUNT],
+    peak_birth_bytes: [u64; CellKind::COUNT],
+    allocated_counts: [u64; CellKind::COUNT],
     allocated_variant_counts: BTreeMap<&'static str, u64>,
-    allocated_bytes: [u64; KINDS],
-    size_buckets: [[u64; BUCKETS]; KINDS],
-    freed_counts: [u64; KINDS],
-    freed_bytes: [u64; KINDS],
-    recently_allocated_freed_counts: [u64; KINDS],
-    recently_allocated_freed_payload_bytes: [u64; KINDS],
+    allocated_bytes: [u64; CellKind::COUNT],
+    size_buckets: [[u64; BUCKETS]; CellKind::COUNT],
+    freed_counts: [u64; CellKind::COUNT],
+    freed_bytes: [u64; CellKind::COUNT],
+    recently_allocated_freed_counts: [u64; CellKind::COUNT],
+    recently_allocated_freed_payload_bytes: [u64; CellKind::COUNT],
     freed_managed_bytes: u64,
-    recently_allocated_freed_managed_bytes: [u64; KINDS],
-    lifetime_buckets: [[u64; BUCKETS]; KINDS],
-    first_orders: [u64; KINDS],
-    last_orders: [u64; KINDS],
+    recently_allocated_freed_managed_bytes: [u64; CellKind::COUNT],
+    lifetime_buckets: [[u64; BUCKETS]; CellKind::COUNT],
+    first_orders: [u64; CellKind::COUNT],
+    last_orders: [u64; CellKind::COUNT],
     current_site: Option<AllocationSite>,
     sites: Vec<Option<AllocationSite>>,
     site_ids: FxHashMap<AllocationSite, u32>,
@@ -69,23 +68,23 @@ impl Default for MemoryProfile {
             birth_bytes: Vec::new(),
             birth_managed_bytes: Vec::new(),
             kinds: Vec::new(),
-            live_counts: [0; KINDS],
-            live_birth_bytes: [0; KINDS],
-            peak_counts: [0; KINDS],
-            peak_birth_bytes: [0; KINDS],
-            allocated_counts: [0; KINDS],
+            live_counts: [0; CellKind::COUNT],
+            live_birth_bytes: [0; CellKind::COUNT],
+            peak_counts: [0; CellKind::COUNT],
+            peak_birth_bytes: [0; CellKind::COUNT],
+            allocated_counts: [0; CellKind::COUNT],
             allocated_variant_counts: BTreeMap::new(),
-            allocated_bytes: [0; KINDS],
-            size_buckets: [[0; BUCKETS]; KINDS],
-            freed_counts: [0; KINDS],
-            freed_bytes: [0; KINDS],
-            recently_allocated_freed_counts: [0; KINDS],
-            recently_allocated_freed_payload_bytes: [0; KINDS],
+            allocated_bytes: [0; CellKind::COUNT],
+            size_buckets: [[0; BUCKETS]; CellKind::COUNT],
+            freed_counts: [0; CellKind::COUNT],
+            freed_bytes: [0; CellKind::COUNT],
+            recently_allocated_freed_counts: [0; CellKind::COUNT],
+            recently_allocated_freed_payload_bytes: [0; CellKind::COUNT],
             freed_managed_bytes: 0,
-            recently_allocated_freed_managed_bytes: [0; KINDS],
-            lifetime_buckets: [[0; BUCKETS]; KINDS],
-            first_orders: [0; KINDS],
-            last_orders: [0; KINDS],
+            recently_allocated_freed_managed_bytes: [0; CellKind::COUNT],
+            lifetime_buckets: [[0; BUCKETS]; CellKind::COUNT],
+            first_orders: [0; CellKind::COUNT],
+            last_orders: [0; CellKind::COUNT],
             current_site: None,
             sites: vec![None],
             site_ids: FxHashMap::default(),
@@ -222,15 +221,6 @@ impl MemoryProfile {
         );
     }
 
-    pub(super) fn freed_promise(&mut self, identity: Value, object_slots: usize) {
-        let Some(index) = self.identity_slots.remove(&identity) else {
-            return;
-        };
-        let kind = CellKind::Object as usize;
-        debug_assert_eq!(self.kinds[index] as usize, kind);
-        self.freed_record(index, kind, Some(object_slots));
-    }
-
     pub(super) fn allocated_iterator(
         &mut self,
         identity: Value,
@@ -246,45 +236,12 @@ impl MemoryProfile {
         );
     }
 
-    pub(super) fn freed_iterator(&mut self, identity: Value, object_slots: usize) {
+    /// A collected record-space cell whose object carried `object_slots` property slots.
+    pub(super) fn freed_record_cell(&mut self, identity: Value, object_slots: usize) {
         let Some(index) = self.identity_slots.remove(&identity) else {
             return;
         };
-        let kind = CellKind::Iterator as usize;
-        debug_assert_eq!(self.kinds[index] as usize, kind);
-        self.freed_record(index, kind, Some(object_slots));
-    }
-
-    pub(super) fn freed_function(&mut self, identity: Value, object_slots: usize) {
-        let Some(index) = self.identity_slots.remove(&identity) else {
-            return;
-        };
-        let kind = CellKind::Function as usize;
-        debug_assert_eq!(self.kinds[index] as usize, kind);
-        self.freed_record(index, kind, Some(object_slots));
-    }
-
-    pub(super) fn freed_object(&mut self, identity: Value, object_slots: usize) {
-        let Some(index) = self.identity_slots.remove(&identity) else {
-            return;
-        };
-        let kind = CellKind::Object as usize;
-        debug_assert_eq!(self.kinds[index] as usize, kind);
-        self.freed_record(index, kind, Some(object_slots));
-    }
-
-    pub(super) fn freed_array(
-        &mut self,
-        identity: Value,
-        object_slots: usize,
-        _array: &ArrayObject,
-    ) {
-        let Some(index) = self.identity_slots.remove(&identity) else {
-            return;
-        };
-        let kind = CellKind::Array as usize;
-        debug_assert_eq!(self.kinds[index] as usize, kind);
-        self.freed_record(index, kind, Some(object_slots));
+        self.freed_record(index, self.kinds[index] as usize, Some(object_slots));
     }
 
     fn freed_record(&mut self, index: usize, kind: usize, object_slots: Option<usize>) {
@@ -319,8 +276,8 @@ impl MemoryProfile {
     pub(crate) fn report(
         &self,
         phase: &str,
-        live_counts: [usize; KINDS],
-        live_bytes: [usize; KINDS],
+        live_counts: [usize; CellKind::COUNT],
+        live_bytes: [usize; CellKind::COUNT],
         heap: &Heap,
     ) {
         let variant_names = self
@@ -383,7 +340,7 @@ impl MemoryProfile {
         self.object_sites[index] = self.site_id(self.current_site);
         self.object_allocated_slots[index] = slots as u32;
         self.object_peak_slots[index] = slots as u32;
-        debug_assert!(kind < KINDS);
+        debug_assert!(kind < CellKind::COUNT);
     }
 
     fn record_object_death(&mut self, index: usize, kind: usize, slots: Option<usize>) {
@@ -498,8 +455,8 @@ impl Heap {
         self.collections
     }
 
-    pub(crate) fn cell_counts(&self) -> [usize; KINDS] {
-        let mut counts = [0; KINDS];
+    pub(crate) fn cell_counts(&self) -> [usize; CellKind::COUNT] {
+        let mut counts = [0; CellKind::COUNT];
         counts[CellKind::Object as usize] = self.object_records.live_count();
         counts[CellKind::Array as usize] = self.array_records.live_count();
         counts[CellKind::Function as usize] = self.function_records.live_count();
@@ -523,8 +480,8 @@ impl Heap {
         &self.memory_profile
     }
 
-    pub(crate) fn live_payload_bytes(&self) -> [usize; KINDS] {
-        let mut bytes = [0; KINDS];
+    pub(crate) fn live_payload_bytes(&self) -> [usize; CellKind::COUNT] {
+        let mut bytes = [0; CellKind::COUNT];
         self.for_each_live_value(|identity| {
             if let Some(object) = self.object_record(identity) {
                 bytes[CellKind::Object as usize] += object.allocated_extra_bytes();

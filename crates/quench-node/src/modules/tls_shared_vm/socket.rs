@@ -111,7 +111,6 @@ fn create_session(
         let session = get(context, options, "session")?;
         if let Some(bytes) = context
             .view_bytes_rooted(session)
-            .map(|bytes| bytes.to_vec())
         {
             let session = SslSession::from_der(&bytes)
                 .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
@@ -175,7 +174,6 @@ fn encode_alpn_protocols(
         return Ok(None);
     }
     if let Some(bytes) = context.view_bytes_rooted(value) {
-        let bytes = bytes.to_vec();
         validate_alpn_wire(context, &bytes)?;
         return Ok(Some(bytes));
     }

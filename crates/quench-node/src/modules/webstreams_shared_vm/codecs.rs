@@ -33,11 +33,11 @@ members!(Member, "webCodecs", [
 
 /// The classes' slots.
 mod field {
-    pub(super) const TRANSFORM: &str = "transform";
-    pub(super) const READABLE: &str = "readable";
-    pub(super) const WRITABLE: &str = "writable";
+    pub(crate) use crate::modules::keys::TRANSFORM;
+    pub(crate) use crate::modules::keys::READABLE;
+    pub(crate) use crate::modules::keys::WRITABLE;
     pub(super) const PENDING: &str = "pendingHighSurrogate";
-    pub(super) const HANDLE: &str = "handle";
+    pub(crate) use crate::modules::keys::HANDLE;
 }
 use field::*;
 

@@ -854,18 +854,8 @@ fn set_timer_ref(
     Ok(receiver)
 }
 
-pub(crate) fn timer_has_ref(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let api = timer_handle_api(context)?;
-    let refed = context.get_property_rooted(receiver, api.refed_key)?;
-    let refed = context.truthy_rooted(refed)?;
-    Ok(context.boolean(refed))
-}
-
-pub(crate) fn immediate_has_ref(
+/// `hasRef()` of a timer or an immediate handle.
+pub(crate) fn handle_has_ref(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
     _: &[RootId],

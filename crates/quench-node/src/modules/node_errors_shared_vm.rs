@@ -212,6 +212,32 @@ pub(crate) fn decorate_type_error(
     decorate_coded_error(context, error, code, ErrorClass::TypeError, &[])
 }
 
+/// A thrown `Error` carrying Node's `code`.
+pub(crate) fn throw_coded_error(context: &mut NativeContext<'_, NodeHost>, code: &'static str, message: &str) -> RootedError {
+    match context.error_rooted(message) {
+        Ok(error) => match decorate_error(context, error, code) {
+            Ok(()) => context.throw(error),
+            Err(failure) => failure,
+        },
+        Err(failure) => failure,
+    }
+}
+
+/// A thrown `TypeError` carrying Node's `code`.
+pub(crate) fn throw_coded_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    code: &'static str,
+    message: &str,
+) -> RootedError {
+    match context.type_error_rooted(message) {
+        Ok(error) => match decorate_type_error(context, error, code) {
+            Ok(()) => context.throw(error),
+            Err(failure) => failure,
+        },
+        Err(failure) => failure,
+    }
+}
+
 pub(super) fn decorate_range_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,

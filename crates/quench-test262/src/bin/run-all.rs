@@ -20,7 +20,7 @@ use quench_test262::ratchet::{
 use quench_test262::waivers::{Adjudication, Waivers};
 use quench_runtime::ExecutionMode;
 use quench_test262::{
-    discover_js_files, execution_mode_name, execution_mode_flag, resolve_stages, take_execution_mode, take_dynamic_source, HarnessCache,
+    discover_js_files, execution_mode_name, execution_mode_flag, required_timeout_ms, resolve_stages, take_execution_mode, take_dynamic_source, worker_jobs, HarnessCache,
     ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
 };
 use wait_timeout::ChildExt;
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
             .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(run_case_entry)
         {
-            Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
+            Ok(worker) => worker.join().unwrap_or_else(|_| ExitCode::from(1)),
             Err(error) => fail(format!("test worker thread: {error}")),
         };
     }
@@ -62,7 +62,7 @@ fn main() -> ExitCode {
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(run)
         .unwrap_or_else(|error| panic!("run-all thread: {error}"));
-    handle.join().unwrap_or(ExitCode::from(1))
+    handle.join().unwrap_or_else(|_| ExitCode::from(1))
 }
 
 fn run() -> ExitCode {
@@ -268,28 +268,6 @@ fn aot_serial_source_bytes() -> Result<Option<u64>, String> {
             .ok_or_else(|| format!("{AOT_SERIAL_SOURCE_BYTES_ENV} must be a positive byte count")),
         Err(error) => Err(format!("{AOT_SERIAL_SOURCE_BYTES_ENV}: {error}")),
     }
-}
-
-fn worker_jobs() -> usize {
-    env::var("TEST262_JOBS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|jobs| *jobs > 0)
-        .or_else(|| thread::available_parallelism().ok().map(usize::from))
-        .unwrap_or(1)
-}
-
-fn required_timeout_ms() -> Result<u64, String> {
-    env::var("TEST262_TEST_TIMEOUT_MS")
-        .map_err(|_| {
-            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".to_string()
-        })?
-        .parse::<u64>()
-        .ok()
-        .filter(|timeout| *timeout > 0)
-        .ok_or_else(|| {
-            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".into()
-        })
 }
 
 fn run_case_entry() -> ExitCode {

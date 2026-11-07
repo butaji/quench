@@ -841,6 +841,7 @@ pub(crate) enum CellKind {
 }
 impl CellKind {
     pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
+    #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
@@ -2537,7 +2538,7 @@ impl Heap {
             let young_runs = properties.young_runs();
             let dispose = |_record_id: RecordId, object: &Object| {
                 #[cfg(feature = "profile-memory")]
-                memory_profile.freed_object(Value::direct_object(_record_id), properties.len(object.properties()));
+                memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
                 object.release_storage(properties)
             };
             let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, true, dispose, |record| match record {
@@ -2569,7 +2570,7 @@ impl Heap {
                         let slots = properties.len(function.object.properties());
                         properties.release_ordinary(function.object.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_function(Value::direct_function(_record_id), slots);
+                        memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
                     }
                 });
             let abandoned_contexts = &mut self.abandoned_contexts;
@@ -2589,7 +2590,7 @@ impl Heap {
                         let slots = properties.len(promise.object.properties());
                         properties.release_ordinary(promise.object.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
+                        memory_profile.freed_record_cell(Value::direct_promise(_record_id), slots);
                     }
                 });
             // An await state owns no arena storage; dropping a dead one frees its unresumed
@@ -2612,7 +2613,7 @@ impl Heap {
                         let slots = properties.len(iterator.object.properties());
                         properties.release_ordinary(iterator.object.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
+                        memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
                 });
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
@@ -2635,7 +2636,7 @@ impl Heap {
             let dispose = |record_id: RecordId, array: &ArrayObject| {
                 *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
                 #[cfg(feature = "profile-memory")]
-                memory_profile.freed_array(Value::direct_array(record_id), properties.len(array.properties()), array);
+                memory_profile.freed_record_cell(Value::direct_array(record_id), properties.len(array.properties()));
                 properties.release_ordinary(array.properties());
                 if sparse {
                     dead_arrays.push(Value::direct_array(record_id));

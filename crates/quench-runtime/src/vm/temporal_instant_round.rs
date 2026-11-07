@@ -1,11 +1,11 @@
 use super::*;
 
-const NANOSECONDS_PER_DAY: i128 = 86_400_000_000_000;
-const NANOSECONDS_PER_HOUR: i128 = 3_600_000_000_000;
-const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
-const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
-const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
+use crate::units::NANOSECONDS_PER_DAY;
+use crate::vm::temporal_instant_difference::NANOSECONDS_PER_HOUR;
+use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MINUTE;
+use crate::units::NANOSECONDS_PER_SECOND;
+use crate::units::NANOSECONDS_PER_MILLISECOND;
+use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MICROSECOND;
 const UNITS: [(&str, i128); 7] = [
     ("day", NANOSECONDS_PER_DAY),
     ("hour", NANOSECONDS_PER_HOUR),

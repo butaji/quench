@@ -6,7 +6,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-const PERCENT: u16 = b'%' as u16;
+pub(crate) const PERCENT: u16 = b'%' as u16;
 const PLUS: u16 = b'+' as u16;
 const SPACE: u8 = b' ';
 const DEFAULT_SEPARATOR: u16 = b'&' as u16;

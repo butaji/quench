@@ -10,7 +10,7 @@ fn main() -> ExitCode {
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(run)
     {
-        Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
+        Ok(worker) => worker.join().unwrap_or_else(|_| ExitCode::from(1)),
         Err(error) => fail(format!("run-test worker thread: {error}")),
     }
 }

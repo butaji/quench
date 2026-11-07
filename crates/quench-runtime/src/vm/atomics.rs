@@ -374,11 +374,11 @@ impl<H: Host> Vm<H> {
         if native != Native::AtomicsCompareExchange || compare {
             let mut next = match native {
                 Native::AtomicsStore | Native::AtomicsExchange => replacement,
-                Native::AtomicsAdd => old_number.clone() + first.clone(),
-                Native::AtomicsSub => old_number.clone() - first.clone(),
-                Native::AtomicsAnd => old_number.clone() & first.clone(),
-                Native::AtomicsOr => old_number.clone() | first.clone(),
-                Native::AtomicsXor => old_number.clone() ^ first.clone(),
+                Native::AtomicsAdd => old_number + first.clone(),
+                Native::AtomicsSub => old_number - first.clone(),
+                Native::AtomicsAnd => old_number & first.clone(),
+                Native::AtomicsOr => old_number | first.clone(),
+                Native::AtomicsXor => old_number ^ first.clone(),
                 Native::AtomicsCompareExchange => replacement,
                 _ => unreachable!(),
             };

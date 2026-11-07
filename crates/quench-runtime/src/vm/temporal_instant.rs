@@ -464,7 +464,7 @@ impl<H: Host> Vm<H> {
         if !self.is_string(value) && !self.is_object_like(value) {
             return Err(self.type_error(p, "Invalid Instant input".into()));
         }
-        let text = self.to_string(p, value)?.to_string();
+        let text = self.to_string(p, value)?;
         super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
         let Some(epoch) =
             super::temporal_zoned_date_time::parse_iso_instant_epoch_nanoseconds(&text)

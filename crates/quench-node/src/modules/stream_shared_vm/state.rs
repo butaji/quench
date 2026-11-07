@@ -421,7 +421,7 @@ pub(crate) fn set_default_high_water_mark(c: &mut Context<'_>, _: RootId, args: 
 }
 
 /// `Number.MAX_SAFE_INTEGER`, `validateInteger`'s default bound.
-const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+use quench_runtime::units::MAX_SAFE_INTEGER;
 
 /// The encoding a state's `defaultEncoding` option names: `None` for UTF-8 (its own bit).
 fn default_encoding(c: &mut Context<'_>, options: RootId) -> Result<Option<RootId>, RootedError> {

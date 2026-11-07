@@ -264,7 +264,7 @@ impl<H: Host> Runtime<H> {
         program: &ResidualProgram,
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> Result<Vec<u8>, String> {
-        program.validate_unless_proven().map_err(|error| error.to_string())?;
+        program.validate_unless_proven()?;
         self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
         // A restored heap starts as a full collection leaves it, every cell old: garbage the
         // snapshot kept would stay until the next full collection.
@@ -281,7 +281,7 @@ impl<H: Host> Runtime<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<ResidualProgram, String> {
-        entry.validate_unless_proven().map_err(|error| error.to_string())?;
+        entry.validate_unless_proven()?;
         self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)
     }
 

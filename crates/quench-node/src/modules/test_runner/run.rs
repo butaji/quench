@@ -11,7 +11,7 @@ const CANCELLED_AT_EXIT: &str = "Promise resolution is still pending but the eve
 const CALLBACK_AND_PROMISE: &str = "passed a callback but also returned a Promise";
 /// Node's `kGenericUserError`.
 const FAILURE_EXIT_CODE: f64 = 1.0;
-const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+use quench_runtime::units::MILLISECONDS_PER_SECOND;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {

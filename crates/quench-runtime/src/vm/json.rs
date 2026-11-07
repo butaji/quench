@@ -431,8 +431,7 @@ const JSON_ERROR_SPECIAL_SOURCES: [&str; 4] = ["[object Object]", "undefined", "
 /// The last unit an escape may name and be a bad escape rather than an unexpected token
 /// (`unibrow::Latin1::kMaxChar`).
 const LATIN1_MAX: u16 = 0xFF;
-const CARRIAGE_RETURN: u16 = b'\r' as u16;
-const LINE_FEED: u16 = b'\n' as u16;
+use crate::units::{CARRIAGE_RETURN, LINE_FEED};
 
 /// The message V8 gives `syntax` at `position` of `source`, its UTF-16 units.
 fn json_syntax_message(source: &[u16], syntax: JsonSyntax, position: usize) -> String {

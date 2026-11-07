@@ -1927,11 +1927,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .map(|value| self.heap.root(value))
             .collect::<Vec<_>>();
-        let mut roots = iterator_roots
-            .iter()
-            .chain(&key_roots)
-            .copied()
-            .collect::<Vec<_>>();
+        let mut padding_roots = Vec::new();
         let result = (|| {
             let padding = match self.iterator_zip_padding(
                 p,
@@ -1955,7 +1951,7 @@ impl<H: Host> Vm<H> {
                     .filter_map(|root| self.heap.root_value(*root))
                     .collect::<Vec<_>>()
             });
-            roots.extend(padding.iter().copied().map(|value| self.heap.root(value)));
+            padding_roots.extend(padding.iter().copied().map(|value| self.heap.root(value)));
             let opened = vec![true; iterators.len()];
             self.iterator_helper(
                 p,
@@ -1971,9 +1967,9 @@ impl<H: Host> Vm<H> {
                 },
             )
         })();
-        roots.into_iter().for_each(|root| {
+        for root in iterator_roots.into_iter().chain(key_roots).chain(padding_roots) {
             self.heap.release_root(root);
-        });
+        }
         result
     }
 

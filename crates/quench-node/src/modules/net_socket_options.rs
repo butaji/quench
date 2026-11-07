@@ -2,7 +2,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 
-const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+pub(crate) const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 pub(super) const SIGNED_INTEGER_MASK: f64 = -1.0;
 const FIELDS: [(&str, &str); 5] = [
     ("noDelay", "kSetNoDelay"),

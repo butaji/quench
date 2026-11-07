@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_MAX_QUEUE: f64 = 2048.0;
-const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+use crate::modules::util_shared_vm::MAX_SAFE_INTEGER;
 fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     let parent = shared

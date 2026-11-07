@@ -9,7 +9,7 @@ use brotli::enc::StandardAlloc;
 use brotli::{Allocator, BrotliDecompressStream, BrotliResult, BrotliState, HeapAlloc, HuffmanCode, SliceWrapperMut};
 
 /// Node's `kNoParam` marker for unset entries of the parameter array.
-const PARAM_UNSET: u32 = u32::MAX;
+pub(crate) const PARAM_UNSET: u32 = u32::MAX;
 /// `BROTLI_OPERATION_FINISH`, the flush Node passes for the final write.
 const FINISH: i32 = BrotliEncoderOperation::BROTLI_OPERATION_FINISH as i32;
 /// `BROTLI_DECODER_PARAM_LARGE_WINDOW`.

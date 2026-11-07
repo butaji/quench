@@ -18,7 +18,7 @@ const MASK_BYTE_BITS: u32 = u8::BITS;
 /// Bytes in a WebSocket mask (RFC 6455, section 5.3).
 const MASK_BYTES: usize = std::mem::size_of::<u32>();
 /// Node's `fill` results lib/buffer.js turns into errors.
-const FILL_INVALID_VALUE: f64 = -1.0;
+pub(crate) const FILL_INVALID_VALUE: f64 = -1.0;
 const FILL_OUT_OF_BOUNDS: f64 = -2.0;
 /// `atob` failure results (lib/buffer.js `atob`).
 const ATOB_REMAINDER: f64 = -1.0;

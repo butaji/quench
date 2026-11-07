@@ -1,7 +1,7 @@
 //! The constructors `fs` defines (`Stats`, `Dirent`, `Dir`, `FileHandle`, ...) and the
 //! intrinsics their instances use, built once per VM.
 
-use crate::modules::stream_shared_vm::{get, put, Context, Outcome};
+use crate::modules::stream_shared_vm::{get, inherit, put, Context, Outcome};
 use quench_runtime::{DescriptorFields, RootId, RootedError};
 
 /// A root `fs` keeps for the VM's lifetime.
@@ -91,12 +91,10 @@ fn operation(name: &str) -> quench_runtime::HostFunctionId {
 /// A constructor whose prototype inherits `parent`'s, and which inherits `parent` itself.
 fn constructor(c: &mut Context<'_>, op: &str, name: &str, parent: Option<RootId>) -> Result<(RootId, RootId), RootedError> {
     let constructor = c.host_constructor_named(operation(op), name)?;
-    let prototype = get(c, constructor, "prototype")?;
-    if let Some(parent) = parent {
-        let parent_prototype = get(c, parent, "prototype")?;
-        c.set_prototype_rooted(prototype, parent_prototype)?;
-        c.set_prototype_rooted(constructor, parent)?;
-    }
+    let prototype = match parent {
+        Some(parent) => inherit(c, constructor, parent)?,
+        None => get(c, constructor, "prototype")?,
+    };
     Ok((constructor, prototype))
 }
 

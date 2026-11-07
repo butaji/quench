@@ -97,7 +97,7 @@ impl<H: Host> Vm<H> {
                 {
                     locale = locale
                         .split_once("-u-")
-                        .map_or(locale.clone(), |(base, _)| base.to_owned());
+                        .map_or_else(|| locale.clone(), |(base, _)| base.to_owned());
                 }
                 let numbering_system = option_numbering_system
                     .or(locale_numbering_system)
@@ -977,10 +977,10 @@ impl<H: Host> Vm<H> {
             {
                 let minimum = min_significant
                     .filter(|value| !value.is_undefined())
-                    .unwrap_or(Value::number(1.0));
+                    .unwrap_or_else(|| Value::number(1.0));
                 let maximum = max_significant
                     .filter(|value| !value.is_undefined())
-                    .unwrap_or(Value::number(if compact {
+                    .unwrap_or_else(|| Value::number(if compact {
                         2.0
                     } else {
                         NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS
@@ -1008,7 +1008,7 @@ impl<H: Host> Vm<H> {
             vm.set_intl_string_property(result, "signDisplay", &sign_display)?;
             let increment = vm
                 .hidden_value(this, NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT)
-                .unwrap_or(Value::number(1.0));
+                .unwrap_or_else(|| Value::number(1.0));
             vm.set_named(p, result, "roundingIncrement", increment)?;
             for (key, slot, default) in [
                 (
@@ -2033,8 +2033,8 @@ fn format_decimal_string(
             increment_decimal_digits(&mut digits);
             let digits = String::from_utf8(digits).ok()?;
             let split = digits.len().saturating_sub(maximum_fraction_digits);
-            integer = digits[..split].to_owned();
-            fraction = digits[split..].to_owned();
+            digits[..split].clone_into(&mut integer);
+            digits[split..].clone_into(&mut fraction);
         }
     }
     while fraction.ends_with('0') && fraction.len() > minimum_fraction_digits {

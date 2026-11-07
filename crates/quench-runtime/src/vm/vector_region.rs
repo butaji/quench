@@ -483,8 +483,7 @@ impl Builder<'_> {
                 let count = kernel
                     .right
                     .filter(|&ty| ty == crate::WasmType::I32)
-                    .and(self.constants[usize::from(c)])
-                    .and_then(Value::as_int);
+                    .and_then(|_| self.constants[usize::from(c)]?.as_int());
                 let bits = (vector(kernel.left)
                     && kernel.right.is_none_or(|ty| vector(ty) || count.is_some())
                     && vector(result))

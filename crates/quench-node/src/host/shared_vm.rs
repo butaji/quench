@@ -290,7 +290,6 @@ node_bindings! {
         method "streamFromWholeRead" (0) => crate::modules::stream_shared_vm::from::whole_read,
         method "streamFromRead" (0) => crate::modules::stream_shared_vm::from::read,
         method "streamFromDestroy" (2) => crate::modules::stream_shared_vm::from::destroy,
-        method "streamFromFirstAsyncValue" (1) => crate::modules::stream_shared_vm::from::first_async_value,
         method "streamFromRejected" (1) => crate::modules::stream_shared_vm::from::rejected,
         method "streamFromAsyncValue" (1) => crate::modules::stream_shared_vm::from::async_value,
         method "streamFromAsyncResult" (1) => crate::modules::stream_shared_vm::from::async_result,
@@ -1809,7 +1808,6 @@ node_bindings! {
         #[cfg(quench_openssl_provider)]
         method "cryptoLazyTransformGet" (0) => crate::modules::crypto_node::hash::lazy_transform_get,
         #[cfg(quench_openssl_provider)]
-        method "cryptoLazyTransformSet" (1) => crate::modules::crypto_node::hash::lazy_transform_set,
         #[cfg(quench_openssl_provider)]
         method "cryptoHashConstructor" (2) => crate::modules::crypto_node::hash::hash_constructor,
         #[cfg(quench_openssl_provider)]
@@ -2289,8 +2287,8 @@ node_bindings! {
         method "timerUnref" (0) => crate::modules::timers_shared_vm::timer_unref,
         method "immediateRef" (0) => crate::modules::timers_shared_vm::immediate_ref,
         method "immediateUnref" (0) => crate::modules::timers_shared_vm::immediate_unref,
-        method "timerHasRef" (0) => crate::modules::timers_shared_vm::timer_has_ref,
-        method "immediateHasRef" (0) => crate::modules::timers_shared_vm::immediate_has_ref,
+        method "timerHasRef" (0) => crate::modules::timers_shared_vm::handle_has_ref,
+        method "immediateHasRef" (0) => crate::modules::timers_shared_vm::handle_has_ref,
         method "timersPromiseSetTimeout" (2) => crate::modules::timers_shared_vm::promise_set_timeout,
         method "timersPromiseSetImmediate" (1) => crate::modules::timers_shared_vm::promise_set_immediate,
         method "timersPromiseSchedulerWait" (1) => crate::modules::timers_shared_vm::scheduler_wait,
@@ -3162,7 +3160,7 @@ impl NodeHost {
         } else {
             referrer_path
         };
-        let base = referrer_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let base = referrer_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
         let file_url = if specifier
             .get(..5)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))

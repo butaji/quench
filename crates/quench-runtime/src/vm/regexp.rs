@@ -28,11 +28,11 @@ impl std::ops::Deref for PreparedSubject {
 // A short string's units fit a subject's inline text.
 const _: () = assert!(super::wtf16::SHORT_ASCII_CAPACITY <= quench_regexp::INLINE_SUBJECT_BYTES);
 
-const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-const HIGH_SURROGATE_START: u16 = 0xD800;
-const HIGH_SURROGATE_END: u16 = 0xDBFF;
-const LOW_SURROGATE_START: u16 = 0xDC00;
-const LOW_SURROGATE_END: u16 = 0xDFFF;
+use crate::units::MAX_SAFE_INTEGER;
+use crate::unicode::HIGH_SURROGATE_START;
+use crate::unicode::HIGH_SURROGATE_END;
+use crate::unicode::LOW_SURROGATE_START;
+use crate::unicode::LOW_SURROGATE_END;
 const REGEXP_ESCAPE: u16 = b'\\' as u16;
 const REGEXP_DELIMITER: u16 = b'/' as u16;
 const REGEXP_NEWLINE: u16 = b'\n' as u16;
@@ -2371,7 +2371,7 @@ impl<H: Host> Vm<H> {
                 // patterns do: a module evaluates every literal it holds, and most never run
                 // (tr46's 34 Unicode classes were 3.3% of the whatwg-url npm scenario).
                 let meta = Rc::new(crate::heap::RegExpMeta {
-                    source: source.clone(),
+                    source,
                     flags: RegExpFlags::validated(flags),
                     legacy_constructor: owner,
                     matcher: crate::heap::RegExpMatcher::default(),
@@ -3077,11 +3077,9 @@ impl<H: Host> Vm<H> {
         matched: &quench_regexp::Match,
         named: &[(String, Option<Range<usize>>)],
     ) -> Result<Value, JsError> {
-        let ranges = std::iter::once(Some(matched.range.clone()))
+        
+        let entries = std::iter::once(Some(matched.range.clone()))
             .chain(matched.captures.iter().cloned())
-            .collect::<Vec<_>>();
-        let entries = ranges
-            .into_iter()
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
         let indices = self.heap.alloc(Cell::Array {

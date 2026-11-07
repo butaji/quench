@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
         let calendar = if calendar.is_undefined() {
             "iso8601".to_owned()
         } else if self.heap.is_string(calendar) {
-            let value = self.to_string(p, calendar)?.to_string();
+            let value = self.to_string(p, calendar)?;
             super::temporal_date_parse::parse_calendar_identifier_name(&value)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
         } else {
@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
                     if !self.is_string(value) && !self.is_object_like(value) {
                         return Err(self.type_error(p, "Invalid offset".into()));
                     }
-                    offset = Some(self.to_string(p, value)?.to_string());
+                    offset = Some(self.to_string(p, value)?.clone());
                 }
             }
             time[index] = self.plain_date_field(p, bag, name)?;
@@ -554,7 +554,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 None
             } else if self.is_string(value) {
-                Some(self.to_string(p, value)?.to_string())
+                Some(self.to_string(p, value)?)
             } else {
                 return Err(self.type_error(p, "Invalid time zone".into()));
             }
@@ -1034,7 +1034,7 @@ impl<H: Host> Vm<H> {
                 }
                 "era" => {
                     era_was_provided = true;
-                    era_value = Some(self.to_string(p, value)?.to_string());
+                    era_value = Some(self.to_string(p, value)?.clone());
                 }
                 "eraYear" => {
                     era_year_was_provided = true;
@@ -1070,7 +1070,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 "constrain".to_owned()
             } else {
-                self.to_string(p, value)?.to_string()
+                self.to_string(p, value)?
             }
         };
         if !matches!(overflow.as_str(), "constrain" | "reject") {
@@ -1227,7 +1227,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 "compatible"
             } else {
-                let mode = self.to_string(p, value)?.to_string();
+                let mode = self.to_string(p, value)?;
                 if !super::temporal_zoned_date_time::DISAMBIGUATION_OPTIONS.contains(&mode.as_str())
                 {
                     return Err(self.range_error(p, "Invalid disambiguation".into()));

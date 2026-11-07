@@ -13,7 +13,7 @@ pub(crate) mod kmac_request;
 const ASYNC: u32 = 0;
 const SYNC: u32 = 1;
 const WEBCRYPTO: u32 = 2;
-const BITS_PER_BYTE: u32 = u8::BITS;
+pub(crate) const BITS_PER_BYTE: u32 = u8::BITS;
 const CACHE: &str = "\0crypto:secret-job";
 #[derive(Default)]
 pub(crate) struct State {

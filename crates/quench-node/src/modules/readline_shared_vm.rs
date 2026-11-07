@@ -6,6 +6,7 @@
 //! the legacy `readline.Interface` exposes those as `_`-prefixed members.
 
 use super::stream_shared_vm::{
+    inherit,
     arg, call_method, captures, closure, emit, get, is_nullish, is_string, is_undefined, next_tick, number, on, once,
     put, put_bool, put_number, remove_listener, truthy_member, Class, Context, Outcome,
 };
@@ -148,14 +149,13 @@ const MIN_CRLF_DELAY: f64 = 100.0;
 const ESCAPE_CODE_TIMEOUT: f64 = 500.0;
 /// The columns a tab stop spans by default.
 const TAB_SIZE: f64 = 8.0;
-const DEFAULT_PROMPT: &str = "> ";
+pub(crate) use crate::modules::keys::DEFAULT_PROMPT;
 /// The lines the async iterator buffers before pausing the input.
 const ITERATOR_HIGH_WATER_MARK: f64 = 1024.0;
 /// `historyIndex` when no history entry is shown.
 const NO_HISTORY_ENTRY: f64 = -1.0;
 
-const LINE_FEED: u16 = b'\n' as u16;
-const CARRIAGE_RETURN: u16 = b'\r' as u16;
+use quench_runtime::units::{CARRIAGE_RETURN, LINE_FEED};
 const TAB: u16 = b'\t' as u16;
 /// The first code point outside the Basic Multilingual Plane: two UTF-16 units.
 const SUPPLEMENTARY_PLANE: u32 = 0x10000;
@@ -2355,14 +2355,6 @@ fn accessor(c: &mut Context<'_>, target: RootId, key: RootId, getter: RootId, se
     Ok(())
 }
 
-fn subclass(c: &mut Context<'_>, constructor: RootId, parent: RootId) -> Outcome {
-    let prototype = get(c, constructor, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(constructor, parent)?;
-    Ok(prototype)
-}
-
 /// `internal/readline/interface`'s `Interface`, over `InterfaceConstructor`.
 fn base_interface(c: &mut Context<'_>) -> Outcome {
     let cache = "\0readline:Interface";
@@ -2373,9 +2365,9 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
     super::stream_shared_vm::module(c)?;
     let emitter = super::stream_shared_vm::intrinsics(c)?.class(Class::Emitter);
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "InterfaceConstructor")?;
-    subclass(c, constructor, emitter)?;
+    inherit(c, constructor, emitter)?;
     let class = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "Interface")?;
-    let prototype = subclass(c, class, constructor)?;
+    let prototype = inherit(c, class, constructor)?;
     let getter = c.host_function_named(crate::host::shared_vm::operation!("readlineColumns"), "get columns")?;
     let key = text(c, "columns");
     accessor(c, prototype, key, getter, None)?;
@@ -2407,7 +2399,7 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
 fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
     let data = c.array_rooted(&[])?;
     let class = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("readlineLegacyConstructor"), "Interface", data)?;
-    let prototype = subclass(c, class, base)?;
+    let prototype = inherit(c, class, base)?;
     let question = c.host_function_named(crate::host::shared_vm::operation!("readlineQuestion"), "question")?;
     let key = text(c, "question");
     c.define_data_property_rooted(prototype, key, question, true, true, true)?;
@@ -2500,7 +2492,7 @@ pub(crate) fn promises_module(c: &mut Context<'_>) -> Outcome {
     }
     let base = base_interface(c)?;
     let interface = c.host_constructor_named(crate::host::shared_vm::operation!("readlinePromisesConstructor"), "Interface")?;
-    let prototype = subclass(c, interface, base)?;
+    let prototype = inherit(c, interface, base)?;
     named_method(c, prototype, "question", "readlineQuestionPromise", false)?;
     let readline = c.host_constructor_named(crate::host::shared_vm::operation!("readlineReadline"), "Readline")?;
     let readline_prototype = get(c, readline, "prototype")?;

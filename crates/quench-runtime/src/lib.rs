@@ -10,6 +10,24 @@
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
 mod execution_interrupt;
+/// Numeric facts shared by the runtime and its hosts.
+pub mod units {
+    pub use quench_temporal::units::*;
+    /// `Number.MAX_SAFE_INTEGER`.
+    pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+    pub const OCTAL_RADIX: u32 = 8;
+    /// The UTF-16 code units of the line terminators text readers split on.
+    pub const LINE_FEED: u16 = b'\n' as u16;
+    pub const CARRIAGE_RETURN: u16 = b'\r' as u16;
+}
+
+/// JavaScript property names the runtime and its hosts both spell.
+pub mod property_names {
+    pub const LENGTH: &str = "length";
+}
+
+pub use vm::value_serializer::DESERIALIZATION_ERROR;
 pub use execution_interrupt::ExecutionInterrupt;
 #[cfg(unix)]
 pub use vm::NativeFaultHandler;

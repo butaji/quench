@@ -71,7 +71,7 @@ const INTERFACES: [Interface; 3] = [
 const EVENTS: [Event; 3] = [Event::Message, Event::Close, Event::Error];
 
 /// Web IDL's integer moduli.
-const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
+pub(crate) const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
 const UNSIGNED_LONG_MODULUS: f64 = 4294967296.0;
 /// `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`:
 /// where its init members start.

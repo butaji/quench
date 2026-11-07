@@ -18,9 +18,9 @@ const ABORT_HANDLER: &str = "__quenchAbortHandler";
 const DEFAULT_KILL_SIGNAL: &str = "SIGTERM";
 /// The first stdio index past stdin, stdout and stderr.
 const FIRST_EXTRA_STDIO: usize = 3;
-const STDIN: usize = 0;
-const STDOUT: usize = 1;
-const STDERR: usize = 2;
+pub(crate) const STDIN: usize = 0;
+pub(crate) const STDOUT: usize = 1;
+pub(crate) const STDERR: usize = 2;
 /// The shells `shell: true` selects.
 const POSIX_SHELL: &str = "/bin/sh";
 const ANDROID_SHELL: &str = "/system/bin/sh";
@@ -77,16 +77,6 @@ fn closure(c: &mut Context<'_>, name: &str, captures: &[RootId]) -> Outcome {
 fn capture(c: &mut Context<'_>, index: usize) -> Outcome {
     let data = c.host_function_data()?;
     get(c, data, &index.to_string())
-}
-
-fn type_error(c: &mut Context<'_>, code: &'static str, message: &str) -> RootedError {
-    match c.type_error_rooted(message) {
-        Ok(error) => match super::node_errors_shared_vm::decorate_type_error(c, error, code) {
-            Ok(()) => c.throw(error),
-            Err(failure) => failure,
-        },
-        Err(failure) => failure,
-    }
 }
 
 fn stream_class(c: &mut Context<'_>, name: &str) -> Outcome {
@@ -208,7 +198,7 @@ fn signal_number(c: &mut Context<'_>, signal: RootId) -> Result<RootId, RootedEr
         }
     }
     let shown = c.to_string(signal)?;
-    Err(type_error(c, "ERR_UNKNOWN_SIGNAL", &format!("Unknown signal: {shown}")))
+    Err(super::node_errors_shared_vm::throw_coded_type_error(c, "ERR_UNKNOWN_SIGNAL", &format!("Unknown signal: {shown}")))
 }
 
 pub(crate) fn kill(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
@@ -677,7 +667,7 @@ pub(crate) fn spawn_sync(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
     };
     for (index, word) in c.array_like_values_rooted(arguments)?.into_iter().enumerate() {
         if c.string_text(word)?.is_some_and(|text| text.contains('\0')) {
-            return Err(type_error(
+            return Err(super::node_errors_shared_vm::throw_coded_type_error(
                 c,
                 "ERR_INVALID_ARG_VALUE",
                 &format!("The argument 'args[{index}]' must be a string without null bytes."),

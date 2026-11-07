@@ -25,9 +25,9 @@ pub(super) mod api {
     pub(in crate::modules) const OBSERVER_SLOT: &str = "observerSlot";
     pub(in crate::modules) const LIST_SLOT: &str = "listSlot";
     pub(in crate::modules) const PERFORMANCE_SLOT: &str = "performanceSlot";
-    pub(in crate::modules) const INSPECT: &str = "inspect";
-    pub(in crate::modules) const MAP: &str = "Map";
-    pub(in crate::modules) const MAP_SET: &str = "mapSet";
+    pub(crate) use crate::modules::keys::INSPECT;
+    pub(crate) use crate::modules::keys::MAP;
+    pub(crate) use crate::modules::keys::MAP_SET;
     pub(in crate::modules) const MAP_CLEAR: &str = "mapClear";
     pub(in crate::modules) const OBJECT_ASSIGN: &str = "objectAssign";
     pub(in crate::modules) const OBJECT_FREEZE: &str = "objectFreeze";

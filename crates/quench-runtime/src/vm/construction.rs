@@ -1442,7 +1442,7 @@ impl<H: Host> Vm<H> {
                 self.box_primitive_object(value)
             }
             Native::Number => {
-                let argument = args.first().copied().unwrap_or(Value::number(0.0));
+                let argument = args.first().copied().unwrap_or_else(|| Value::number(0.0));
                 let primitive = if self.is_object_like(argument) {
                     self.to_primitive(p, argument, "number")?
                 } else {

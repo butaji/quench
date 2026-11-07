@@ -170,11 +170,7 @@ pub(crate) const SERVER_SOCKET_KEYLOG: &str = "onSocketKeylog";
 
 fn inherit(c: &mut Context<'_>, class: RootId, net: RootId, base: &str) -> Result<(), RootedError> {
     let base = get(c, net, base)?;
-    let prototype = get(c, class, "prototype")?;
-    let base_prototype = get(c, base, "prototype")?;
-    c.set_prototype_rooted(prototype, base_prototype)?;
-    c.set_prototype_rooted(class, base)?;
-    Ok(())
+    crate::modules::stream_shared_vm::inherit(c, class, base).map(drop)
 }
 
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {

@@ -97,9 +97,9 @@ fn measure() -> Result<(), String> {
     println!("script {path}: {} functions, {rounds} rounds", program.function_count());
     println!("{:<12} {:>12} {:>14} {:>12}", "subject", "compile ms", "mapped KiB", "execute ms");
     for (subject, samples) in order.iter().zip(&samples) {
-        let compile = median(&samples.compile).map_or("-".into(), |value| format!("{:.3}", value.as_secs_f64() * 1e3));
-        let mapped = median(&samples.mapped).map_or("-".into(), |value| format!("{:.1}", value as f64 / 1024.0));
-        let execute = median(&samples.execute).map_or("-".into(), |value| format!("{:.3}", value.as_secs_f64() * 1e3));
+        let compile = median(&samples.compile).map_or_else(|| "-".into(), |value| format!("{:.3}", value.as_secs_f64() * 1e3));
+        let mapped = median(&samples.mapped).map_or_else(|| "-".into(), |value| format!("{:.1}", value as f64 / 1024.0));
+        let execute = median(&samples.execute).map_or_else(|| "-".into(), |value| format!("{:.3}", value.as_secs_f64() * 1e3));
         println!("{:<12} {compile:>12} {mapped:>14} {execute:>12}", format!("{subject:?}"));
     }
     Ok(())

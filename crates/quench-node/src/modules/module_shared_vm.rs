@@ -771,7 +771,7 @@ pub(crate) fn global_paths() -> Vec<PathBuf> {
         paths.extend([home.join(".node_modules"), home.join(".node_libraries")]);
     }
     let executable = crate::shared_run::executable_path().unwrap_or_default();
-    let prefix = executable.ancestors().nth(EXECUTABLE_PREFIX_DEPTH).unwrap_or(Path::new("/"));
+    let prefix = executable.ancestors().nth(EXECUTABLE_PREFIX_DEPTH).unwrap_or_else(|| Path::new("/"));
     paths.push(prefix.join("lib").join("node"));
     paths
 }

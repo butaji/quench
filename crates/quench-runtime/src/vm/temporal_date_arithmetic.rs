@@ -1,11 +1,11 @@
 use super::*;
 
-pub(super) const DURATION_YEARS_FIELD: usize = 0;
-pub(super) const DURATION_MONTHS_FIELD: usize = 1;
-pub(super) const DURATION_WEEKS_FIELD: usize = 2;
-pub(super) const DURATION_DAYS_FIELD: usize = 3;
+pub(crate) const DURATION_YEARS_FIELD: usize = 0;
+pub(crate) const DURATION_MONTHS_FIELD: usize = 1;
+pub(crate) const DURATION_WEEKS_FIELD: usize = 2;
+pub(crate) const DURATION_DAYS_FIELD: usize = 3;
 pub(super) const DURATION_HOURS_FIELD: usize = 4;
-pub(super) const DAYS_PER_WEEK: i128 = 7;
+pub(super) use crate::units::DAYS_PER_WEEK;
 pub(super) const NANOS_PER_DAY: i128 = 86_400_000_000_000;
 pub(super) const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
     3_600_000_000_000,

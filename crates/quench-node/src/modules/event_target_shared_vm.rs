@@ -24,29 +24,29 @@ const PHASE_AT_TARGET: f64 = 2.0;
 
 /// The slot an event's fields live in.
 mod field {
-    pub(super) const TYPE: &str = "type";
+    pub(crate) use crate::modules::keys::TYPE;
     pub(super) const BUBBLES: &str = "bubbles";
     pub(super) const CANCELABLE: &str = "cancelable";
     pub(super) const COMPOSED: &str = "composed";
     pub(super) const PREVENTED: &str = "defaultPrevented";
     pub(super) const TIME_STAMP: &str = "timeStamp";
     pub(super) const TRUSTED: &str = "isTrusted";
-    pub(super) const TARGET: &str = "target";
+    pub(crate) use crate::modules::keys::TARGET;
     pub(super) const DISPATCHING: &str = "dispatching";
     pub(super) const PROPAGATION_STOPPED: &str = "propagationStopped";
     pub(super) const STOPPED: &str = "stopped";
-    pub(super) const PASSIVE: &str = "passive";
+    pub(crate) use crate::modules::keys::PASSIVE;
 }
 
 /// A listener record's and list root's fields.
 mod record {
-    pub(super) const NEXT: &str = "next";
+    pub(crate) use crate::modules::keys::NEXT;
     pub(super) const PREVIOUS: &str = "previous";
-    pub(super) const SIZE: &str = "size";
-    pub(super) const LISTENER: &str = "listener";
+    pub(crate) use crate::modules::keys::SIZE;
+    pub(crate) use crate::modules::keys::LISTENER;
     pub(super) const ONCE: &str = "once";
     pub(super) const CAPTURE: &str = "capture";
-    pub(super) const PASSIVE: &str = "passive";
+    pub(crate) use crate::modules::keys::PASSIVE;
     pub(super) const RESIST: &str = "resistStopPropagation";
     pub(super) const REMOVED: &str = "removed";
     /// A NodeEventTarget listener, which receives the event's value.
@@ -1023,8 +1023,7 @@ pub(crate) fn event_target_inspect(c: &mut Context<'_>, receiver: RootId, args: 
     custom_inspect(c, receiver, body, args, Shallow::Name)
 }
 
-/// An event handler attribute's holder field: the current handler.
-const HANDLER: &str = "handler";
+pub(crate) use crate::modules::keys::HANDLER;
 
 /// `defineEventHandler`'s getter: the handler `container[field]` keeps, or null.
 pub(super) fn event_handler(c: &mut Context<'_>, container: RootId, field: &str) -> Result<RootId, RootedError> {

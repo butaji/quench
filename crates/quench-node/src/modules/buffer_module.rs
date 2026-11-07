@@ -863,8 +863,7 @@ pub(crate) fn index_of(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Re
     Ok(if includes { c.boolean(found != -1.0) } else { c.number(found) })
 }
 
-/// The binding's `fill` result for a value it cannot fill with.
-const FILL_INVALID_VALUE: f64 = -1.0;
+use crate::modules::buffer_binding_shared_vm::FILL_INVALID_VALUE;
 
 const SEARCH_FIRST: u8 = 0;
 const SEARCH_LAST: u8 = 1;

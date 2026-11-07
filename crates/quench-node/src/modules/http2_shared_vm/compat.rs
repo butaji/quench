@@ -16,13 +16,13 @@ use quench_runtime::{RootId, RootedError};
 const HTTP_VERSION_MAJOR: f64 = 2.0;
 const HTTP_VERSION_MINOR: f64 = 0.0;
 const HTTP_VERSION: &str = "2.0";
-const STATUS_OK: f64 = 200.0;
-const STATUS_CONTINUE: f64 = 100.0;
+pub(crate) const STATUS_OK: f64 = 200.0;
+pub(crate) const STATUS_CONTINUE: f64 = 100.0;
 const STATUS_EARLY_HINTS: f64 = 103.0;
-const STATUS_SWITCHING_PROTOCOLS: f64 = 101.0;
+pub(crate) const STATUS_SWITCHING_PROTOCOLS: f64 = 101.0;
 const STATUS_EXPECTATION_FAILED: f64 = 417.0;
 const STATUS_METHOD_NOT_ALLOWED: f64 = 405.0;
-const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
+pub(crate) const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
 const STATUS_RANGE: std::ops::RangeInclusive<f64> = 100.0..=599.0;
 /// The pseudo-headers the compatibility API refuses to set.
 const PSEUDO_HEADERS: [&str; 5] = [headers::STATUS, headers::METHOD, headers::PATH, headers::AUTHORITY, headers::SCHEME];
@@ -121,7 +121,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
     let stream_module = crate::modules::stream_shared_vm::module(c)?;
     let readable = get(c, stream_module, "Readable")?;
     let request = constructor(c, Member::RequestConstruct, "Http2ServerRequest")?;
-    crate::modules::http_shared_vm::inherit(c, request, readable)?;
+    crate::modules::stream_shared_vm::inherit(c, request, readable)?;
     let prototype = get(c, request, "prototype")?;
     accessors(c, prototype, &[
         ("aborted", Member::RequestAborted, None),
@@ -146,7 +146,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
 
     let base = get(c, stream_module, "Stream")?;
     let response = constructor(c, Member::ResponseConstruct, "Http2ServerResponse")?;
-    crate::modules::http_shared_vm::inherit(c, response, base)?;
+    crate::modules::stream_shared_vm::inherit(c, response, base)?;
     let prototype = get(c, response, "prototype")?;
     accessors(c, prototype, &[
         ("_header", Member::Header, None),

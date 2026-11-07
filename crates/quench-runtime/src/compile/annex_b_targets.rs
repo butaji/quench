@@ -64,7 +64,7 @@ pub(super) fn invalid_target(program: &oxc_ast::ast::Program<'_>) -> Option<Span
                     .and_then(call_target)
                     .is_some()
             {
-                self.invalid.get_or_insert(assignment.left.span());
+                self.invalid.get_or_insert_with(|| assignment.left.span());
             }
             walk::walk_assignment_expression(self, assignment);
         }
@@ -83,7 +83,7 @@ pub(super) fn invalid_target(program: &oxc_ast::ast::Program<'_>) -> Option<Span
                 .and_then(|binding| binding.as_simple_assignment_target())
                 .and_then(call_target)
             {
-                self.invalid.get_or_insert(call.span());
+                self.invalid.get_or_insert_with(|| call.span());
             }
             walk::walk_assignment_target_maybe_default(self, target);
         }
@@ -94,7 +94,7 @@ pub(super) fn invalid_target(program: &oxc_ast::ast::Program<'_>) -> Option<Span
                 .as_simple_assignment_target()
                 .and_then(call_target)
             {
-                self.invalid.get_or_insert(call.span());
+                self.invalid.get_or_insert_with(|| call.span());
             }
             walk::walk_assignment_target_rest(self, rest);
         }

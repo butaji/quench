@@ -169,13 +169,6 @@ fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, data
     Ok(())
 }
 
-fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<String, RootedError> {
-    match c.string_text(value)? {
-        Some(text) => Ok(text),
-        None => Err(super::util_shared_vm::argument_type_error(c, value, name, "string")?),
-    }
-}
-
 fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
     if c.is_callable_rooted(value)? {
         return Ok(());
@@ -187,16 +180,6 @@ fn validate_boolean(c: &mut Context<'_>, value: RootId, name: &str) -> Result<bo
     match c.rooted_value(value).and_then(|value| value.as_bool()) {
         Some(flag) => Ok(flag),
         None => Err(super::util_shared_vm::argument_type_error(c, value, name, "boolean")?),
-    }
-}
-
-fn type_error(c: &mut Context<'_>, code: &'static str, message: &str) -> RootedError {
-    match c.type_error_rooted(message) {
-        Ok(error) => match super::node_errors_shared_vm::decorate_type_error(c, error, code) {
-            Ok(()) => c.throw(error),
-            Err(failure) => failure,
-        },
-        Err(failure) => failure,
     }
 }
 
@@ -421,9 +404,9 @@ pub(crate) fn resolver_set_servers(c: &mut Context<'_>, this: RootId, args: &[Ro
     let entries = c.array_like_values_rooted(servers)?;
     let mut parsed = Vec::with_capacity(entries.len());
     for (index, entry) in entries.into_iter().enumerate() {
-        let text = validate_string(c, entry, &format!("servers[{index}]"))?;
+        let text = super::util_shared_vm::validate_string(c, entry, &format!("servers[{index}]"))?;
         let Some((family, address, port)) = server_entry(&text) else {
-            return Err(type_error(c, "ERR_INVALID_IP_ADDRESS", &format!("Invalid IP address: {text}")));
+            return Err(super::node_errors_shared_vm::throw_coded_type_error(c, "ERR_INVALID_IP_ADDRESS", &format!("Invalid IP address: {text}")));
         };
         let family = c.number(family);
         let address = c.string_rooted(&address);
@@ -447,9 +430,9 @@ pub(crate) fn resolver_set_servers(c: &mut Context<'_>, this: RootId, args: &[Ro
 
 pub(crate) fn resolver_set_local_address(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let (ipv4, ipv6) = (arg(c, args, 0), arg(c, args, 1));
-    validate_string(c, ipv4, "ipv4")?;
+    super::util_shared_vm::validate_string(c, ipv4, "ipv4")?;
     if !is_undefined(c, ipv6) {
-        validate_string(c, ipv6, "ipv6")?;
+        super::util_shared_vm::validate_string(c, ipv6, "ipv6")?;
     }
     let handle = handle(c, this)?;
     call_method(c, handle, "setLocalAddress", &[ipv4, ipv6])?;
@@ -536,7 +519,7 @@ pub(crate) fn resolver_query(c: &mut Context<'_>, this: RootId, args: &[RootId])
         callback = options;
         options = c.undefined();
     }
-    validate_string(c, name, "name")?;
+    super::util_shared_vm::validate_string(c, name, "name")?;
     if delivery == Delivery::Callback {
         validate_function(c, callback, "callback")?;
     }
@@ -676,7 +659,7 @@ fn lookup_options(c: &mut Context<'_>, options: RootId) -> Result<LookupOptions,
     let verbatim = get(c, options, "verbatim")?;
     if !is_nullish(c, verbatim) {
         let verbatim = validate_boolean(c, verbatim, "options.verbatim")?;
-        settings.order = if verbatim { ORDERS[0].0 } else { ORDERS[1].0 }.to_owned();
+        if verbatim { ORDERS[0].0 } else { ORDERS[1].0 }.clone_into(&mut settings.order);
     }
     let order = get(c, options, "order")?;
     if !is_nullish(c, order) {
@@ -744,7 +727,7 @@ fn lookup(c: &mut Context<'_>, delivery: Delivery, args: &[RootId]) -> Outcome {
     let mut options = arg(c, args, 1);
     let mut callback = arg(c, args, 2);
     if c.truthy_rooted(hostname)? {
-        validate_string(c, hostname, "hostname")?;
+        super::util_shared_vm::validate_string(c, hostname, "hostname")?;
     }
     if delivery == Delivery::Callback && c.is_callable_rooted(options)? {
         callback = options;
@@ -869,10 +852,10 @@ fn lookup_service(c: &mut Context<'_>, delivery: Delivery, args: &[RootId]) -> O
             Delivery::Callback => "The \"address\", \"port\", and \"callback\" arguments must be specified",
             Delivery::Promise => "The \"address\" and \"port\" arguments must be specified",
         };
-        return Err(type_error(c, "ERR_MISSING_ARGS", message));
+        return Err(super::node_errors_shared_vm::throw_coded_type_error(c, "ERR_MISSING_ARGS", message));
     }
     let (address, port, callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
-    let text = validate_string(c, address, "address")?;
+    let text = super::util_shared_vm::validate_string(c, address, "address")?;
     if ip_family(&text) == 0.0 {
         return Err(super::util_shared_vm::argument_value_error(c, address, "address", "is invalid")?);
     }

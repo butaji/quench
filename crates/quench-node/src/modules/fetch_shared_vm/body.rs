@@ -22,19 +22,19 @@ members!(Member, "fetchBody", [
 /// A body's fields: its stream, the bytes it was made of when known (to send again on a
 /// redirect), and their length.
 pub(crate) mod field {
-    pub(crate) const STREAM: &str = "stream";
-    pub(crate) const SOURCE: &str = "source";
-    pub(crate) const LENGTH: &str = "length";
+    pub(crate) use crate::modules::keys::STREAM;
+    pub(crate) use crate::modules::keys::SOURCE;
+    pub(crate) use quench_runtime::property_names::LENGTH;
 }
 use field::*;
 
 /// A read in progress: the target promise, what it makes, the chunks so far and the
 /// reader.
 mod read {
-    pub(super) const PROMISE: &str = "promise";
-    pub(super) const KIND: &str = "kind";
-    pub(super) const CHUNKS: &str = "chunks";
-    pub(super) const READER: &str = "reader";
+    pub(crate) use crate::modules::keys::PROMISE;
+    pub(crate) use crate::modules::keys::KIND;
+    pub(crate) use crate::modules::keys::CHUNKS;
+    pub(crate) use crate::modules::keys::READER;
     pub(super) const MIME: &str = "mime";
 }
 

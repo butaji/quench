@@ -358,7 +358,7 @@ impl<H: Host> Vm<H> {
                 let text = receiver.units();
                 let result = if native == Native::StringIndexOf {
                     let start = self
-                        .to_number(p, args.get(1).copied().unwrap_or(Value::number(0.0)))?
+                        .to_number(p, args.get(1).copied().unwrap_or_else(|| Value::number(0.0)))?
                         .max(0.0)
                         .trunc() as usize;
                     receiver.find_units(search.units(), start)
@@ -367,7 +367,7 @@ impl<H: Host> Vm<H> {
                         p,
                         args.get(1)
                             .copied()
-                            .unwrap_or(Value::number(text.len() as f64)),
+                            .unwrap_or_else(|| Value::number(text.len() as f64)),
                     )?;
                     let position = if position.is_nan() {
                         text.len()

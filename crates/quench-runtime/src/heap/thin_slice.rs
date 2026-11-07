@@ -331,7 +331,7 @@ mod tests {
         assert!(empty.is_empty() && other.is_empty());
         assert_eq!(empty.allocated_bytes(), 0);
         assert_eq!(empty.header, other.header);
-        let copy = empty.clone();
+        let copy = empty;
         assert_eq!(copy.len(), 0);
         let built = ThinBoxSlice::from_exact_iter([1, 2, 3].into_iter());
         assert_eq!(&*built, &[1, 2, 3]);

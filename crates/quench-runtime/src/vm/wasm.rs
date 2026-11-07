@@ -3574,7 +3574,7 @@ mod tests {
                     .map(Ok),
                 },
                 crate::WasmFunctionBody {
-                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    ty: crate::WasmCallableType::Embedded(signature),
                     locals: vec![],
                     operators: vec![Operator::I32Const { value: 5 }, Operator::End]
                         .into_iter()
@@ -3630,7 +3630,7 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("diagnostic Wasm program")
-            .clone();
+            ;
         assert!(compiled.reference_fast_cache_matches_target(0, 0));
         assert_eq!(
             compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
@@ -4631,7 +4631,7 @@ mod tests {
             "function-importer",
             [
                 WasmFunctionBody {
-                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    ty: crate::WasmCallableType::Embedded(signature),
                     locals: vec![wasmparser::ValType::Ref(
                         wasmparser::RefType::new(
                             false,

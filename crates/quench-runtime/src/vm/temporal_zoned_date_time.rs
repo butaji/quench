@@ -4,7 +4,7 @@ use chrono::{Datelike, Duration, Offset, TimeZone, Timelike, Utc};
 use std::cmp::Ordering;
 
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+use crate::units::NANOSECONDS_PER_SECOND;
 const OFFSET_MATCH_TOLERANCE_NANOSECONDS: i128 = 30 * NANOSECONDS_PER_SECOND;
 const START_OF_DAY_SEARCH_LIMIT_MINUTES: i64 = 180;
 const SKIPPED_START_OF_DAY_SEARCH_LIMIT_DAYS: usize = 4;
@@ -15,14 +15,14 @@ const NANOSECONDS_PER_MILLISECOND: u32 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
 const SECONDS_PER_HOUR: i32 = 3_600;
-const SECONDS_PER_MINUTE: i32 = 60;
-const ISO_YEAR_DIGITS: usize = 4;
-const EXTENDED_YEAR_DIGITS: usize = 6;
+use crate::units::SECONDS_PER_MINUTE;
+use crate::vm::temporal_date_parse::ISO_YEAR_DIGITS;
+use crate::vm::temporal_date_parse::EXTENDED_YEAR_DIGITS;
 const ZONED_DATE_TIME_TIME_FIELD_LIMITS: [i32; 6] = [23, 59, 59, 999, 999, 999];
-const MAX_BASIC_ISO_YEAR: i32 = 9_999;
-const ISO_MONTH_DIGITS: usize = 2;
-const ISO_DAY_DIGITS: usize = 2;
-const MAX_FRACTION_DIGITS: usize = 9;
+use crate::vm::temporal_date::MAX_BASIC_ISO_YEAR;
+use crate::vm::temporal_date_parse::ISO_MONTH_DIGITS;
+use crate::vm::temporal_date_parse::ISO_DAY_DIGITS;
+use crate::vm::temporal_date_parse::MAX_FRACTION_DIGITS;
 const ISO_TIME_FIELD_DIGITS: usize = 2;
 const ISO_HOUR_LIMIT: u32 = 23;
 const ISO_MINUTE_LIMIT: u32 = 59;
@@ -71,22 +71,12 @@ const SMALLEST_UNITS: [&str; 5] = [
     "microsecond",
     "nanosecond",
 ];
-const ROUNDING_MODES: [&str; 9] = [
-    "ceil",
-    "floor",
-    "expand",
-    "trunc",
-    "halfCeil",
-    "halfFloor",
-    "halfExpand",
-    "halfTrunc",
-    "halfEven",
-];
-const CALENDAR_NAME_OPTIONS: [&str; 4] = ["auto", "always", "never", "critical"];
+use crate::vm::temporal_instant_difference::ROUNDING_MODES;
+use crate::vm::temporal_instant_format::CALENDAR_NAME_OPTIONS;
 const OFFSET_DISPLAY_OPTIONS: [&str; 2] = ["auto", "never"];
 const TIME_ZONE_NAME_OPTIONS: [&str; 3] = ["auto", "never", "critical"];
-const ROUNDING_TIE_FACTOR: i128 = 2;
-const DECIMAL_RADIX: u32 = 10;
+use crate::units::ROUNDING_TIE_FACTOR;
+use crate::vm::intl_datetime_parts::DECIMAL_RADIX;
 const DECIMAL_RADIX_I128: i128 = 10;
 
 struct ZonedDateTimeStringOptions {
@@ -338,7 +328,7 @@ impl<H: Host> Vm<H> {
         }
         let timezone_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         if self.is_string(timezone_value) {
-            let timezone = self.to_string(p, timezone_value)?.to_string();
+            let timezone = self.to_string(p, timezone_value)?;
             if time_zone_from_datetime_identifier(&timezone).is_some() {
                 return Err(self.range_error(p, "Invalid time zone".into()));
             }
@@ -348,7 +338,7 @@ impl<H: Host> Vm<H> {
         let calendar = if calendar_value.is_undefined() {
             "iso8601".to_owned()
         } else if self.heap.is_string(calendar_value) {
-            let text = self.to_string(p, calendar_value)?.to_string();
+            let text = self.to_string(p, calendar_value)?;
             super::temporal_date_parse::parse_calendar_identifier_name(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
         } else {
@@ -376,12 +366,12 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<String, JsError> {
         if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(value) {
-            return Ok(instant.time_zone.to_string());
+            return Ok(instant.time_zone.clone());
         }
         let Some(_) = self.heap.string(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
         };
-        let text = self.to_string(p, value)?.to_string();
+        let text = self.to_string(p, value)?;
         if text.eq_ignore_ascii_case("utc") {
             return Ok("UTC".into());
         }
@@ -481,7 +471,7 @@ impl<H: Host> Vm<H> {
             };
             let receiver = ZonedDateTimeRecord {
                 epoch_nanoseconds: instant.epoch_nanoseconds,
-                time_zone: instant.time_zone.to_string(),
+                time_zone: instant.time_zone.clone(),
                 calendar: calendar.to_string(),
             };
             let other = self.temporal_zoned_date_time_record(
@@ -572,7 +562,7 @@ impl<H: Host> Vm<H> {
                 ));
             };
             let epoch_nanoseconds = instant.epoch_nanoseconds;
-            let time_zone = instant.time_zone.to_string();
+            let time_zone = instant.time_zone.clone();
             let calendar = calendar.to_string();
             if native == Native::TemporalZonedDateTimeValueOf {
                 return Err(self.type_error(p, "Cannot convert ZonedDateTime to a number".into()));
@@ -621,7 +611,7 @@ impl<H: Host> Vm<H> {
         };
         let (epoch, zone, calendar) = (
             instant.epoch_nanoseconds,
-            instant.time_zone.to_string(),
+            instant.time_zone.clone(),
             calendar.to_string(),
         );
         match native {
@@ -815,7 +805,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = instant.epoch_nanoseconds;
-        let time_zone = instant.time_zone.to_string();
+        let time_zone = instant.time_zone.clone();
         let calendar = calendar.to_string();
         let mut duration =
             self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -838,7 +828,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap.alloc_string(calendar.to_string().into()),
+            self.heap.alloc_string(calendar.clone().into()),
         ];
         let local_date_time =
             self.temporal_plain_date_time_construct(p, &date_time_args, date_time_constructor)?;
@@ -905,7 +895,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = instant.epoch_nanoseconds;
-        let time_zone = instant.time_zone.to_string();
+        let time_zone = instant.time_zone.clone();
         let calendar = calendar.to_string();
         let options = args
             .first()
@@ -925,7 +915,7 @@ impl<H: Host> Vm<H> {
             if matches!(self.heap.get(direction), Some(Cell::Symbol(_))) {
                 return Err(self.type_error(p, "Invalid direction".into()));
             }
-            self.to_string(p, direction)?.to_string()
+            self.to_string(p, direction)?
         };
         if direction != "next" && direction != "previous" {
             return Err(self.range_error(p, "Invalid direction".into()));
@@ -964,7 +954,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = instant.epoch_nanoseconds;
-        let time_zone = instant.time_zone.to_string();
+        let time_zone = instant.time_zone.clone();
         let calendar = calendar.to_string();
         let at_epoch_limit = epoch_nanoseconds.unsigned_abs() >= MAX_EPOCH_NANOSECONDS as u128;
         if at_epoch_limit && !ZERO_OFFSET_TIME_ZONES.contains(&time_zone.as_str()) {
@@ -1006,7 +996,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = instant.epoch_nanoseconds;
-        let time_zone = instant.time_zone.to_string();
+        let time_zone = instant.time_zone.clone();
         let calendar = calendar.to_string();
         let options = args
             .first()
@@ -1040,14 +1030,14 @@ impl<H: Host> Vm<H> {
                 let rounding_mode = if mode_value.is_undefined() {
                     "halfExpand".to_owned()
                 } else {
-                    self.to_string(p, mode_value)?.to_string()
+                    self.to_string(p, mode_value)?
                 };
                 let unit = self.get_option_property(p, options, "smallestUnit")?;
                 if unit.is_undefined() {
                     return Err(self.range_error(p, "smallestUnit required".into()));
                 }
                 (
-                    self.to_string(p, unit)?.to_string(),
+                    self.to_string(p, unit)?,
                     increment,
                     rounding_mode,
                 )
@@ -1106,11 +1096,11 @@ impl<H: Host> Vm<H> {
             ));
         };
         let record_epoch = instant.epoch_nanoseconds;
-        let record_time_zone = instant.time_zone.to_string();
+        let record_time_zone = instant.time_zone.clone();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar_like) {
             _ if self.heap.is_string(calendar_like)  => {
-                let text = self.to_string(p, calendar_like)?.to_string();
+                let text = self.to_string(p, calendar_like)?;
                 super::temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
@@ -1153,7 +1143,7 @@ impl<H: Host> Vm<H> {
         };
         let (epoch_nanoseconds, time_zone, calendar) = (
             instant.epoch_nanoseconds,
-            instant.time_zone.to_string(),
+            instant.time_zone.clone(),
             calendar.to_string(),
         );
         let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1183,8 +1173,8 @@ impl<H: Host> Vm<H> {
                     day: fields[2] as u32,
                 },
                 time.map(|field| field as u32),
-                calendar.to_string(),
-                time_zone.to_string(),
+                calendar.clone(),
+                time_zone.clone(),
                 "compatible",
             )?;
             let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(resolved) else {
@@ -1233,7 +1223,7 @@ impl<H: Host> Vm<H> {
         };
         let (epoch_nanoseconds, time_zone, calendar) = (
             instant.epoch_nanoseconds,
-            instant.time_zone.to_string(),
+            instant.time_zone.clone(),
             calendar.to_string(),
         );
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1296,7 +1286,7 @@ impl<H: Host> Vm<H> {
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
                 }
-                let text = self.to_string(p, value)?.to_string();
+                let text = self.to_string(p, value)?.clone();
                 FieldValue::String(text)
             } else {
                 FieldValue::Number(self.to_number(p, value)?)
@@ -1314,7 +1304,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 return Ok(default.to_owned());
             }
-            let value = vm.to_string(p, value)?.to_string();
+            let value = vm.to_string(p, value)?;
             if !allowed.contains(&value.as_str()) {
                 return Err(vm.range_error(p, "Invalid Temporal option".into()));
             }
@@ -1358,7 +1348,7 @@ impl<H: Host> Vm<H> {
             year,
             month: month as u32,
             day: day as u32,
-            calendar: Box::new(calendar.to_string()),
+            calendar: Box::new(calendar.clone()),
         });
         let changes = self.object();
         let mut has_date_change = false;
@@ -1487,7 +1477,7 @@ impl<H: Host> Vm<H> {
         };
         let left = ZonedDateTimeRecord {
             epoch_nanoseconds: instant.epoch_nanoseconds,
-            time_zone: instant.time_zone.to_string(),
+            time_zone: instant.time_zone.clone(),
             calendar: left_calendar.to_string(),
         };
         let other = self.temporal_zoned_date_time_compare_record(
@@ -1757,7 +1747,7 @@ impl<H: Host> Vm<H> {
         let largest_value = if largest_was_default {
             None
         } else {
-            Some(self.to_string(p, largest_value)?.to_string())
+            Some(self.to_string(p, largest_value)?)
         };
         let increment_value = if options.is_undefined() {
             Value::UNDEFINED
@@ -1786,7 +1776,7 @@ impl<H: Host> Vm<H> {
         let rounding_mode = if mode_value.is_undefined() {
             "trunc".to_owned()
         } else {
-            self.to_string(p, mode_value)?.to_string()
+            self.to_string(p, mode_value)?
         };
         let smallest_value = if options.is_undefined() {
             Value::UNDEFINED
@@ -1797,7 +1787,7 @@ impl<H: Host> Vm<H> {
         let smallest_value = if smallest_was_default {
             "nanosecond".to_owned()
         } else {
-            self.to_string(p, smallest_value)?.to_string()
+            self.to_string(p, smallest_value)?
         };
         let smallest = canonical_zoned_difference_unit(&smallest_value)
             .ok_or_else(|| self.range_error(p, "Invalid smallestUnit".into()))?;
@@ -1856,7 +1846,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
             self.heap
-                .alloc_string(value.calendar.to_string().into()),
+                .alloc_string(value.calendar.clone().into()),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -1916,7 +1906,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
         if self.heap.is_string(value) {
-            let text = self.to_string(p, value)?.to_string();
+            let text = self.to_string(p, value)?;
             super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
             let parsed = parse_zoned_date_time_string(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
@@ -1947,7 +1937,7 @@ impl<H: Host> Vm<H> {
                 })
             }
             _ if self.heap.is_string(value)  => {
-                let text = self.to_string(p, value)?.to_string();
+                let text = self.to_string(p, value)?;
                 super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
                 let parsed = parse_zoned_date_time_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
@@ -2009,7 +1999,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(default.to_owned());
         }
-        let value = self.to_string(p, value)?.to_string();
+        let value = self.to_string(p, value)?;
         if !allowed.contains(&value.as_str()) {
             return Err(self.range_error(p, "Invalid Temporal option".into()));
         }
@@ -2032,7 +2022,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch = instant.epoch_nanoseconds;
-        let time_zone = instant.time_zone.to_string();
+        let time_zone = instant.time_zone.clone();
         let calendar = calendar.to_string();
         let epoch = round_zoned_date_time_epoch(epoch, &time_zone, &options)
             .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
@@ -2093,7 +2083,7 @@ impl<H: Host> Vm<H> {
         let fractional_text = if fractional_value.is_undefined() {
             None
         } else {
-            Some(self.to_string(p, fractional_value)?.to_string())
+            Some(self.to_string(p, fractional_value)?)
         };
         let offset = self.temporal_option_string(p, value, "offset")?;
         let rounding_mode = self.temporal_option_string(p, value, "roundingMode")?;
@@ -2139,7 +2129,7 @@ impl<H: Host> Vm<H> {
             Ok(None)
         } else {
             self.to_string(p, value)
-                .map(|value| Some(value.to_string()))
+                .map(Some)
         }
     }
 
@@ -2219,7 +2209,7 @@ impl<H: Host> Vm<H> {
             {
                 return Err(self.type_error(p, "Invalid offset".into()));
             }
-            let offset = self.to_string(p, offset_value)?.to_string();
+            let offset = self.to_string(p, offset_value)?;
             if !quench_temporal::valid_timezone_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
