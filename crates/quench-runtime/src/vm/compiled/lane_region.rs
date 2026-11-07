@@ -28,6 +28,14 @@ use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/packed_ranges.rs"]
 mod packed_ranges;
+#[path = "lane_region/stable.rs"]
+mod stable;
+#[path = "lane_region/polls.rs"]
+mod polls;
+use polls::specialize_closed_polls;
+#[cfg(test)]
+use polls::retain_closed_polls;
+pub(crate) use stable::StableFacts;
 use crate::typed_ir::IntRange;
 
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
@@ -274,16 +282,6 @@ pub(super) struct LoweredRegion {
     pub(super) stable: StableFacts,
 }
 
-/// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
-/// of a code dependency its publication takes (`ProgramStore::publish_lane_method`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct StableFacts {
-    /// Exact shapes of prototypes whose values it holds (`heap::subscribe_prototype_values`).
-    pub(crate) holders: Vec<u32>,
-    /// Atoms it stores without a method-cache test (`MethodCacheAtoms::readers`).
-    pub(crate) atoms: Vec<Atom>,
-}
-
 struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
@@ -296,11 +294,8 @@ struct Lowering<'a, 'f> {
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
-    /// The holder shapes whose prototypes' values the code took as constants, and the atoms it
-    /// stores directly because no method cache named them: the Stable facts it folded, each a
-    /// code dependency of its publication (`LaneRegion::stable`).
-    stable_holders: BTreeSet<u32>,
-    stable_atoms: BTreeSet<Atom>,
+    /// The Stable facts the code folded, each a code dependency of its publication.
+    stable: stable::StableUses,
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
     /// runs by the call protocol (`Lowering::construct`).
     generic: &'a [usize],
@@ -1268,8 +1263,7 @@ pub(super) fn lower(
         shared_headers,
         global_reads,
         vm,
-        stable_holders: BTreeSet::new(),
-        stable_atoms: BTreeSet::new(),
+        stable: Default::default(),
         generic,
         direct,
         frame_captures,
@@ -1652,78 +1646,11 @@ pub(super) fn lower(
     let mut polls = std::mem::take(&mut lowering.polls);
     let reentries = std::mem::take(&mut lowering.reentries);
     let helpers = lowering.helpers;
-    let stable = StableFacts { holders: std::mem::take(&mut lowering.stable_holders).into_iter().collect(),
-        atoms: std::mem::take(&mut lowering.stable_atoms).into_iter().collect() };
+    let stable = lowering.stable.take();
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
-    if fault_poll && !polls.is_empty() {
-        retain_closed_polls(&native, &reentries, &mut polls);
-        if !polls.is_empty() { specialize_interrupt_owner(&mut native, helpers, context, &polls, isa); }
-    }
+    if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, stable })
-}
-
-/// A callback retires ownership only on paths reachable from its completion. A callback
-/// after a closed loop cannot invalidate that loop's entry proof retroactively.
-fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Block], polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>) {
-    if reentries.is_empty() { return; }
-    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
-    let mut possible: CompoundBitSet = CompoundBitSet::with_capacity(function.dfg.num_blocks());
-    let mut pending = smallvec::SmallVec::<[ir::Block; INLINE_EFFECT_EDGES]>::new();
-    for &block in reentries {
-        if possible.insert(block.index()) { pending.push(block); }
-    }
-    while let Some(block) = pending.pop() {
-        for successor in cfg.succ_iter(block) {
-            if possible.insert(successor.index()) { pending.push(successor); }
-        }
-    }
-    polls.retain(|poll| {
-        let block = function.layout.inst_block(*poll).expect("published poll block");
-        let effect = if possible.contains(block.index()) { Reentry::Possible } else { Reentry::Closed };
-        effect == Reentry::Closed
-    });
-}
-
-/// Bind the current owner's proof once, after helper binding and before guest execution.
-/// Each selected poll lies before any reachable callback completion.
-fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers, context: ir::Value,
-    polls: &[ir::Inst], isa: &dyn cranelift_codegen::isa::TargetIsa)
-{
-    use cranelift_codegen::cursor::{Cursor, FuncCursor};
-    let entry = function.layout.entry_block().expect("native entry");
-    let after = match helpers {
-        #[cfg(feature = "aot")]
-        LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
-            ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
-        },
-        LaneHelpers::Numeric | LaneHelpers::Process(_) => None,
-        #[cfg(feature = "aot")]
-        LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
-    };
-    let mut cursor = FuncCursor::new(function);
-    if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
-    else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
-    let address = helpers.address(cursor.ins(), LaneHelper::InterruptOwner);
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(ir::AbiParam::new(types::I64));
-    signature.returns.push(ir::AbiParam::new(types::I64));
-    let signature = cursor.func.import_signature(signature);
-    let call = cursor.ins().call_indirect(signature, address, &[context]);
-    let exclusive = cursor.func.dfg.inst_results(call)[0];
-    let mut gates = Vec::with_capacity(polls.len());
-    for &poll in polls {
-        let before = cursor.func.layout.inst_block(poll).expect("poll block");
-        let polled = cursor.func.dfg.make_block();
-        cursor.func.layout.split_block(polled, poll);
-        let next = cursor.func.layout.next_inst(poll).expect("poll continuation");
-        let resume = cursor.func.dfg.make_block();
-        cursor.func.layout.split_block(resume, next);
-        cursor.goto_bottom(before); let gate = cursor.ins().brif(exclusive, resume, &[], polled, &[]);
-        gates.push((gate, false));
-        cursor.goto_bottom(polled); cursor.ins().jump(resume, &[]);
-    }
-    cursor.func.effect_specializations.push(ir::function::EffectSpecialization { proof: call, gates });
 }
 
 impl Lowering<'_, '_> {
@@ -2278,43 +2205,11 @@ impl Lowering<'_, '_> {
         domain.ty()
     }
 
-    /// The division this lowering specializes under: online where it may take code
-    /// dependencies on the VM (`VmFacts::online`), offline for code shared across VMs.
-    fn division(&self) -> Division {
-        if self.vm.online.is_some() { Division::Online } else { Division::Offline }
-    }
-
-    /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
-    fn invalidation_word(&mut self, online: OnlineFacts<'_>) -> ir::Value {
-        let address = self.ins().iconst(types::I64, online.invalidation as i64);
-        self.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
-    }
-
-    /// Holds every Stable fact the code folded from here to the block's next helper that may
-    /// change one: an invalidation point, which reads the word once and leaves through `exit`
-    /// where a change retired the code (Execution laws 2: the change triggers, a use checks
-    /// nothing).
-    fn hold_stable(&mut self, state: &mut State, exit: ir::Block) {
-        if state.proofs.stable { return; }
-        let online = self.vm.online.expect("only the online division folds Stable facts");
-        let invalidated = self.invalidation_word(online);
-        let held = self.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
-        emit_js_guard(&mut self.builder, held, exit);
-        state.proofs.stable = true;
-    }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-        // No method cache names the atom now: that is a Stable fact, which a cache naming it
-        // retires (`Vm::record_method_cache`), so the store reads the invalidation word, not
-        // the cache's names.
-        if let Some(online) = self.vm.online.filter(|online| !online.names(atom)) {
-            self.stable_atoms.insert(atom);
-            let invalidated = self.invalidation_word(online);
-            let held = self.builder.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
-            return self.builder.ins().band(specialized, held);
-        }
+        if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
         let word_index = atom / u64::BITS;
         let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
         let words_len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
@@ -4167,8 +4062,7 @@ impl Lowering<'_, '_> {
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
         if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
-            self.hold_stable(state, exit);
-            self.stable_holders.insert(holder);
+            self.hold_holder(state, exit, holder);
             // The receiver's link selects its prototype's value; one prototype's is a constant.
             let ((first, value), rest) = constant.values().split_first()?;
             let mut matched = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*first));

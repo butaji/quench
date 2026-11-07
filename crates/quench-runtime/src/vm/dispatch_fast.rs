@@ -677,10 +677,10 @@ impl LaneLeaves {
     }
 }
 
-/// Where a lane body left, for the diagnostics report: the compile that left (the first being
-/// 1) and the lowering line of the guard that made the leave (`JsStepDispatch::exit_line`, 0
-/// where none did), the inlined frame it left inside, if any, and the function it left in and
-/// its PC there.
+/// Where a lane body left, for the diagnostics report: the compile that left (the first is
+/// compile 1), the lowering line of the guard that made the leave (`JsStepDispatch::exit_line`,
+/// 0 where none did), the inlined frame it left inside, if any, and the function it left in
+/// and its PC there.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LeaveSite {
     compile: u32,

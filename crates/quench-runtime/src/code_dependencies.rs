@@ -164,7 +164,7 @@ mod tests {
     fn retirement_sets_the_invalidation_word_running_code_reads() {
         let invalidation = Invalidation::default();
         let publication = Rc::new(PublishedCode::with_invalidation((), invalidation.clone()));
-        let reader: Rc<dyn DependentCode> = publication.clone();
+        let reader: Rc<dyn DependentCode> = publication;
         let mut readers = CodeReaders::default();
         assert!(readers.subscribe(3, &reader));
         assert!(!invalidation.is_set());
