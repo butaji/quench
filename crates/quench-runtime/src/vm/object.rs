@@ -3661,10 +3661,9 @@ impl<H: Host> Vm<H> {
         if let Some(defined) = self.define_receiver_array_data_property(p, receiver, atom, value)? {
             return Ok(defined);
         }
-        if new_property
-            && !self
-                .object_data(receiver)
-                .is_some_and(Object::is_extensible)
+        // A String wrapper receiver's own index is read-only (`string_wrapper`).
+        if self.string_wrapper_index(receiver, PropertyKey::string(atom)).is_some()
+            || (new_property && !self.object_data(receiver).is_some_and(Object::is_extensible))
         {
             return Ok(false);
         }
