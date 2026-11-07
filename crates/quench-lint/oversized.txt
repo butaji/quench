@@ -650,7 +650,6 @@ complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_tier_frame_entry 
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::run_compiled_inner 53
 complexity crates/quench-runtime/src/vm/compiled.rs::cached_direct_reference 13
 complexity crates/quench-runtime/src/vm/compiled.rs::compile_built_functions 14
-complexity crates/quench-runtime/src/vm/compiled.rs::direct_call 12
 complexity crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 13
 complexity crates/quench-runtime/src/vm/compiled.rs::js_numeric_control_flow 13
 complexity crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 88

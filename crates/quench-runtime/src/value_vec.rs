@@ -537,7 +537,7 @@ impl ValueArena {
         let owner = self.slot_owner(shape, slot);
         let changed = self.targets.join(owner, target);
         if changed { self.slot_readers.retire(owner); }
-        self.join_slot_type(shape, slot, SlotType::of(value)) || changed
+        self.join_owner_type(owner, SlotType::of(value)) || changed
     }
 
     pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
@@ -552,23 +552,20 @@ impl ValueArena {
         let target = if ty.is_subtype(crate::typed_ir::Type::NULLISH) { TargetShape::NONE } else { TargetShape::ANY };
         let changed = self.targets.join(owner, target);
         if changed { self.slot_readers.retire(owner); }
-        self.join_slot_type(shape, slot, SlotType::from_type(ty)) || changed
+        self.join_owner_type(owner, SlotType::from_type(ty)) || changed
     }
 
-    #[cold]
-    #[inline(never)]
-    fn join_slot_type(&mut self, shape: u32, slot: usize, incoming: SlotType) -> bool {
-        let owner = self.slot_owner(shape, slot) as usize;
-        let held = self.owner_types[owner];
-        // A slot that has held any value holds every value: the common case pays one compare.
-        if held == SlotType::Tagged { return false; }
+    /// Joins `incoming` into the slot type `owner` holds; whether it widened.
+    #[inline(always)]
+    fn join_owner_type(&mut self, owner: u32, incoming: SlotType) -> bool {
+        let held = self.owner_types[owner as usize];
+        // Writes mostly repeat a class the slot already holds: one compare.
+        if held == incoming || held == SlotType::Tagged { return false; }
         let class = held.join(incoming);
-        let widened = class != held;
-        if widened {
-            self.slot_readers.retire(owner as u32);
-            self.owner_types[owner] = class;
-        }
-        widened
+        if class == held { return false; }
+        self.slot_readers.retire(owner);
+        self.owner_types[owner as usize] = class;
+        true
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {

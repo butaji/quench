@@ -71,6 +71,9 @@ mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
+#[path = "compiled/direct_call.rs"]
+mod direct_call;
+use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
 pub(super) use osr_loop::{
@@ -9802,24 +9805,7 @@ impl CompiledJsFunction {
                 NativeNumberResult::Float64 => Value::number(f64::from_bits(result)),
             }));
         }
-        // A leaf body of the plain `fn(*const f64)` ABI makes no call, polls nothing and
-        // cannot fault: it runs as a direct call, without the shared adapter's context.
-        // SAFETY: each artifact kind emits the ABI its variant names (`from_artifact`), and
-        // `arguments` holds every input it reads (checked above).
-        match self.entry {
-            CompiledJsEntry::Int32Identity { entry, return_pc } => {
-                return Some(CompiledJsResult::Int32Identity { value: unsafe { entry(arguments.as_ptr()) }, return_pc });
-            }
-            CompiledJsEntry::Boolean(entry) => {
-                return Some(CompiledJsResult::Boolean(
-                    unsafe { entry(arguments.as_ptr()) } & super::js_compiled::BOOLEAN_REGION_RESULT_MASK != 0,
-                ));
-            }
-            CompiledJsEntry::StringReturnPc(entry) => {
-                return Some(CompiledJsResult::StringReturnPc(unsafe { entry(arguments.as_ptr()) }));
-            }
-            _ => {}
-        }
+        if let Some(result) = self.call_leaf(arguments) { return Some(result); }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
             interrupt: interrupt.atomic_flag(),
@@ -15819,11 +15805,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         parameters: &[Value],
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        // The artifact lives while the tier holds it; its code then stays mapped.
-        if let Some(leaf) = entry.leaf {
-            if entry.compiled.strong_count() == 0 { return None; }
-            return leaf.run(parameters).map(|value| (entry.return_pc, entry.return_register, value));
-        }
+        if let Some(entered) = entry.run_leaf(parameters) { return entered; }
         let compiled = entry.compiled.upgrade()?;
         let result = direct_call(&compiled, parameters, &self.execution_interrupt)?;
         let value = match result {
@@ -16967,75 +16949,6 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 
-fn direct_call(
-    compiled: &CompiledJsFunction,
-    arguments: &[Value],
-    interrupt: &crate::ExecutionInterrupt,
-) -> Option<CompiledJsCallResult> {
-    let int32_identity = compiled.is_int32_identity();
-    let requires_int32 = compiled.requires_signed_int32_arguments();
-    let params = compiled.params().min(arguments.len());
-    // The common case, a few parameters, converts into a fixed array on the stack.
-    if params <= 8 {
-        let mut numeric = [0.0_f64; 8];
-        for index in 0..params {
-            let argument = arguments[index];
-            numeric[index] = match argument.as_int() {
-                Some(integer) => f64::from(integer),
-                None => {
-                    let value = argument.as_number()?;
-                    if (requires_int32 || (int32_identity && index == 0)) && !super::js_compiled::is_i32_number(value) {
-                        return None;
-                    }
-                    value
-                }
-            };
-        }
-        return direct_call_numbers(compiled, &numeric[..params], interrupt);
-    }
-    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for (index, argument) in arguments.iter().take(compiled.params()).enumerate() {
-        // An integer Value is an int32 Number by representation; any other Number is
-        // checked where the body's guards require one.
-        let value = match argument.as_int() {
-            Some(integer) => f64::from(integer),
-            None => {
-                let value = argument.as_number()?;
-                let int32 = compiled.requires_signed_int32_arguments() || (int32_identity && index == 0);
-                if int32 && !super::js_compiled::is_i32_number(value) {
-                    return None;
-                }
-                value
-            }
-        };
-        numeric_arguments.push(value);
-    }
-    direct_call_numbers(compiled, &numeric_arguments, interrupt)
-}
-
-#[inline(always)]
-fn direct_call_numbers(
-    compiled: &CompiledJsFunction,
-    numeric_arguments: &[f64],
-    interrupt: &crate::ExecutionInterrupt,
-) -> Option<CompiledJsCallResult> {
-    // Only a body that polls reads the poll page.
-    let poll_page = (compiled.native_entry_mode() == NativeEntryMode::Resumable)
-        .then(|| native_poll_page(interrupt))
-        .flatten();
-    match compiled.call(numeric_arguments, interrupt, poll_page)? {
-        CompiledJsResult::Number(value) => Some(CompiledJsCallResult::Value(value)),
-        CompiledJsResult::Int32Identity { value, .. } => Some(CompiledJsCallResult::Value(Value::number(value))),
-        CompiledJsResult::Boolean(value) => {
-            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
-        }
-        CompiledJsResult::StringReturnPc(return_pc) => {
-            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
-        }
-        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
-    }
-}
-
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
 /// artifact, held weakly so that the tier retiring it ends the direct run,
 /// and the `Return` its result completes. The artifact owns the input signature.
@@ -17047,80 +16960,7 @@ pub(super) struct DirectTierEntry {
     leaf: Option<LeafCall>,
 }
 
-/// A compiled leaf body of the plain `fn(*const f64)` ABI with at most `LEAF_PARAMS`
-/// parameters: what a direct run calls without the shared entry.
-#[derive(Clone, Copy)]
-struct LeafCall {
-    kind: LeafKind,
-    params: u8,
-    /// Per parameter, whether a non-integer Number argument must still be an int32.
-    int32_params: u8,
-}
-
-#[derive(Clone, Copy)]
-enum LeafKind {
-    Int32Identity(unsafe extern "C" fn(*const f64) -> f64),
-    Boolean(unsafe extern "C" fn(*const f64) -> u32),
-}
-
-const LEAF_PARAMS: usize = 8;
-
-impl LeafCall {
-    fn of(compiled: &CompiledJsFunction) -> Option<Self> {
-        let params = compiled.params();
-        if params > LEAF_PARAMS { return None; }
-        let (kind, int32_params) = match compiled.entry {
-            CompiledJsEntry::Int32Identity { entry, .. } => (LeafKind::Int32Identity(entry), 1),
-            CompiledJsEntry::Boolean(entry) => (LeafKind::Boolean(entry), 0),
-            _ => return None,
-        };
-        let int32_params = if compiled.requires_signed_int32_arguments() { u8::MAX } else { int32_params };
-        Some(Self { kind, params: params as u8, int32_params })
-    }
-
-    /// The body's result on `arguments`; `None` where an argument is no Number its guards
-    /// admit, as `direct_call`.
-    #[inline(always)]
-    fn run(self, arguments: &[Value]) -> Option<Value> {
-        let mut numeric = [0.0_f64; LEAF_PARAMS];
-        let params = usize::from(self.params);
-        if arguments.len() < params { return None; }
-        for index in 0..params {
-            let argument = arguments[index];
-            numeric[index] = match argument.as_int() {
-                Some(integer) => f64::from(integer),
-                None => {
-                    let value = argument.as_number()?;
-                    if self.int32_params >> index & 1 != 0 && !super::js_compiled::is_i32_number(value) {
-                        return None;
-                    }
-                    value
-                }
-            };
-        }
-        // SAFETY: the variant names the ABI the artifact emits (`CompiledJsFunction::from_artifact`);
-        // a leaf makes no call, polls nothing and cannot fault.
-        Some(match self.kind {
-            LeafKind::Int32Identity(entry) => Value::number(unsafe { entry(numeric.as_ptr()) }),
-            LeafKind::Boolean(entry) => {
-                if unsafe { entry(numeric.as_ptr()) } & super::js_compiled::BOOLEAN_REGION_RESULT_MASK != 0 { Value::TRUE } else { Value::FALSE }
-            }
-        })
-    }
-}
-
 impl DirectTierEntry {
-    /// The leaf run of this entry on `parameters` (`LeafCall`): `None` where it has no leaf
-    /// call, else the run's outcome, `Some(None)` where an argument does not admit it or the
-    /// tier retired the artifact.
-    #[inline(always)]
-    pub(super) fn run_leaf(&self, parameters: &[Value]) -> Option<Option<(usize, crate::bytecode::Register, Value)>> {
-        let leaf = self.leaf?;
-        // The artifact lives while the tier holds it; its code then stays mapped.
-        if self.retired() { return Some(None); }
-        Some(leaf.run(parameters).map(|value| (self.return_pc, self.return_register, value)))
-    }
-
     /// Whether the tier retired the artifact.
     pub(super) fn retired(&self) -> bool {
         self.compiled.strong_count() == 0
