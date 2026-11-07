@@ -19,6 +19,7 @@ aot = ["quench-runtime/aot"]
 profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
+tier-stress = ["quench-runtime/tier-stress"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

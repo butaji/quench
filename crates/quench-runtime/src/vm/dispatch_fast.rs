@@ -591,6 +591,9 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 /// Script activation admission groups two base granules.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
+mod list_calls;
+use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
+
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "primitive_bench/windows.rs"]
 mod window_primitives;
@@ -14061,126 +14064,6 @@ fn lane_native_call_value<H: Host>(
     lane_native_complete(cx, ip, i, value)
 }
 
-/// `f.apply(thisArg, list)` (`native` `FunctionApply`, `f` the receiver) or
-/// `Reflect.apply(f, thisArg, list)` (`ReflectApply`) of a frameless `f` and a list that is a
-/// dense array without holes, or absent for `apply`: `f`'s activation with the list's
-/// elements, which CreateListFromArrayLike reads as its own data elements and the activation
-/// copies before anything runs, as `lane_function_call_activation` activates a call's. `None`
-/// for any other call, which the native makes.
-#[inline(never)]
-fn lane_apply_activation<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    ip: Ip,
-    i: &LaneInstruction,
-    native: Native,
-) -> Option<Result<(Registers, Ip), Ip>> {
-    // SAFETY: the call's window is registers of the running function.
-    let args = unsafe { lane_call_window(r, i) };
-    let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
-    let (callee, receiver, list) = match native {
-        Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
-        _ => (argument(0), argument(1), *args.get(2)?),
-    };
-    let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
-    #[cfg(feature = "profile-lane-exits")]
-    {
-        let vm = unsafe { vm(cx) };
-        super::lane_exits::record_detail(format!(
-            "apply callee={:?} array={} arguments_object={} sparse={} holes={} activations={}",
-            vm.heap.function(callee).map(|record| match record.kind {
-                FunctionKind::User(..) => "user",
-                FunctionKind::Native(_) => "native",
-            }),
-            vm.heap.array(list).is_some(),
-            vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
-            vm.heap.sparse_length(list).is_some(),
-            vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
-            vm.lane_stack.activations.len(),
-        ));
-    }
-    lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
-}
-
-/// `callee`'s activation with `receiver` and the elements of `list`, a dense array without
-/// holes (none when not `listed`), for an applied call or a spread call (`CallArray`), whose
-/// argument array the call's spread evaluation built; `None` for any other list.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn lane_list_activation<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    ip: Ip,
-    i: &LaneInstruction,
-    callee: Value,
-    receiver: Value,
-    list: Value,
-    listed: bool,
-) -> Option<Result<(Registers, Ip), Ip>> {
-    let vm = unsafe { vm(cx) };
-    let dense = |vm: &Vm<H>| {
-        vm.heap.array(list).is_some_and(|array| {
-            !array.is_arguments_object()
-                && vm.heap.sparse_length(list).is_none()
-                && !array.elements().as_slice().iter().any(|value| value.is_deleted())
-        })
-    };
-    if listed && !dense(vm) {
-        return None;
-    }
-    // A bound function or `Function.prototype.call` forwards the list to the function it
-    // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
-    // out first, as a frame call's are.
-    if matches!(
-        vm.heap.function(callee),
-        Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
-    ) {
-        let elements = if listed {
-            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
-        } else {
-            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
-        };
-        let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
-            #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::record_detail("applied forwarding declined".into());
-            return None;
-        };
-        let args = args.as_slice();
-        if !matches!(kind, Some(FunctionKind::User(..))) {
-            #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::record_detail("applied forwarding to a native".into());
-            return None;
-        }
-        let Some(activated) = lane_passed_target(cx, target, args.len()) else {
-            return Some(Err(lane_passed_frame_call(cx, r, ip, i, target, receiver, FrameCallArguments::List(args)).into_loop()));
-        };
-        let Some(this) = lane_call_this(vm, &activated, receiver) else {
-            #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::record_detail("applied forwarding this declined".into());
-            return Some(Err(exit(ip)));
-        };
-        return Some(lane_activate_passed(cx, r, ip, &activated, args, this));
-    }
-    let length = if listed { vm.heap.array(list).map_or(0, |array| array.elements().len()) } else { 0 };
-    let Some(target) = lane_passed_target(cx, callee, length) else {
-        // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with
-        // the elements copied out first: making the caller's
-        // activations frames moves no heap array, but the callee may change the list.
-        let elements = if listed {
-            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
-        } else {
-            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
-        };
-        return Some(Err(lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
-    };
-    let Some(this) = lane_call_this(vm, &target, receiver) else {
-        return Some(Err(exit(ip)));
-    };
-    // Read after the resolution above, which runs no guest code but may allocate.
-    let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
-    Some(lane_activate_passed(cx, r, ip, &target, elements, this))
-}
-
 script_handler! {
     /// A call of one spread (`CallSpread`), whose window holds the iterable: an intact array
     /// (`Vm::array_iteration_intact`) of present own data elements (`present_dense_elements`)
@@ -14193,6 +14076,9 @@ script_handler! {
         let length = vm.heap.array(list).map_or(0, |array| array.elements().len());
         if !vm.array_iteration_intact(list) || vm.present_dense_elements(list, 0..length).is_none() {
             return exit(ip);
+        }
+        if let Some(resumed) = lane_spread_native_call(cx, ip, i, r.get(i.b), r.get(i.c), list) {
+            resume!(cx, resumed)
         }
         match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
             Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script(cx)),
@@ -18190,6 +18076,7 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
         Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
+        Some(Completion::Constructs) => lane_return_from::<H, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         _ => None,
     };
     if common.is_some() {
@@ -18206,7 +18093,7 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
 /// activation the same way (`lane_complete_cross_activation`).
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, false>(cx, value)
+    lane_return_from::<H, false, false, false>(cx, value)
 }
 
 /// `lane_return_plain` into a running lane body's call (`lane_body_call`): a returning
@@ -18214,7 +18101,7 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
 fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, true>(cx, value)
+    lane_return_from::<H, false, true, false>(cx, value)
 }
 
 /// `lane_complete_plain_activation` of an activation of another program than its caller's
@@ -18223,26 +18110,25 @@ fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option
 /// carries none of the program switch.
 #[inline(always)]
 fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let (registers, next) = lane_return_from::<H, true, false>(cx, value)?;
+    let (registers, next) = lane_return_from::<H, true, false, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
 /// `lane_return_plain` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
-/// (`Completion::Cross`), which enters the caller's program first. `INTO_BODY` admits a
-/// returning call too (`lane_return_to_body`).
+/// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
+/// `new` of its program (`Completion::Constructs`). `INTO_BODY` admits a returning call too.
 #[inline(always)]
-fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const CONSTRUCTS: bool>(cx: *mut LaneContext<H>, mut value: Value) -> Option<(Registers, Ip)> {
     debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a leaf's own returns complete it");
     let vm = unsafe { vm(cx) };
+    // A construction yields its receiver, the activation's `this`, for a non-object result.
+    if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).this }; }
     let stack = &mut vm.lane_stack;
     let top = stack.activations.last()?;
-    let ActivationKind::Script(script) = &top.kind else {
-        return None;
-    };
-    if script.completion != if CROSSES { Completion::Cross } else { Completion::Plain } {
-        return None;
-    }
+    let expected = if CROSSES { Completion::Cross } else if CONSTRUCTS { Completion::Constructs } else { Completion::Plain };
+    let ActivationKind::Script(script) = &top.kind else { return None };
+    if script.completion != expected { return None; }
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
     if !INTO_BODY && destination & crate::bytecode::RETURN_REGISTER != 0 {
@@ -18255,8 +18141,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool>(cx: *mu
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its window starts within the values.
     unsafe {
-        let len = stack.activations.len();
-        stack.activations.set_len(len - 1);
+        stack.activations.set_len(stack.activations.len() - 1);
         stack.values.set_len(window);
     }
     // The caller's memory view reads its program's records (`MemoryView::script`), which an

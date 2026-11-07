@@ -1,4 +1,4 @@
-use super::compiled::tier_policy::TIERS;
+use super::compiled::tier_policy::{STRESS, TIERS};
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -178,7 +178,6 @@ fn promote_general_dispatch_if_paid(
         JsTierState::Hot { .. }
             | JsTierState::Rejected { .. }
             | JsTierState::GeneralPromotionPending { .. }
-            | JsTierState::Unsupported
     ) || !general_dispatch_work_due(
         accumulated_work,
         u64::try_from(instructions.max(1)).unwrap_or(u64::MAX),
@@ -385,6 +384,8 @@ pub(super) enum JsTierState {
         entries: u64,
         reason: &'static str,
     },
+    /// Terminal: no tier compiles the function again. Its rejections are deterministic (the same
+    /// bytecode lowers to the same code), so a retry only repeats the compile.
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
@@ -953,10 +954,10 @@ impl Default for ProgramStore {
             } else {
                 WasmModuleCompile::ADAPTIVE
             },
-            general_baseline_priced: !crate::trace::Dev::JsUnpricedGeneralDispatch.on(),
+            general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
-            js_jit_general_dispatch_enabled: crate::trace::Dev::JsGeneralDispatch.on(),
-            js_jit_lane_methods_enabled: crate::trace::Dev::JsLaneMethods.on(),
+            js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
+            js_jit_lane_methods_enabled: STRESS || crate::trace::Dev::JsLaneMethods.on(),
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
@@ -2336,7 +2337,6 @@ impl ProgramStore {
                         JsTierState::Hot { .. }
                             | JsTierState::Rejected { .. }
                             | JsTierState::GeneralPromotionPending { .. }
-                            | JsTierState::Unsupported
                     )
                 )
         }) {

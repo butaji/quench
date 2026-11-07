@@ -772,7 +772,6 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_keeping
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_direct_callees 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_fields_fit 20
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_construct 17
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_list_activation 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 23
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 43
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_native_value 21
@@ -786,9 +785,10 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 71
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 13
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 21
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_register_operands 40
+complexity crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 11
 complexity crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activate_general_frame 14
 complexity crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::initialize_activation_bindings 12
-complexity crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 172
+complexity crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 171
 complexity crates/quench-runtime/src/vm/dispatch_wasm.rs::Vm<H>::step_wasm 166
 complexity crates/quench-runtime/src/vm/disposal.rs::Vm<H>::call_disposal_native 25
 complexity crates/quench-runtime/src/vm/disposal.rs::Vm<H>::continue_async_disposal 12
@@ -1429,7 +1429,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 24071
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23956
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -3060,7 +3060,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_in_place 41
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_initialize_fields 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlined_activation 41
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 57
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_list_activation 78
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_literal_value 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 140
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 259
@@ -3074,7 +3073,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_pure_native 1
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 138
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_read_capture_value 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_generator_frame 44
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 49
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script_frame 70
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 48
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_step_array_iteration_in_place 42
@@ -3090,6 +3089,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_operato
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_proved_arrays 53
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_register_operands 193
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::window_environment 64
+function-lines crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 78
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activate_general_frame 80
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activate_plain_frame 44
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::bind_activation_arguments 45
@@ -3474,7 +3474,7 @@ function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::inse
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::install_js_tier_with_cache 98
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::install_wasm_tier 44
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::js_jit_call_site_counts 41
-function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_backedge 55
+function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_backedge 54
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_entry 77
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_specialized_guard_miss 47
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::reclaim_unreferenced 136
@@ -4254,7 +4254,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::frame_entry_census 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 9
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_getter 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 2
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_apply_activation 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native_out 2
@@ -4263,7 +4262,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_direct_callees 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_construct 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_getter_activation 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 4
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_list_activation 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 3
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_new_array 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_passed_frame_call 1
@@ -4274,6 +4272,8 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_unit_targets 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_proved_arrays 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::window_environment 1
+hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_apply_activation 1
+hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activation_arguments_object 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::captured_with_objects 4
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::captured_with_objects_for_function 1
@@ -4318,7 +4318,6 @@ hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::frame_entry_census 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::generic_handler 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 3
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_fields_fit 1
-hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_list_activation 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 4
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_specialize 1
@@ -4333,6 +4332,7 @@ hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_int32_truncat
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_load_branch_pairs 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_proved_arrays 2
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_update_jumps 2
+hot-scan crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 1
 hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::activation_binding_slot 1
 hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::active_global_lexical_binding 2
 hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::captured_lexical_this 1
