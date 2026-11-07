@@ -3957,8 +3957,8 @@ pub(crate) enum Cell {
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
     },
-    /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
-    BigInt(Box<num_bigint::BigInt>),
+    /// Digits inline up to `bigint::INLINE_DIGITS`, within the slot (`cells_stay_compact`).
+    BigInt(crate::bigint::JsBigInt),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     /// `meta` is shared: every evaluation of one literal site takes the site's record
@@ -4027,7 +4027,7 @@ pub(crate) enum Cell {
 
 impl Cell {
     pub(crate) fn bigint(value: num_bigint::BigInt) -> Self {
-        Self::BigInt(Box::new(value))
+        Self::BigInt(crate::bigint::JsBigInt::from(&value))
     }
 
     /// Whether a collection prunes this cell's entries by the liveness of their targets

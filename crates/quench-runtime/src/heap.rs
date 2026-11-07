@@ -1328,6 +1328,19 @@ impl Heap {
         self.alloc_in_slot(cell, track_young)
     }
 
+    /// `alloc(Cell::BigInt(value))` without the dispatch on the cell's kind: a BigInt has no
+    /// prototype, payload or external bytes, so its weight is one allocation.
+    #[inline(always)]
+    pub(crate) fn alloc_bigint(&mut self, value: crate::bigint::JsBigInt) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::BigInt(value));
+        }
+        self.allocated += 1;
+        self.total_allocations += 1;
+        // A BigInt holds no weak entries.
+        self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::BigInt(value))
+    }
+
     /// `alloc(Cell::Environment { .. })` without the dispatch on the cell's kind, with the
     /// address of the environment's slot storage, which stays put while it lives. An
     /// environment's weight is one allocation: it has no prototype, payload or external bytes.
@@ -1658,6 +1671,31 @@ impl Heap {
     /// The slot part of `alloc`, for a cell no record space takes.
     fn alloc_in_slot(&mut self, cell: Cell, track_young: bool) -> Value {
         let weak = cell.has_weak_entries();
+        self.alloc_in_slot_with(track_young, weak, || cell)
+    }
+
+    /// `alloc_in_slot` of the cell `cell` makes, which a reused slot receives in place.
+    #[inline(always)]
+    fn alloc_in_slot_with(&mut self, track_young: bool, weak: bool, cell: impl FnOnce() -> Cell) -> Value {
+        let Some(slot) = self.take_free_slot() else {
+            return self.alloc_in_new_slot(cell(), track_young, weak);
+        };
+        let index = slot as u32;
+        self.slots.get_mut(slot).unwrap().cell = Some(cell());
+        if track_young {
+            self.young.push(index);
+        }
+        if weak {
+            self.young_weak.push(index);
+        }
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(Value::heap(index));
+        Value::heap(index)
+    }
+
+    /// A free slot's index, the highest of the last slab with one, claimed.
+    #[inline(always)]
+    fn take_free_slot(&mut self) -> Option<usize> {
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
             let Some(offset) = self.free_by_slab[slab_index].pop() else {
@@ -1668,19 +1706,14 @@ impl Heap {
             if self.free_by_slab[slab_index].is_empty() {
                 self.free_slabs.pop();
             }
-            let slot = slab_index * SLOTS_PER_SLAB + offset as usize;
-            let index = slot as u32;
-            self.slots.get_mut(slot).unwrap().cell = Some(cell);
-            if track_young {
-                self.young.push(index);
-            }
-            if weak {
-                self.young_weak.push(index);
-            }
-            #[cfg(feature = "profile-memory")]
-            self.profile_allocation(Value::heap(index));
-            return Value::heap(index);
+            return Some(slab_index * SLOTS_PER_SLAB + offset as usize);
         }
+        None
+    }
+
+    /// `alloc_in_slot` when no slot is free: a new one past the last.
+    #[inline(never)]
+    fn alloc_in_new_slot(&mut self, cell: Cell, track_young: bool, weak: bool) -> Value {
         let index = self.slots.len();
         self.slots.push(Slot { cell: Some(cell) });
         let slab = index / SLOTS_PER_SLAB;
@@ -2879,24 +2912,42 @@ impl Heap {
             let sparse_arrays = &mut self.sparse_arrays;
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
-            let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
-                *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
-                *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
-                if let Cell::Promise(promise) = &cell {
-                    abandoned_contexts.abandon(&promise.record);
-                }
-                #[cfg(feature = "profile-memory")]
-                {
-                    let object_slots = cell
-                        .object()
-                        .map(|object| properties.len(object.properties()));
-                    memory_profile.freed(Value::heap(index as u32), &cell, object_slots);
-                }
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties());
-                }
-                if let Some(arrays) = sparse_arrays {
-                    arrays.remove(&Value::heap(index as u32));
+            // Frees `slot`'s cell, if it has one. A BigInt whose digits are inline, the cell
+            // most often freed where BigInt arithmetic runs, owns nothing beyond its slot: no
+            // payload or external bytes, no properties, nothing to drop.
+            let mut reclaim = |properties: &mut ValueArena, index: usize, slot: &mut Slot| {
+                match &slot.cell {
+                    None => return,
+                    Some(Cell::BigInt(value)) if value.is_inline() => {
+                        #[cfg(feature = "profile-memory")]
+                        memory_profile.freed(Value::heap(index as u32), slot.cell.as_ref().unwrap(), None);
+                        // SAFETY: the cell owns nothing a drop would release.
+                        unsafe { std::ptr::write(&mut slot.cell, None) };
+                    }
+                    Some(_) => {
+                        let cell = slot.cell.take().unwrap();
+                        #[cfg(feature = "profile-memory")]
+                        {
+                            let object_slots = cell
+                                .object()
+                                .map(|object| properties.len(object.properties()));
+                            memory_profile.freed(Value::heap(index as u32), &cell, object_slots);
+                        }
+                        *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                        *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
+                        if let Cell::Promise(promise) = &cell {
+                            abandoned_contexts.abandon(&promise.record);
+                        }
+                        if let Some(object) = cell.object() {
+                            properties.release(object.properties());
+                        }
+                        // Only an array has sparse elements, as the parallel sweep finds.
+                        if let Some(arrays) = sparse_arrays
+                            && matches!(cell, Cell::Array { .. })
+                        {
+                            arrays.remove(&Value::heap(index as u32));
+                        }
+                    }
                 }
                 let slab = index / SLOTS_PER_SLAB;
                 let slab_free = &mut free_by_slab[slab];
@@ -2906,7 +2957,6 @@ impl Heap {
                 slab_free.insert(index % SLOTS_PER_SLAB);
                 *free_slot_count += 1;
                 freed_cells += 1;
-                drop(cell);
             };
             self.collection_state = CollectionState::Sweeping;
             if full {
@@ -2924,8 +2974,8 @@ impl Heap {
                                         index,
                                     ));
                                 }
-                        } else if let Some(cell) = slot.cell.take() {
-                            reclaim(properties, index, cell);
+                        } else {
+                            reclaim(properties, index, slot);
                         }
                     }
                 }
@@ -2951,10 +3001,8 @@ impl Heap {
                         if marked { aged_fates.promoted += 1 } else { aged_fates.died += 1 }
                     }
                     if !marked {
-                        if let Some(cell) = slot.cell.take() {
-                            // Its mark bit is already clear: the test above found it so.
-                            reclaim(properties, index_usize, cell);
-                        }
+                        // Its mark bit is already clear: the test above found it so.
+                        reclaim(properties, index_usize, slot);
                         false
                     } else if was_aged || !age.ages() {
                         promoted += 1;
@@ -4539,7 +4587,7 @@ impl Heap {
                     slots.len() * size_of::<EnvironmentSlot>()
                         + std::mem::size_of_val(with_objects)
                 }
-                Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+                Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
