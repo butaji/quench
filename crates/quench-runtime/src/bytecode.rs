@@ -108,7 +108,7 @@ mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
 mod field_store;
-pub(crate) use field_store::{FieldStore, StoreReceiver};
+pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};

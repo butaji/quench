@@ -105,6 +105,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                         let string = string.unbox();
                         let src = &self.source_text
                             [string.span.start as usize + 1..string.span.end as usize - 1];
+                        self.strict |= src == "use strict";
                         directives.push(Directive::new(span, string, Str::from(src), self));
                         continue;
                     }

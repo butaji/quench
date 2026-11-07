@@ -1,4 +1,4 @@
-use super::compiled::tier_policy::TIERS;
+use super::compiled::tier_policy::{STRESS, TIERS};
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -179,7 +179,6 @@ fn promote_general_dispatch_if_paid(
         JsTierState::Hot { .. }
             | JsTierState::Rejected { .. }
             | JsTierState::GeneralPromotionPending { .. }
-            | JsTierState::Unsupported
     ) || !general_dispatch_work_due(
         accumulated_work,
         u64::try_from(instructions.max(1)).unwrap_or(u64::MAX),
@@ -386,6 +385,8 @@ pub(super) enum JsTierState {
         entries: u64,
         reason: &'static str,
     },
+    /// Terminal: no tier compiles the function again. Its rejections are deterministic (the same
+    /// bytecode lowers to the same code), so a retry only repeats the compile.
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
@@ -413,7 +414,19 @@ enum JitTierManager {
 #[derive(Default)]
 struct WasmTiers {
     functions: FxHashMap<u32, WasmTierState>,
+    /// The root whose selective artifact holds each function one holds: a function's own,
+    /// else the first installed. A call finds its code without visiting every artifact.
+    holders: FxHashMap<u32, u32>,
     module: WasmModuleTier,
+}
+
+impl WasmTiers {
+    /// Keeps `root`'s selective artifact, the holder of each function it holds that none held.
+    fn install(&mut self, root: u32, compiled: Rc<super::compiled::CompiledProgram>) {
+        for function in compiled.held_functions() { self.holders.entry(function as u32).or_insert(root); }
+        self.holders.insert(root, root);
+        *self.functions.entry(root).or_default() = WasmTierState::Compiled(compiled);
+    }
 }
 
 /// A Wasm module's lifecycle under `--jit`. It starts with no eager artifact, so a short use
@@ -617,6 +630,12 @@ impl JitTierManager {
         }
     }
 
+    /// The selective artifact holding `function` (`WasmTiers::holders`).
+    fn wasm_holding(&self, function: u32) -> Option<&Rc<super::compiled::CompiledProgram>> {
+        let Self::Wasm(tiers) = self else { return None };
+        tiers.functions.get(tiers.holders.get(&function)?)?.compiled()
+    }
+
     fn wasm_values(&self) -> impl Iterator<Item = &WasmTierState> {
         let functions = match self {
             Self::Wasm(tiers) => Some(&tiers.functions),
@@ -687,6 +706,7 @@ impl JitTierManager {
             return None;
         }
         tiers.module = WasmModuleTier::Whole;
+        tiers.holders.clear();
         let retired = tiers
             .functions
             .values_mut()
@@ -954,10 +974,10 @@ impl Default for ProgramStore {
             } else {
                 WasmModuleCompile::ADAPTIVE
             },
-            general_baseline_priced: !crate::trace::Dev::JsUnpricedGeneralDispatch.on(),
+            general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
-            js_jit_general_dispatch_enabled: crate::trace::Dev::JsGeneralDispatch.on(),
-            js_jit_lane_methods_enabled: crate::trace::Dev::JsLaneMethods.on(),
+            js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
+            js_jit_lane_methods_enabled: STRESS || crate::trace::Dev::JsLaneMethods.on(),
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
@@ -1766,17 +1786,7 @@ impl ProgramStore {
     /// function. This check is intentionally borrow-only so lane dispatches
     /// do not clone its `Rc` on every call.
     pub(super) fn has_wasm_tier_containing(&self, id: ProgramId, function: usize) -> bool {
-        let Some(tiers) = self.entry(id).map(|entry| &entry.jit_tiers) else {
-            return false;
-        };
-        tiers
-            .wasm(function as u32)
-            .is_some_and(|state| state.compiled().is_some())
-            || tiers.wasm_values().any(|state| {
-                state
-                    .compiled()
-                    .is_some_and(|compiled| compiled.has_function(function))
-            })
+        self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_holding(function as u32).is_some())
     }
 
     pub(super) fn set_compiled(
@@ -1944,17 +1954,7 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
     ) -> Option<Rc<super::compiled::CompiledProgram>> {
-        let tiers = &self.entry(id)?.jit_tiers;
-        tiers
-            .wasm(function)
-            .and_then(|state| state.compiled().cloned())
-            .or_else(|| {
-                tiers
-                    .wasm_values()
-                    .filter_map(WasmTierState::compiled)
-                    .find(|compiled| compiled.has_function(function as usize))
-                    .cloned()
-            })
+        self.entry(id)?.jit_tiers.wasm_holding(function).cloned()
     }
 
     /// Find a selective tier with the requested function in the currently
@@ -2020,12 +2020,12 @@ impl ProgramStore {
             .retain(JitArtifactKind::WasmTierRoot, bytes);
         debug_assert!(retained, "shared JIT budget changed during Wasm admission");
         let entry = self.entry_mut(id).expect("entry checked above");
-        let Some(state) = entry.jit_tiers.wasm_mut_or_default(root) else {
+        let Some(tiers) = entry.jit_tiers.wasm_tiers_mut() else {
             self.jit_code_cache
                 .release(JitArtifactKind::WasmTierRoot, 1, bytes);
             return false;
         };
-        *state = WasmTierState::Compiled(compiled);
+        tiers.install(root, compiled);
         true
     }
 
@@ -2279,7 +2279,6 @@ impl ProgramStore {
                         JsTierState::Hot { .. }
                             | JsTierState::Rejected { .. }
                             | JsTierState::GeneralPromotionPending { .. }
-                            | JsTierState::Unsupported
                     )
                 )
         }) {

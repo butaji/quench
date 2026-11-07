@@ -34,9 +34,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.expect(Kind::LCurly);
 
         // Add Return context, remove TopLevel context
+        let strict = self.strict;
         let (directives, statements) = self.context(Context::Return, Context::TopLevel, |p| {
             p.parse_directives_and_statements(/* in_ts_namespace_body */ false)
         });
+        self.strict = strict;
 
         self.expect_closing(Kind::RCurly, opening_span);
         FunctionBody::boxed(self.end_span(start), directives, statements, self)
@@ -54,8 +56,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     /// A function body parsed, then released from the arena and kept as its directives,
     /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
-    fn parse_lazy_function_body(&mut self) -> ArenaBox<'a, FunctionBody<'a>> {
+    fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
         let allocator = self.allocator();
+        let inherited_strict = self.strict;
         // The arena allocates downward: everything the body allocates lies before this.
         let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
         let checkpoint = LazyBodyCheckpoint::of(self);
@@ -79,6 +82,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         {
             return body;
         }
+        if let Some(check) = self.options.lazy_body_check {
+            self.check_lazy_body(check, &function, &body, inherited_strict);
+            // The check's nodes lie past the marker unless they took a new arena chunk; then
+            // the body stays whole and the program's own checks see it as well.
+            if allocator.capacity() != checkpoint.arena_capacity {
+                return body;
+            }
+        }
         // SAFETY: each directive's strings lie in the source text, checked above, so a
         // bitwise copy holds nothing in the arena region released below.
         let directives: Vec<Directive<'a>> =
@@ -95,6 +106,43 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.lazy_function_bodies.push(span.start);
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
+    }
+
+    /// Calls `check` with `function` and its `body` alone as a program, as its source
+    /// would parse alone in the strictness it inherits, before the body is released.
+    fn check_lazy_body(
+        &self,
+        check: crate::LazyBodyCheck,
+        function: &LazyFunction<'_, 'a>,
+        body: &ArenaBox<'a, FunctionBody<'a>>,
+        inherited_strict: bool,
+    ) {
+        let end = body.span.end;
+        let span = Span::new(function.start, end);
+        // SAFETY: bitwise copies of the arena boxes and the binding, read only through the
+        // shared program below while the originals are not touched; the copies own nothing
+        // that drops.
+        let (id, params, body) = unsafe {
+            (function.id.map(|id| std::ptr::read(id)), std::ptr::read(function.params), std::ptr::read(body))
+        };
+        let r#type = if function.expression { FunctionType::FunctionExpression } else { FunctionType::FunctionDeclaration };
+        let node = Function::boxed(span, r#type, id, function.generator, function.r#async, false, None, None, params, None, Some(body), self);
+        let statement = if function.expression {
+            Statement::ExpressionStatement(ExpressionStatement::boxed(span, Expression::FunctionExpression(node), self))
+        } else {
+            Statement::FunctionDeclaration(node)
+        };
+        let mut directives = ArenaVec::new_in(self);
+        if inherited_strict && !self.source_type.is_module() {
+            let empty = Span::empty(function.start);
+            directives.push(Directive::new(empty, StringLiteral::new(empty, "use strict", None, self), "use strict", self));
+        }
+        let mut statements = ArenaVec::new_in(self);
+        statements.push(statement);
+        let program = Program::new(span, self.source_type, self.source_text, [], None, directives, statements, self);
+        // SAFETY: `ParseOptions::lazy_body_check` outlives the parse.
+        unsafe { check.call(&program) };
+        std::mem::forget(program);
     }
 
     pub(crate) fn parse_formal_parameters(
@@ -363,7 +411,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         };
         let body = if self.at(Kind::LCurly) || func_kind == FunctionKind::Expression {
             Some(if self.lazy_body_candidate(start, func_kind) {
-                self.parse_lazy_function_body()
+                self.parse_lazy_function_body(LazyFunction {
+                    start,
+                    id: id.as_ref(),
+                    params: &params,
+                    r#async,
+                    generator: generator.is_some(),
+                    expression: func_kind == FunctionKind::Expression,
+                })
             } else {
                 self.parse_function_body()
             })
@@ -647,6 +702,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             None
         }
     }
+}
+
+/// The parts of a function whose body parses lazily that a check of it alone reads.
+struct LazyFunction<'f, 'a> {
+    start: u32,
+    id: Option<&'f BindingIdentifier<'a>>,
+    params: &'f ArenaBox<'a, FormalParameters<'a>>,
+    r#async: bool,
+    generator: bool,
+    expression: bool,
 }
 
 /// The parser state a function body's parse can extend with data that outlives the body.

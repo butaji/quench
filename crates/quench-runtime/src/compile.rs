@@ -1114,7 +1114,13 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::arena(parsed_text);
-        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0));
+        let mut facts = lazy_bodies::BodyFacts::default();
+        #[cfg(feature = "aot")]
+        { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
+        let mut check = |program: &oxc_ast::ast::Program<'_>| facts.check(program, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        // SAFETY: `check` lives through the parse, which alone calls it.
+        let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
+        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check);
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1306,30 +1312,16 @@ impl Engine {
         #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
         if lazy {
-            // The lazily parsed bodies, checked and analyzed one at a time before code
-            // generation (`lazy_bodies::body_facts`).
-            let root_strict = module_goal
-                || inherited_strict
-                || parsed.program.directives.iter().any(|directive| directive.directive == "use strict");
-            let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
-            let Some(facts) = lazy_bodies::body_facts(
-                &normalized,
-                &parsed.program,
-                &parsed.lazy_function_bodies,
-                source_type,
-                root_strict,
-                first_private_id,
-                #[cfg(feature = "aot")]
-                atom_prefix.native_source_requests().map(|_| atom_prefix.specialized()),
-                #[cfg(feature = "aot")]
-                atom_prefix.native_global_script_calls(),
-            ) else {
+            // The lazily parsed bodies, checked and analyzed one at a time as the parser
+            // released them (`lazy_bodies::BodyFacts::check`).
+            if facts.failed {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
-            };
+            }
+            let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
             #[cfg(feature = "aot")]
             if let Some((_, requests)) = facts.native_source_requests
                 && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
-            private_name_ids.extend(facts.private_name_ids);
+            private_name_ids.extend(facts.private_name_ids.into_iter().map(|(span, id)| (span, first_private_id + id)));
             private_name_labels.extend(facts.private_name_labels);
             prototype_unobservable.extend(facts.prototype_unobservable);
         }

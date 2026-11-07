@@ -290,6 +290,39 @@ pub struct ParseOptions {
     ///
     /// Default: `None`
     pub lazy_function_bodies: Option<u32>,
+
+    /// Called with each function whose body `lazy_function_bodies` releases, alone as a
+    /// program (as its source parses alone, with a `"use strict"` directive when it inherits
+    /// strictness), before its body is released.
+    ///
+    /// Default: `None`
+    pub lazy_body_check: Option<LazyBodyCheck>,
+}
+
+/// A borrowed check of each lazily parsed function (`ParseOptions::lazy_body_check`).
+#[derive(Clone, Copy)]
+pub struct LazyBodyCheck(std::ptr::NonNull<dyn for<'x> FnMut(&Program<'x>)>);
+
+impl LazyBodyCheck {
+    /// # Safety
+    /// `check` must outlive every parse given these options.
+    pub unsafe fn new<'c>(check: &'c mut (dyn for<'x> FnMut(&Program<'x>) + 'c)) -> Self {
+        // SAFETY: the caller keeps `check` alive while it is called.
+        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn for<'x> FnMut(&Program<'x>) + 'c>, std::ptr::NonNull<dyn for<'x> FnMut(&Program<'x>)>>(std::ptr::NonNull::from(check)) })
+    }
+
+    /// # Safety
+    /// The check given to `new` is alive and not otherwise borrowed.
+    pub(crate) unsafe fn call(self, program: &Program<'_>) {
+        // SAFETY: the caller's contract.
+        unsafe { (*self.0.as_ptr())(program) }
+    }
+}
+
+impl std::fmt::Debug for LazyBodyCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LazyBodyCheck")
+    }
 }
 
 impl Default for ParseOptions {
@@ -303,6 +336,7 @@ impl Default for ParseOptions {
             allow_v8_intrinsics: false,
             enable_ident_hashes: true,
             lazy_function_bodies: None,
+            lazy_body_check: None,
         }
     }
 }
@@ -705,6 +739,10 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// The start of each function body parsed lazily, in source order.
     lazy_function_bodies: Vec<u32>,
+
+    /// Whether the current position is strict mode code, as far as a lazily parsed body's
+    /// check needs it: the module goal, a `"use strict"` directive or a class.
+    strict: bool,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -745,6 +783,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             is_ts: source_type.is_typescript(),
             lazy_depth: 0,
             lazy_function_bodies: Vec::new(),
+            strict: source_type.is_module(),
         }
     }
 
