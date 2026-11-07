@@ -59,15 +59,10 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
         M::narrow(function.local_registers.iter().filter(|entry| entry.local < function.params)
             .fold(0, |mask, entry| mask | register_bit(entry.register)))
     };
-    let mut starts = Vec::with_capacity(length + 1);
-    let mut successors = Vec::with_capacity(length);
-    let pc_of = |pc: usize| u32::try_from(pc).expect("a function's pcs fit u32");
-    for (pc, instruction) in function.instructions().enumerate() {
-        starts.push(pc_of(successors.len()));
-        function.for_each_successor(pc, instruction, |successor, _| successors.push(pc_of(successor)));
-    }
-    starts.push(pc_of(successors.len()));
-    let mut live = analyze_graph(transfers, &starts, &successors, |_| observable);
+    let instructions = function.instructions().collect::<Vec<_>>();
+    debug_assert_eq!(instructions.len(), length);
+    let successors = crate::bytecode::Successors::of(function, &instructions);
+    let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), |_| observable);
     add_suspended_exception_roots(function, &mut live);
     live
 }

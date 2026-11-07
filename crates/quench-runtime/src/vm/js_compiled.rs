@@ -4503,14 +4503,14 @@ impl JsEntryFacts {
         !self.enters && !self.general
     }
 
-    pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
+    pub(super) fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
         let numeric_find = numeric_find_candidate(function);
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
         let captured_store = captured_field_store_candidate(program, function);
-        let candidate = function_candidate(function, program);
         let has_calls = function.instructions().any(|instruction|
             instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
+        let candidate = function_candidate(function, program) && (!priced || has_calls || super::compiled::pays_native_entry(function));
         let shape = super::compiled::js_general_dispatch_shape(function);
         let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
         let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some() || captured_store.is_some();

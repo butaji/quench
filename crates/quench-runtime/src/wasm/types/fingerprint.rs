@@ -9,12 +9,20 @@ use wasmparser::{CompositeInnerType, FieldType, HeapType, StorageType, SubType, 
 impl WasmTypes {
     /// The fingerprint of declaration `index`: its position and its group's shapes.
     pub(crate) fn fingerprint(&self, index: usize) -> Option<u64> {
-        let (group, member) = self.locate(index)?;
+        let &(group, member) = self.members.get(index)?;
         let mut hasher = rustc_hash::FxHasher::default();
-        (member, group.len()).hash(&mut hasher);
-        group.iter().for_each(|ty| subtype(ty, &mut hasher));
+        (member, self.shapes[group as usize]).hash(&mut hasher);
         Some(hasher.finish())
     }
+}
+
+/// The hash of a group's length and shapes, which every member's fingerprint shares: a
+/// module's one recursion group of thousands of types is hashed once, not per lookup.
+pub(super) fn group_shapes(group: &[SubType]) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    group.len().hash(&mut hasher);
+    group.iter().for_each(|ty| subtype(ty, &mut hasher));
+    hasher.finish()
 }
 
 fn subtype(ty: &SubType, hasher: &mut impl Hasher) {

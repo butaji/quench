@@ -196,11 +196,7 @@ impl<H: Host> Vm<H> {
             let left = super::temporal_plain_date_time_conversion::to_time(self, p, values[0])?;
             let right = super::temporal_plain_date_time_conversion::to_time(self, p, values[1])?;
             let ordering = left.cmp(&right);
-            return Ok(Value::number(match ordering {
-                std::cmp::Ordering::Less => -1.0,
-                std::cmp::Ordering::Equal => 0.0,
-                std::cmp::Ordering::Greater => 1.0,
-            }));
+            return Ok(Value::number(f64::from(ordering as i8)));
         }
         if native == Native::TemporalPlainTime {
             return Err(self.type_error(p, "Temporal.PlainTime requires new".into()));

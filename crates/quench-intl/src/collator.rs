@@ -310,11 +310,7 @@ fn punctuation_only(value: &str) -> bool {
 }
 
 fn ordering_number(ordering: std::cmp::Ordering) -> f64 {
-    match ordering {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    }
+    f64::from(ordering as i8)
 }
 
 #[cfg(test)]

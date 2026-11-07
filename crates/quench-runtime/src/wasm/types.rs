@@ -15,6 +15,8 @@ pub struct WasmTypes {
     groups: Rc<[Vec<SubType>]>,
     /// Each declaration's group and its position in it, so a declaration is found at once.
     members: Rc<[(u32, u32)]>,
+    /// Each group's shapes, hashed once (`fingerprint`).
+    shapes: Rc<[u64]>,
 }
 
 impl WasmTypes {
@@ -23,10 +25,8 @@ impl WasmTypes {
     }
 
     fn of(groups: Rc<[Vec<SubType>]>) -> Self {
-        let members = groups.iter().enumerate()
-            .flat_map(|(group, types)| (0..types.len()).map(move |member| (group as u32, member as u32)))
-            .collect();
-        Self { groups, members }
+        let members = groups.iter().enumerate().flat_map(|(group, types)| (0..types.len()).map(move |member| (group as u32, member as u32))).collect();
+        Self { shapes: groups.iter().map(|group| fingerprint::group_shapes(group)).collect(), groups, members }
     }
 
     /// Embedding inputs without a binary type section declare singleton,
@@ -189,11 +189,7 @@ impl WasmTypes {
         let ValType::Ref(reference) = ty else {
             return None;
         };
-        let (index, exact) = match reference.heap_type() {
-            HeapType::Concrete(UnpackedIndex::Module(index)) => (index, false),
-            HeapType::Exact(UnpackedIndex::Module(index)) => (index, true),
-            _ => return None,
-        };
+        let (index, exact) = super::reference::module_type_index(reference.heap_type())?;
         let declaration = self.get(index as usize)?;
         if declaration.composite_type.shared {
             return None;

@@ -451,11 +451,7 @@ impl<H: Host> Vm<H> {
                     self.duration_time_nanos(&left)
                         .cmp(&self.duration_time_nanos(&right))
                 };
-                Ok(Value::number(match ordering {
-                    std::cmp::Ordering::Less => -1.0,
-                    std::cmp::Ordering::Equal => 0.0,
-                    std::cmp::Ordering::Greater => 1.0,
-                }))
+                Ok(Value::number(f64::from(ordering as i8)))
             }
             Native::TemporalDurationToString | Native::TemporalDurationToJSON => {
                 let fields = self.duration_fields(p, this)?;

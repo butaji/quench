@@ -18,8 +18,36 @@ pub(crate) fn format(value: f64) -> String {
     unsafe { String::from_utf8_unchecked(text) }
 }
 
+/// Where `write` appends its ASCII bytes: a growing text, or a buffer on the stack.
+pub(crate) trait Output {
+    fn push(&mut self, byte: u8);
+    fn extend_from_slice(&mut self, bytes: &[u8]);
+}
+
+impl Output for Vec<u8> {
+    fn push(&mut self, byte: u8) {
+        Vec::push(self, byte);
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        Vec::extend_from_slice(self, bytes);
+    }
+}
+
+/// Every Number::toString(10) text fits: at most 21 integer digits or 17 significant ones,
+/// with a sign, a point and an exponent or leading zeros.
+pub(crate) type Short = smallvec::SmallVec<[u8; 32]>;
+
+impl Output for Short {
+    fn push(&mut self, byte: u8) {
+        smallvec::SmallVec::push(self, byte);
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        smallvec::SmallVec::extend_from_slice(self, bytes);
+    }
+}
+
 /// Appends Number::toString(10) of `value` to `out`.
-pub(crate) fn write(value: f64, out: &mut Vec<u8>) {
+pub(crate) fn write(value: f64, out: &mut impl Output) {
     if value.is_nan() {
         out.extend_from_slice(b"NaN");
         return;
@@ -75,11 +103,14 @@ fn decimal_digits(text: &str) -> (smallvec::SmallVec<[u8; 24]>, i32) {
 }
 
 /// Steps 6-10 of Number::toString for digits `s` (k of them) and point position `n`.
-fn lay_out(digits: &[u8], point: i32, out: &mut Vec<u8>) {
+/// The most zeros a fixed-point layout pads with: up to the 21-digit integer boundary.
+const ZEROS: [u8; MAX_FIXED_POINT_POSITION as usize] = [b'0'; MAX_FIXED_POINT_POSITION as usize];
+
+fn lay_out(digits: &[u8], point: i32, out: &mut impl Output) {
     let count = digits.len() as i32;
     if count <= point && point <= MAX_FIXED_POINT_POSITION {
         out.extend_from_slice(digits);
-        out.resize(out.len() + (point - count) as usize, b'0');
+        out.extend_from_slice(&ZEROS[..(point - count) as usize]);
     } else if 0 < point && point <= MAX_FIXED_POINT_POSITION {
         let (integer, fraction) = digits.split_at(point as usize);
         out.extend_from_slice(integer);
@@ -87,7 +118,7 @@ fn lay_out(digits: &[u8], point: i32, out: &mut Vec<u8>) {
         out.extend_from_slice(fraction);
     } else if MIN_FIXED_POINT_POSITION < point && point <= 0 {
         out.extend_from_slice(b"0.");
-        out.resize(out.len() + (-point) as usize, b'0');
+        out.extend_from_slice(&ZEROS[..(-point) as usize]);
         out.extend_from_slice(digits);
     } else {
         let (first, rest) = digits.split_first().expect("a nonzero value has digits");

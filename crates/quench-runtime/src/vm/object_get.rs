@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::PrivateBrand;
+mod plain_key_set;
 
 /// Where constructors of one shape hold their own `@@species` getter
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
@@ -553,7 +554,7 @@ impl<H: Host> Vm<H> {
         if !self.plain_named_key(atom) {
             return None;
         }
-        self.set_plain_key_property(object, atom, value)
+        self.set_plain_key_property(object, atom, value, false)
     }
 
     /// `[[Get]]` of array index `index` along a chain of ordinary objects, which hold an index
@@ -574,7 +575,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let atom = self.lookup_array_index_atom(index)?;
-        self.set_plain_key_property(object, atom, value)
+        self.set_plain_key_property(object, atom, value, false)
     }
 
     /// Whether every object from `object` up its prototype chain is ordinary and no arguments
@@ -585,7 +586,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.heap.ordinary_object(current) else {
                 return false;
             };
-            if data.is_arguments_object() {
+            if data.is_arguments_object() || self.string_wrapper_primitive(current).is_some() {
                 return false;
             }
             current = data.proto();
@@ -593,63 +594,6 @@ impl<H: Host> Vm<H> {
                 return true;
             }
         }
-    }
-
-    /// The chain walk and store of `set_plain_named_property` for a key the caller admitted.
-    fn set_plain_key_property(&mut self, object: Value, atom: Atom, value: Value) -> Option<()> {
-        // A global object's bindings carry declaration state beside its shape.
-        if self.is_global_object(object) {
-            return None;
-        }
-        let key = PropertyKey::string(atom);
-        let mut current = object;
-        loop {
-            let data = self.heap.ordinary_object(current)?;
-            if !data.is_extensible()
-                || data.is_module_namespace()
-                || data.deferred_module().is_some()
-                || (data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)))
-            {
-                return None;
-            }
-            let (shape, proto) = (data.shape(), data.proto());
-            if let Some(slot) = self.property_shape_slot(shape, key) {
-                let attributes = self.slot_attributes(data, slot)?;
-                if attributes.accessor || !attributes.writable {
-                    return None;
-                }
-                break;
-            }
-            if proto.is_null() {
-                break;
-            }
-            current = proto;
-        }
-        self.set_shape_property(object, key, value).ok()
-    }
-
-    /// A keyed `[[Set]]` of a string naming an existing atom, made as
-    /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
-    /// that function refuses, to the general path, which interns a new name.
-    pub(super) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some(atom) = self.lookup_string_atom(key) else {
-            return false;
-        };
-        if !self.plain_named_key(atom) {
-            return false;
-        }
-        // An add a keyed store made before replays from its entry (`keyed_add_hit`).
-        if self.keyed_add_hit(object, atom, value) {
-            return true;
-        }
-        let guard = self.keyed_add_guard(object, atom);
-        if self.set_plain_key_property(object, atom, value).is_none() {
-            return false;
-        }
-        if let Some((shape, guard)) = guard {
-            self.record_keyed_add(object, atom, shape, guard);
-        }
-        true
     }
 
     /// A keyed read of a symbol, or of a string naming an existing non-index atom, that the
@@ -1066,7 +1010,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some(v) = self.own_property(object, atom) {
+            if let Some(v) = self.own_property(object, atom).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
                 return Ok(v);
             }
             if let Some(data) = self.heap.object_record(object) {
