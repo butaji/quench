@@ -943,7 +943,7 @@ impl EnvironmentScopeRef {
 use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord, GeneratorState};
 
 snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
-snapshot_enum!(generator_state: GeneratorState { Suspended, Executing, Completed });
+snapshot_enum!(generator_state: GeneratorState { Suspended, Executing, Completed, AwaitingReturn });
 snapshot_enum!(iterator_zip_mode: IteratorZipMode { Shortest, Longest, Strict });
 
 macro_rules! snap_via_enum {
