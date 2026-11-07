@@ -14,7 +14,7 @@ impl Op {
         matches!(self, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
     }
 
-    /// A plain register copy: its result takes register B's value.
+    /// A copy of register B into the result register, and nothing else.
     pub(crate) const fn copies_register(self) -> bool {
         matches!(self, Op::Move)
     }

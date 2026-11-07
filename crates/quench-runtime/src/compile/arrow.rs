@@ -46,17 +46,12 @@ impl Compiler<'_> {
         let parameter_local_count = locals.len();
         let strict = inherited_strict
             || matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
-        let function_scope = match &value.body {
+        let (function_scope, annex_b_collisions) = match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
-                self.collect_locals(&body.statements, &mut locals, strict, false)
+                let collisions = self.annex_b_collisions(&body.statements);
+                (self.collect_locals(&body.statements, &mut locals, strict, false, &collisions), collisions)
             }
-            _ => locals.iter().copied().collect(),
-        };
-        let annex_b_collisions = match &value.body {
-            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
-                early::annex_b_lexical_collisions(&body.statements)
-            }
-            _ => FxHashSet::default(),
+            _ => (locals.iter().copied().collect(), early::AnnexBCollisions::default()),
         };
         let environment_atoms = locals
             .iter()

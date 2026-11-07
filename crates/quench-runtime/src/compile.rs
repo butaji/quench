@@ -1868,7 +1868,7 @@ struct Compiler<'a> {
     module_goal: bool,
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
-    eval_annex_b_collisions: FxHashSet<u32>,
+    eval_annex_b_collisions: early::AnnexBCollisions,
     atoms: CompilerAtoms<'a>,
     /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
     /// source atom (`capture_marker`).
@@ -2384,10 +2384,8 @@ impl<'a> Compiler<'a> {
         bindings
     }
 
-    fn annex_b_collisions(&self, body: &[Statement<'_>]) -> FxHashSet<u32> {
-        let mut collisions = early::annex_b_lexical_collisions(body);
-        collisions.extend(self.eval_annex_b_collisions.iter().copied());
-        collisions
+    fn annex_b_collisions(&self, body: &[Statement<'_>]) -> early::AnnexBCollisions {
+        early::annex_b_lexical_collisions(body, &self.eval_annex_b_collisions)
     }
 
     fn new(
@@ -2432,7 +2430,7 @@ impl<'a> Compiler<'a> {
             module_goal: false,
             capture_script_completion: false,
             eval_context: None,
-            eval_annex_b_collisions: FxHashSet::default(),
+            eval_annex_b_collisions: early::AnnexBCollisions::default(),
             atoms,
             capture_markers: FxHashMap::default(),
             private_name_references: 0,
@@ -3188,7 +3186,7 @@ impl<'a> Compiler<'a> {
                 .collect();
             global_annex_b_var_names = early::annex_b_function_names(&program.body)
                 .into_iter()
-                .filter(|(span, _)| !direct_functions.contains(span) && !collisions.contains(span))
+                .filter(|(span, _)| !direct_functions.contains(span) && !collisions.contains(*span))
                 .map(|(_, name)| name)
                 .collect();
             global_var_names.extend(global_annex_b_var_names.iter().cloned());
@@ -3525,11 +3523,11 @@ impl<'a> Compiler<'a> {
                     views: replay::ReplayViews::default(),
                 })
             }),
+            first_call_scopes: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
             closure_reads,
-            first_calls: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
             load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]
@@ -3942,8 +3940,9 @@ impl<'a> Compiler<'a> {
         }
         let parameter_local_count = locals.len();
         let root_strict = self.root_strict || options.strict;
+        let annex_b_collisions = self.annex_b_collisions(body);
         let mut function_scope =
-            self.collect_locals(body, &mut locals, root_strict, parent.is_some());
+            self.collect_locals(body, &mut locals, root_strict, parent.is_some(), &annex_b_collisions);
         // Only a function-scope binding (a parameter, `var`, top-level declaration) shadows
         // the expression's own name; a block's or a catch clause's binding does not.
         let name_binding = options.name_binding.and_then(|source_name| {
@@ -3986,7 +3985,6 @@ impl<'a> Compiler<'a> {
             function_scope.retain(|atom| lexical_atoms.contains(atom));
         }
         let module_source = self.source;
-        let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
         } else if parent.is_none() || options.class_initializer {

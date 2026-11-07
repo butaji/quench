@@ -1874,7 +1874,7 @@ impl Lowering<'_, '_> {
             Some(moved) if moved.op().copies_register() && moved.register_b() == register && !self.is_live(at + 1, register) => (at + 1, moved.result_register()),
             _ => (at, register),
         };
-        match instruction(at) { Some(jump) if jump.op().control_flow_layout() == ControlFlowLayout::Jump => (jump.jump_target() as usize, register), _ => (at, register) }
+        match instruction(at) { Some(jump) if jump.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Jump => (jump.jump_target() as usize, register), _ => (at, register) }
     }
 
     /// `state` past a join with `incoming`: each register's facts as both paths prove them.

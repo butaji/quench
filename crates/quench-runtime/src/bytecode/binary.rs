@@ -1,3 +1,6 @@
+mod abi;
+mod closure_tables;
+use closure_tables::{read_closure_tables, write_closure_tables};
 use super::{
     AtomTable, BindingSite, Constant, DerivedFact, DispatchClass, FactTables, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
@@ -14,9 +17,16 @@ const THROWN_VALUE_IN_REGISTER: u8 = 2;
 
 /// Encodes a function without an `undefined` register.
 const NO_UNDEFINED_REGISTER: u16 = u16::MAX;
-const RESIDUAL_MAGIC: &[u8; 8] = &[b'Q', b'U', b'E', b'N', b'C', b'H', RESIDUAL_MAGIC_TERMINATOR, super::ResidualProgram::FORMAT_VERSION];
-mod first_calls;
-use first_calls::{read_first_calls, write_first_calls};
+const RESIDUAL_MAGIC: &[u8; 8] = &[
+    b'Q',
+    b'U',
+    b'E',
+    b'N',
+    b'C',
+    b'H',
+    RESIDUAL_MAGIC_TERMINATOR,
+    super::ResidualProgram::FORMAT_VERSION,
+];
 const RESIDUAL_MAGIC_TERMINATOR: u8 = 0;
 // Serialized absence of register parameters; no register file reaches it.
 const NO_PARAMETER_REGISTERS: u16 = u16::MAX;
@@ -384,7 +394,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
-    (write_closure_reads(&mut out, program.closure_reads.as_deref()), write_first_calls(&mut out, &program.first_calls));
+    write_closure_tables(&mut out, program);
     let order = match out.atoms {
         AtomEncoding::Program => {
             header.strings(&program.atoms);
@@ -719,7 +729,7 @@ fn decode_program(
         }
         Ok(Superinstruction::new(code))
     })?;
-    let (closure_reads, first_calls) = (read_closure_reads(&mut input)?, read_first_calls(&mut input)?);
+    let (closure_reads, first_call_scopes) = read_closure_tables(&mut input, functions.len())?;
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
@@ -740,61 +750,14 @@ fn decode_program(
         regexp_literal_sites,
         literal_templates,
         superinstructions,
-        replay: None,
+        replay: None, first_call_scopes,
         encoded_records,
         validated: Default::default(),
         undefined_constant: Default::default(),
         load_encoding: Default::default(),
-        closure_reads, first_calls,
+        closure_reads,
     };
     Ok(program)
-}
-
-/// A program's closure reads (`ClosureReads`), when it has them: per function its parent,
-/// whether it is an arrow, its reads (none for its whole chain) and its by-name slots.
-fn write_closure_reads(out: &mut BinaryWriter, reads: Option<&super::ClosureReads>) {
-    out.u8(u8::from(reads.is_some()));
-    let Some(reads) = reads else {
-        return;
-    };
-    out.u32(reads.functions.len() as u32);
-    for function in reads.functions.iter() {
-        out.option_u32(function.parent);
-        out.u8(u8::from(function.is_arrow));
-        out.u8(u8::from(function.reads.is_some()));
-        if let Some(pairs) = &function.reads {
-            out.u32(pairs.len() as u32);
-            for &(distance, slot) in pairs.iter() {
-                out.u32(distance);
-                out.u16(slot);
-            }
-        }
-        out.u16s(&function.named_slots);
-    }
-}
-
-fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc<super::ClosureReads>>, String> {
-    if input.u8()? == 0 {
-        return Ok(None);
-    }
-    let functions = input.list(|input| {
-        let parent = input.option_u32()?;
-        let is_arrow = input.u8()? != 0;
-        let reads = if input.u8()? != 0 {
-            Some(input.list(|input| Ok((input.u32()?, input.u16()?)))?.into_boxed_slice())
-        } else {
-            None
-        };
-        let named_slots = input.u16s()?.into_boxed_slice();
-        Ok(super::closure_reads::FunctionReads { parent, is_arrow, reads, named_slots })
-    })?;
-    if functions
-        .iter()
-        .any(|function| function.parent.is_some_and(|parent| parent as usize >= functions.len()))
-    {
-        return Err("invalid residual closure reads parent".into());
-    }
-    Ok(Some(std::rc::Rc::new(super::ClosureReads { functions: functions.into_boxed_slice() })))
 }
 
 /// The body's entry for a deferred record, `record` of `region`: its length, its place and its

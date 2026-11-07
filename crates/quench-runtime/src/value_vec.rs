@@ -513,11 +513,6 @@ impl ValueArena {
         }
     }
 
-    /// Shape identifiers will be remapped; retire assumptions before any object moves.
-    pub(crate) fn retire_shape_readers(&mut self) {
-        self.shape_readers.reset();
-    }
-
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
     #[inline(always)]
     #[cfg(test)]
