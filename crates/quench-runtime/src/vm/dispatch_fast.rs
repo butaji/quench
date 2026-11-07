@@ -4220,6 +4220,13 @@ unsafe fn lane_returning_binary_value<H: Host>(
     unsafe { lane_binary_value(cx, r, i) }
 }
 
+/// An operator of operands not both Numbers the lane computes in place: a concatenation of
+/// strings for `+`, or BigInt arithmetic; `None` leaves it to the general path.
+fn lane_other_operator_value<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
+    let concatenated = (operator == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right));
+    concatenated.flatten().or_else(|| lane_bigint_value(cx, operator, left, right))
+}
+
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
 /// allocates the result; `None` leaves the operation, and any error, to the general path.
 #[inline(never)]
@@ -4635,13 +4642,7 @@ script_handler! {
     /// BigInt arithmetic in place; anything else takes the general path.
     #[inline(never)]
     fn lane_operator_other<OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        let value = if OP == super::operations::ADDITION {
-            lane_concatenation(cx, left, right).or_else(|| lane_bigint_value(cx, OP, left, right))
-        } else {
-            lane_bigint_value(cx, OP, left, right)
-        };
-        let Some(value) = value else {
+        let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -4733,7 +4734,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_constant_numbers` and `lane_operator_constant_concatenation` of
+    /// `lane_operator_constant_numbers` and `lane_operator_constant_other` of
     /// `lane_operator_integer_constant`'s integer, out of line.
     #[inline(never)]
     fn lane_operator_integer_constant_numbers<OP: u32>(cx, r, ip, i, view) {
@@ -4750,16 +4751,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_numbers` with a constant right operand; a concatenation takes
-    /// `lane_operator_constant_concatenation`, out of line.
+    /// `lane_operator_numbers` with a constant right operand; other operands take
+    /// `lane_operator_constant_other`, out of line.
     #[inline(never)]
     fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant())
         else {
-            if OP == super::operations::ADDITION {
-                sibling!(lane_operator_constant_concatenation::<H>, r, ip, Carried::script(cx))
-            }
-            return exit(ip);
+            sibling!(lane_operator_constant_other::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4820,10 +4818,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_operator_constant_numbers` of an addition that concatenates.
+    /// `lane_operator_other` of `lane_operator_constant_numbers`, whose right operand is the
+    /// record's constant.
     #[inline(never)]
-    fn lane_operator_constant_concatenation<>(cx, r, ip, i, view) {
-        let Some(value) = lane_concatenation(cx, r.get(i.b), i.constant()) else {
+    fn lane_operator_constant_other<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), i.constant()) else {
             return exit(ip);
         };
         r.set(i.a, value);
