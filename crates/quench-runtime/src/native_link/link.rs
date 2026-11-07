@@ -33,6 +33,8 @@ pub struct NativeSupport {
     rust_lto: bool,
     support: NativeImageSupport,
     host_semantic_exports: bool,
+    /// The host's executable link arguments (kind, function order), applied to each image.
+    executable_link_args: &'static [&'static str],
 }
 
 const NATIVE_SDK_FEATURE: &str = "native-sdk";
@@ -155,15 +157,19 @@ impl NativeSupport {
             host_semantic_exports,
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
             native_paths,
-            optimization: optimization.ok_or("Cargo report has no support optimization level")?,
+            optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
     }
+
+    /// Link images as the host binary links: no dynamic relocations dirtying pages at startup,
+    /// and the trained order packing the functions a run executes.
+    pub fn with_executable_link_args(mut self, arguments: &'static [&'static str]) -> Self { self.executable_link_args = arguments; self }
 
     pub fn report(&self) -> Value {
         serde_json::json!({ "host_library": self.host, "host_crate": self.host_crate, "runtime_library": self.runtime,
             "optimization_level": self.optimization, "native_search_paths": self.native_paths,
             "driver_panic_strategy": "abort", "rust_lto": self.rust_lto,
-            "dynamic_source": self.support.allows_dynamic_source(), "host_semantic_exports": self.host_semantic_exports })
+            "dynamic_source": self.support.allows_dynamic_source(), "host_semantic_exports": self.host_semantic_exports, "executable_link_args": self.executable_link_args })
     }
 
     /// The SDK already owns the opcode-derived C ABI helpers for its host.
@@ -237,6 +243,7 @@ impl NativeSupport {
         for path in &self.native_paths {
             command.arg("-L").arg(path);
         }
+        command.args(self.executable_link_args.iter().flat_map(|argument| ["-C".to_owned(), format!("link-arg={argument}")]));
         for object in inputs.objects() {
             command
                 .arg("-C")
@@ -248,30 +255,10 @@ impl NativeSupport {
             path.push(".link-map");
             PathBuf::from(path)
         };
-        #[cfg(target_os = "macos")]
-        command
-            .args([
-                "-C",
-                "link-arg=-Xlinker",
-                "-C",
-                "link-arg=-map",
-                "-C",
-                "link-arg=-Xlinker",
-            ])
-            .arg("-C")
-            .arg(format!("link-arg={}", map.display()));
-        #[cfg(target_os = "linux")]
-        command
-            .args([
-                "-C",
-                "link-arg=-Xlinker",
-                "-C",
-                "link-arg=-Map",
-                "-C",
-                "link-arg=-Xlinker",
-            ])
-            .arg("-C")
-            .arg(format!("link-arg={}", map.display()));
+        // The linker's map (ld64 spells the option `-map`, GNU-style linkers `-Map`).
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        command.args(["-C", "link-arg=-Xlinker", "-C", if cfg!(target_os = "macos") { "link-arg=-map" } else { "link-arg=-Map" },
+            "-C", "link-arg=-Xlinker", "-C"]).arg(format!("link-arg={}", map.display()));
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
         let symbols = audit(inputs, executable, self.support)?;

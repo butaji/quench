@@ -21,9 +21,10 @@ impl<T: CollectionEntry> From<CollectionEntries<T>> for Entries<T> {
     }
 }
 
-impl<T: CollectionEntry> From<Vec<T>> for Entries<T> {
-    fn from(entries: Vec<T>) -> Self {
-        CollectionEntries::from(entries).into()
+impl<T: CollectionEntry> Entries<T> {
+    /// The entry storage owned (`CollectionEntries::payload_bytes`); none until written.
+    pub(crate) fn payload_bytes(&self) -> usize {
+        self.0.as_deref().map_or(0, CollectionEntries::payload_bytes)
     }
 }
 
@@ -47,7 +48,7 @@ impl<T: SharedEmpty> DerefMut for Entries<T> {
 /// An entry type whose empty table one thread's empty collections share.
 pub(crate) trait SharedEmpty: CollectionEntry + 'static {
     /// The thread's empty table. Not `Sync`, the reference stays on this thread; nothing
-    /// writes through it but an index lookup's cell, which an empty table leaves empty.
+    /// writes through it.
     fn empty() -> &'static CollectionEntries<Self>;
 }
 

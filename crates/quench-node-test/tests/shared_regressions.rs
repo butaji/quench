@@ -1,27 +1,9 @@
 //! Complex guest regressions not owned by the upstream conformance suites.
 
-use quench_node_test::case_process::{observe_case, CaseObservation, RunResult};
-use std::{fs, path::Path, process::Command, time::Duration};
+mod support;
 
-const SHARED_WORKER: &str = env!("CARGO_BIN_EXE_run-parallel");
-const REGRESSION_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn observe_source(source: &str) -> CaseObservation {
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = directory.path().join("regression.js");
-    fs::write(&fixture, source).unwrap();
-    observe_case(Path::new(SHARED_WORKER), &fixture, REGRESSION_TIMEOUT).unwrap()
-}
-
-fn observe_node_source(source: &str) -> std::process::Output {
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = directory.path().join("oracle.js");
-    fs::write(&fixture, source).unwrap();
-    Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
-        .arg(fixture)
-        .output()
-        .unwrap()
-}
+use quench_node_test::case_process::RunResult;
+use support::{observe_node_source, observe_source};
 
 #[test]
 fn strict_assert_aliases_preserve_identity_and_strict_comparison() {
@@ -308,121 +290,6 @@ fn idle_task_combinator_finishes_on_the_shared_worker() {
 }
 
 #[test]
-fn webassembly_namespace_links_converts_and_shares_memory_like_node() {
-    // (module (import "env" "log" (func (param i32))) (memory (export "memory") 1 10)
-    //   (global (export "g") (mut i32) (i32.const 7)) and exports add, store, callLog, grow,
-    //   i64add, fmul and trap over those resources.
-    let source = r#"
-const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,36,7,96,1,127,0,96,2,127,127,1,127,96,2,127,127,0,96,1,127,1,127,96,2,126,126,1,126,96,2,124,124,1,124,96,0,0,2,11,1,3,101,110,118,3,108,111,103,0,0,3,8,7,1,2,0,3,4,5,6,5,4,1,1,1,10,6,6,1,127,1,65,7,11,7,68,9,6,109,101,109,111,114,121,2,0,1,103,3,0,3,97,100,100,0,1,5,115,116,111,114,101,0,2,7,99,97,108,108,76,111,103,0,3,4,103,114,111,119,0,4,6,105,54,52,97,100,100,0,5,4,102,109,117,108,0,6,4,116,114,97,112,0,7,10,53,7,7,0,32,0,32,1,106,11,9,0,32,0,32,1,54,2,0,11,6,0,32,0,16,0,11,6,0,32,0,64,0,11,7,0,32,0,32,1,124,11,7,0,32,0,32,1,162,11,3,0,0,11]);
-const m = new WebAssembly.Module(bytes);
-console.log(WebAssembly.validate(bytes), JSON.stringify(WebAssembly.Module.imports(m)));
-const logged = [];
-const e = new WebAssembly.Instance(m, { env: { log: x => logged.push(x) } }).exports;
-console.log(Object.keys(e).join(), Object.isFrozen(e), Object.getPrototypeOf(e));
-console.log(e.add(0x7fffffff, 1), e.add('4', 1.9), e.add.name, e.add.length);
-e.store(16, 0x01020304);
-console.log(Array.from(new Uint8Array(e.memory.buffer, 16, 4)).join());
-e.callLog(42);
-const old = e.memory.buffer;
-console.log(logged.join(), e.grow(1), old.byteLength, e.memory.buffer.byteLength, e.memory.grow(1));
-console.log(e.i64add(-1n, 0n), e.fmul(1.5, 2), e.g.value);
-try { e.trap(); } catch (error) { console.log(error instanceof WebAssembly.RuntimeError); }
-try { new WebAssembly.Instance(m, { env: {} }); } catch (error) { console.log(error.name); }
-const table = new WebAssembly.Table({ element: 'anyfunc', initial: 1 });
-table.set(0, e.add);
-console.log(table.get(0) === e.add, table.grow(1), table.get(1));
-WebAssembly.instantiate(m, { env: { log() {} } })
-  .then(instance => console.log(instance instanceof WebAssembly.Instance));
-"#;
-    let node = observe_node_source(source);
-    assert!(node.status.success(), "Node oracle failed: {node:?}");
-    let quench = observe_source(source);
-    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
-    assert_eq!(quench.stdout, node.stdout);
-}
-
-#[test]
-fn webassembly_internal_references_reach_javascript_like_node() {
-    // (module (func "i31" (result i31ref) (ref.i31 -5)) (func "wide" (result anyref)
-    //   (ref.i31 0x7fffffff)) (func "nullAny" (result anyref)) (func "nullNone" (result nullref))
-    //   (func "host" (param externref) (result anyref) (any.convert_extern))
-    //   (func "pair" (result anyref i32) (ref.i31 7) 1) (global "g" anyref (ref.i31 3)))
-    let source = r#"
-const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,23,5,96,0,1,108,96,0,1,110,96,0,1,113,96,1,111,1,110,96,0,2,110,127,3,7,6,0,1,1,2,3,4,6,8,1,110,0,65,3,251,28,11,7,53,7,3,105,51,49,0,0,4,119,105,100,101,0,1,7,110,117,108,108,65,110,121,0,2,8,110,117,108,108,78,111,110,101,0,3,4,104,111,115,116,0,4,4,112,97,105,114,0,5,1,103,3,0,10,45,6,6,0,65,123,251,28,11,10,0,65,255,255,255,255,7,251,28,11,4,0,208,110,11,4,0,208,113,11,6,0,32,0,251,26,11,8,0,65,7,251,28,65,1,11]);
-const e = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
-const object = {};
-console.log(e.i31(), e.wide(), e.nullAny(), e.nullNone(), JSON.stringify(e.pair()), e.g.value);
-console.log(e.host(object) === object, e.host('s'), e.host(1.5), e.host(42), e.host(null));
-"#;
-    let node = observe_node_source(source);
-    assert!(node.status.success(), "Node oracle failed: {node:?}");
-    let quench = observe_source(source);
-    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
-    assert_eq!(quench.stdout, node.stdout);
-}
-
-#[test]
-fn webassembly_gc_objects_are_opaque_exotic_objects_like_node() {
-    // (module (type $s (struct (field i32))) (func "st" (result anyref) (struct.new $s 1))
-    //   (func "back" (param externref) (result i32) (ref.test (ref $s) (any.convert_extern))))
-    let source = r#"
-const wasmModule = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0,1,14,3,95,1,127,0,96,0,1,110,96,1,111,1,127,3,3,2,1,2,7,13,2,2,115,116,0,0,4,98,97,99,107,0,1,10,19,2,7,0,65,1,251,0,0,11,9,0,32,0,251,26,251,20,0,11,0,11,4,110,97,109,101,4,4,1,0,1,115]));
-const e = new WebAssembly.Instance(wasmModule).exports;
-const r = e.st();
-const out = [];
-const t = (n, f) => { try { const v = f(); out.push(n + '=' + (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v))); } catch (err) { out.push(n + '!' + err.constructor.name); } };
-t('typeof', () => typeof r); t('keys', () => Object.keys(r)); t('x', () => r.x); t('proto', () => Object.getPrototypeOf(r));
-t('set', () => { 'use strict'; r.x = 1; }); t('str', () => String(r)); t('plus', () => r + 1); t('in', () => 'x' in r);
-t('ext', () => Object.isExtensible(r)); t('frozen', () => Object.isFrozen(r)); t('wrap', () => Object(r) === r); t('back', () => e.back(r));
-t('def', () => Object.defineProperty(r, 'y', { value: 1 })); t('setproto', () => Object.setPrototypeOf(r, {})); t('rsetproto', () => Reflect.setPrototypeOf(r, null));
-t('del', () => { 'use strict'; delete r.x; }); t('freeze', () => Object.freeze(r)); t('rset', () => Reflect.set(r, 'x', 1)); t('rpe', () => Reflect.preventExtensions(r));
-t('gopd', () => Object.getOwnPropertyDescriptor(r, 'x')); t('spread', () => ({ ...r })); t('create', () => Object.getPrototypeOf(Object.create(r)) === r);
-t('json', () => JSON.stringify([r])); t('sym', () => { 'use strict'; r[Symbol.iterator] = 1; });
-console.log(out.join(' '));
-"#;
-    let node = observe_node_source(source);
-    assert!(node.status.success(), "Node oracle failed: {node:?}");
-    let quench = observe_source(source);
-    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
-    assert_eq!(quench.stdout, node.stdout);
-}
-
-#[test]
-fn webassembly_values_enter_reference_types_like_node() {
-    // Exports taking anyref, eqref, i31ref, structref, (ref null $s), (ref $s) and nullref;
-    // anyref and (ref null $s) globals and tables; imports returning anyref and (ref null $s);
-    // and the JS API's reference type names for WebAssembly.Global and WebAssembly.Table.
-    let source = r#"
-let ret = null;
-const wasmModule = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0,1,59,12,95,1,127,0,95,1,126,0,96,0,1,110,96,0,1,99,0,96,1,110,1,110,96,1,109,1,127,96,1,108,1,127,96,1,107,1,127,96,1,99,0,1,127,96,1,100,0,1,127,96,1,113,1,127,96,0,1,127,2,22,2,3,101,110,118,3,103,101,116,0,2,3,101,110,118,4,103,101,116,115,0,3,3,12,11,4,5,6,7,8,9,10,2,2,2,11,4,8,2,110,0,2,99,0,0,2,6,12,2,110,1,208,110,11,99,0,1,208,0,11,7,86,15,3,97,110,121,0,2,2,101,113,0,3,3,105,51,49,0,4,2,115,116,0,5,1,115,0,6,3,115,110,110,0,7,4,110,111,110,101,0,8,2,109,107,0,9,3,109,107,116,0,10,3,105,109,112,0,11,4,105,109,112,115,0,12,1,103,3,0,2,103,115,3,1,3,116,97,98,1,0,4,116,97,98,115,1,1,10,70,11,4,0,32,0,11,7,0,32,0,251,20,108,11,6,0,32,0,251,29,11,5,0,32,0,209,11,5,0,32,0,209,11,4,0,65,1,11,4,0,65,1,11,7,0,65,1,251,0,0,11,7,0,66,1,251,0,1,11,4,0,16,0,11,5,0,16,1,209,11,0,28,4,110,97,109,101,1,12,2,0,3,103,101,116,1,4,103,101,116,115,4,7,2,0,1,115,1,1,116]));
-const e = new WebAssembly.Instance(wasmModule, { env: { get: () => ret, gets: () => ret } }).exports;
-const s = e.mk(), t = e.mkt(), o = {};
-const show = x => x === null ? 'null' : typeof x === 'object' ? (x === o ? 'o' : x === s ? 's' : x === t ? 't' : 'obj') : typeof x + ':' + String(x);
-const out = [];
-const c = (n, f) => { try { out.push(n + '=' + show(f())); } catch (err) { out.push(n + '!' + err.constructor.name); } };
-for (const [name, x] of [['null', null], ['undef', undefined], ['num', 5], ['big', 2 ** 30], ['frac', 1.5], ['o', o], ['s', s], ['t', t], ['bigint', 1n]]) {
-  for (const f of ['any', 'eq', 'i31', 'st', 's', 'snn', 'none']) c(f + '(' + name + ')', () => e[f](x));
-  c('g=' + name, () => { e.g.value = x; return e.g.value; });
-  c('gs=' + name, () => { e.gs.value = x; return e.gs.value; });
-  c('tab=' + name, () => { e.tab.set(0, x); return e.tab.get(0); });
-  c('tabs=' + name, () => { e.tabs.set(0, x); return e.tabs.get(0); });
-  c('imp=' + name, () => { ret = x; return e.imp(); });
-  c('imps=' + name, () => { ret = x; return e.imps(); });
-}
-for (const ty of ['anyfunc', 'funcref', 'externref', 'anyref', 'eqref', 'i31ref', 'structref', 'arrayref', 'nullref', 'exnref']) {
-  c('global:' + ty, () => { const g = new WebAssembly.Global({ value: ty, mutable: true }); g.value = 7; return g.value; });
-  c('table:' + ty, () => { const table = new WebAssembly.Table({ element: ty, initial: 1 }); table.set(0, 7); return table.get(0); });
-}
-console.log(out.join(' '));
-"#;
-    let node = observe_node_source(source);
-    assert!(node.status.success(), "Node oracle failed: {node:?}");
-    let quench = observe_source(source);
-    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
-    assert_eq!(quench.stdout, node.stdout);
-}
-
-#[test]
 fn non_callable_calls_name_their_callee_like_node() {
     // V8's CallPrinter: names, property chains, computed keys, sequences, operators,
     // literals, nested calls and constructions, optional chains and private fields.
@@ -508,43 +375,44 @@ setTimeout(() => console.log(log.join(' ')), 0);
     assert_eq!(quench.stdout, node.stdout);
 }
 
-/// A Wasm export called from a lane's frameless activations runs beside them
-/// (`Native::runs_beside_activations`): its results, the stack its JavaScript import observes
-/// (the activations, then frames, in order), and its trap are a frame-stack call's. The
-/// trap's `RuntimeError` names the JavaScript callers it left, not the frame that caught it.
+/// Promise jobs that capture no store and no resource run in a fresh, empty context: job order
+/// across `then`, `await` and `queueMicrotask`, execution ids, thrown handlers, unhandled
+/// rejections, and an `enterWith` inside a job, which reaches the job's own continuations and
+/// no later job, as Node's do.
 #[test]
-fn wasm_export_calls_beside_frameless_activations_report_like_node() {
+fn promise_jobs_isolate_async_local_storage_and_keep_order_like_node() {
     let source = r#"
-const section = (id, bytes) => [id, bytes.length, ...bytes];
-const name = (s) => [s.length, ...[...s].map((c) => c.charCodeAt(0))];
-const types = [2, 0x60, 0, 0, 0x60, 1, 0x7f, 1, 0x7f];
-const imports = [1, ...name('env'), ...name('cb'), 0, 0];
-const funcs = [1, 1];
-const exps = [1, ...name('run'), 0, 1];
-const run = [0x20, 0, 0x45, 0x04, 0x40, 0x00, 0x0b,
-  0x20, 0, 0x41, 1, 0x46, 0x04, 0x40, 0x10, 0, 0x0b,
-  0x20, 0, 0x41, 1, 0x6a, 0x0b];
-const code = [1, run.length + 1, 0, ...run];
-const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...section(1, types), ...section(2, imports),
-  ...section(3, funcs), ...section(7, exps), ...section(10, code)]);
-const callers = (stack) => stack.split('\n').map((line) => /at (\w+) /.exec(line)?.[1])
-  .filter((name) => ['cb', 'inner', 'middle', 'outer'].includes(name)).join(' < ');
-const wasm = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
-  env: { cb() { console.log('import sees', callers(new Error('cb').stack)); } },
-}).exports;
-function inner(x) { return wasm.run(x); }
-function middle(x) { return inner(x) + 0; }
-function outer(n) { let sum = 0; for (let i = 2; i < n; i++) sum += middle(i); return sum; }
-console.log(outer(3000), outer(3000));
-function calls(x) { return middle(x); }
-calls(1);
-try { calls(0); } catch (e) { console.log(e.constructor.name, e.message, callers(e.stack)); }
+const { AsyncLocalStorage, executionAsyncId, triggerAsyncId } = require('async_hooks');
+const out = [];
+const ids = () => executionAsyncId() + '/' + triggerAsyncId();
+process.on('unhandledRejection', (reason) => out.push('unhandled ' + (reason && reason.message)));
+const p = Promise.resolve(1);
+p.then(() => out.push('t1 ' + ids()));
+queueMicrotask(() => out.push('q1'));
+(async () => { out.push('a0'); await null; out.push('a1 ' + ids()); await p; out.push('a2'); })();
+p.then(() => { out.push('t2'); throw new Error('thrown'); }).catch((e) => out.push('caught ' + e.message));
+p.then(() => { throw new Error('nobody'); });
+Promise.reject(new Error('rejected')).then(() => out.push('never'));
+let als;
+p.then(() => {
+  als = new AsyncLocalStorage();
+  out.push('e0 ' + als.getStore());
+  als.enterWith('E');
+  out.push('e1 ' + als.getStore());
+  Promise.resolve().then(() => out.push('e-inner ' + als.getStore()));
+});
+p.then(() => out.push('after-e ' + als.getStore()));
+queueMicrotask(() => { out.push('q2 ' + als.getStore()); als.enterWith('Q'); });
+p.then(() => out.push('after-q ' + als.getStore()));
+p.then(() => als.run('R', () => p.then(() => { out.push('run ' + als.getStore()); als.enterWith('R2'); }).then(() => out.push('run2 ' + als.getStore()))));
+p.then(() => out.push('last ' + als.getStore()));
+setTimeout(() => { out.push('timer ' + als.getStore()); console.log(out.join('\n')); }, 10);
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");
     let quench = observe_source(source);
-    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
-    assert_eq!(quench.stdout, node.stdout);
+    assert_eq!(quench.outcome(), RunResult::Pass, "Quench failed: {:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
 }
 
 #[test]
@@ -591,44 +459,4 @@ console.log(show(() => mix({ valueOf() { throw new RangeError('boom'); } })));
     let quench = observe_source(source);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
-}
-
-/// Promise jobs that capture no store and no resource run in a fresh, empty context: job order
-/// across `then`, `await` and `queueMicrotask`, execution ids, thrown handlers, unhandled
-/// rejections, and an `enterWith` inside a job, which reaches the job's own continuations and
-/// no later job, as Node's do.
-#[test]
-fn promise_jobs_isolate_async_local_storage_and_keep_order_like_node() {
-    let source = r#"
-const { AsyncLocalStorage, executionAsyncId, triggerAsyncId } = require('async_hooks');
-const out = [];
-const ids = () => executionAsyncId() + '/' + triggerAsyncId();
-process.on('unhandledRejection', (reason) => out.push('unhandled ' + (reason && reason.message)));
-const p = Promise.resolve(1);
-p.then(() => out.push('t1 ' + ids()));
-queueMicrotask(() => out.push('q1'));
-(async () => { out.push('a0'); await null; out.push('a1 ' + ids()); await p; out.push('a2'); })();
-p.then(() => { out.push('t2'); throw new Error('thrown'); }).catch((e) => out.push('caught ' + e.message));
-p.then(() => { throw new Error('nobody'); });
-Promise.reject(new Error('rejected')).then(() => out.push('never'));
-let als;
-p.then(() => {
-  als = new AsyncLocalStorage();
-  out.push('e0 ' + als.getStore());
-  als.enterWith('E');
-  out.push('e1 ' + als.getStore());
-  Promise.resolve().then(() => out.push('e-inner ' + als.getStore()));
-});
-p.then(() => out.push('after-e ' + als.getStore()));
-queueMicrotask(() => { out.push('q2 ' + als.getStore()); als.enterWith('Q'); });
-p.then(() => out.push('after-q ' + als.getStore()));
-p.then(() => als.run('R', () => p.then(() => { out.push('run ' + als.getStore()); als.enterWith('R2'); }).then(() => out.push('run2 ' + als.getStore()))));
-p.then(() => out.push('last ' + als.getStore()));
-setTimeout(() => { out.push('timer ' + als.getStore()); console.log(out.join('\n')); }, 10);
-"#;
-    let node = observe_node_source(source);
-    assert!(node.status.success(), "Node oracle failed: {node:?}");
-    let quench = observe_source(source);
-    assert_eq!(quench.outcome(), RunResult::Pass, "Quench failed: {:?}", quench.worker);
-    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
 }

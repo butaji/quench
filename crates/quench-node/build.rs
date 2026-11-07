@@ -13,7 +13,7 @@
 //! carry crate hashes, which change with the exact compiler release: `rust-toolchain.toml`
 //! names one, and an order is trained with it.
 
-use std::{env, path::Path};
+use std::{env, path::{Path, PathBuf}};
 
 #[path = "../link_layout.rs"]
 mod link_layout;
@@ -74,7 +74,13 @@ fn main() {
         // basic blocks: the qualification build's block layout (`bolt-profile`).
         println!("cargo:rustc-link-arg-bins=-Wl,--emit-relocs");
     }
-    link_layout::link_binaries(env::var_os(LINK_ORDER_ENV).is_none_or(|value| value != LINK_ORDER_OFF));
+    export_link_arguments(&link_layout::link_binaries(env::var_os(LINK_ORDER_ENV).is_none_or(|value| value != LINK_ORDER_OFF)));
+}
+
+/// `quench compile` links native images as this crate's binaries are linked (`aot/link.rs`).
+fn export_link_arguments(arguments: &[String]) {
+    let out = PathBuf::from(env::var("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    std::fs::write(out.join("executable_link_args.rs"), format!("&{arguments:?}")).expect("write executable link arguments");
 }
 
 /// Legacy TextDecoder mappings follow ICU, as Node does. Hosts without ICU

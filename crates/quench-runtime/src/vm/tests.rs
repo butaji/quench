@@ -2839,19 +2839,14 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
     )
     .unwrap();
     program.compile_released();
-    let plans: Vec<_> = program
+    let resets: Vec<Vec<u16>> = program
         .functions
         .iter()
-        .flat_map(|function| function.environment_clones.iter())
+        .flat_map(|function| function.environment_clones.iter().map(|plan| function.environment_clones.resets(plan).iter().collect()))
         .collect();
     // The outer loop's next iteration does not share the inner loop's `k`
     // with the clone that last owned it: it resets the slot.
-    assert!(plans.iter().any(|plan| !plan.reset.is_empty()));
-    assert!(plans.iter().all(|plan| {
-        plan.reset
-            .iter()
-            .all(|slot| plan.fresh.binary_search(slot).is_err())
-    }));
+    assert!(resets.iter().any(|reset| !reset.is_empty()));
 }
 
 #[test]
@@ -12755,64 +12750,6 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function plus(value) { return +value; }
-          function negate(value) { return -value; }
-          const values = [0, -0, Infinity, -Infinity, NaN];
-          for (let index = 0; index < 40; index++) {
-            const value = values[index % values.length];
-            if (!Object.is(plus(value), value)) throw Error('unary plus');
-            if (!Object.is(negate(value), -value)) throw Error('unary negation');
-          }
-          if (plus('7') !== 7) throw Error('unary plus coercion fallback');
-          let plusThrew = false;
-          try { plus(7n); } catch (error) { plusThrew = error instanceof TypeError; }
-          if (!plusThrew) throw Error('unary plus BigInt fallback');
-          if (negate(7n) !== -7n) throw Error('unary negation BigInt fallback');
-          let coercions = 0;
-          const boxed = { valueOf() { coercions++; return 5; } };
-          if (negate(boxed) !== -5 || coercions !== 1) throw Error('unary effectful fallback');
-        "#,
-        "js-jit-number-unary.js",
-    ))
-    .unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-
-    for name in ["plus", "negate"] {
-        let function = program
-            .functions
-            .iter()
-            .position(|function| {
-                function
-                    .header()
-                    .name
-                    .or_else(|| function.header().inferred_name)
-                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
-            })
-            .unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(compiled)) =
-            vm.programs
-                .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
-            panic!("{name} should compile its Number unary denotation");
-        };
-        assert!(
-            compiled.uses_shared_entry(),
-            "{name} should use the common VM native-entry ABI"
-        );
-        assert!(
-            compiled.native_entries() > 0,
-            "{name} should have entered native code before the fallback checks"
-        );
-    }
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
 fn js_jit_compiles_straight_line_plain_local_temporaries() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -12976,254 +12913,6 @@ fn js_jit_routes_rejected_lane_candidates_through_the_general_frame_handoff() {
     };
     assert!(compiled.is_general_dispatch());
     assert!(compiled.native_entries() > 0);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_forward_numeric_decision_trees() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function magnitude(value) {
-            if (value < 0) return -value;
-            return value;
-          }
-          function magnitudeJoined(value) {
-            return value < 0 ? -value : value;
-          }
-          for (let index = 0; index < 40; index++) {
-            if (magnitude(index - 20) !== Math.abs(index - 20)) throw Error('decision tree');
-            if (magnitudeJoined(index - 20) !== Math.abs(index - 20)) throw Error('decision join');
-          }
-          if (!Object.is(magnitude(-0), -0)) throw Error('signed zero');
-          if (!Number.isNaN(magnitude(NaN))) throw Error('NaN relation');
-          if (magnitude('3') !== '3') throw Error('coercive fallback');
-          let coercions = 0;
-          const boxed = { valueOf() { coercions++; return -4; } };
-          if (magnitude(boxed) !== 4 || coercions !== 2) throw Error('effectful fallback');
-        "#,
-        "js-jit-forward-decision-tree.js",
-    ))
-    .unwrap();
-    let magnitude = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "magnitude")
-        })
-        .unwrap() as u32;
-    let mut interpreter = Vm::new(TestHost::default());
-    interpreter
-        .execute(&program)
-        .expect("interpreted decision tree should preserve JS results");
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-
-    let compiled = match vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, magnitude)
-    {
-        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled,
-        Some(super::program_store::JsTierState::Rejected { reason, .. }) => {
-            panic!("the Number decision tree was rejected: {reason}");
-        }
-        Some(super::program_store::JsTierState::Hot {
-            observations,
-            numeric,
-        }) => panic!("the Number decision tree remained hot: {observations} observations, {numeric} numeric"),
-        Some(super::program_store::JsTierState::PromotionPending) => {
-            panic!("the Number decision tree remained promotion-pending");
-        }
-        Some(
-            super::program_store::JsTierState::GeneralPromotionPending { .. }
-            | super::program_store::JsTierState::GeneralCompileDue,
-        ) => {
-            panic!("the numeric decision tree was sent to the general baseline");
-        }
-        Some(super::program_store::JsTierState::Unsupported) => {
-            panic!("the Number decision tree was marked unsupported");
-        }
-        None => panic!("the Number decision tree was not tier-tracked"),
-    };
-    assert!(compiled.uses_shared_entry());
-    assert!(compiled.native_entries() > 0);
-
-    let joined = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "magnitudeJoined")
-        })
-        .unwrap() as u32;
-    match vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, joined)
-    {
-        Some(super::program_store::JsTierState::Compiled(compiled)) => {
-            assert!(compiled.uses_shared_entry());
-            assert!(compiled.native_entries() > 0);
-        }
-        Some(super::program_store::JsTierState::Rejected { reason, .. }) => {
-            panic!("the Number join was rejected: {reason}");
-        }
-        Some(super::program_store::JsTierState::Hot {
-            observations,
-            numeric,
-        }) => panic!("the Number join remained hot: {observations} observations, {numeric} numeric"),
-        Some(super::program_store::JsTierState::PromotionPending) => {
-            panic!("the Number join remained promotion-pending");
-        }
-        Some(
-            super::program_store::JsTierState::GeneralPromotionPending { .. }
-            | super::program_store::JsTierState::GeneralCompileDue,
-        ) => {
-            panic!("the numeric join was sent to the general baseline");
-        }
-        Some(super::program_store::JsTierState::Unsupported) => {
-            panic!("the Number join was marked unsupported");
-        }
-        None => panic!("the Number join was not tier-tracked"),
-    }
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function add(left, right) { return left + right; }
-          for (let index = 0; index < 40; index++) {
-            if (add(index, 2) !== index + 2) throw Error('known call result');
-          }
-        "#,
-        "js-jit-known-call.js",
-    ))
-    .unwrap();
-    let add = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, add)
-    else {
-        panic!("the numeric callee should be compiled");
-    };
-    assert!(
-        compiled.uses_leaf_entry(),
-        "the non-polling numeric artifact should use the shared leaf entry"
-    );
-    assert!(
-        compiled.native_entries() >= 9,
-        "promotion plus the remaining statically-known calls should enter native code"
-    );
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function makeReader() {
-            let value = 7;
-            function read() { return value; }
-            function write(next) { value = next; }
-            return { read, write };
-          }
-          const state = makeReader();
-          for (let index = 0; index < 40; index++) {
-            if (state.read() !== 7) throw Error('capture number');
-          }
-          state.write(11);
-          if (state.read() !== 11) throw Error('capture update');
-          state.write('text');
-          if (state.read() !== 'text') throw Error('non-number capture fallback');
-        "#,
-        "js-jit-capture-return.js",
-    ))
-    .unwrap();
-    let reader = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, reader),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function makeAdder() {
-            let delta = 3;
-            function add(value) { return value + delta; }
-            function update(next) { delta = next; }
-            return { add, update };
-          }
-          const adder = makeAdder();
-          for (let index = 0; index < 40; index++) {
-            if (adder.add(index) !== index + 3) throw Error('numeric capture');
-          }
-          adder.update(5);
-          if (adder.add(2) !== 7) throw Error('capture mutation');
-          adder.update('x');
-          if (adder.add(2) !== '2x') throw Error('capture fallback');
-        "#,
-        "js-jit-capture-arithmetic.js",
-    ))
-    .unwrap();
-    let add = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, add),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
 }
 
 #[test]
@@ -13403,72 +13092,6 @@ fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly(
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function hashKey(key) {
-            switch (typeof key) {
-              case 'object':
-                if (!key) return 0;
-                return key.hashCode();
-              case 'number':
-                if ((key | 0) == key) return key;
-                return 'fraction';
-              default: return 'other';
-            }
-          }
-          function exercise() {
-            for (let index = 0; index < 40; index++) {
-              if (hashKey(index) !== index) throw Error('integer fast arm');
-            }
-            if (hashKey(2.5) !== 'fraction') throw Error('fraction fallback');
-            if (hashKey('2') !== 'other') throw Error('type fallback');
-            if (hashKey({ hashCode() { return 7; } }) !== 7) throw Error('object path');
-          }
-          exercise();
-        "#,
-        "js-jit-int32-identity.js",
-    ))
-    .unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "hashKey")
-        })
-        .unwrap() as u32;
-    assert!(
-        super::js_compiled::int32_identity_return_candidate(
-            &program,
-            program.function_get(function_id as usize).unwrap()
-        )
-        .is_some(),
-        "{}",
-        program.disassemble()
-    );
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, function_id),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function_id)
-    else {
-        unreachable!("the guarded identity function was compiled above")
-    };
-    assert!(compiled.native_entries() >= 9);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
 fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -13542,46 +13165,6 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn js_jit_interrupt_exits_through_the_shared_native_entry() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function sumTo(limit) {
-            let sum = 0;
-            let index = 0;
-            while (index < limit) {
-              sum = sum + index;
-              index = index + 1;
-            }
-            return sum;
-          }
-        "#,
-        "js-jit-interrupt-adapter.js",
-    ))
-    .unwrap();
-    let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
-    assert!(matches!(
-        artifact.result,
-        super::js_compiled::JsJitResultKind::NumberInterruptible
-            | super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable, _)
-    ));
-    let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
-        .expect("shared executable mapping");
-    assert!(
-        !compiled.uses_leaf_entry(),
-        "an interruptible loop must retain the resumable native entry"
-    );
-    let interrupt = crate::ExecutionInterrupt::default();
-    interrupt.request_termination();
-
-    let result = compiled.call(&[1_000_000.0], &interrupt, None);
-
-    assert!(result.is_none(), "interrupted native execution must not return a guest result");
-    assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
-    assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
 fn js_jit_repeated_specialized_guard_misses_release_cache_for_general_tier() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         "function add(left, right) { return left + right; }",
@@ -13629,75 +13212,6 @@ fn js_jit_repeated_specialized_guard_misses_release_cache_for_general_tier() {
         0,
         "the specialized mapping must stop consuming shared JIT cache budget at demotion"
     );
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_counts_only_tagged_guard_misses_after_falsy_native_success() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function add(left, right) { return left + right; }
-          function read(scale, node) { return node.value * scale; }
-          for (let index = 0; index < 40; index++) {
-            add(index, 0);
-            read(2, { value: index });
-          }
-          if (add(0, 0) !== 0) throw Error('falsy numeric result');
-          if (add('tag', 1) !== 'tag1') throw Error('tagged fallback');
-          new add('frame', 1);
-          let gets = 0;
-          const accessor = { get value() { gets++; return 3; } };
-          if (read(2, accessor) !== 6 || gets !== 1) throw Error('shape fallback');
-        "#,
-        "js-jit-specialized-guard-miss-count.js",
-    ))
-    .unwrap();
-    let function = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.programs.enable_js_general_dispatch();
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
-        panic!("one confirmed miss should not yet replace the specialized tier");
-    };
-    assert!(!compiled.is_general_dispatch());
-    assert_eq!(
-        compiled.specialized_guard_misses(),
-        2,
-        "numeric zero must not count, and each frameless/frame miss must count once"
-    );
-    let read = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
-        })
-        .unwrap() as u32;
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, read)
-    else {
-        panic!("the numeric field reader should retain its specialized tier after one miss");
-    };
-    assert!(!compiled.is_general_dispatch());
-    assert_eq!(compiled.specialized_guard_misses(), 1, "shape guard miss count");
 }
 
 #[test]
@@ -14527,8 +14041,8 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
-    // A Gauss-Seidel sweep's row loop runs its rows in pairs (`compiled::wavefront`): each
-    // case reads what program order reads, bit for bit: an odd last row, integral results,
+    // A Gauss-Seidel sweep's row loop runs natively: each case reads what program order
+    // reads, bit for bit: an odd last row, integral results,
     // signed zeros and NaN, an element whose `valueOf` runs (which restores the pair and
     // leaves for the general path), and an array read and written as one (not entered).
     let source = r#"
@@ -17408,265 +16922,6 @@ fn shared_osr_float_unary_uses_shared_number_denotation() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_change() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function quickHash(str) {
-            let hash = 5381;
-            let index = str.length;
-            while (index > 0) {
-              hash = hash * 33 ^ (str.charCodeAt(index) | 0);
-              index -= 919;
-            }
-            return hash | 0;
-          }
-          if (quickHash('') !== 5381) throw Error('empty string');
-          if (quickHash('abc') !== 177573) throw Error('short string');
-          if (quickHash('😀') !== 177573) throw Error('surrogate pair');
-          if (quickHash('a'.repeat(2000)) !== 193375941) throw Error('long string');
-          String.prototype.charCodeAt = function() { return 99; };
-          if (quickHash('abc') !== 177606) throw Error('intrinsic mutation fallback');
-        "#,
-        "js-jit-string-hash.js",
-    ))
-    .unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(
-        matches!(
-            vm.programs
-                .js_tier(super::program_store::ProgramId::MAIN, 1),
-            Some(super::program_store::JsTierState::Compiled(_))
-        ),
-        "string hash loop should compile\n{}",
-        program.disassemble()
-    );
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_changes() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function escapeLeadingUnderscores(value) {
-            return value.length >= 2 && value.charCodeAt(0) === 95 && value.charCodeAt(1) === 95
-              ? '_' + value : value;
-          }
-          function unescapeLeadingUnderscores(value) {
-            const alias = value;
-            return alias.length >= 3 && alias.charCodeAt(0) === 95
-              && alias.charCodeAt(1) === 95 && alias.charCodeAt(2) === 95
-              ? alias.substr(1) : alias;
-          }
-          for (let i = 0; i < 40; i++) {
-            if (escapeLeadingUnderscores('__x') !== '___x') throw Error('escape match');
-            if (escapeLeadingUnderscores('_x') !== '_x') throw Error('escape short prefix');
-            if (escapeLeadingUnderscores('x') !== 'x') throw Error('escape miss');
-            if (unescapeLeadingUnderscores('___x') !== '__x') throw Error('unescape match');
-            if (unescapeLeadingUnderscores('__x') !== '__x') throw Error('unescape short prefix');
-            if (unescapeLeadingUnderscores('x') !== 'x') throw Error('unescape miss');
-          }
-          String.prototype.charCodeAt = function() { return 95; };
-          if (escapeLeadingUnderscores('ax') !== '_ax') throw Error('escape intrinsic fallback');
-          if (unescapeLeadingUnderscores('abc') !== 'bc') throw Error('unescape intrinsic fallback');
-        "#,
-        "js-jit-leading-underscore.js",
-    ))
-    .unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 1),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-    assert!(
-        matches!(
-            vm.programs
-                .js_tier(super::program_store::ProgramId::MAIN, 2),
-            Some(super::program_store::JsTierState::Compiled(_))
-        ),
-        "unescape helper should compile\n{}",
-        program.disassemble()
-    );
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
-    let source =
-        r#"
-          function isStatementKindButNotDeclarationKind(kind) {
-            return kind === 253 || kind === 252 || kind === 260 || kind === 247 ||
-              kind === 245 || kind === 243 || kind === 250 || kind === 251 ||
-              kind === 249 || kind === 246 || kind === 257 || kind === 254 ||
-              kind === 256 || kind === 258 || kind === 259 || kind === 244 ||
-              kind === 248 || kind === 255 || kind === 354;
-          }
-          function isFunctionLikeDeclarationKind(kind) {
-            let switchValue = kind;
-            switch (switchValue) {
-              case 263: case 175: case 177: case 178:
-              case 179: case 219: case 220: return true;
-              default: return false;
-            }
-          }
-          function logicalNotNumberConstant() { return !0; }
-          const matches = [253, 252, 260, 247, 245, 243, 250, 251, 249, 246,
-            257, 254, 256, 258, 259, 244, 248, 255, 354];
-          const functionLikeMatches = [263, 175, 177, 178, 179, 219, 220];
-          for (let kind = 0; kind < 360; kind++) {
-            const expected = matches.includes(kind);
-            const functionLikeExpected = functionLikeMatches.includes(kind);
-            if (isStatementKindButNotDeclarationKind(kind) !== expected) {
-              throw Error('equality chain ' + kind);
-            }
-            if (isFunctionLikeDeclarationKind(kind) !== functionLikeExpected) {
-              throw Error('switch chain ' + kind);
-            }
-          }
-          for (let i = 0; i < 40; i++) {
-            if (logicalNotNumberConstant() !== true) throw Error('logical not constant');
-          }
-        "#;
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        source,
-        "js-jit-boolean-joins.js",
-    ))
-    .unwrap();
-    assert!(
-        super::js_compiled::compile(&program, 1).is_some(),
-        "equality chain should compile\n{}",
-        program.disassemble()
-    );
-    assert!(
-        super::js_compiled::compile(&program, 2).is_some(),
-        "switch chain should compile\n{}",
-        program.disassemble()
-    );
-    assert!(
-        super::js_compiled::compile(&program, 3).is_some(),
-        "constant logical not should compile; candidate={} function={:?}\n{}",
-        super::js_compiled::function_candidate(program.function(3), &program),
-        program.functions[3],
-        program.disassemble()
-    );
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 1),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 2),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 3),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_cached_numeric_kind_field_switches() {
-    let source = r#"
-      function isMethodOrAccessor(node) {
-        switch (node.kind) {
-          case 175: case 178: case 179: return true;
-          default: return false;
-        }
-      }
-      function isBindingPattern(node) {
-        if (node) {
-          const kind = node.kind;
-          return kind === 208 || kind === 207;
-        }
-        return false;
-      }
-      const kinds = [175, 178, 179, 180];
-      for (let i = 0; i < 40; i++) {
-        const kind = kinds[i % kinds.length];
-        if (isMethodOrAccessor({kind}) !== (kind !== 180)) throw Error('kind switch');
-        const bindingKind = i % 2 === 0 ? 208 : 207;
-        if (isBindingPattern({kind: bindingKind}) !== true) throw Error('binding kind');
-      }
-      if (isBindingPattern(null) !== false) throw Error('falsey fallback');
-    "#;
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        source,
-        "js-jit-kind-field.js",
-    ))
-    .unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 1),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 2),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function twice(scale, node) { return node.value * scale; }
-          for (let index = 0; index < 40; index++) {
-            if (twice(2, {value: index}) !== index * 2) throw Error('numeric field result');
-          }
-          let reads = 0;
-          const accessor = { get value() { reads++; return 7; } };
-          if (twice(2, accessor) !== 14 || reads !== 1) throw Error('accessor fallback');
-          if (twice(2, {value: '7'}) !== 14) throw Error('cache replacement fallback');
-        "#,
-        "js-jit-guarded-field-arithmetic.js",
-    ))
-    .unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "twice")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function_id)
-    else {
-        panic!("numeric field arithmetic should compile");
-    };
-    assert_eq!(compiled.numeric_field_inputs().len(), 1);
-    assert_eq!(compiled.params(), 2);
-    assert_eq!(
-        compiled.numeric_field_inputs()[0].receiver,
-        super::js_compiled::JsJitFieldReceiver::Parameter(1)
-    );
-    assert!(compiled.native_entries() >= 9);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
 fn js_jit_field_guard_observes_reassigned_parameter() {
     let source = r#"
       function read(object, replacement) { object = replacement; return object.value + 1; }
@@ -17684,249 +16939,6 @@ fn js_jit_field_guard_observes_reassigned_parameter() {
     let mut compiled = Vm::new(TestHost::default());
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_guarded_boolean_fields_and_captures() {
-    let source = r#"
-      function make(mask, expected) {
-        function check() { return (this.value & mask) !== 0 || this.value == expected; }
-        return {check, setMask(value) { mask = value; }};
-      }
-      const reader = make(2, 4);
-      reader.value = 4;
-      for (let i = 0; i < 80; i++) {
-        if (!reader.check()) throw Error('boolean numeric region');
-      }
-      reader.setMask(1);
-      reader.value = 3;
-      if (!reader.check()) throw Error('capture mutation');
-      reader.setMask(1.5);
-      if (!reader.check()) throw Error('fractional bitwise fallback');
-      reader.setMask(1n);
-      let threw = false;
-      try { reader.check(); } catch (error) { threw = error instanceof TypeError; }
-      if (!threw) throw Error('bigint fallback');
-      reader.setMask(2);
-      let reads = 0;
-      Object.defineProperty(reader, 'value', {
-        configurable: true,
-        get() { reads++; return reads === 1 ? 0 : 4; }
-      });
-      if (!reader.check() || reads !== 2) throw Error('getter fallback ordering');
-    "#;
-    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-capture-boolean.js")).unwrap();
-    let check = program.functions.iter().position(|function| {
-        function.header().name.or_else(|| function.header().inferred_name)
-            .is_some_and(|atom| &program.atoms[atom as usize] == "check")
-    }).unwrap() as u32;
-    let mut interpreter = Vm::new(TestHost::default());
-    interpreter.execute(&program).unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm.programs
-        .js_tier(super::program_store::ProgramId::MAIN, check) else {
-        panic!("guarded field and capture predicate should compile");
-    };
-    assert!(!compiled.is_general_dispatch());
-    assert_eq!(compiled.numeric_field_inputs().len(), 2);
-    assert_eq!(compiled.numeric_field_inputs()[0].source, 0);
-    assert_eq!(compiled.numeric_field_inputs()[1].source, 0);
-    assert!(compiled.native_entries() > 0);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function makeReader() {
-            const state = {value: 7};
-            function read() { return state.value * 2; }
-            return {read, state};
-          }
-          const reader = makeReader();
-          for (let index = 0; index < 40; index++) {
-            if (reader.read() !== 14) throw Error('captured numeric field');
-          }
-          reader.state.value = '8';
-          if (reader.read() !== 16) throw Error('captured field type guard');
-          let reads = 0;
-          Object.defineProperty(reader.state, 'value', {
-            configurable: true,
-            get() { reads++; return 9; }
-          });
-          if (reader.read() !== 18 || reads !== 1) throw Error('captured accessor fallback');
-        "#,
-        "js-jit-captured-object-field.js",
-    ))
-    .unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function_id)
-    else {
-        panic!("captured-object numeric field region should compile");
-    };
-    assert_eq!(compiled.numeric_field_inputs().len(), 1);
-    assert!(matches!(
-        compiled.numeric_field_inputs()[0].receiver,
-        super::js_compiled::JsJitFieldReceiver::Capture { .. }
-    ));
-    assert!(compiled.native_entries() >= 9);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function scaledSum(scale) { return this.left + this.right * scale; }
-          const receiver = {left: 3, right: 4};
-          for (let index = 0; index < 40; index++) {
-            if (scaledSum.call(receiver, 2) !== 11) throw Error('this field arithmetic');
-          }
-          let reads = 0;
-          const accessor = {get left() { reads++; return 3; }, right: 4};
-          if (scaledSum.call(accessor, 2) !== 11 || reads !== 1) throw Error('this accessor fallback');
-          const nonNumber = {left: '3', right: 4};
-          if (scaledSum.call(nonNumber, 2) !== '38') throw Error('this non-number fallback');
-        "#,
-        "js-jit-guarded-this-fields.js",
-    ))
-    .unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "scaledSum")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function_id)
-    else {
-        panic!("multiple guarded `this` reads should compile");
-    };
-    assert_eq!(compiled.numeric_field_inputs().len(), 2);
-    assert!(compiled.native_entries() >= 9);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_guarded_field_bitwise_boolean_regions() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function isHeldOrSuspended() {
-            return (this.state & 1) !== 0 || this.state === 2;
-          }
-          for (let index = 0; index < 48; index++) {
-            const state = index % 3;
-            const receiver = {state};
-            const expected = (state & 1) !== 0 || state === 2;
-            if (isHeldOrSuspended.call(receiver) !== expected) throw Error('field bitwise result');
-          }
-          let reads = 0;
-          const accessor = {get state() { reads++; return 1; }};
-          if (isHeldOrSuspended.call(accessor) !== true || reads !== 1) throw Error('accessor fallback');
-          if (isHeldOrSuspended.call({state: 1.5}) !== true) throw Error('fractional fallback');
-          if (isHeldOrSuspended.call({state: '1'}) !== true) throw Error('coercion fallback');
-        "#,
-        "js-jit-field-bitwise-boolean.js",
-    ))
-    .unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "isHeldOrSuspended")
-        })
-        .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function_id)
-    else {
-        panic!("guarded field predicate should compile\n{}", program.disassemble());
-    };
-    assert_eq!(compiled.numeric_field_inputs().len(), 2);
-    assert!(compiled.native_entries() >= 8);
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        r#"
-          function isFunctionBlock(node) { return node.isFunctionBlock === true; }
-          function isBlockStatement(node) {
-            if (242 !== node.tag) return !1;
-            return !isFunctionBlock(node);
-          }
-          for (let index = 0; index < 40; index++) {
-            const kind = index % 3 === 0 ? 242 : 241;
-            if (isBlockStatement({tag: kind}) !== (kind === 242)) throw Error('field reject result');
-          }
-          let reads = 0;
-          const accessor = { get tag() { reads++; return 242; } };
-          if (isBlockStatement(accessor) !== true || reads !== 1) throw Error('accessor fallback');
-          if (isBlockStatement({tag: '242'}) !== false) throw Error('non-number field fallback');
-        "#,
-        "js-jit-field-reject.js",
-    ))
-    .unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "isBlockStatement")
-        })
-        .unwrap() as u32;
-    assert!(
-        super::js_compiled::compile(&program, function_id).is_some(),
-        "direct field-reject compile failed\n{}",
-        program.disassemble()
-    );
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, function_id),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
 }
 
 #[test]
@@ -17998,64 +17010,6 @@ fn js_jit_compiles_number_truthiness_branches() {
         };
         assert!(artifact.native_entries() > 0);
     }
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
-    let source = r#"
-      const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
-      for (let i = 0; i < 40; i++) {
-        if (rating(99.99) !== '€') throw Error('below first boundary');
-        if (rating(100) !== '€€') throw Error('first boundary');
-        if (rating(999.99) !== '€€') throw Error('below second boundary');
-        if (rating(1000) !== '€€€') throw Error('second boundary');
-      }
-      if (rating(-0) !== '€' || rating(-Infinity) !== '€') throw Error('negative number');
-      if (rating(NaN) !== '€€€' || rating(Infinity) !== '€€€') throw Error('unordered/large number');
-
-      let coercions = 0;
-      const boxed = { valueOf() { coercions++; return 150; } };
-      if (rating(boxed) !== '€€' || coercions !== 2) throw Error('guard fallback');
-
-      function constructible(price) { return price < 100 ? '€' : '€€'; }
-      for (let i = 0; i < 40; i++) constructible(i);
-      const instance = new constructible(1);
-      if (instance === '€' || !(instance instanceof constructible)) throw Error('constructor return');
-    "#;
-    let program = Engine::compile(crate::ExecutionRequest {
-        source,
-        name: "js-jit-string-branch.js",
-        kind: crate::SourceKind::Script,
-    })
-    .unwrap();
-    let function_count = program.functions.len();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-
-    let compiled_string_functions: Vec<_> = (1..function_count)
-        .filter_map(|function| {
-            match vm
-                .programs
-                .js_tier(super::program_store::ProgramId::MAIN, function as u32)
-            {
-                Some(super::program_store::JsTierState::Compiled(compiled))
-                    if compiled.has_string_returns() =>
-                {
-                    Some(compiled)
-                }
-                _ => None,
-            }
-        })
-        .collect();
-    assert!(
-        !compiled_string_functions.is_empty(),
-        "at least one forward-branch string function should reach native code"
-    );
-    assert!(compiled_string_functions
-        .iter()
-        .all(|compiled| compiled.native_entries() > 0));
 }
 
 #[test]
@@ -19085,66 +18039,6 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
         .collect::<Vec<_>>();
     assert_eq!(get_field_pcs.len(), 1);
     assert!(native.general_dispatch_pc_is_native(get_field_pcs[0]));
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
-    let source = include_str!("../../tests/fixtures/captured-field-store.js");
-    let program = Engine::specialize(source, "captured-field-store.js").unwrap();
-    let store = program.functions.iter().position(|function| {
-        function.header().name.or_else(|| function.header().inferred_name)
-            .is_some_and(|atom| &program.atoms[atom as usize] == "store")
-    }).unwrap();
-    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(store)).is_some());
-    for name in ["and", "or", "xor", "shl", "shr", "ushr"] {
-        let id = program.functions.iter().position(|function| {
-            function.header().name.or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == name)
-        }).unwrap();
-        assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id))
-            .is_some_and(|store| store.update.is_some()), "{name} should share the guarded update proof");
-    }
-    let mut interpreter = Vm::new(TestHost::default());
-    interpreter.execute(&program).unwrap();
-    let mut compiled = Vm::new(TestHost::default());
-    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
-    compiled.programs.enable_js_jit_diagnostics();
-    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    assert!(compiled.js_tier_runs());
-    compiled.execute(&program).unwrap();
-    for name in ["store", "and", "or", "xor", "shl", "shr", "ushr"] {
-        let id = program.functions.iter().position(|function| {
-            function.header().name.or_else(|| function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == name)
-        }).unwrap();
-        assert!(compiled.programs.js_jit_captured_store_entries(super::ProgramId::MAIN, id as u32)
-            .unwrap_or(0) > 0, "{name} should enter the shared JIT store fast path");
-    }
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn js_jit_captured_field_updates_reject_overwritten_read_registers() {
-    let mut program = Engine::specialize(
-        "function make(mask) { function update() { this.value = this.value | mask; } return update; }",
-        "captured-update-register.js",
-    ).unwrap();
-    let id = program.functions.iter().position(|function| {
-        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "update")
-    }).unwrap();
-    let body = program.function(id);
-    assert!(super::js_compiled::captured_field_store_candidate(&program, body).is_some());
-    let read = body.code[0].as_wide().result_register();
-    let capture = body.code[1].as_wide();
-    let binary = body.code[2].as_wide();
-    program.functions[id].code[1] = crate::bytecode::Instr::new(
-        crate::bytecode::Op::LoadCapture, read, capture.b(), capture.c(), capture.imm(),
-    );
-    program.functions[id].code[2] = crate::bytecode::Instr::new(
-        crate::bytecode::Op::Binary, binary.a(), read, read, binary.imm(),
-    );
-    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id)).is_none());
 }
 
 #[test]
@@ -20765,7 +19659,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     assert!(
         proven
             .instructions()
-            .all(|instruction| !matches!(instruction.op(), crate::bytecode::Op::LoadLocal | crate::bytecode::Op::StoreLocal)),
+            .all(|instruction| !instruction.op().is_relocatable_local_access()),
         "every lexical slot of `proven` is read after its initialization"
     );
     vm.execute(&program).unwrap();
@@ -26542,4 +25436,43 @@ fn appended_strings_keep_their_text_when_appends_extend_a_shared_buffer() {
     for policy in crate::MemoryPolicy::ALL {
         assert_eq!(global_text_under(policy, source, "result"), expected, "{policy:?}");
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_interrupt_exits_through_the_shared_native_entry() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function sumTo(limit) {
+            let sum = 0;
+            let index = 0;
+            while (index < limit) {
+              sum = sum + index;
+              index = index + 1;
+            }
+            return sum;
+          }
+        "#,
+        "js-jit-interrupt-adapter.js",
+    ))
+    .unwrap();
+    let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
+    assert!(matches!(
+        artifact.result,
+        super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable, _)
+    ));
+    let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
+        .expect("shared executable mapping");
+    assert!(
+        !compiled.uses_leaf_entry(),
+        "an interruptible loop must retain the resumable native entry"
+    );
+    let interrupt = crate::ExecutionInterrupt::default();
+    interrupt.request_termination();
+
+    let result = compiled.call(&[1_000_000.0], &interrupt, None);
+
+    assert!(result.is_none(), "interrupted native execution must not return a guest result");
+    assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
+    assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
 }

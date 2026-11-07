@@ -3362,13 +3362,13 @@ impl EnvironmentSlots {
         &self,
         environment: Value,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
         owned_value: impl Fn(Value, usize) -> Option<Value>,
     ) -> Option<Self> {
         let len = self.len();
         let copy_slot = |index: usize| -> Option<EnvironmentSlot> {
             let slot = u16::try_from(index).ok()?;
-            if reset.binary_search(&slot).is_ok() {
+            if reset.contains(slot) {
                 return Some(EnvironmentSlot::owned(Value::UNDEFINED));
             }
             let fresh = fresh.binary_search(&slot).is_ok();
@@ -3399,7 +3399,7 @@ impl EnvironmentSlots {
                     EnvironmentSlotState::Shared(owner) => owned_value(owner, index)?,
                 });
             }
-            for &slot in reset {
+            for slot in reset.iter() {
                 if let Some(target) = copy.get_mut(usize::from(slot)) {
                     *target = EnvironmentSlot::owned(Value::UNDEFINED);
                 }
@@ -3413,7 +3413,7 @@ impl EnvironmentSlots {
         let mut indexes = merge_ascending(
             merge_ascending(self.sparse_indexes(), fresh.iter().map(|&slot| usize::from(slot)))
                 .into_iter(),
-            reset.iter().map(|&slot| usize::from(slot)),
+            reset.iter().map(usize::from),
         );
         indexes.truncate(indexes.partition_point(|&index| index < len));
         let shared = Value::shared_environment_slot(owner);
@@ -3815,7 +3815,7 @@ pub(crate) enum Cell {
         payload: Box<Vec<Value>>,
     },
     /// A tag retains its original declaration; identity is independent of type equality.
-    WasmTag { declarations: Box<crate::WasmTypes>, ty: u32 },
+    WasmTag { object: Box<Object>, declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
     WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<WasmGcFields> },
     /// The native callable's immutable host operation and structural signature.

@@ -1,5 +1,10 @@
 use super::*;
 
+/// Whether a declaration's bindings are disposed when their scope exits (`using`, `await using`).
+pub(super) fn disposes(kind: VariableDeclarationKind) -> bool {
+    matches!(kind, VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing)
+}
+
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn function_body_statements(&mut self, body: &[Statement<'_>]) {
         let has_using = Self::has_using_declarations(body);
