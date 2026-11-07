@@ -49,8 +49,7 @@ impl<H: Host> Vm<H> {
             };
             #[cfg(feature = "profile-aggregate")]
             let operand_shapes = (left.profile_shape(), right.profile_shape());
-            let mut text = left.clone();
-            text.push_js_string(right);
+            let text = left.concat(right);
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat_shapes(
                 operand_shapes.0,
