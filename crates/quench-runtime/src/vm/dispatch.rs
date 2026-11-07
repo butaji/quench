@@ -1,6 +1,9 @@
 use super::*;
 use crate::heap::PrivateBrand;
 
+mod increment;
+pub(super) use increment::{integer_increment, number_increment};
+
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
     ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
@@ -1864,37 +1867,25 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The `++`/`--` step: one, negated for a decrement.
-fn increment_delta(is_decrement: bool) -> f64 {
-    if is_decrement { -1.0 } else { 1.0 }
-}
-
-/// `++`/`--` of a Number operand, staying an integer while the result fits; `None` for any
-/// other operand, whose conversion may run guest code or allocate.
-#[inline(always)]
-pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
-    if let Some(integer) = input.as_int() {
-        let next = if is_decrement {
-            integer.checked_sub(1)
-        } else {
-            integer.checked_add(1)
-        };
-        return Some(next.map_or_else(
-            || Value::overflowed_integer(f64::from(integer) + increment_delta(is_decrement)),
-            Value::integer,
-        ));
+impl<H: Host> Vm<H> {
+    /// The frame call-like instruction `i` of frame `caller` pushes, as its step pushes it:
+    /// callee, argument window, receiver and completion. `getter` and `this` are what the step
+    /// found running: a getter read's function, and a construction's or getter's receiver.
+    /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
+    pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
+        -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
+        match i.op() {
+            Op::Construct => {
+                let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
+                    unreachable!("a pushed construction passes registers")
+                };
+                (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
+            }
+            // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
+            Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
+            _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
+        }
     }
-    input
-        .as_number()
-        .map(|number| Value::number(number + increment_delta(is_decrement)))
-}
-
-/// `number_increment` of an integer whose update stays one; `None` for any other value or
-/// an overflow, which `number_increment` answers.
-#[inline(always)]
-pub(super) fn integer_increment(input: Value, is_decrement: bool) -> Option<Value> {
-    let integer = input.as_int()?;
-    if is_decrement { integer.checked_sub(1) } else { integer.checked_add(1) }.map(Value::integer)
 }
 
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional

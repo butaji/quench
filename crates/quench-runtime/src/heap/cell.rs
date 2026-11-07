@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod modes;
 mod prototype_values;
+mod shape_id;
 mod snapshot;
 mod typed_array_kind;
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
@@ -2570,9 +2571,7 @@ impl Object {
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
-        let mut properties = ValueVec::from_parts(0, self.auxiliary);
-        properties.set_auxiliary(shape);
-        self.auxiliary = properties.into_parts().1;
+        self.renumber_shape(shape);
     }
     pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
