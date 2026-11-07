@@ -176,6 +176,9 @@ pub(crate) enum GeneratorState {
     Executing,
     /// Finished: every resumption completes at once.
     Completed,
+    /// Finished, but (async) awaiting the value of a `return`: requests queue, and the
+    /// generator is completed again once the await settles.
+    AwaitingReturn,
 }
 
 #[derive(Clone, Debug)]
@@ -194,7 +197,7 @@ impl GeneratorRecord {
 
     #[inline(always)]
     pub(crate) fn is_executing(&self) -> bool {
-        self.state == GeneratorState::Executing
+        matches!(self.state, GeneratorState::Executing | GeneratorState::AwaitingReturn)
     }
 
     #[inline(always)]
@@ -217,12 +220,23 @@ impl GeneratorRecord {
         continuation
     }
 
-    /// The end of a run that did not finish the generator: executing becomes suspended, and a
-    /// completed generator stays completed.
+    /// The end of a run that did not finish the generator: executing becomes suspended, a
+    /// completed generator awaiting a return is completed again, and a completed one stays so.
     pub(crate) fn stop(&mut self) {
-        if self.state == GeneratorState::Executing {
-            self.state = GeneratorState::Suspended;
+        match self.state {
+            GeneratorState::Executing => self.state = GeneratorState::Suspended,
+            GeneratorState::AwaitingReturn => self.state = GeneratorState::Completed,
+            GeneratorState::Suspended | GeneratorState::Completed => {}
         }
+    }
+
+    /// An async `return` starts awaiting its value: the generator is busy until it settles,
+    /// and keeps whether it had already completed.
+    pub(crate) fn await_return(&mut self) {
+        self.state = match self.state {
+            GeneratorState::Completed => GeneratorState::AwaitingReturn,
+            _ => GeneratorState::Executing,
+        };
     }
 
     /// The generator finished: it drops its continuation.

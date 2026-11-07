@@ -749,7 +749,6 @@ complexity crates/quench-runtime/src/vm/date/legacy_parse.rs::parse_legacy_date 
 complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::step 233
 complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_apply 19
 complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_user_call 20
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::note_lane_body_end 13
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::call_prepared_lane 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_callback 18
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 12
@@ -1429,7 +1428,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1977
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23956
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23895
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -3014,7 +3013,6 @@ function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::push_in_loop_cal
 function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::step 1289
 function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_apply 101
 function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_user_call 107
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::note_lane_body_end 48
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::osr_diagnostics 75
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_lane_body 45
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_leaf_returns 45
