@@ -1170,8 +1170,8 @@ impl JsString {
             Repr::Shared(inner) => inner.flat.get(),
         };
         match flat {
-            // A wide slice holds its record; the units belong to the storage it shares, which
-            // its root was charged for.
+            // A slice holds its record; its root was charged for the units it shares.
+            Some(FlatUnits::AsciiSlice(_)) => std::mem::size_of::<AsciiSlice>(),
             Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
             Some(FlatUnits::AsciiPrefix(buffer, length)) => buffer.charge(*length),
             Some(FlatUnits::WidePrefix(buffer, length)) => buffer.charge(*length),
