@@ -573,12 +573,17 @@ impl PendingJob {
         }
     }
 }
+/// A realm's global lexical bindings in insertion order. A binding is never removed while its
+/// realm is active, so its index names it until the realm switches, and a read that holds the
+/// index and name (`lane_load_root_lexical`) needs no hash.
+type GlobalLexicalBindings = indexmap::IndexMap<Atom, Value, rustc_hash::FxBuildHasher>;
+
 struct Realm {
     globals: Value,
     /// Every global lexical name of the realm, including every bound one
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one.
     global_lexical_declarations: FxHashSet<Atom>,
-    global_lexical_bindings: FxHashMap<Atom, Value>,
+    global_lexical_bindings: GlobalLexicalBindings,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
     /// Every inactive realm's global lexical state, keyed by its global, except the realm
     /// last switched away from, which `parked` holds.
@@ -669,7 +674,7 @@ struct PrivateHomeKey {
 #[derive(Default)]
 struct GlobalLexicalState {
     declarations: FxHashSet<Atom>,
-    bindings: FxHashMap<Atom, Value>,
+    bindings: GlobalLexicalBindings,
     immutable_bindings: FxHashSet<Atom>,
 }
 /// An inactive realm with its global lexical state and the prototypes the realm-following
@@ -739,6 +744,11 @@ struct AccessorFieldCache {
 const INHERITED_FIELD_CACHE_WAYS: usize = 4;
 // Reusing the oldest entry unlinks it from an older-than-head predecessor.
 const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
+/// Receiver shapes one site's accessor entries remember (`Vm::record_accessor_entry`). A
+/// getter on a prototype is read from instances that differ by which fields their factory
+/// set, as Air's `Arg` kinds do (about ten shapes reading `isStack`); a site past its ways
+/// leaves the lane at each miss and evicts an entry another shape needs next.
+const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
 use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
