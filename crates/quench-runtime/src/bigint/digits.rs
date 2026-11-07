@@ -1,8 +1,9 @@
 //! Magnitude arithmetic on little-endian digit slices: schoolbook addition, subtraction,
-//! multiplication and Knuth's Algorithm D (TAOCP vol. 2, 4.3.1), with each two-by-one
-//! digit division a multiplication by the divisor's reciprocal (Möller and Granlund,
-//! "Improved division by invariant integers", 2011, Algorithm 4), as V8's
-//! `src/bigint/div-schoolbook.cc` does. Every function takes normalized inputs (no zero
+//! multiplication and Knuth's Algorithm D (TAOCP vol. 2, 4.3.1). Each quotient digit is a
+//! three-by-two division by the divisor's top two digits through their reciprocal (Möller
+//! and Granlund, "Improved division by invariant integers", 2011, Algorithms 5 and 6), as
+//! GMP's `mpn_sbpi1_div_qr` does, so no estimate needs Knuth's correction loop; a one-digit
+//! divisor takes two-by-one divisions (Algorithm 4), as V8's `div-schoolbook.cc` does. Every function takes normalized inputs (no zero
 //! top digit; zero is the empty slice) unless it says otherwise, and returns the
 //! normalized length of what it wrote.
 
@@ -181,6 +182,61 @@ impl Divisor {
     }
 }
 
+/// Division of three-digit numerators by a normalized two-digit divisor through its
+/// reciprocal (Möller and Granlund, Algorithms 5 and 6).
+struct DoubleDivisor {
+    high: Digit,
+    low: Digit,
+    reciprocal: Digit,
+}
+
+impl DoubleDivisor {
+    /// (`high`:`low`), `high`'s top bit set: its reciprocal floor((B³ − 1) / d) − B.
+    fn new(high: Digit, low: Digit) -> Self {
+        let mut reciprocal = Divisor::new(high).reciprocal;
+        let mut p = high.wrapping_mul(reciprocal).wrapping_add(low);
+        if p < low {
+            reciprocal = reciprocal.wrapping_sub(1);
+            if p >= high {
+                reciprocal = reciprocal.wrapping_sub(1);
+                p = p.wrapping_sub(high);
+            }
+            p = p.wrapping_sub(high);
+        }
+        let (t0, t1) = split(Wide::from(reciprocal) * Wide::from(low));
+        let (p, overflow) = p.overflowing_add(t1);
+        if overflow {
+            reciprocal = reciprocal.wrapping_sub(1);
+            if join(p, t0) >= join(high, low) {
+                reciprocal = reciprocal.wrapping_sub(1);
+            }
+        }
+        Self { high, low, reciprocal }
+    }
+
+    /// (`u2`:`u1`:`u0`) / d as the quotient digit and the two-digit remainder,
+    /// (`u2`:`u1`) < d.
+    #[inline(always)]
+    fn div(&self, u2: Digit, u1: Digit, u0: Digit) -> (Digit, Wide) {
+        let divisor = join(self.high, self.low);
+        let (q0, q1) = split(Wide::from(self.reciprocal) * Wide::from(u2) + join(u2, u1));
+        let r1 = u1.wrapping_sub(q1.wrapping_mul(self.high));
+        let mut remainder = join(r1, u0)
+            .wrapping_sub(Wide::from(self.low) * Wide::from(q1))
+            .wrapping_sub(divisor);
+        let mut quotient = q1.wrapping_add(1);
+        if split(remainder).1 >= q0 {
+            quotient = quotient.wrapping_sub(1);
+            remainder = remainder.wrapping_add(divisor);
+        }
+        if remainder >= divisor {
+            quotient += 1;
+            remainder -= divisor;
+        }
+        (quotient, remainder)
+    }
+}
+
 /// `a / b` into `quotient` (zeroed, at least `a.len() - b.len() + 1` long) and `a % b` into
 /// `remainder` (at least `b.len()` long), `b` nonzero and `a >= b`: both lengths. Divisors
 /// of up to four digits (256 bits), by dividends up to twice as long, take a copy of the
@@ -225,26 +281,26 @@ fn div_rem_digits<const M: usize, const N: usize>(
             remainder[0] = rest >> shift;
             return (normalized_len(&quotient[..m]), usize::from(remainder[0] != 0));
         }
-        let (top, next) = (v[n - 1], v[n - 2]);
-        let divisor = Divisor::new(top);
+        let divisor = DoubleDivisor::new(v[n - 1], v[n - 2]);
+        // Each step divides the window's top digits, below the divisor times the digit base,
+        // and leaves the window's remainder in its low `n` digits, the next window's top.
         for j in (0..=m - n).rev() {
             let window = &mut u[j..=j + n];
-            let mut estimate = Digit::MAX;
-            if window[n] != top {
-                let (q, mut rest) = divisor.div(window[n], window[n - 1]);
-                estimate = q;
-                while Wide::from(estimate) * Wide::from(next) > join(rest, window[n - 2]) {
-                    estimate -= 1;
-                    let (sum, overflow) = rest.overflowing_add(top);
-                    rest = sum;
-                    if overflow {
-                        break;
-                    }
-                }
+            if window[n] == divisor.high && window[n - 1] == divisor.low {
+                // The quotient digit is B − 1, which the three-by-two division cannot give.
+                sub_mul(&mut window[..n], v, Digit::MAX);
+                quotient[j] = Digit::MAX;
+                continue;
             }
-            if estimate != 0 && sub_mul(window, v, estimate) {
+            let (mut estimate, rest) = divisor.div(window[n], window[n - 1], window[n - 2]);
+            let borrow = sub_mul(&mut window[..n - 2], &v[..n - 2], estimate);
+            let (rest, borrowed) = rest.overflowing_sub(Wide::from(borrow));
+            (window[n - 2], window[n - 1]) = split(rest);
+            if borrowed {
+                // The estimate was one too large: add the divisor back once.
+                let carry = add_into(&mut window[..n], v);
+                debug_assert!(carry);
                 estimate -= 1;
-                add_back(window, v);
             }
             quotient[j] = estimate;
         }
@@ -275,36 +331,25 @@ fn denormalize(a: &[Digit], shift: u32, out: &mut [Digit]) {
     }
 }
 
-/// `u -= v * factor`, `u.len() == v.len() + 1`: whether it borrowed.
+/// `u -= v * factor` over `v.len()` digits: the digit borrowed out of the top.
 #[inline(always)]
-fn sub_mul(u: &mut [Digit], v: &[Digit], factor: Digit) -> bool {
-    let (low_digits, top) = u.split_at_mut(v.len());
+fn sub_mul(u: &mut [Digit], v: &[Digit], factor: Digit) -> Digit {
     let mut carry: Digit = 0;
-    let mut borrow = false;
-    for (slot, &digit) in low_digits.iter_mut().zip(v) {
+    for (slot, &digit) in u.iter_mut().zip(v) {
         let (low, high) = split(Wide::from(digit) * Wide::from(factor) + Wide::from(carry));
-        carry = high;
-        let (difference, first) = slot.overflowing_sub(low);
-        let (difference, second) = difference.overflowing_sub(Digit::from(borrow));
+        let (difference, borrowed) = slot.overflowing_sub(low);
         *slot = difference;
-        borrow = first | second;
+        carry = high + Digit::from(borrowed);
     }
-    let (difference, first) = top[0].overflowing_sub(carry);
-    let (difference, second) = difference.overflowing_sub(Digit::from(borrow));
-    top[0] = difference;
-    first | second
+    carry
 }
 
-/// `u += v`, discarding the carry out of `u`'s top digit, which cancels `sub_mul`'s borrow.
+/// `u += v` over `v.len()` digits: whether it carried out of the top.
 #[inline(always)]
-fn add_back(u: &mut [Digit], v: &[Digit]) {
-    let (low_digits, top) = u.split_at_mut(v.len());
+fn add_into(u: &mut [Digit], v: &[Digit]) -> bool {
     let mut carry = false;
-    for (slot, &digit) in low_digits.iter_mut().zip(v) {
-        let (sum, first) = slot.overflowing_add(digit);
-        let (sum, second) = sum.overflowing_add(Digit::from(carry));
-        *slot = sum;
-        carry = first | second;
+    for (slot, &digit) in u.iter_mut().zip(v) {
+        (*slot, carry) = slot.carrying_add(digit, carry);
     }
-    top[0] = top[0].wrapping_add(Digit::from(carry));
+    carry
 }
