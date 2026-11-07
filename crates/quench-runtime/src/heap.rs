@@ -3715,6 +3715,12 @@ impl Heap {
         // SAFETY: as the caller guarantees.
         unsafe { self.property_get_flat(holder, slot) }
     }
+    /// The arena's value base, which the interpreter's staged reads address runs from
+    /// (`staged::Table::PropertyValues`).
+    #[cfg(test)]
+    pub(crate) fn property_values_base(&self) -> *const Value {
+        self.properties.values_base()
+    }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         if let Some(value) = object.inline_property(slot) {
@@ -4755,19 +4761,8 @@ fn observed_target(records: &ObjectRecordSpace, value: Value) -> TargetShape {
 /// The slot exists and the object is not in dictionary storage.
 #[inline(always)]
 unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
-    // Most objects keep their values in the arena and have no extras; their payload is
-    // their storage start, read here without decoding the other forms.
-    if let Some(start) = object.plain_storage_start() {
-        debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves the slot exists outside dictionary storage.
-        return unsafe { properties.get_flat_at(start, slot) };
-    }
-    if let Some(value) = object.inline_property(slot) {
-        value
-    } else {
-        // SAFETY: the caller proves the slot exists outside dictionary storage.
-        unsafe { properties.get_flat(object.properties(), slot) }
-    }
+    // SAFETY: the caller proves the exact slot exists; the arena holds the object's run.
+    unsafe { crate::staged::concrete_own_read(object, properties.values_base(), slot) }
 }
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:

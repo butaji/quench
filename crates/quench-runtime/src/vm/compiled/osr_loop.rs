@@ -2967,10 +2967,6 @@ fn webs(region: &LoopRegion) -> Webs {
     webs
 }
 
-fn int32_number(number: f64) -> bool {
-    Value::number(number).as_int().is_some()
-}
-
 /// Each web's, capture's and field's representation: an `i32` where every definition in
 /// the web yields one (an entry value observed as one, an instruction's result from `i32`
 /// operands) and no widening names it; the least fixpoint from that start, widening a web
@@ -3325,7 +3321,7 @@ fn definition(
     let source = |operand: Operand| match operand.kind() {
         Some(OperandKind::Register) => registers(operand.payload()),
         _ => match region.constants.get(&usize::from(operand.payload())) {
-            Some(number) if int32_number(*number) => Representation::Int32,
+            Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
             _ => Representation::Float64,
         },
     };
@@ -3340,7 +3336,7 @@ fn definition(
         Op::LoadConst => {
             let index = instruction.constant_index();
             match region.constants.get(&index) {
-                Some(number) if int32_number(*number) => Representation::Int32,
+                Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
                 _ => Representation::Float64,
             }
         }
@@ -3582,7 +3578,7 @@ struct Int32Facts {
 fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option<Range>, register: &dyn Fn(Register) -> Option<Range>, constants: &std::collections::BTreeMap<usize, f64>) -> Option<Range> {
     use super::super::operations::NumberBitwise as Bitwise;
     let constant = |operand: Operand| match operand.kind() {
-        Some(OperandKind::Constant) => constants.get(&usize::from(operand.payload())).copied().filter(|number| int32_number(*number)).map(|number| number as i64),
+        Some(OperandKind::Constant) => constants.get(&usize::from(operand.payload())).copied().filter(|number| crate::vm::compiled::facts::is_int32_number(*number)).map(|number| number as i64),
         _ => None,
     };
     let corners = |(a, b): Range, (c, d): Range, f: fn(i64, i64) -> i64| {
@@ -3592,7 +3588,7 @@ fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option
     Some(match instruction.op() {
         Op::LoadConst => {
             match constants.get(&instruction.constant_index()) {
-                Some(number) if int32_number(*number) => (*number as i64, *number as i64),
+                Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => (*number as i64, *number as i64),
                 _ => INT32_RANGE,
             }
         }
@@ -3669,7 +3665,7 @@ fn operand_range(
     match operand.kind()? {
         OperandKind::Register => register_range(region, webs, representations, ranges, pc, operand.payload()),
         OperandKind::Constant => match region.constants.get(&usize::from(operand.payload())) {
-            Some(number) if int32_number(*number) => Some((*number as i64, *number as i64)),
+            Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Some((*number as i64, *number as i64)),
             _ => Some(INT32_RANGE),
         },
         OperandKind::Field | OperandKind::Local => Some(INT32_RANGE),
@@ -3985,7 +3981,7 @@ fn counted_loop(
         base(value.base) && value.addend.is_none_or(base)
     };
     let mut terms: Vec<Term> = Vec::new();
-    let constant = |number: f64| int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
+    let constant = |number: f64| crate::vm::compiled::facts::is_int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
     let mut state: BTreeMap<Register, Option<Affine>> = BTreeMap::new();
     let value = |state: &BTreeMap<Register, Option<Affine>>, register: Register| {
         state
@@ -4001,7 +3997,7 @@ fn counted_loop(
         }
         OperandKind::Constant => {
             let number = *region.constants.get(&usize::from(operand.payload()))?;
-            Some((int32_number(number), constant(number)))
+            Some((crate::vm::compiled::facts::is_int32_number(number), constant(number)))
         }
         OperandKind::Field | OperandKind::Local => None,
     };
@@ -5825,7 +5821,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let chain = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
         let key = (receiver, load.shape);
         if let Some((object, proved)) = self.objects.get(&key).copied()
-            && proved == chain && usize::from(load.slot) < object.storage_len {
+            && proved == chain && usize::from(load.slot) < object.storage_len() {
             return Some(object);
         }
         let heap_base = self.region.native_heap_word();
@@ -5936,7 +5932,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 ty: Type::immediate(value),
                 representation: Representation::Tagged,
             },
-            Source::Number(number) if int32_number(number) => Typed {
+            Source::Number(number) if crate::vm::compiled::facts::is_int32_number(number) => Typed {
                 value: self.body.builder.ins().iconst(types::I32, i64::from(number as i32)),
                 ty: Type::INT32,
                 representation: Representation::Int32,
@@ -7196,10 +7192,8 @@ mod tests {
             (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))
         }).unwrap();
-        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::Number(value) => Value::number(*value),
-            _ => Value::UNDEFINED,
-        }).collect();
+        let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
         region(function, &decoded, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap()
     }
@@ -7224,11 +7218,8 @@ mod tests {
         let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
             (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))).unwrap();
-        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::Number(value) => Value::number(*value),
-            crate::bytecode::Constant::Null => Value::NULL,
-            _ => Value::UNDEFINED,
-        }).collect();
+        let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
         let region = region(function, &instructions, &constants, &program.field_sites,
             program.shared_register_root_masks(1), header, backedge).unwrap();
         assert_eq!(region.fields.len(), 2);
@@ -7284,10 +7275,8 @@ mod tests {
             let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
                 (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
                     .then(|| (pc as u32, instruction.jump_target()))).unwrap();
-            let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
-                crate::bytecode::Constant::Number(value) => Value::number(*value),
-                _ => Value::UNDEFINED,
-            }).collect();
+            let constants: Vec<_> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
             let region = region(function, &instructions, &constants, &program.field_sites,
                 program.shared_register_root_masks(1), header, backedge).unwrap();
             let verified = verify_unprofiled(&region).unwrap();

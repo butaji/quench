@@ -47,6 +47,7 @@ mod number_inputs;
 mod profile;
 pub mod trace;
 mod snapshot;
+mod staged;
 mod typed_ir;
 pub(crate) use quench_stack as stack;
 mod unicode;
