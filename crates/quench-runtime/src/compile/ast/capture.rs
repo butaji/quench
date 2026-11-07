@@ -3,7 +3,6 @@
 use super::super::capture_scope::{BaseBindings, CaptureBase, CaptureLayer, CaptureScope, ScopeChain};
 use super::{FunctionCompiler, LexicalBindingKind};
 use crate::bytecode::Atom;
-use rustc_hash::FxHashSet;
 use std::rc::Rc;
 
 /// The state a capture scope is derived from. Locals and lexical pushes only grow, so equal
@@ -26,14 +25,15 @@ pub(super) struct CaptureMemos {
     base: Option<((usize, bool), Rc<BaseBindings>)>,
     /// Lexical targets a cached layer or slot set found without a local slot; one gaining a
     /// slot advances `unslotted_epoch`, retiring every cached layer and slot set.
-    pub(super) unslotted_targets: FxHashSet<Atom>,
+    pub(super) unslotted_targets: crate::bitset::BitSet,
     pub(super) unslotted_epoch: u32,
 }
 
 impl CaptureMemos {
     /// `hidden_local` gave `atom` a slot.
     pub(super) fn slot_given(&mut self, atom: Atom) {
-        if self.unslotted_targets.remove(&atom) {
+        if self.unslotted_targets.contains(atom as usize) {
+            self.unslotted_targets.remove(atom as usize);
             self.unslotted_epoch += 1;
         }
     }
@@ -47,11 +47,11 @@ impl FunctionCompiler<'_, '_> {
             lexical_pushes: self.lexical_scope_pushes,
             parameter_context: self.parameter_context,
         };
-        let scope = match &self.capture.scope {
+        let scope = match &self.capture_memo.scope {
             Some((memo_state, scope)) if *memo_state == state => Rc::clone(scope),
             _ => {
                 let scope = Rc::new(self.current_capture_scope());
-                self.capture.scope = Some((state, Rc::clone(&scope)));
+                self.capture_memo.scope = Some((state, Rc::clone(&scope)));
                 scope
             }
         };
@@ -93,7 +93,7 @@ impl FunctionCompiler<'_, '_> {
             .parameter_arguments_slot
             .filter(|_| parameter_context)
             .map(|slot| (self.owner.atom("arguments"), slot));
-        let (bindings, first_new): (Rc<BaseBindings>, _) = match self.capture.base.take() {
+        let (bindings, first_new): (Rc<BaseBindings>, _) = match self.capture_memo.base.take() {
             Some(((memo_count, context), bindings)) if context == parameter_context && memo_count <= count => (bindings, memo_count),
             _ => (Rc::default(), 0),
         };
@@ -115,11 +115,11 @@ impl FunctionCompiler<'_, '_> {
                 && !bindings.bind(atom, index as u32, slot)
             {
                 // A name rebound to another slot: earlier positions keep what they saw; start over.
-                self.capture.base = None;
+                self.capture_memo.base = None;
                 return self.capture_base();
             }
         }
-        self.capture.base = Some(((count, parameter_context), Rc::clone(&bindings)));
+        self.capture_memo.base = Some(((count, parameter_context), Rc::clone(&bindings)));
         CaptureBase { bindings, visible: count as u32, arguments }
     }
 
@@ -129,7 +129,7 @@ impl FunctionCompiler<'_, '_> {
         let mut scope = CaptureScope::new(self.capture_base());
         for index in 0..self.lexical_scopes.len() {
             let layer = match &self.lexical_scopes[index].capture_layer {
-                Some((epoch, layer)) if *epoch == self.capture.unslotted_epoch => Rc::clone(layer),
+                Some((epoch, layer)) if *epoch == self.capture_memo.unslotted_epoch => Rc::clone(layer),
                 _ => self.capture_layer(index, &scope),
             };
             scope.push_layer(layer);
@@ -146,7 +146,7 @@ impl FunctionCompiler<'_, '_> {
         let mut private = false;
         for (source, target) in &lexical.bindings {
             let Some(slot) = self.local_slots.get(target).copied() else {
-                self.capture.unslotted_targets.insert(*target);
+                self.capture_memo.unslotted_targets.insert_growing(*target as usize);
                 continue;
             };
             layer.insert(*source, Some(slot));
@@ -172,7 +172,7 @@ impl FunctionCompiler<'_, '_> {
         }
         let layer = Rc::new(layer);
         if !private {
-            self.lexical_scopes[index].capture_layer = Some((self.capture.unslotted_epoch, Rc::clone(&layer)));
+            self.lexical_scopes[index].capture_layer = Some((self.capture_memo.unslotted_epoch, Rc::clone(&layer)));
         }
         layer
     }

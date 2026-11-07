@@ -124,7 +124,7 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
 }
 
 /// The interpreters: the one place an opcode's meaning is written by hand.
-const INTERPRETERS: &[&str] = &["vm/dispatch.rs", "vm/dispatch_wasm.rs"];
+const INTERPRETERS: &[&str] = &["vm/dispatch.rs", "vm/dispatch_wasm.rs", "vm/dispatch_wasm/gc.rs"];
 
 /// Opcode match arms per file and opcode (`Op::X` before a `=>`) in `vm/`, outside the
 /// interpreters and tests.

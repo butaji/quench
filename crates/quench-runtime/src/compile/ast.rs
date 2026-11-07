@@ -158,7 +158,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     lexical_scopes: Vec<LexicalScope>,
     lexical_scope_pushes: usize,
     /// What capture scopes and lexical slot sets are derived from (`capture::CaptureMemos`).
-    capture: capture::CaptureMemos,
+    capture_memo: capture::CaptureMemos,
     disposal_scopes: Vec<DisposalScope>,
     /// For each base name `hidden_local` was asked for, the suffix its next local takes:
     /// a function with many blocks, loops or classes asks for the same name once per
@@ -274,7 +274,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             super_call_binds_this: false,
             lexical_scopes: Vec::new(),
             lexical_scope_pushes: 0,
-            capture: Default::default(),
+            capture_memo: Default::default(),
             disposal_scopes: vec![DisposalScope::default()],
             hidden_local_suffixes: FxHashMap::default(),
         }
@@ -699,7 +699,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .expect("function local scope is uniquely owned")
             .insert(atom, slot);
         self.locals.push(atom);
-        self.capture.slot_given(atom);
+        self.capture_memo.slot_given(atom);
         atom
     }
 

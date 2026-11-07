@@ -72,7 +72,7 @@ impl FunctionCompiler<'_, '_> {
     /// shared by every plan sited in it, until a target it found unslotted gains a slot.
     pub(in crate::compile) fn lexical_slots(&mut self, index: usize) -> Rc<[u16]> {
         if let Some((epoch, slots)) = &self.lexical_scopes[index].slots
-            && *epoch == self.capture.unslotted_epoch
+            && *epoch == self.capture_memo.unslotted_epoch
         {
             return Rc::clone(slots);
         }
@@ -81,14 +81,14 @@ impl FunctionCompiler<'_, '_> {
             match self.local_slots.get(target) {
                 Some(slot) => slots.push(*slot),
                 None => {
-                    self.capture.unslotted_targets.insert(*target);
+                    self.capture_memo.unslotted_targets.insert_growing(*target as usize);
                 }
             }
         }
         slots.sort_unstable();
         slots.dedup();
         let slots: Rc<[u16]> = slots.into();
-        self.lexical_scopes[index].slots = Some((self.capture.unslotted_epoch, Rc::clone(&slots)));
+        self.lexical_scopes[index].slots = Some((self.capture_memo.unslotted_epoch, Rc::clone(&slots)));
         slots
     }
 

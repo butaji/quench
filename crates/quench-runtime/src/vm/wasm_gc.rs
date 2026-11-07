@@ -1,5 +1,7 @@
 use super::*;
 
+mod window;
+
 pub(super) enum ArrayInitialization {
     Repeated { count: u32, value: Value },
     Default(u32),
@@ -63,11 +65,7 @@ impl<H: Host> Vm<H> {
         }
         let mut values = match values {
             Some(values) if values.len() == fields.len() => values,
-            Some(_) => {
-                return Err(JsError::validation(
-                    "Wasm struct field count mismatch".into(),
-                ));
-            }
+            Some(_) => return Err(JsError::validation("Wasm struct field count mismatch".into())),
             None => {
                 let mut values = Vec::new();
                 values

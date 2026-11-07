@@ -90,6 +90,11 @@ const BIASED: u32 = 1 << 31;
 /// moves the values of short arrays too, where the copy costs less than the bookkeeping.
 const TRIM_MIN_LEN: usize = 16;
 
+/// A backing with front room compacts in place, instead of growing, while at most
+/// 1/COMPACT_LIVE_DIVISOR of it is live: each compaction then follows as many front removals
+/// as it moves values.
+const COMPACT_LIVE_DIVISOR: usize = 2;
+
 /// The smallest capacity a growing backing takes, as `Vec` grows from empty.
 const MIN_GROWN_CAPACITY: usize = 4;
 
@@ -527,9 +532,7 @@ impl UniqueElements {
     fn grow_for(&mut self, required: usize) {
         if self.0.bias() != 0 {
             self.unbias();
-            // A queue's backing compacts in place while at most half of it is live, so each
-            // compaction follows as many front removals as it moves values.
-            if required <= self.0.capacity() && 2 * self.0.len() <= self.0.capacity() {
+            if required <= self.0.capacity() && self.0.len() <= self.0.capacity() / COMPACT_LIVE_DIVISOR {
                 return;
             }
         }

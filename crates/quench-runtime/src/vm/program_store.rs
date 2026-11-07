@@ -211,7 +211,7 @@ const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-// Cranelift executable mappings are page-rounded. A 64 KiB cap admitted only
+// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
 // sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
 // helpers; the function-count cap still bounds artifact proliferation.
 const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
@@ -262,8 +262,8 @@ const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 /// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
 /// to a few large modules.
 const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
-/// The least an artifact maps: executable mappings are page-rounded.
-const JIT_MIN_ARTIFACT_BYTES: usize = 4096;
+/// The least an artifact holds in the code zone.
+const JIT_MIN_ARTIFACT_BYTES: usize = super::compiled::CODE_GRANULE;
 /// One VM-local admission ceiling shared by JS and Wasm artifacts.
 const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
@@ -988,7 +988,7 @@ impl ProgramStore {
             entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body);
+            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(STRESS || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
             let facts = if self.js_entry_specializations_enabled { facts } else {
                 // Select the requested test tier without depending on which
@@ -2487,22 +2487,7 @@ impl ProgramStore {
                             | crate::bytecode::Op::JumpBinaryFalse => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
                                 if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
-                                    match instruction.binary_operator_field() {
-                                        x if x
-                                            == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
-                                        {
-                                            guard_census.2 = guard_census.2.saturating_add(1);
-                                        }
-                                        x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
-                                        {
-                                            guard_census.3 = guard_census.3.saturating_add(1);
-                                        }
-                                        _ => {}
-                                    }
+                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                                 }
                             }
                             crate::bytecode::Op::Unary
@@ -2512,21 +2497,7 @@ impl ProgramStore {
                                 guard_census.1 = guard_census.1.saturating_add(1);
                             }
                             crate::bytecode::Op::Binary => {
-                                match instruction.binary_operator() {
-                                    x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                        || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
-                                    {
-                                        guard_census.2 = guard_census.2.saturating_add(1);
-                                    }
-                                    x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                        || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
-                                    {
-                                        guard_census.3 = guard_census.3.saturating_add(1);
-                                    }
-                                    _ => {}
-                                }
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator())
                             }
                             _ => {}
                         }
@@ -4126,3 +4097,22 @@ mod jit_code_cache_tests {
 pub(super) struct JsEntryFactsTable(
     std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
 );
+
+/// Counts a comparison in the guard census: strict (in)equality in its third column, an
+/// order (`<`, `<=`, `>`, `>=`) in its fourth.
+fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
+    use oxc_ast::ast::BinaryOperator;
+    const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
+    const ORDER: [BinaryOperator; 4] = [
+        BinaryOperator::LessThan,
+        BinaryOperator::LessEqualThan,
+        BinaryOperator::GreaterThan,
+        BinaryOperator::GreaterEqualThan,
+    ];
+    let named = |operators: &[BinaryOperator]| operators.iter().any(|&named| named as u32 == operator);
+    if named(&STRICT) {
+        census.2 = census.2.saturating_add(1);
+    } else if named(&ORDER) {
+        census.3 = census.3.saturating_add(1);
+    }
+}

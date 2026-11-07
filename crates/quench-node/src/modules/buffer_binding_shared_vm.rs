@@ -407,11 +407,7 @@ fn view_bytes(c: &mut Context<'_>, value: RootId) -> Vec<u8> {
 /// `normalizeCompareVal`: memcmp's sign, or the length order when the prefix is equal.
 fn compare_bytes(source: &[u8], target: &[u8], source_length: usize, target_length: usize) -> f64 {
     let ordering = source.cmp(target).then(source_length.cmp(&target_length));
-    match ordering {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    }
+    f64::from(ordering as i8)
 }
 
 pub(crate) fn compare(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

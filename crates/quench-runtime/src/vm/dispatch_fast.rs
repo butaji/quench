@@ -595,6 +595,7 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
+mod lane_stack_growth;
 mod loop_fields;
 use loop_fields::lane_loop_field_stores;
 mod construct_plan;
@@ -8143,7 +8144,7 @@ script_handler! {
             || site.declines.get() >= TIERS.loops.max_declines
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
         {
-            lane_loop_retire::<H>(cx, ip, site);
+            lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         let region = match site.region.get() {
@@ -12099,8 +12100,8 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    // A leaf runs records the tier may claim after this first resolution.
-                    .filter(|_| !self.js_tier_runs())
+                    // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
+                    .filter(|_| !tier_may_claim)
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }
@@ -13935,6 +13936,8 @@ fn lane_native_value<H: Host>(
 
 mod native_calls;
 use native_calls::{for_in_next_handler, native_call_handler, string_char_at_ascii, string_char_code_at};
+mod wasm_gc;
+use wasm_gc::wasm_gc_handler;
 
 /// Whether liveness proves the result register of the running function's call record `i`
 /// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
@@ -17470,17 +17473,9 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     // The callee's own room, which a function of many registers makes larger than a common
     // window: reserving less would send each of its calls at this depth here again.
     let room = room.max(LANE_SCRIPT_WINDOW);
-    let values_full = stack.values.capacity() - stack.values.len() < room;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(room);
     vm.materialize_lane_activations(cx);
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(room));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, room);
     exit(ip)
 }
 
@@ -17604,19 +17599,9 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     let count = usize::from(code.function(usize::from(i.b)).registers);
     let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < window;
-    let activations_full = stack.activations.len() == stack.activations.capacity();
+    let full = stack.full(window);
     vm.materialize_lane_activations(cx);
-    // Only a lack of room grows the stack, so its size follows the deepest
-    // window and activation count a lane has actually needed.
-    if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(window));
-    }
-    if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
-    }
+    vm.lane_stack.grow(full, window);
     let caller = unsafe { (*cx).frame };
     // SAFETY: `ip` is a record of the active view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
@@ -19562,9 +19547,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
-        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => {
-            Some(lane_binary::<H>)
-        }
+        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
@@ -19602,7 +19585,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H, NOT_LEAF>),
         Op::Yield => Some(lane_yield::<H>),
-        _ => None,
+        _ => wasm_gc_handler::<H>(op),
     }
 }
 

@@ -32,6 +32,7 @@ pub use execution_interrupt::ExecutionInterrupt;
 #[cfg(unix)]
 pub use vm::NativeFaultHandler;
 mod bigint;
+mod bitset;
 mod bytecode;
 mod compile;
 mod code_dependencies;
@@ -61,7 +62,7 @@ pub use wasm::{
     WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
     WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
-    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
+    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
 };
 
 pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};
