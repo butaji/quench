@@ -13643,7 +13643,7 @@ fn js_jit_repeated_specialized_guard_misses_release_cache_for_general_tier() {
     assert!(programs.install_js_tier(id, function, Some(compiled), false));
     assert_eq!(programs.jit_mapped_bytes(), bytes);
 
-    for _ in 0..super::program_store::JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD {
+    for _ in 0..crate::vm::compiled::tier_policy::TIERS.js_function.specialized_guard_misses {
         let due = programs.note_js_specialized_guard_miss(id, function, 5);
         assert_eq!(
             due,
@@ -13746,7 +13746,7 @@ fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
           if (result !== 'last1') throw Error('general tier result');
           print(result);
         "#,
-        misses = super::program_store::JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD,
+        misses = crate::vm::compiled::tier_policy::TIERS.js_function.specialized_guard_misses,
     );
     let program = Engine::compile(crate::ExecutionRequest::script(
         &source,
@@ -13982,7 +13982,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         .unwrap();
 
     // Each policy compiles the loop at its own optimization level, or not at all
-    // (`LOOP_TIER_OPT_LEVELS`); the result is the same either way.
+    // (`PolicyTiers::loop_opt_level`); the result is the same either way.
     for policy in crate::MemoryPolicy::ALL {
         let compiled_output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
@@ -14000,7 +14000,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .and_then(super::program_store::derived_lane_view)
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
-        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = super::compiled::js_function_tiers_compile(policy);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
@@ -14048,7 +14048,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
             .and_then(super::program_store::derived_lane_view)
             .expect("hot fill loop lane view")
             .osr_diagnostics();
-        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = super::compiled::js_function_tiers_compile(policy);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
@@ -15059,7 +15059,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
             .and_then(super::program_store::derived_lane_view)
             .expect("hot mix loop lane view")
             .osr_diagnostics();
-        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = super::compiled::js_function_tiers_compile(policy);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
@@ -15141,7 +15141,7 @@ fn shared_osr_reports_captured_environment_store_rejection_by_site() {
     assert_eq!(site.compile_attempts, 0);
     assert_eq!(site.native_region_runs, 0);
     assert!(
-        site.lane_backedge_count >= u64::from(super::dispatch_fast::LOOP_TIER_THRESHOLD),
+        site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.threshold),
         "the diagnostic fixture must execute the rejected loop: {site:?}"
     );
 
@@ -15305,7 +15305,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(super::dispatch_fast::LOOP_TIER_THRESHOLD)
+                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.threshold)
         );
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
@@ -15910,7 +15910,7 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
         .expect("effectful loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(
             osr.native_region_runs > 0 && osr.exits > 0,
             "the forced effect boundary must run and exit native code: {osr:?}"
@@ -16645,7 +16645,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
         1,
         "truthiness loop did not retain native code"
     );
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
         assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
     }
@@ -16725,7 +16725,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
         diagnostics.native_region_runs,
         diagnostics.analysis_rejections,
     );
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(
             diagnostics.native_region_runs > 0,
             "native OSR region never ran; diagnostics: {:?}",
@@ -20315,7 +20315,7 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
         .get(function as usize)
         .and_then(super::program_store::derived_lane_view)
         .expect("sum function lane view");
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(
             loop_view.osr_diagnostics().native_region_runs > 0,
             "shared-tier promotion must be paid by native OSR work"
@@ -20525,7 +20525,6 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
 
 #[test]
 fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
-    use super::program_store::JS_JIT_PROMOTION_LOOKS;
 
     fn upper_tail(n: u8, k: u8, p: f64) -> f64 {
         let n = u32::from(n);
@@ -20545,7 +20544,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
 
     // Each fixed look spends alpha/4 under p=0.8. Testing at these points
     // bounds false promotion across looks for this function at 5%.
-    for (observations, minimum) in JS_JIT_PROMOTION_LOOKS {
+    for (observations, minimum) in crate::vm::compiled::tier_policy::TIERS.js_function.promotion_looks {
         assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
         assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
     }
@@ -23580,7 +23579,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert_eq!(method.inlined.len(), 1);
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         vm.collect_now(&program);
         assert!(published.lease().is_some(), "a live callee binding survives collection");
         match transition {
@@ -23590,7 +23589,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), None, &[]).unwrap();
-                let dead = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+                let dead = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
                 vm.collect_now(&program);
                 assert!(!vm.heap.is_live(orphan));
                 assert!(dead.lease().is_none(), "retire before the function locator can be reused");

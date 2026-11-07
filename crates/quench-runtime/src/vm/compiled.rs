@@ -23,6 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+use tier_policy::TIERS;
 use super::*;
 use crate::bytecode::{
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
@@ -52,7 +53,11 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
-mod facts;
+pub(super) mod facts;
+pub(super) mod switches;
+pub(super) mod tier_policy;
+#[cfg(test)]
+mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
@@ -1048,17 +1053,7 @@ fn read_js_tagged_operand(
             ))
         }
         OperandKind::Constant => {
-            let value = match program.constants.get(usize::from(operand.payload()))? {
-                crate::bytecode::Constant::Number(number) => Value::number(*number),
-                crate::bytecode::Constant::Boolean(boolean) => Value::boolean(*boolean),
-                crate::bytecode::Constant::Null => Value::NULL,
-                crate::bytecode::Constant::Undefined => Value::UNDEFINED,
-                crate::bytecode::Constant::String(_)
-                | crate::bytecode::Constant::StringUnits(_)
-                | crate::bytecode::Constant::BigInt(_)
-                | crate::bytecode::Constant::WasmBits64(_)
-                | crate::bytecode::Constant::WasmV128(_) => return None,
-            };
+            let value = facts::immediate(program.constants.get(usize::from(operand.payload()))?)?;
             Some(builder.ins().iconst(types::I64, value.to_bits() as i64))
         }
         OperandKind::Field | OperandKind::Local => None,
@@ -2332,20 +2327,6 @@ fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     }
 }
 
-/// Decode a packed property using the canonical NarrowLayout, transferring
-/// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
-fn emit_packed_object_slot_read(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    slot: u16,
-    join: ir::Block,
-) {
-    debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
-    let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
-    let narrow = builder.ins().ireduce(types::I32, half);
-    emit_narrow_read(builder, narrow, NarrowTable::Process, join);
-}
-
 /// Binding time changes the table address, never the packed-value semantics.
 #[derive(Clone, Copy)]
 enum NarrowTable {
@@ -2682,9 +2663,26 @@ fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: Wide
     Some(NullishComparison { source, expected, strict, negated })
 }
 
+/// What the online division may fold as Stable facts of one VM, and where the code learns
+/// that one changed (`typed_ir::BindingTime::Stable`).
+#[derive(Clone, Copy)]
+pub(super) struct OnlineFacts<'a> {
+    /// The names method caches hold now.
+    pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
+    /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
+    pub(super) invalidation: usize,
+}
+
+impl OnlineFacts<'_> {
+    /// Whether a method cache names `atom` now.
+    pub(super) fn names(&self, atom: Atom) -> bool {
+        self.method_cache_atoms.contains(atom)
+    }
+}
+
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
 #[derive(Clone, Copy)]
-pub(super) struct VmFacts {
+pub(super) struct VmFacts<'a> {
     /// The VM's `length` name.
     pub(super) length: Atom,
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
@@ -2695,19 +2693,23 @@ pub(super) struct VmFacts {
     /// The `call` name and the realm's `Function.prototype.call`, through which a call
     /// inlines the function it calls (`lane_unit::Frame::function_call`).
     pub(super) function_call: Option<(Atom, Value)>,
+    /// The Stable facts the code may fold under a code dependency: `None` for code that takes
+    /// no dependency on this VM (`Division::Offline`).
+    pub(super) online: Option<OnlineFacts<'a>>,
 }
 
-impl VmFacts {
+impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
-    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None };
+    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
+    /// no Stable facts.
+    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, online: None };
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn vm_facts(&self) -> VmFacts {
+    pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call }
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call, online: None }
     }
 }
 
@@ -3373,11 +3375,10 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        let store_receiver = match instruction.op() {
-            Op::SetField | Op::SetFieldStrict => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
-            Op::SetThisField | Op::SetThisFieldStrict => Some(JsFieldReceiver::FixedThis),
-            _ => None,
-        };
+        let store_receiver = instruction.op().field_store().and_then(|store| match store.receiver {
+            crate::bytecode::StoreReceiver::Register => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
+            crate::bytecode::StoreReceiver::This => Some(JsFieldReceiver::FixedThis),
+        });
         if let Some(receiver) = store_receiver
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -4796,9 +4797,6 @@ const TRAPS: [crate::WasmTrap; 6] = [
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
 const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
-const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
-const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
-const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -4808,30 +4806,6 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
-
-/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
-/// compiled call consults several, and reading the environment on each call cost more than
-/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
-struct EnvSwitch {
-    name: &'static str,
-    enabled: std::sync::OnceLock<bool>,
-}
-
-impl EnvSwitch {
-    const fn new(name: &'static str) -> Self {
-        Self { name, enabled: std::sync::OnceLock::new() }
-    }
-
-    fn enabled(&self) -> bool {
-        *self.enabled.get_or_init(|| {
-            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
-        })
-    }
-}
-
-static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
-static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
-static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -4855,7 +4829,7 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
 pub(super) fn jit_wasm_selective_enabled() -> bool {
-    JIT_WASM_SELECTIVE.enabled()
+    switches::WASM_JIT_SELECTIVE.enabled()
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -4863,7 +4837,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    JIT_ROOT_ONLY.enabled()
+    switches::WASM_JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -4871,7 +4845,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    JIT_ROOT_FIRST.enabled()
+    switches::WASM_JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -5319,7 +5293,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // No guest code or collector ran, so all entry identities remain rooted and live.
             unsafe { (&mut *payload.entry).refresh_array_backing(&*payload.region, old, elements, length, capacity) };
             let due = vm.heap.should_collect();
-            if payload.diagnostics_enabled && std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            if payload.diagnostics_enabled && crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_ARRAY_RESERVE function={} length={length} capacity={capacity} gc_due={due}", payload.function);
             }
             // Collection is never performed with native SSA values unrooted. A debt exit
@@ -6580,8 +6554,7 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
+    crate::trace::Channel::WasmJit.on()
 }
 
 impl CompiledProgram {
@@ -6849,11 +6822,11 @@ impl CompiledProgram {
     }
 }
 
-/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// With `QUENCH_TRACE=perf-map` set, names each compiled Wasm function's code for
 /// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
 /// for disassembly at `BASE` (diagnostics only).
 fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
-    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+    if !crate::trace::Channel::PerfMap.on() {
         return;
     }
     use std::io::Write;
@@ -7052,37 +7025,12 @@ pub(super) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
-/// The Cranelift optimization level the loop tier compiles regions at under each memory
-/// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
-/// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and
-/// the code pages of the compiler and of the region.
-///
-/// Memory-first compiles no loop region, on the owner's direction of 2026-10-24 (TOD-123:
-/// memory-first may trade Score for memory under `--jit`). The per-function tier, which this
-/// leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below their interpreted
-/// peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988 interpreted, Crypto at
-/// 4000 and 3128 (static BOLT x86_64, memory-first, median of 5, 2026-10-24). Compiling at
-/// `none`, without the e-graph pass, saved only 576 KiB on Crypto and 648 on NavierStokes
-/// (`tod137-loop-tier-opt-level-…`). Throughput compiles at `speed`.
-const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
-
-/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_opt_level`).
 pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
-    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
+    tier_policy::by_policy(policy).loop_opt_level.is_some()
 }
 
-/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
-/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
-/// order). Memory-first compiles
-/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
-/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
-/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
-/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
-/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
-/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
-const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
-
-/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+/// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     #[cfg(feature = "gc-tuning")]
     {
@@ -7096,7 +7044,7 @@ pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
             return false;
         }
     }
-    JS_FUNCTION_TIERS[policy as usize]
+    tier_policy::by_policy(policy).js_function_tiers
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -7111,7 +7059,7 @@ pub(super) fn compile_osr_region(
     if loop_tier_region_budget_spent() {
         return None;
     }
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
+    let isa = super::jit_backend::target_isa(tier_policy::by_policy(policy).loop_opt_level?)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -7143,7 +7091,7 @@ pub(super) fn compile_osr_region(
     })
 }
 
-/// The process's peak resident set in KiB, for `QUENCH_JS_JIT_PEAK_TRACE`.
+/// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 #[cfg(feature = "gc-tuning")]
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
@@ -7166,7 +7114,7 @@ fn process_peak_rss_kib() -> i64 {
 /// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
 /// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
 /// region compilation against the `--jit` peak that regalloc2's state sets
-/// (`LOOP_TIER_OPT_LEVELS`).
+/// (`PolicyTiers::loop_opt_level`).
 #[cfg(feature = "gc-tuning")]
 fn loop_tier_region_budget_spent() -> bool {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7181,12 +7129,11 @@ fn loop_tier_region_budget_spent() -> bool {
     COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
-/// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
+/// The directory the `jit-dump` trace channel names: each loop region
 /// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
 /// instruction-level profiles to native code.
 fn native_dump_directory() -> Option<&'static std::path::Path> {
-    static DIRECTORY: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    DIRECTORY.get_or_init(|| std::env::var_os("QUENCH_JS_JIT_DUMP").map(std::path::PathBuf::from)).as_deref()
+    crate::trace::Channel::JitDump.value().map(std::path::Path::new)
 }
 
 /// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
@@ -7548,15 +7495,24 @@ struct JsStepDispatch {
     outcome: Option<JsNativeStep>,
 }
 
-/// A general-dispatch body specialized for frameless lane activations
-/// (`GeneralDispatchMode::Lane`): it runs on the activation's own registers, so they stay
-/// the interpreter's exact state, and leaves at the PC of any instruction it does not run.
-/// The length below which a lane body without loops or inlined calls declines
-/// (`Vm::compile_lane_method`).
-const LANE_BODY_MIN_INSTRUCTIONS: usize = 24;
+/// The slots a lane body's field reads and its direct callees' bodies depend on, once each.
+fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
+    -> Vec<crate::code_dependencies::SlotDependency> {
+    let mut slot_dependencies: Vec<_> = fields.values().flatten()
+        .filter_map(|field| field.slot_dependency())
+        .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
+        .collect();
+    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
+    slot_dependencies.dedup();
+    slot_dependencies
+}
 
 pub(super) struct LaneMethod {
     pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// The Stable facts its code folded, each a dependency its publication takes.
+    pub(super) stable: lane_region::StableFacts,
+    /// The word its code reads at its invalidation points, set when it retires.
+    pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: Entry,
     /// An OSR-only body keeps normal calls on their baseline entry.
@@ -7600,7 +7556,7 @@ impl LaneMethod {
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
+    /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.first_entry && self.amortizes
     }
@@ -8096,7 +8052,7 @@ impl<H: Host> Vm<H> {
                 }),
                 None => Vec::new(),
             },
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
+            op if op.is_field_store() => vec![(instruction.cache_site_index(), false)],
             _ => Vec::new(),
         }
     }
@@ -8133,7 +8089,12 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let result = (|| {
             let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
-            let facts = self.vm_facts();
+            // The body folds Stable facts under its own invalidation word, which its publication
+            // sets when one changes (`ProgramStore::publish_lane_method`).
+            let invalidation = crate::code_dependencies::Invalidation::default();
+            let method_cache_atoms = self.method_cache_atoms.bits().clone();
+            let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
+                invalidation: invalidation.address() }), ..self.vm_facts() };
             let body = program.function_get(function as usize)?;
             let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
             let (unit, region, fields, direct, direct_sites) = loop {
@@ -8224,7 +8185,7 @@ impl<H: Host> Vm<H> {
                 instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
                     && (instruction.imm() as usize) <= pc
             });
-            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
+            let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions;
             let code = CodeMemory::new(&region.code)?;
             if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
                 dump_native_code(directory, function, &code, clif);
@@ -8243,13 +8204,8 @@ impl<H: Host> Vm<H> {
                 .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
             let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
             let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
-            let mut slot_dependencies: Vec<_> = fields.values().flatten()
-                .filter_map(|field| field.slot_dependency())
-                .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
-                .collect();
-            slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-            slot_dependencies.dedup();
-            Some(LaneMethod { slot_dependencies, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
+            let slot_dependencies = lane_slot_dependencies(&fields, &direct);
+            Some(LaneMethod { slot_dependencies, stable: region.stable, invalidation, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
         })();
         self.host.after_native_compilation();
         result
@@ -14341,7 +14297,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the JavaScript function tiers run: compiled execution under a memory policy
-    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// that compiles them (`PolicyTiers::js_function_tiers`), in a build whose profiles do not count
     /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
         !cfg!(quench_profiled)
@@ -14695,7 +14651,7 @@ impl<H: Host> Vm<H> {
             self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
             self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
             if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
-                && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+                && !arguments.iter().all(|value| facts::is_int32_number(*value))
             {
                 return None;
             }
@@ -15383,7 +15339,7 @@ impl<H: Host> Vm<H> {
         if numeric && int32_bitwise_candidate {
             numeric = arguments
                 .iter()
-                .all(|value| super::js_compiled::is_i32_number(*value));
+                .all(|value| facts::is_int32_number(*value));
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
@@ -15518,7 +15474,7 @@ impl<H: Host> Vm<H> {
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
                 #[cfg(feature = "gc-tuning")]
-                let peak_before = (std::env::var_os("QUENCH_JS_JIT_PEAK_TRACE").is_some())
+                let peak_before = crate::trace::Channel::JitPeak.on()
                     .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
                 #[cfg(feature = "gc-tuning")]
@@ -15584,7 +15540,7 @@ impl<H: Host> Vm<H> {
         if compiled.is_int32_identity()
             && !arguments
                 .first()
-                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+                .is_some_and(|value| facts::is_int32_number(*value))
         {
             if !compiled.is_general_dispatch() {
                 *specialized_guard_miss = true;
@@ -18560,7 +18516,7 @@ mod tests {
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
         let receiver_atom = vm.intern_atom("receiver");
@@ -18599,7 +18555,7 @@ mod tests {
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
             assert!(!method.slot_dependencies.is_empty());
-            let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+            let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -18670,7 +18626,7 @@ mod tests {
         assert!(!method.supports_first_entry());
         assert!(!method.amortizes_entry());
         assert!(!method.calls_only_natively());
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap).unwrap();
+        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         // No guest code executes at these collection/realm events; a code lease
         // may remain alive independently of the publication's validity.
         unsafe { vm.programs.retire_dead_native_calls(|_| false); }

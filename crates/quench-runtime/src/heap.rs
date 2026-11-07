@@ -37,6 +37,7 @@ mod records;
 mod root;
 mod slots;
 mod snapshot;
+mod string_atoms;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -581,6 +582,7 @@ pub(crate) struct Heap {
     iterator_records: IteratorRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
+    string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
@@ -1996,7 +1998,7 @@ impl Heap {
         }
         properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             let after = properties.stats();
             eprintln!(
                 "{{\"kind\":\"quench-property-compaction\",\"values_before\":{},\"values_after\":{},\"capacity_before\":{},\"capacity_after\":{},\"free_ranges_before\":{},\"free_ranges_after\":{}}}",
@@ -2013,6 +2015,7 @@ impl Heap {
         self.await_records = AwaitRecordSpace::default();
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
+        self.clear_string_atoms();
         self.v128_records = V128RecordSpace::default();
         self.marks.clear();
         self.aged.clear();
@@ -2053,13 +2056,9 @@ impl Heap {
         self.ascii_unit_strings = None;
         self.collection_state = CollectionState::Idle;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        {
-            self.gc_profile = GcProfile::default();
-        }
+        { self.gc_profile = GcProfile::default(); }
         #[cfg(feature = "profile-memory")]
-        {
-            self.memory_profile = memory_profile::MemoryProfile::default();
-        }
+        { self.memory_profile = memory_profile::MemoryProfile::default(); }
     }
     /// Counts collections; a slot index names the same cell for as long as this is unchanged.
     #[inline(always)]
@@ -2617,12 +2616,9 @@ impl Heap {
                     }
                 });
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
-                RecordSweep::Keep(_, string) => {
-                    if full {
-                        live_payload_bytes += string.flat_unit_bytes();
-                    }
-                }
-                RecordSweep::Dead(_, string) => {
+                RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
+                RecordSweep::Dead(record_id, string) => {
+                    self.string_atoms.forget(record_id);
                     *payload_bytes = payload_bytes.saturating_sub(string.flat_unit_bytes());
                 }
             });
@@ -2784,7 +2780,7 @@ impl Heap {
             },
         );
         #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
-        if full && std::env::var_os("QUENCH_GC_TRACE").is_some() {
+        if full && crate::trace::Channel::Gc.on() {
             // Diagnostic recount of the payload ledger after a full sweep.
             let mut exact = 0;
             self.for_each_live_cell(|cell| exact += cell.payload_bytes());
@@ -2792,7 +2788,7 @@ impl Heap {
             eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
         }
         #[cfg(feature = "gc-tuning")]
-        if std::env::var_os("QUENCH_GC_TRACE").is_some() {
+        if crate::trace::Channel::Gc.on() {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
@@ -3714,6 +3710,12 @@ impl Heap {
         }
         // SAFETY: as the caller guarantees.
         unsafe { self.property_get_flat(holder, slot) }
+    }
+    /// The arena's value base, which the interpreter's staged reads address runs from
+    /// (`staged::Table::PropertyValues`).
+    #[cfg(test)]
+    pub(crate) fn property_values_base(&self) -> *const Value {
+        self.properties.values_base()
     }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
@@ -4755,19 +4757,8 @@ fn observed_target(records: &ObjectRecordSpace, value: Value) -> TargetShape {
 /// The slot exists and the object is not in dictionary storage.
 #[inline(always)]
 unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
-    // Most objects keep their values in the arena and have no extras; their payload is
-    // their storage start, read here without decoding the other forms.
-    if let Some(start) = object.plain_storage_start() {
-        debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves the slot exists outside dictionary storage.
-        return unsafe { properties.get_flat_at(start, slot) };
-    }
-    if let Some(value) = object.inline_property(slot) {
-        value
-    } else {
-        // SAFETY: the caller proves the slot exists outside dictionary storage.
-        unsafe { properties.get_flat(object.properties(), slot) }
-    }
+    // SAFETY: the caller proves the exact slot exists; the arena holds the object's run.
+    unsafe { crate::staged::concrete_own_read(object, properties.values_base(), slot) }
 }
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:

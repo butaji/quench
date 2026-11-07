@@ -1228,7 +1228,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     value,
                     i.cache_site_index(),
-                    i.op() == Op::SetFieldStrict,
+                    i.op().field_store().is_some_and(|store| store.strict),
                 )?;
             }
             Op::DefinePropertyRecord => {
@@ -1277,7 +1277,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     self.read(f, i.register_a()),
                     i.cache_site_index(),
-                    i.op() == Op::SetThisFieldStrict,
+                    i.op().field_store().is_some_and(|store| store.strict),
                 )?;
             }
             Op::SetIndex => {

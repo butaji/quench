@@ -165,12 +165,12 @@ pub(super) fn validates_alone(source: &str, source_type: SourceType, candidate: 
     passes_early_checks(&format!("{strict}{prefix}{snippet}{suffix}"), source_type)
 }
 
-/// Checks, under `QUENCH_LAZY_BODIES_VERIFY`, that validating each candidate of `source`
+/// Checks, under `QUENCH_TRACE=lazy-bodies`, that validating each candidate of `source`
 /// alone loses no early error: the program passes the early checks exactly when it does
 /// with the bodies that validated alone emptied (directives kept, offsets kept).
 #[cfg(feature = "verify-replay")]
 pub(super) fn verify(name: &str, source: &str, program: &Program<'_>) {
-    if std::env::var_os("QUENCH_LAZY_BODIES_VERIFY").is_none() {
+    if !crate::trace::Channel::LazyBodies.on() {
         return;
     }
     let source_type = program.source_type;

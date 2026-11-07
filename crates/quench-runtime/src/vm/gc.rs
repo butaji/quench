@@ -404,7 +404,7 @@ impl<H: Host> Vm<H> {
             self.host.at_collection_boundary(self.memory_policy());
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
+        if crate::trace::Channel::FunctionUse.on() {
             self.report_function_use();
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -798,7 +798,7 @@ impl<H: Host> Vm<H> {
         roots.extend(external_roots);
         self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+        if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
@@ -954,7 +954,7 @@ impl<H: Host> Vm<H> {
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.host.at_collection_boundary(self.memory_policy());
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+        if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
             self.report_memory_snapshot(&phase);
         }
@@ -1033,7 +1033,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.remap_invalidated_method_shapes(&mapping);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             eprintln!(
                 "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_shapes\":{}}}",
                 old_shape_count,

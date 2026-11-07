@@ -1,9 +1,11 @@
 //! Fails when the repository says the same thing twice (`duplicates`) or when a function or
-//! file outgrows the manifesto's size laws (`shape`).
+//! file outgrows the manifesto's size laws (`shape`), or when a hot path hashes, scans or
+//! allocates (`hot_path`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
 
 mod duplicates;
+mod hot_path;
 mod shape;
 
 use std::{

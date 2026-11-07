@@ -447,8 +447,7 @@ fn operands_are(left: Operand, right: Operand, one: u16, two: u16) -> bool {
 }
 
 fn operand_is_number(program: &ResidualProgram, operand: Operand, expected: f64) -> bool {
-    operand.kind() == Some(OperandKind::Constant)
-        && matches!(program.constants.get(usize::from(operand.payload())), Some(Constant::Number(value)) if *value == expected)
+    super::compiled::facts::constant_number(&program.constants, operand) == Some(expected)
 }
 
 fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtifact> {
@@ -638,7 +637,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
                         else {
                             return false;
                         };
-                        is_i32_number(*value)
+                        super::compiled::facts::is_int32_number(*value)
                     }
                     _ => false,
                 });
@@ -655,7 +654,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
             Op::LoadConst => {
                 let is_i32 = matches!(
                     program.constants.get(instruction.constant_index()),
-                    Some(Constant::Number(value)) if is_i32_number(*value)
+                    Some(Constant::Number(value)) if super::compiled::facts::is_int32_number(*value)
                 );
                 if let Some(slot) = registers.get_mut(destination()) {
                     *slot = is_i32;
@@ -684,13 +683,6 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
         }
     }
     found
-}
-
-pub(super) fn is_i32_number(value: f64) -> bool {
-    value.is_finite()
-        && value.fract() == 0.0
-        && value >= f64::from(i32::MIN)
-        && value <= f64::from(i32::MAX)
 }
 
 fn compile_capture_number(
@@ -1045,7 +1037,7 @@ pub(super) fn captured_field_store_candidate(
                 || capture.result_register() == read.result_register()
                 || binary.operand_b().register_index() != Some(read.result_register())
                 || binary.operand_c().register_index() != Some(capture.result_register())
-                || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+                || !store.stores_to_this()
                 || atom != store.atom_index()
             { return None; }
             let operation = super::operations::NumberBitwise::from_js_instruction(binary.op(), binary.binary_operator())?;
@@ -1055,7 +1047,7 @@ pub(super) fn captured_field_store_candidate(
     };
     if capture.result_flags() != 0
         || capture.capture_depth() != 0
-        || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        || !store.stores_to_this()
         || store.result_flags() != 0 || store.register_a() != source
         || undefined.op() != Op::LoadConst || undefined.result_flags() != 0
         || !matches!(program.constants.get(undefined.constant_index()), Some(crate::bytecode::Constant::Undefined))
@@ -3015,10 +3007,7 @@ fn branch_numeric_operand(
             }
         }
         OperandKind::Constant => {
-            let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
-            else {
-                return None;
-            };
+            let value = super::compiled::facts::constant_number(&program.constants, operand)?;
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
         OperandKind::Local => {
@@ -3699,10 +3688,7 @@ fn numeric_loop_operand(
             Some(builder.use_var(*variables.get(register)?))
         }
         OperandKind::Constant => {
-            let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
-            else {
-                return None;
-            };
+            let value = super::compiled::facts::constant_number(&program.constants, operand)?;
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
         OperandKind::Local => {
