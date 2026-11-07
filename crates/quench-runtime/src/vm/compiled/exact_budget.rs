@@ -16,7 +16,8 @@ pub(in crate::vm) enum PcLowering {
     Stepped = 2,
 }
 
-#[cfg(test)]
+// The budget reads AOT lowering (`JsGeneralCallout::Address`), which only the aot feature builds.
+#[cfg(all(test, feature = "aot"))]
 mod tests {
     use super::PcLowering;
     use std::collections::BTreeMap;
