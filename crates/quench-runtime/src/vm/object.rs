@@ -144,7 +144,7 @@ enum FieldCacheRead {
     Hit(FieldCacheHit),
 }
 
-/// A census of shape creations by transition key (`QUENCH_SHAPE_TRACE`, `profile-memory`):
+/// A census of shape creations by transition key (`QUENCH_TRACE=shapes`, `profile-memory`):
 /// which operations keep making a shape instead of finding it in the cached child index.
 #[cfg(feature = "profile-memory")]
 mod shape_trace {
@@ -535,7 +535,7 @@ impl<H: Host> Vm<H> {
         storage_len: usize,
     ) -> u32 {
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_SHAPE_TRACE").is_some() {
+        if crate::trace::Channel::Shapes.on() {
             // Which transitions keep missing the cached child index, by key: a shape a
             // repeated operation re-creates names the key that fails to dedupe.
             let label = match &transition {
@@ -1672,10 +1672,9 @@ impl<H: Host> Vm<H> {
 
     /// The reads a site's proved inherited entries answer (`proved_inherited_field_hit`), as
     /// constants: a receiver of the entry's shape whose prototype link is the proved one, while
-    /// no prototype changes (`heap::prototype_value_epoch`), reads what the proved holder held
+    /// the value stays (`heap::subscribe_prototype_values`), reads what the proved holder held
     /// when the code was compiled, `undefined` for an absent name.
     fn inherited_native_loads(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
-        let epoch = crate::heap::prototype_value_epoch();
         let mut loads = Vec::new();
         let mut index = self.inherited_field_indices.get(self.field_cache_index(site));
         while index != NO_INHERITED_FIELD {
@@ -1700,7 +1699,7 @@ impl<H: Host> Vm<H> {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 target_shape: None,
-                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)], epoch),
+                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]),
             });
         }
         loads
@@ -1730,9 +1729,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the
-    /// link that names it, and the epoch they are read under: what a holder read may take
-    /// while the receiver's link names one of them and the epoch holds
-    /// (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
+    /// link that names it: what a holder read may take while the receiver's link names one of
+    /// them and no value changes (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
     /// prototypes holding the same names share it.
     fn inherited_constant(&self, holder: u32, slot: u16) -> Option<super::compiled::InheritedConstant> {
         let mut holders = Vec::new();
@@ -1741,7 +1739,7 @@ impl<H: Host> Vm<H> {
             if value.is_deleted() { return None; }
             holders.push((crate::heap::ProtoLink::of(prototype).bits(), value));
         }
-        super::compiled::InheritedConstant::of(holders, crate::heap::prototype_value_epoch())
+        super::compiled::InheritedConstant::of(holders)
     }
 
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
@@ -5074,7 +5072,7 @@ impl<H> Vm<H> {
         super::shape_layouts(&self.shapes)
     }
 
-    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_JS_JIT_STATS`): the
+    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_TRACE=js-jit`): the
     /// polymorphic sites by how many receiver shapes they recorded, how many name only own
     /// fields and of those how many find the field at one slot in every shape (a layout whose
     /// subclasses share their parent's prefix reads them at a fixed offset), and how many name

@@ -2741,7 +2741,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-gc-time")]
         self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
-        if std::env::var_os("QUENCH_PROFILE_ALL_PROGRAMS").is_some() {
+        if crate::trace::Channel::AllPrograms.on() {
             for index in 0..self.programs.len() {
                 let id = ProgramId::from_raw(index as u32);
                 if let Some(residual) = self.programs.get(id) {
@@ -2762,7 +2762,7 @@ impl<H: Host> Vm<H> {
             .profile
             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
         {
-            if std::env::var_os("QUENCH_OPCODE_CENSUS").is_some_and(|census| census == "all") {
+            if crate::trace::Channel::Census.value() == Some("all") {
                 self.report_dispatch_by_register_width();
             }
             self.profile
@@ -2778,13 +2778,13 @@ impl<H: Host> Vm<H> {
     }
     #[cfg(feature = "profile-allocator")]
     fn report_allocator_if_enabled(&self, phase: &str) {
-        if std::env::var_os("QUENCH_ALLOCATOR_MEMORY").is_some() {
+        if crate::trace::Channel::Allocator.on() {
             crate::report_allocator_memory(phase);
         }
     }
     #[cfg(feature = "profile-gc-time")]
     fn report_gc_time_if_enabled(&self) {
-        if std::env::var_os("QUENCH_GC_TIME_PROFILE").is_none() {
+        if !crate::trace::Channel::GcTime.on() {
             return;
         }
         let (_, collections, _, _, _, _) = self.heap.stats();
@@ -2815,11 +2815,11 @@ impl<H: Host> Vm<H> {
     }
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_if_enabled(&self, phase: &str) {
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             self.report_memory(phase);
         }
     }
-    /// `QUENCH_FUNCTION_USE`: how many compiled functions have been called (their call plan is
+    /// `QUENCH_TRACE=function-use`: how many compiled functions have been called (their call plan is
     /// derived on first call), and the record and code bytes of those never called.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_function_use(&self) {

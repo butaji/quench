@@ -1,4 +1,4 @@
-//! A lane view's lane-body counters, kept under `QUENCH_JS_JIT_STATS`.
+//! A lane view's lane-body counters, kept under `QUENCH_TRACE=js-jit`.
 
 /// A view's lane-body counters, which only a diagnostics run keeps
 /// (`ProgramStore::js_jit_diagnostics_enabled`): its function, its compiles and the frames the

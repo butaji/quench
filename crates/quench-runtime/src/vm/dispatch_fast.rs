@@ -21,6 +21,7 @@
 //! which unwinds it; a due collection raises the floor so that the next
 //! safepoint jump leaves the lane.
 
+use super::compiled::tier_policy::TIERS;
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
@@ -244,7 +245,7 @@ pub(super) struct LoopSite {
     /// no call record, whose `call_link` names a call target, and the header of no other
     /// site. The record's `call_link` then names the site.
     hookable: bool,
-    /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
+    /// Backward jumps taken before the region compiles, up to `TIERS.loops.threshold`.
     taken: std::cell::Cell<u32>,
     /// Native runs that left at an instruction the general path executes.
     exits: std::cell::Cell<u32>,
@@ -296,27 +297,9 @@ impl LoopTier {
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
     fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
         self.is_published()
-            || (self.compilations < LOOP_TIER_MAX_COMPILATIONS && super::compiled::loop_tier_compiles(policy))
+            || (self.compilations < TIERS.loops.max_compilations && super::compiled::loop_tier_compiles(policy))
     }
 }
-
-/// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
-/// which run briefly never pay the compilation.
-pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
-/// Native runs in a row (no run leaving through the loop's own exit between them) that may leave at
-/// a general-path instruction before the site stops entering
-/// native code: a loop whose values keep leaving the subset is the interpreter's.
-const LOOP_TIER_MAX_EXITS: u32 = 1000;
-/// Entries a site's guards may decline in a row before it stops trying: a field whose cache
-/// never hits at entry (an array's `length`) made V8-v7 Crypto's sum loop decline at each of
-/// its iterations.
-const LOOP_TIER_MAX_DECLINES: u32 = 64;
-/// Elements of an array read to guess whether it holds `i32`s; a wrong guess costs one
-/// compilation.
-const LOOP_TIER_ELEMENT_SAMPLE: usize = 8;
-/// Compilations a site may make: each after the first widens a value the last one held as
-/// an `i32`, and a region has few such values.
-const LOOP_TIER_MAX_COMPILATIONS: u32 = 8;
 
 type Ip = *const LaneInstruction;
 
@@ -367,7 +350,7 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// What its lane bodies did, under `QUENCH_JS_JIT_STATS` (`LaneBodyStats`).
+    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
@@ -508,7 +491,7 @@ impl LaneView {
                 call_boundary_pcs,
                 admitted: site.is_admitted(),
                 deferred_call,
-                tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+                tier_threshold_reached: site.taken.get() >= TIERS.loops.threshold,
                 lane_backedge_count: site.lane_backedge_count.get(),
                 analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
                 compile_attempts: site.compile_attempts.get(),
@@ -818,10 +801,10 @@ enum LaneBody {
         method: std::rc::Rc<super::compiled::PublishedLaneMethod>,
         tier_prologue: *const (),
         /// Its runs from the prologue and those that left before completing, counted up to
-        /// `LANE_BODY_TRIAL_RUNS` (`LaneView::note_lane_body_run`).
+        /// `TIERS.lane_body.trial_runs` (`LaneView::note_lane_body_run`).
         runs: std::cell::Cell<u16>,
         leaves: std::cell::Cell<u16>,
-        /// Its leaves since it specialized, toward `LANE_BODY_REOPTIMIZE_EXITS`, and where
+        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits`, and where
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
@@ -839,41 +822,21 @@ enum LaneBody {
     Declined,
 }
 
-/// The most bodies of one function lifecycle edges may discard before it runs in the lane
-/// for good: past them a compile costs more than its runs regain.
-const LANE_BODY_MAX_LIFETIMES: u8 = 8;
 
 impl LaneBody {
     /// The entries a function warms for before its next body, `lifetimes` bodies of it
     /// having been discarded.
     fn warmup(lifetimes: u8) -> u16 {
-        LANE_BODY_WARMUP_ENTRIES << lifetimes.min(7)
+        TIERS.lane_body.warmup_entries << lifetimes.min(7)
     }
 
     /// The warming state after a lifecycle edge discarded a body of `lifetimes` before.
     fn after_lifecycle(lifetimes: u8) -> Self {
         let lifetimes = lifetimes.saturating_add(1);
-        if lifetimes > LANE_BODY_MAX_LIFETIMES { return LaneBody::Declined; }
+        if lifetimes > TIERS.lane_body.max_lifetimes { return LaneBody::Declined; }
         LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE, lifetimes }
     }
 }
-
-/// The leaves after which a body specializes again from the feedback its sites hold then: a
-/// region compiled while its call graph warmed keeps leaving at sites whose targets came
-/// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
-/// threshold backs off, and `LANE_BODY_MAX_RECOMPILES` bounds it.
-const LANE_BODY_REOPTIMIZE_EXITS: u16 = 64;
-const LANE_BODY_MAX_RECOMPILES: u8 = 4;
-
-/// The runs over which a specialized body proves it completes more often than it leaves:
-/// a body whose runs mostly leave pays its entry and the lane's resumption for work the
-/// lane does anyway (`LaneView::note_lane_body_run`).
-const LANE_BODY_TRIAL_RUNS: u16 = 1024;
-
-/// The entries a function makes before its lane body specializes: enough that its call
-/// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
-/// only a function called repeatedly pays for compiling one.
-const LANE_BODY_WARMUP_ENTRIES: u16 = 400;
 
 impl LaneView {
     /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
@@ -923,7 +886,7 @@ impl LaneView {
                             (unsafe { std::mem::replace(&mut (*prologue).handler, entry as *const ()) }, 0)
                         } else {
                             self.release_from_tier();
-                            (unsafe { (*self.prologue.get()).handler }, LANE_BODY_TRIAL_RUNS)
+                            (unsafe { (*self.prologue.get()).handler }, TIERS.lane_body.trial_runs)
                         };
                         LaneBody::Specialized {
                             method: published,
@@ -974,24 +937,24 @@ impl LaneView {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         // A function whose bodies lifecycle edges discarded warms as any entry does.
         if let LaneBody::Unspecialized { entries, lifetimes: 0, .. } = unsafe { &mut *self.tier_lane.get() } {
-            *entries = LANE_BODY_WARMUP_ENTRIES - 1;
+            *entries = TIERS.lane_body.warmup_entries - 1;
         }
         self.specialize_lane_body(entry, specialize);
     }
 
     /// Counts a run of the specialized body from its prologue, and whether it `left` before
-    /// completing; at `LANE_BODY_TRIAL_RUNS`, a body whose runs mostly left retires
+    /// completing; at `TIERS.lane_body.trial_runs`, a body whose runs mostly left retires
     /// (`LaneBody::Retired`), its prologue taking back the tier's handler.
     fn note_lane_body_run(&self, left: bool) {
         // SAFETY: as `lane_body`; the run that counts has finished.
         let body = unsafe { &mut *self.tier_lane.get() };
         let LaneBody::Specialized { runs, leaves, tier_prologue, .. } = body else { return };
-        if runs.get() >= LANE_BODY_TRIAL_RUNS {
+        if runs.get() >= TIERS.lane_body.trial_runs {
             return;
         }
         runs.set(runs.get() + 1);
         leaves.set(leaves.get() + u16::from(left));
-        if runs.get() < LANE_BODY_TRIAL_RUNS || leaves.get() <= LANE_BODY_TRIAL_RUNS / 2 {
+        if runs.get() < TIERS.lane_body.trial_runs || leaves.get() <= TIERS.lane_body.trial_runs / 2 {
             return;
         }
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
@@ -1002,9 +965,9 @@ impl LaneView {
     }
 
     /// Counts how a run of the specialized body ended, at `exit`: a leave counts; at
-    /// `LANE_BODY_REOPTIMIZE_EXITS` it
+    /// `TIERS.lane_body.reoptimize_exits` it
     /// specializes again, from the feedback its sites hold now (`lane_specialize`), at most
-    /// `LANE_BODY_MAX_RECOMPILES` times, its code kept for the direct callers that name it. A
+    /// `TIERS.lane_body.max_recompiles` times, its code kept for the direct callers that name it. A
     /// body that left at few places specializes them generically next. One that left only
     /// where its predecessor did gained nothing from the feedback and retires, as the next
     /// would leave there too, where no run of it completed; one whose runs complete keeps its
@@ -1020,7 +983,7 @@ impl LaneView {
         }
         exits.set(exits.get().saturating_add(1));
         leaves_at.set(leaves_at.get().with(exit));
-        if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES {
+        if exits.get() < TIERS.lane_body.reoptimize_exits << *recompiles || *recompiles >= TIERS.lane_body.max_recompiles {
             return;
         }
         // A body that left at few places takes them, and its predecessors', generically next
@@ -1031,7 +994,7 @@ impl LaneView {
         // nothing from another compile, and loses nothing by keeping its code: it stays,
         // and reoptimizes no more.
         if completed.get() && leaves != LaneLeaves::NONE && leaves.within(stuck) {
-            *recompiles = LANE_BODY_MAX_RECOMPILES;
+            *recompiles = TIERS.lane_body.max_recompiles;
             return;
         }
         let unmoved = (leaves != LaneLeaves::NONE && leaves.within(stuck))
@@ -2599,7 +2562,7 @@ struct LaneContext<H: Host> {
     /// access found it (`lane_frame_storage`).
     frame_storage: FrameStorage,
     /// Backward jumps left before the running Wasm function is credited with an
-    /// interpreter entry's worth of loop work (`WASM_JIT_BACKEDGES_PER_ENTRY`), or `None`
+    /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
     /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps
     /// its floor raised, so every backward jump reaches `lane_safepoint`, which counts: the
     /// handlers stay as they are.
@@ -8359,7 +8322,7 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
         .last()
         .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
     machine.programs.note_wasm_tier_backedges(program, function);
-    unsafe { (*cx).backedges_left = Some(super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY) };
+    unsafe { (*cx).backedges_left = Some(TIERS.wasm.backedges_per_entry) };
 }
 
 lane_handler! {
@@ -8415,7 +8378,7 @@ script_handler! {
                 return exit(header);
             }
         }
-        if site.taken.get() < LOOP_TIER_THRESHOLD {
+        if site.taken.get() < TIERS.loops.threshold {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
         }
@@ -8430,8 +8393,8 @@ script_handler! {
             lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.exits.get() >= LOOP_TIER_MAX_EXITS
-            || site.declines.get() >= LOOP_TIER_MAX_DECLINES
+        if site.exits.get() >= TIERS.loops.max_exits
+            || site.declines.get() >= TIERS.loops.max_declines
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
         {
             lane_loop_retire::<H>(cx, ip, site);
@@ -8444,7 +8407,7 @@ script_handler! {
                 None => {
                     // The calls do not run inlined: the loop runs in its function's lane
                     // body, which calls natively, or stays the interpreter's.
-                    site.exits.set(LOOP_TIER_MAX_EXITS);
+                    site.exits.set(TIERS.loops.max_exits);
                     lane_loop_body_or_retire::<H>(cx, ip, site);
                     next!(cx, r, header, Carried::script(cx))
                 }
@@ -8563,8 +8526,8 @@ script_handler! {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
         if !script_below_floor(cx)
-            && site.exits.get() < LOOP_TIER_MAX_EXITS
-            && site.declines.get() < LOOP_TIER_MAX_DECLINES
+            && site.exits.get() < TIERS.loops.max_exits
+            && site.declines.get() < TIERS.loops.max_declines
             && let Some(region) = site.active_region()
         {
             match lane_loop_native::<H>(cx, r, ip, ip, site, region) {
@@ -8601,7 +8564,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         if diagnostics && let Some(method) = &method {
             own.body_stats.compiled(function, method.inlined.len());
         }
-        method.and_then(|method| vm.programs.publish_lane_method(method, &mut vm.heap))
+        method.and_then(|method| vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()))
     };
     if now {
         own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
@@ -8640,7 +8603,7 @@ script_handler! {
     /// The backward jump of a loop its function's lane body runs from the header
     /// (`lane_loop_body_or_retire`): the body runs on the activation's registers until it
     /// leaves, and the lane continues where it left. A loop whose body keeps leaving
-    /// (`LOOP_TIER_MAX_EXITS`) goes back to the interpreter's jump.
+    /// (`TIERS.loops.max_exits`) goes back to the interpreter's jump.
     #[inline(never)]
     fn lane_loop_body_jump<>(cx, r, ip, i, view) {
         let site = i.loop_site();
@@ -8684,7 +8647,7 @@ script_handler! {
         // a warming call graph makes, cost one entry each for native iterations.
         if !Vm::<H>::lane_shadow_active() && exit == super::compiled::LaneExit::At(site.header as usize) {
             site.exits.set(site.exits.get() + 1);
-            if site.exits.get() >= LOOP_TIER_MAX_EXITS {
+            if site.exits.get() >= TIERS.loops.max_exits {
                 lane_loop_retire::<H>(cx, ip, site);
             }
         }
@@ -8810,7 +8773,7 @@ fn lane_loop_run<H: Host>(
         };
         let int32_elements = |register| {
             heap.record_array(array_value(register)).is_some_and(|array| {
-                array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
+                array.elements().iter().take(TIERS.loops.element_sample).all(|value| value.as_int().is_some())
             })
         };
         let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
@@ -8854,7 +8817,7 @@ fn lane_loop_run<H: Host>(
                 .set(site.compile_successes.get().saturating_add(1));
         }
         if !tier.is_published() {
-            tier.compilations = LOOP_TIER_MAX_COMPILATIONS;
+            tier.compilations = TIERS.loops.max_compilations;
             return LoopContinuation::Jump;
         }
     }
@@ -8881,7 +8844,7 @@ fn lane_loop_run<H: Host>(
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
             LoopOutcome::NotEntered(widening) => {
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                if crate::trace::Channel::OsrReject.on() {
                     eprintln!(
                         "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
                         site.function,
@@ -8902,7 +8865,7 @@ fn lane_loop_run<H: Host>(
                 // Attribute a guard exit to its recovery PC before the lane resumes.
                 // Reuse the opt-in OSR trace; ordinary execution keeps no extra table
                 // or per-site allocation, and the exit budget is unchanged.
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                if crate::trace::Channel::OsrReject.on() {
                     eprintln!(
                         "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
                         program.raw(), site.function, site.header,
@@ -14351,7 +14314,7 @@ fn lane_native_value<H: Host>(
                 return Some(if holds { Value::TRUE } else { Value::FALSE });
             }
         }
-        Native::RegExpExec | Native::RegExpTest | Native::StringReplace => {
+        Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
             return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
         }
         // A generator's resumption runs its body, guest code that no in-place shortcut of
@@ -14879,7 +14842,7 @@ fn lane_native_complete<H: Host>(
     Resumed::At(r, following(ip), Carried::script(cx))
 }
 
-/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` of a RegExp, made in
+/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` or `match` of a RegExp, made in
 /// place when it runs no guest code and raises nothing, so it observes no frame
 /// (`Vm::steady_regexp_call`, `Vm::steady_string_replace`); any other such call goes on as
 /// `lane_string_or_native_call` makes it.
@@ -14899,6 +14862,7 @@ fn lane_regexp_call<H: Host>(
     let result_used = ImmediateLayout::lane_call_result_used(i.imm());
     let steady = match (native, args) {
         (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
+        (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
         (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
         _ => None,
     };
@@ -16733,7 +16697,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let leaf_method = vm.compile_lane_method(&program, target.function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
     assert!(!leaf_method.slot_dependencies.is_empty());
-    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap).unwrap();
+    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
@@ -16753,7 +16717,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         &|_, _| Vec::new(), &|_| (0, 0), direct, None, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
-    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap).unwrap();
+    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);
     drop(leaf_body);
@@ -23172,7 +23136,7 @@ impl<H: Host> Vm<H> {
             callee_acc: Value::UNDEFINED,
             backedges_left: self
                 .lane_credits_backedges(code, program)
-                .then_some(super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY),
+                .then_some(TIERS.wasm.backedges_per_entry),
             env: Value::DELETED,
             capture: std::ptr::null(),
             outer: NO_OUTER_WALK,
