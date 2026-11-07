@@ -15926,7 +15926,7 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
         .expect("effectful loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(
             osr.native_region_runs > 0 && osr.exits > 0,
             "the forced effect boundary must run and exit native code: {osr:?}"
@@ -16661,7 +16661,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
         1,
         "truthiness loop did not retain native code"
     );
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
         assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
     }
@@ -16741,7 +16741,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
         diagnostics.native_region_runs,
         diagnostics.analysis_rejections,
     );
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(
             diagnostics.native_region_runs > 0,
             "native OSR region never ran; diagnostics: {:?}",
@@ -20331,7 +20331,7 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
         .get(function as usize)
         .and_then(super::program_store::derived_lane_view)
         .expect("sum function lane view");
-    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+    if crate::trace::Channel::JsJit.on() {
         assert!(
             loop_view.osr_diagnostics().native_region_runs > 0,
             "shared-tier promotion must be paid by native OSR work"

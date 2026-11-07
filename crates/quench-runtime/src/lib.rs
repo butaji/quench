@@ -45,6 +45,7 @@ mod number_to_string;
 #[path = "../benches/support/number_inputs.rs"]
 mod number_inputs;
 mod profile;
+pub mod trace;
 mod snapshot;
 mod typed_ir;
 pub(crate) use quench_stack as stack;
