@@ -1,4 +1,8 @@
 use super::*;
+use smallvec::SmallVec;
+
+/// Elements a literal evaluates into registers before making its array.
+const LITERAL_ELEMENT_WINDOW: usize = 8;
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn array_expression(&mut self, value: &ArrayExpression<'_>) -> Register {
@@ -32,8 +36,16 @@ impl FunctionCompiler<'_, '_> {
             );
             return dst;
         }
-        self.emit(Op::MakeArray, dst, 0, 0, value.elements.len() as u32);
         let element_temporaries = self.next_reg;
+        if let Some(values) = self.literal_element_values(value) {
+            self.emit(Op::MakeArray, dst, 0, 0, values.len() as u32);
+            for (index, item) in values.into_iter().enumerate() {
+                self.emit(Op::DefineArrayElement, item, dst, 0, index as u32);
+            }
+            self.next_reg = element_temporaries;
+            return dst;
+        }
+        self.emit(Op::MakeArray, dst, 0, 0, value.elements.len() as u32);
         for (index, item) in value.elements.iter().enumerate() {
             let Some(expr) = item.as_expression() else {
                 continue;
@@ -43,6 +55,32 @@ impl FunctionCompiler<'_, '_> {
             self.next_reg = element_temporaries;
         }
         dst
+    }
+
+    /// The registers holding a short literal's elements, every one evaluated before the
+    /// array is made, which no code can observe: its definitions then follow `MakeArray`
+    /// back to back, which the lane makes as one literal (`specialize_array_literals`).
+    /// A value read from a register that a later element could assign is copied first; the
+    /// last element's is read as it stands.
+    /// `None` for a literal with holes or past the window, which define as they go.
+    fn literal_element_values(&mut self, value: &ArrayExpression<'_>) -> Option<SmallVec<[Register; LITERAL_ELEMENT_WINDOW]>> {
+        if value.elements.len() > LITERAL_ELEMENT_WINDOW {
+            return None;
+        }
+        let expressions = value.elements.iter().map(ArrayExpressionElement::as_expression).collect::<Option<SmallVec<[_; LITERAL_ELEMENT_WINDOW]>>>()?;
+        let mut values = SmallVec::new();
+        let last = expressions.len().saturating_sub(1);
+        for (index, expression) in expressions.into_iter().enumerate() {
+            let start = self.next_reg;
+            let mut item = self.expression(expression);
+            if item < start && index < last {
+                let copy = self.reg();
+                self.emit(Op::Move, copy, item, 0, 0);
+                item = copy;
+            }
+            values.push(item);
+        }
+        Some(values)
     }
 
     fn array_expression_with_spread(&mut self, value: &ArrayExpression<'_>) -> Register {
