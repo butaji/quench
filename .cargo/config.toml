@@ -2,6 +2,8 @@
 # Enforce clippy rules from .clippy.toml — never allow warnings.
 # 64-byte function alignment measured +3.4% on Linux CoreMark (Linear TOD-19).
 rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
+# Optimized x86-64 Linux builds are profile-guided by the committed profile.
+rustc-wrapper = "tools/rustc-pgo.sh"
 
 # Use LLVM's target alignment on Apple ARM; the forced alignment above is a
 # Linux measurement. Host-specific qualification and code residency: Linear TOD-8.

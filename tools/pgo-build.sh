@@ -1,39 +1,26 @@
 #!/usr/bin/env bash
-# Profile-guided production build of quench-node.
+# Trains the profile every optimized x86-64 Linux build uses
+# (crates/quench-node/pgo/x86_64-linux.profdata, applied by tools/rustc-pgo.sh).
 #
-# usage: tools/pgo-build.sh [--static] [PROFILE]   (default: production)
+# usage: tools/pgo-build.sh
 #
-# --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
-# model), the input of the BOLT layout step in the Linear command reference: both the instrumented and the
-# profile-guided build add `-Ctarget-feature=+crt-static -Crelocation-model=static` and build
-# for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. Every build
-# passes its flags in `RUSTFLAGS`, which replaces the repository's rustflags
-# (.cargo/config.toml) rather than appending to them, so the script repeats that baseline in
-# `repo_rustflags` and refuses an inherited `RUSTFLAGS`.
-#
-# 1. Builds an instrumented quench-node into target/pgo-instrumented.
+# 1. Builds an instrumented release quench-node into target/pgo-instrumented.
 # 2. Runs the training corpus: the interpreter curriculum micro programs, the numbered
-#    diagnostic micros and the Node compatibility fixtures. The scored engine suites under
-#    quench-bench/js-engine-benchmark are never run, so the profile describes general
-#    workloads, not benchmark identity.
-# 3. Builds PROFILE with the merged profile; the binary lands at target/PROFILE/quench-node,
-#    where the benchmark tooling reads it.
+#    diagnostic micros and the Node compatibility fixtures. The scored engine suites
+#    (JetStream, quench-bench/js-engine-benchmark) are never run, so the profile describes
+#    general workloads, not benchmark identity.
+# 3. Merges the raw profiles into the committed profile; the next `cargo build --release`
+#    uses it. Retrain when the profile's code has drifted (a rebuilt binary loses speed).
 #
 # Requires llvm-profdata from the toolchain's llvm-tools component
 # (`rustup component add llvm-tools`).
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-static=false
-if [[ "${1:-}" == "--static" ]]; then
-    static=true
-    shift
-fi
-profile="${1:-production}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 instrumented_dir="$target_dir/pgo-instrumented"
 data_dir="$target_dir/pgo-data"
-profdata="$target_dir/pgo-quench-node.profdata"
+profdata="$root_dir/crates/quench-node/pgo/x86_64-linux.profdata"
 # Seconds each corpus program may run; fixtures that wait on the network or a child process
 # only add their startup path.
 per_program_timeout=10
@@ -66,26 +53,6 @@ http_training_rounds="${QUENCH_PGO_HTTP_ROUNDS:-3000}"
 micros_budget_ms=1500
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
-# `RUSTFLAGS` has precedence over the repository's target-specific rustflags.
-# Passing only `--config build.rustflags=...` silently loses the PGO flag on
-# targets whose configuration has its own rustflags (aarch64-apple-darwin), so
-# this script appends the PGO flag to the same baseline flags in RUSTFLAGS.
-# It replaces every configured array, so an inherited `RUSTFLAGS` would lose both
-# the baseline and the profile flag.
-if [[ -n "${RUSTFLAGS:-}" ]]; then
-    printf 'unset RUSTFLAGS: it would replace the profile flags and the repository rustflags\n' >&2
-    exit 1
-fi
-repo_rustflags="-D warnings -C llvm-args=-align-all-functions=6"
-# The static mode's link flags, appended to both builds, and the target directory layout a
-# `--target` build uses.
-target_args=()
-binary_subdir="$profile"
-if [[ "$static" == true ]]; then
-    repo_rustflags="$repo_rustflags -Ctarget-feature=+crt-static -Crelocation-model=static"
-    target_args=(--target "$host")
-    binary_subdir="$host/$profile"
-fi
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
 if [[ ! -x "$llvm_profdata" ]]; then
     printf 'llvm-profdata not found; run: rustup component add llvm-tools\n' >&2
@@ -110,23 +77,11 @@ run_training_limited() {
     fi
 }
 
-# Link OpenSSL statically where its archives exist: a shared libcrypto/libssl is loaded and
-# relocated at every start (~1 MB of startup RSS on x86_64 Linux) although only TLS uses it,
-# while statically linked code costs memory only once it runs. Other hosts keep their link.
-openssl_libdir="$(pkg-config --variable=libdir openssl 2>/dev/null || true)"
-if [[ -n "$openssl_libdir" && -f "$openssl_libdir/libcrypto.a" && -f "$openssl_libdir/libssl.a" ]]; then
-    export OPENSSL_STATIC=1 OPENSSL_NO_PKG_CONFIG=1 OPENSSL_LIB_DIR="$openssl_libdir"
-    export OPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
-fi
-
 cd "$root_dir"
 rm -rf "$data_dir"
 mkdir -p "$data_dir"
-# `RUSTFLAGS` replaces the repository's target-specific rustflags instead of appending to
-# them; see `repo_rustflags` above.
-RUSTFLAGS="$repo_rustflags -Cprofile-generate=$data_dir" \
-    CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
-instrumented="$instrumented_dir/$binary_subdir/quench-node"
+QUENCH_PGO_GENERATE="$data_dir" CARGO_TARGET_DIR="$instrumented_dir" cargo build --release -p quench-node --bin quench-node
+instrumented="$instrumented_dir/release/quench-node"
 
 # One raw profile per process: Darwin's runtime does not reliably merge concurrent
 # writers into a shared pool file here (llvm-profdata then reports "too much profile data").
@@ -144,8 +99,10 @@ train_micro_programs() {
                 "$budget_ms"
         } >"$driver"
         # A CPU-time budget can outlast the per-program wall limit on a busy host, and a
-        # killed run writes no profile.
+        # killed run writes no profile. Each program also runs with --jit, so the Cranelift
+        # compiler and the native code's runtime helpers are not laid out as cold code.
         run_training_limited "$instrumented" "$driver" >/dev/null 2>&1 || true
+        run_training_limited "$instrumented" --jit "$driver" >/dev/null 2>&1 || true
     done
 }
 train_micro_programs quench-bench/deegen-curriculum "$curriculum_budget_ms"
@@ -177,20 +134,9 @@ unset LLVM_PROFILE_FILE
 # whose counters overflow writes a "too much profile data" one; both are still merged. The
 # default failure mode rejects the run when the last of them is truncated, so ask for
 # warnings instead of an abort and let a genuinely empty corpus fail below.
-"$llvm_profdata" merge --failure-mode=warn -o "$profdata" "$data_dir"/*.profraw
+# Zero-count functions carry no information (a function without counts is optimized as
+# without a profile), so the sparse profile keeps the committed file small.
+mkdir -p "$(dirname "$profdata")"
+"$llvm_profdata" merge --sparse --failure-mode=warn -o "$profdata" "$data_dir"/*.profraw
 rm -rf "$data_dir"
-# Indirect call promotion turns a profiled indirect call into a guarded direct call and may
-# inline the callee there. The lane's dispatches are indirect tail calls between handlers;
-# promoting one inlines a large handler (a frameless call) into a small one (a register
-# move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
-# ran 38% more instructions once training made a call the move's most frequent successor.
-RUSTFLAGS="$repo_rustflags -Cprofile-use=$profdata -Cllvm-args=-disable-icp" \
-    CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
-binary="$target_dir/$binary_subdir/quench-node"
-printf 'PGO build: %s\n' "$binary"
-# Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
-# (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.
-if nm "$binary" 2>/dev/null | grep dispatch_fast >/dev/null; then
-    printf 'Lane handlers dispatching with a call:\n'
-    tools/check-lane-tail-calls.sh "$binary" || true
-fi
+printf 'PGO profile: %s\n' "$profdata"
