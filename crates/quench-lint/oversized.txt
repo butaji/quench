@@ -530,7 +530,6 @@ complexity crates/quench-runtime/src/compile/ast/object.rs::FunctionCompiler<'_,
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::statement_at_current_position 46
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::switch_statement 11
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 14
-complexity crates/quench-runtime/src/compile/binding_time.rs::expression 13
 complexity crates/quench-runtime/src/compile/capture_layout.rs::activation_is_private 11
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::emit_instance_fields 18
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::lower_class 90
@@ -1381,7 +1380,7 @@ file-lines crates/quench-runtime/src/compile.rs 4474
 file-lines crates/quench-runtime/src/compile/ast.rs 1310
 file-lines crates/quench-runtime/src/compile/ast/call.rs 709
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 993
-file-lines crates/quench-runtime/src/compile/ast/expression.rs 987
+file-lines crates/quench-runtime/src/compile/ast/expression.rs 980
 file-lines crates/quench-runtime/src/compile/ast/statement.rs 857
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2031
@@ -1461,14 +1460,14 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 5122
+file-lines crates/quench-runtime/src/vm/object.rs 5075
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 1015
 file-lines crates/quench-runtime/src/vm/object_get.rs 1518
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
 file-lines crates/quench-runtime/src/vm/object_static.rs 990
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
-file-lines crates/quench-runtime/src/vm/operations.rs 2735
+file-lines crates/quench-runtime/src/vm/operations.rs 2682
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
 file-lines crates/quench-runtime/src/vm/primitives.rs 728
 file-lines crates/quench-runtime/src/vm/program_store.rs 4219
@@ -3392,7 +3391,6 @@ function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::set_property_with_
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::set_receiver_proxy_data_property 52
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::update_property_attributes 58
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::walked_property_shape_slot 50
-function-lines crates/quench-runtime/src/vm/object.rs::derive_shape_lookup_index 47
 function-lines crates/quench-runtime/src/vm/object.rs::tests::native_only_field_probes_use_semantic_specialization_permission 59
 function-lines crates/quench-runtime/src/vm/object_array.rs::Vm<H>::define_array_length 97
 function-lines crates/quench-runtime/src/vm/object_array.rs::Vm<H>::define_array_property 73

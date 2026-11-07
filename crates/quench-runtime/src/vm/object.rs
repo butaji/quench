@@ -1,5 +1,6 @@
 use super::property_key::PropertyKey;
 use super::*;
+pub(super) use super::shape_lookup::derive_shape_lookup_index;
 use crate::value::HeapReference;
 
 #[cfg(all(test, feature = "aot"))]
@@ -174,54 +175,6 @@ mod shape_trace {
             eprintln!("  shape {count:>9} {label}");
         }
     }
-}
-
-pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
-    let mut entries = Vec::new();
-    let mut seen_keys = FxHashSet::default();
-    let mut seen_slots = FxHashSet::default();
-    let mut attributes = FxHashMap::default();
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        let shape = &shapes[id as usize];
-        match shape.transition {
-            ShapeTransition::Add {
-                key,
-                slot,
-                attributes: value,
-            } => {
-                if seen_keys.insert(key) {
-                    entries.push((key, slot));
-                }
-                if seen_slots.insert(slot) && value != DEFAULT_DATA_ATTRIBUTES {
-                    attributes.insert(slot, value.shape());
-                }
-            }
-            ShapeTransition::Delete { key, slot } => {
-                seen_keys.insert(key);
-                seen_slots.insert(slot);
-            }
-            ShapeTransition::Descriptor {
-                slot,
-                attributes: value,
-            } => {
-                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
-                    attributes.insert(slot, value);
-                }
-            }
-            ShapeTransition::FunctionName { .. }
-            | ShapeTransition::FunctionNameReconfigured
-            | ShapeTransition::FunctionLengthReconfigured
-            | ShapeTransition::Constructed { .. }
-            | ShapeTransition::Root
-            | ShapeTransition::Vacant
-            | ShapeTransition::Dictionary { .. } => {}
-        }
-        current = shape.parent();
-    }
-    entries.reverse();
-    entries.shrink_to_fit();
-    ShapeLookupIndex::new(entries, attributes)
 }
 
 /// What the inline field caches know about one read.
