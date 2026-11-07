@@ -35,10 +35,10 @@ fn run() -> Result<(), String> {
     if selected.is_empty() { return Err("stage range contains no stages".into()); }
     let mut summaries = Vec::new();
     for stage in selected {
-        
+        let files = discover_js_files(&stage.root)?.into_iter().filter(|file| stage.owns_file(file, &stages)).collect::<Vec<_>>();
         let stage_root = output.join(format!("stage-{}",stage.id));
         fs::create_dir(&stage_root).map_err(|e| e.to_string())?;
-        let files = discover_js_files(&stage.root)?.into_iter().filter(|file| stage.owns_file(file, &stages)).map(|path| {
+        let files = files.into_iter().map(|path| {
             let original = fs::read_to_string(&path).map_err(|e| e.to_string())?;
             Ok((path,TestMetadata::parse(&original)?))
         }).collect::<Result<Vec<_>,String>>()?;

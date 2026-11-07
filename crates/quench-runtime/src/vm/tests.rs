@@ -4905,7 +4905,10 @@ fn error_new_target_roots_release_after_prototype_success_and_throw() {
                     Native::SuppressedError => vec![cause, options, message],
                     _ => vec![message, options],
                 };
-                
+                let weak = args
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let constructor = vm.native_value(native);
@@ -4917,9 +4920,7 @@ fn error_new_target_roots_release_after_prototype_success_and_throw() {
                 let result = result.ok().map(|value| vm.heap.weak_handle(value).unwrap());
                 vm.collect_now(&program);
                 assert!(
-                    args
-                    .iter()
-                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    weak.into_iter()
                         .all(|value| vm.heap.weak_value(value).is_none())
                 );
                 if let Some(value) = result {
@@ -6471,7 +6472,10 @@ fn property_copy_roots_release_after_callback_completion() {
                     .array_elements(operands)
                     .map(|elements| elements.to_vec())
                     .expect("operands");
-                
+                let handles = args
+                    .iter()
+                    .map(|v| vm.heap.weak_handle(*v).unwrap())
+                    .collect::<Vec<_>>();
                 let excluded = if phase == "excluded" {
                     vec![vm.heap.alloc_string("first".into())]
                 } else {
@@ -6524,9 +6528,7 @@ fn property_copy_roots_release_after_callback_completion() {
                     );
                 }
                 vm.collect_now(&program);
-                for handle in args
-                    .iter()
-                    .map(|v| vm.heap.weak_handle(*v).unwrap()).chain(excluded_handles) {
+                for handle in handles.into_iter().chain(excluded_handles) {
                     assert!(vm.heap.weak_value(handle).is_none());
                 }
             }

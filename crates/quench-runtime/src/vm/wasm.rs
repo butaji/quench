@@ -2729,7 +2729,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::needless_collect, reason = "both function bodies need one operator iterator type")]
     fn compiled_wasm_indirect_call_spills_large_signature_arguments() {
         let signature = crate::WasmSignature {
             params: vec![crate::WasmType::I32; 9],

@@ -550,13 +550,13 @@ impl Engine {
         let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
-        
+        let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
         Self::erase_type_only_module_syntax(&mut parsed.program);
         let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
             let span = statement.span(); (span.start, span.end)
         }).collect();
         let has_module_declarations = parsed.program.body.iter().any(Statement::is_module_declaration);
-        let mut erased = parsed.program.body.iter().map(GetSpan::span).filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
+        let mut erased = spans.into_iter().filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
         if erased.peek().is_none() { return Some((source.into(), has_module_declarations)); }
         let mut projected = String::with_capacity(source.len());
         let mut cursor = 0;

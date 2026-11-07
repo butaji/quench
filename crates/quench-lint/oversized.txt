@@ -1278,7 +1278,7 @@ file-lines crates/quench-node/src/modules/crypto_node/keys.rs 1061
 file-lines crates/quench-node/src/modules/crypto_node/mod.rs 850
 file-lines crates/quench-node/src/modules/crypto_node/web.rs 1807
 file-lines crates/quench-node/src/modules/crypto_node/x509.rs 511
-file-lines crates/quench-node/src/modules/crypto_secret_job_shared_vm.rs 2461
+file-lines crates/quench-node/src/modules/crypto_secret_job_shared_vm.rs 2463
 file-lines crates/quench-node/src/modules/dgram_shared_vm.rs 1340
 file-lines crates/quench-node/src/modules/diagnostics_channel_shared_vm.rs 1009
 file-lines crates/quench-node/src/modules/dns_module_shared_vm.rs 1012
@@ -1493,7 +1493,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 516
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 732
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3361
-file-lines crates/quench-runtime/src/vm/tests.rs 24126
+file-lines crates/quench-runtime/src/vm/tests.rs 24128
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1158
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 1001
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1972
@@ -3722,7 +3722,7 @@ function-lines crates/quench-runtime/src/vm/tests.rs::dynamic_import_waiters_are
 function-lines crates/quench-runtime/src/vm/tests.rs::equality_roots_the_opposite_primitive_during_object_coercion 67
 function-lines crates/quench-runtime/src/vm/tests.rs::error_constructor_and_call_scopes_release_after_coercion 95
 function-lines crates/quench-runtime/src/vm/tests.rs::error_data_survives_collection_without_retaining_dead_errors 51
-function-lines crates/quench-runtime/src/vm/tests.rs::error_new_target_roots_release_after_prototype_success_and_throw 63
+function-lines crates/quench-runtime/src/vm/tests.rs::error_new_target_roots_release_after_prototype_success_and_throw 64
 function-lines crates/quench-runtime/src/vm/tests.rs::error_stack_setter_roots_release_after_each_completion 99
 function-lines crates/quench-runtime/src/vm/tests.rs::fallback_descriptor_edges_follow_their_owner_lifetime 50
 function-lines crates/quench-runtime/src/vm/tests.rs::finalization_unregister_does_not_match_a_reused_dead_token_slot 62
@@ -3826,7 +3826,7 @@ function-lines crates/quench-runtime/src/vm/tests.rs::pooled_frame_registers_are
 function-lines crates/quench-runtime/src/vm/tests.rs::promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation 45
 function-lines crates/quench-runtime/src/vm/tests.rs::promise_finally_restores_roots_after_each_effect_completion 68
 function-lines crates/quench-runtime/src/vm/tests.rs::promoted_locals_preserve_order_and_survive_collection 48
-function-lines crates/quench-runtime/src/vm/tests.rs::property_copy_roots_release_after_callback_completion 107
+function-lines crates/quench-runtime/src/vm/tests.rs::property_copy_roots_release_after_callback_completion 108
 function-lines crates/quench-runtime/src/vm/tests.rs::prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound 46
 function-lines crates/quench-runtime/src/vm/tests.rs::proved_element_records_keep_semantics_when_array_storage_changes 73
 function-lines crates/quench-runtime/src/vm/tests.rs::proxy_introspection_roots_release_after_nested_validation 184
@@ -4064,7 +4064,7 @@ function-lines crates/quench-runtime/src/wasm.rs::tests::serialized_float_rows_p
 function-lines crates/quench-runtime/src/wasm.rs::tests::serialized_i64_numeric_rows_execute_after_decoding 44
 function-lines crates/quench-runtime/src/wasm/atomic.rs::AtomicOperator::apply 57
 function-lines crates/quench-runtime/src/wasm/atomic.rs::super::Lowering<'_>::atomic_operator 48
-function-lines crates/quench-runtime/src/wasm/atomic.rs::tests::atomic_accesses_preserve_critical_sections_and_cross_memory_order 92
+function-lines crates/quench-runtime/src/wasm/atomic.rs::tests::atomic_accesses_preserve_critical_sections_and_cross_memory_order 94
 function-lines crates/quench-runtime/src/wasm/constant.rs::Engine::evaluate_wasm_constant_expression 66
 function-lines crates/quench-runtime/src/wasm/constant.rs::Engine::lower_wasm_constant_expression 120
 function-lines crates/quench-runtime/src/wasm/constant.rs::InitializerType::matches 50

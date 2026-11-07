@@ -955,13 +955,15 @@ pub(crate) fn digest_inventory(c: &mut Context<'_>, aliases: bool) -> Result<Roo
         }
         Ok(result)
     } else {
-        
-        let values = shared
+        let names = shared
             .borrow()
             .crypto_secret_jobs
             .digests
             .names()
             .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let values = names
+            .into_iter()
             .map(|name| c.string_rooted(&name))
             .collect::<Vec<_>>();
         c.array_rooted(&values)
