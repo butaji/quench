@@ -17,10 +17,8 @@ impl<H: Host> Vm<H> {
             )
         } else if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
             ((0..self.typed_array_length(object)?).collect(), false)
-        } else if let Some(length) = self.string_wrapper_length(object) {
-            ((0..length).collect(), false)
         } else {
-            return None;
+            ((0..self.string_wrapper_length(object)?).collect(), false)
         };
         let mut keys = indices
             .into_iter()
