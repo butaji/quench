@@ -115,18 +115,6 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_builtin_named(program, object, "keys", Native::ObjectKeys)?;
-        let native_for_in_keys = self.native_value(Native::ForInKeys);
-        self.global(
-            program,
-            crate::bytecode::FOR_IN_KEYS_BINDING,
-            native_for_in_keys,
-        )?;
-        let native_for_in_key_is_enumerable = self.native_value(Native::ForInKeyIsEnumerable);
-        self.global(
-            program,
-            crate::bytecode::FOR_IN_KEY_IS_ENUMERABLE_BINDING,
-            native_for_in_key_is_enumerable,
-        )?;
         let proxy = self.native_value(Native::Proxy);
         self.set_builtin_function_name(proxy, "Proxy")?;
         self.set_builtin_named(program, proxy, "revocable", Native::ProxyRevocable)?;

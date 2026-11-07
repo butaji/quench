@@ -94,6 +94,8 @@ setting! {
         Replay = "replay",
         RssPhases = "rss-phases",
         CodeResidency = "code-residency",
+        /// Whether a startup snapshot was restored, and why not.
+        StartupSnapshot = "startup-snapshot",
     }
 }
 

@@ -469,7 +469,7 @@ impl GenerationalPacing {
 /// How a runtime trades memory for speed (TOD-167): one choice per runtime, made at startup
 /// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
 /// host returns pages at collection boundaries (`Host::at_collection_boundary`),
-/// whether and how the loop tier compiles (`PolicyTiers::loop_opt_level`), whether the
+/// whether and how the loop tier compiles (`PolicyTiers::loop_tier`), whether the
 /// JavaScript function tiers compile (`PolicyTiers::js_function_tiers`), and how much IR a Wasm module's
 /// compile workers hold at once (`WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

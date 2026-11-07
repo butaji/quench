@@ -46,7 +46,7 @@ const MATH_FUNCTIONS: &[(&str, Native)] = &[
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
-    Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
+    Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectGroupBy,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -744,23 +744,12 @@ impl<H: Host> Vm<H> {
             crate::bytecode::ITERATOR_CLOSE_BINDING,
             native_iterator_close,
         )?;
-        self.global(program, "undefined", Value::UNDEFINED)?;
-        self.global(program, "NaN", Value::number(f64::NAN))?;
-        self.global(program, "Infinity", Value::number(f64::INFINITY))?;
-        for name in ["undefined", "NaN", "Infinity"] {
+        for (name, value) in immutable_globals() {
+            self.global(program, name, value)?;
             let atom = self.intern_atom(name);
-            self.set_property_attributes(
-                self.realm.globals,
-                property_key::PropertyKey::string(atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
+            self.set_property_attributes(self.realm.globals, property_key::PropertyKey::string(atom), PropertyAttributes {
+                writable: false, enumerable: false, configurable: false, accessor: false, getter: None, setter: None,
+            });
         }
         let native_print = self.native_value(Native::Print);
         self.global(program, "print", native_print)?;
@@ -1457,4 +1446,10 @@ mod math_function_tests {
             );
         }
     }
+}
+
+/// The global object's value properties that are neither writable nor configurable (ECMA-262 19.1): no global
+/// lexical declaration may shadow them (`HasRestrictedGlobalProperty`), so a read the global scope resolves is its constant.
+pub(crate) fn immutable_globals() -> [(&'static str, Value); 3] {
+    [("undefined", Value::UNDEFINED), ("NaN", Value::number(f64::NAN)), ("Infinity", Value::number(f64::INFINITY))]
 }

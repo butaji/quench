@@ -315,9 +315,8 @@ impl<H: Host> Vm<H> {
     ) -> impl Iterator<Item = (PropertyKey, Value)> + '_ {
         let object = self.object_data(holder);
         let named = object
-            .map(|object| self.shape_entries(object.shape()))
-            .unwrap_or(&[])
-            .iter()
+            .into_iter()
+            .flat_map(|object| self.shape_entries(object.shape()))
             .map(|(key, _)| *key);
         let indexed = object
             .filter(|object| object.has_indexed_descriptors())
