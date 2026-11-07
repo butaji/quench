@@ -768,7 +768,7 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_keeping
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_direct_callees 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_fields_fit 20
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_construct 17
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 23
+complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 43
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_native_value 21
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_pure_native 24
@@ -1380,7 +1380,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 714
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1053
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1691
-file-lines crates/quench-runtime/src/heap.rs 4836
+file-lines crates/quench-runtime/src/heap.rs 4814
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 873
 file-lines crates/quench-runtime/src/heap/cell.rs 4110
@@ -1423,7 +1423,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1353
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1972
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23620
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23598
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 965
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -3047,7 +3047,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_initialize_fi
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlined_activation 41
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 57
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_literal_value 49
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 140
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 116
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 259
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_materialize_leaf 60
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_memo_read 46

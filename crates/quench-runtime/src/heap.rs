@@ -25,6 +25,8 @@ mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
+mod inline_storage;
+use inline_storage::widen_inline_storage;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
@@ -3827,14 +3829,6 @@ impl Heap {
 
     /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
     /// values move to the arena. The caller has applied the write barrier.
-    #[cold]
-    fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
-        let (data, properties) = self
-            .object_and_arena_mut(object)
-            .expect("property owner is an object");
-        let length = properties.len(data.properties());
-        widen_inline_storage(data, properties, data.shape(), length, slot, value);
-    }
     #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
         &mut self,
@@ -4680,22 +4674,6 @@ fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id
     owners.push((start, record_id));
 }
 
-/// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
-/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
-fn widen_inline_storage(
-    data: &mut Object,
-    properties: &mut ValueArena,
-    shape: u32,
-    length: usize,
-    slot: usize,
-    value: Value,
-) {
-    let mut values = data.inline_properties().expect("inline storage");
-    values[slot] = value;
-    let moved = properties.with_values(shape, &values[..length]);
-    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], properties);
-    properties.release(previous);
-}
 
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.
