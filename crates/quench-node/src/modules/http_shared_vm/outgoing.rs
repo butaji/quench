@@ -388,7 +388,7 @@ pub(crate) fn initialize(c: &mut Context<'_>, this: RootId, options: RootId) -> 
     put(c, this, "_header", null)?;
     put_slot(c, this, Slot::OutHeaders, null)?;
     put_number(c, this, "_keepAliveTimeout", 0.0)?;
-    let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+    let nop = crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)?;
     put(c, this, "_onPendingData", nop)?;
     put_slot(c, this, Slot::Errored, null)?;
     let options_given = !is_nullish(c, options);
@@ -1078,7 +1078,7 @@ fn length_mismatch(c: &mut Context<'_>, written: f64, expected: f64) -> RootedEr
 
 /// `write_(msg, chunk, encoding, callback, fromEnd)`.
 fn write_chunk(c: &mut Context<'_>, this: RootId, chunk: RootId, encoding: RootId, callback: RootId, from_end: bool) -> Result<bool, RootedError> {
-    let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsics(c)?.nop };
+    let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)? };
     if is_null(c, chunk) {
         return Err(crate::modules::stream_shared_vm::errors::throw(
             c,
@@ -1191,7 +1191,7 @@ fn end(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
                 c,
                 crate::modules::stream_shared_vm::errors::StreamError::WriteAfterEnd,
             )?;
-            let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsics(c)?.nop };
+            let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)? };
             on_error(c, this, error, callback)?;
             return Ok(this);
         }

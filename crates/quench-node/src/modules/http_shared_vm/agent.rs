@@ -49,7 +49,7 @@ const SCHEDULINGS: [&str; 2] = ["fifo", "lifo"];
 use crate::modules::https_shared_vm::GLOBAL_TIMEOUT;
 
 pub(crate) fn build(c: &mut Context<'_>) -> Outcome {
-    let emitter = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Emitter);
+    let emitter = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Emitter))?;
     let class = super::constructor(c, Member::Construct, "Agent")?;
     crate::modules::stream_shared_vm::inherit(c, class, emitter)?;
     put_number(c, class, "defaultMaxSockets", f64::INFINITY)?;
@@ -238,7 +238,7 @@ fn construct(c: &mut Context<'_>, this: RootId, options: RootId) -> Outcome {
     if c.new_target_rooted().is_none() && !(c.is_object_rooted(this)? && c.instance_of_rooted(this, agent_class)?) {
         return c.construct_rooted(agent_class, agent_class, &[options]);
     }
-    let emitter = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Emitter);
+    let emitter = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Emitter))?;
     c.call_rooted(emitter, this, &[])?;
     let own = c.null_object_rooted()?;
     if c.is_object_rooted(options)? {
