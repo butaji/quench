@@ -137,8 +137,6 @@ vm/compiled/lane_unit.rs Move 6
 vm/compiled/lane_unit.rs Nop 2
 vm/compiled/lane_unit.rs Return 6
 vm/compiled/lane_unit.rs SetIndex 2
-vm/compiled/lane_unit.rs StoreEnvLocal 1
-vm/compiled/lane_unit.rs StoreLocal 1
 vm/compiled/lane_unit.rs Throw 3
 vm/compiled/lane_unit.rs Unary 1
 vm/compiled/osr_loop.rs Binary 18

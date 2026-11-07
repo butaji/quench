@@ -14,7 +14,7 @@ use program_shape::ParsedProgramShape;
 use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
 mod nested;
-pub(crate) use nested::{FirstCallScopes, ScopeLevel};
+pub(crate) use nested::{FirstCallScopes, FirstCalls, ScopeLevel};
 pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, free_names};
 
 impl ReplayViews {

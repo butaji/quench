@@ -14,6 +14,9 @@ pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
 /// One scope level a stub's function closes over: its bindings by name and slot.
 pub(crate) type ScopeLevel = Rc<[(Box<str>, u16)]>;
 
+/// Nested first-call stubs by id, each with the scopes its chunk compiles against.
+pub(crate) type FirstCalls = Box<[(u32, Rc<FirstCallScopes>)]>;
+
 /// What a nested stub's chunk compiles its function against: the scopes it closes over,
 /// innermost first, and the strictness it inherits.
 #[derive(Debug)]

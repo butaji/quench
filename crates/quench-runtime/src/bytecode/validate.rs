@@ -1354,8 +1354,7 @@ mod tests {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
-            closure_reads: None,
-            first_calls: Box::default(),
+            closure_reads: None, first_calls: Box::default(),
         }
     }
 

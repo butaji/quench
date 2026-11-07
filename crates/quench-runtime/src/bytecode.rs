@@ -146,7 +146,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
     name.starts_with(HOME_BINDING_PREFIX)
         || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor};
+pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, reachable_from};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -3851,7 +3851,7 @@ pub struct ResidualProgram {
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
     /// The scopes each nested first-call stub's chunk compiles against, by stub id.
-    pub(crate) first_calls: FirstCalls,
+    pub(crate) first_calls: crate::compile::first_call::FirstCalls,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -4278,14 +4278,10 @@ impl ResidualProgram {
     }
 }
 mod binary;
-#[cfg(feature = "native-execution")]
-mod native_metadata;
-#[cfg(feature = "native-execution")]
-pub use native_metadata::NativeProgramNamespace;
+#[cfg(feature = "native-execution")] mod native_metadata;
+#[cfg(feature = "native-execution")] pub use native_metadata::NativeProgramNamespace;
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
-/// Nested first-call stubs by id, each with the scopes its chunk compiles against.
-pub(crate) type FirstCalls = Box<[(u32, std::rc::Rc<crate::compile::FirstCallScopes>)]>;
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
 #[cfg(test)]
