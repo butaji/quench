@@ -2443,10 +2443,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
         self.heap.release_root_scope_keeping(height, keep);
     }
-    pub(super) fn instantiate_global_declarations(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
+    pub(super) fn instantiate_global_declarations(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         if program.is_module() {
             return Ok(());
         }

@@ -1400,7 +1400,7 @@ file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 598
 file-lines crates/quench-runtime/src/value.rs 1031
 file-lines crates/quench-runtime/src/value_vec.rs 1484
-file-lines crates/quench-runtime/src/vm.rs 3809
+file-lines crates/quench-runtime/src/vm.rs 3808
 file-lines crates/quench-runtime/src/vm/array.rs 1232
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 668
@@ -1446,17 +1446,17 @@ file-lines crates/quench-runtime/src/vm/intl_relative.rs 611
 file-lines crates/quench-runtime/src/vm/iterators.rs 3576
 file-lines crates/quench-runtime/src/vm/jit_backend/select.rs 679
 file-lines crates/quench-runtime/src/vm/js_compiled.rs 4544
-file-lines crates/quench-runtime/src/vm/json.rs 2730
-file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 550
+file-lines crates/quench-runtime/src/vm/json.rs 2372
+file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
 file-lines crates/quench-runtime/src/vm/native_graph.rs 974
 file-lines crates/quench-runtime/src/vm/native_object.rs 608
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 5065
+file-lines crates/quench-runtime/src/vm/object.rs 5058
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 990
 file-lines crates/quench-runtime/src/vm/object_get.rs 1518
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
-file-lines crates/quench-runtime/src/vm/object_static.rs 926
+file-lines crates/quench-runtime/src/vm/object_static.rs 925
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2682
@@ -1481,7 +1481,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 516
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 732
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3361
-file-lines crates/quench-runtime/src/vm/tests.rs 26580
+file-lines crates/quench-runtime/src/vm/tests.rs 26549
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1146
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 964
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1970
@@ -2715,7 +2715,7 @@ function-lines crates/quench-runtime/src/value_vec/buffer.rs::PropertyBuffer::sh
 function-lines crates/quench-runtime/src/vm.rs::Vm<H>::call_prepared 59
 function-lines crates/quench-runtime/src/vm.rs::Vm<H>::call_value_with_target_inner 76
 function-lines crates/quench-runtime/src/vm.rs::Vm<H>::initialize_shared 184
-function-lines crates/quench-runtime/src/vm.rs::Vm<H>::instantiate_global_declarations 125
+function-lines crates/quench-runtime/src/vm.rs::Vm<H>::instantiate_global_declarations 122
 function-lines crates/quench-runtime/src/vm.rs::Vm<H>::report_execution 45
 function-lines crates/quench-runtime/src/vm.rs::Vm<H>::report_memory 97
 function-lines crates/quench-runtime/src/vm.rs::Vm<H>::report_memory_snapshot 146
@@ -3311,7 +3311,6 @@ function-lines crates/quench-runtime/src/vm/js_compiled.rs::numeric_capture_cand
 function-lines crates/quench-runtime/src/vm/js_compiled.rs::numeric_find_candidate 153
 function-lines crates/quench-runtime/src/vm/js_compiled.rs::string_hash_loop_shape 107
 function-lines crates/quench-runtime/src/vm/js_compiled.rs::string_transform_candidate 47
-function-lines crates/quench-runtime/src/vm/json.rs::JsonHeapBuilder<'v,H>::advance 41
 function-lines crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::number 81
 function-lines crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 92
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_enumerable_keys 55
