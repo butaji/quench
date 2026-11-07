@@ -913,6 +913,7 @@ fn rewrite_once(
     let analysis = has_pair
         .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
         .flatten();
+    let (mut transfers, live) = analysis.map_or((None, None), |CodeLiveness { transfers, live, successors }| (Some(transfers), Some((live, successors))));
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
@@ -925,8 +926,11 @@ fn rewrite_once(
     let positions = std::cell::OnceCell::new();
     let positions = || positions.get_or_init(|| function.source_positions.iter().collect::<Vec<_>>()).as_slice();
     let mut code = Vec::with_capacity(old.len());
-    // The old instruction each new one is, or `None` for a pair's replacement.
-    let mut kept = Vec::with_capacity(old.len());
+    // A kept instruction keeps its transfer masks, which name registers and not positions, and
+    // moves to a pc no later than its old one, so the masks move down in place; only a pair's
+    // replacement, at these pcs, derives its own (mandreel `global_init`: a second table of
+    // 20 MB at a cold load's peak).
+    let mut replaced = Vec::new();
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
     let mut changed = false;
@@ -946,11 +950,11 @@ fn rewrite_once(
                 rules.peek()?;
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
-                let analysis = analysis.as_ref()?;
+                let (live, successors) = live.as_ref()?;
                 let original_definitions =
                     liveness::definitions(first.as_wide(), superinstructions)
                         | liveness::definitions(second.as_wide(), superinstructions);
-                let live_out = liveness::live_out(&analysis.successors, &analysis.live, index + 1);
+                let live_out = liveness::live_out(successors, live, index + 1);
                 rules.find_map(|rule| {
                     let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                     let removed_definitions = original_definitions
@@ -960,24 +964,25 @@ fn rewrite_once(
             });
         if let Some(instruction) = rewritten {
             map[index + 1] = code.len();
+            replaced.push(code.len());
             code.push(instruction);
-            kept.push(None);
             index += 2;
             changed = true;
         } else {
+            transfers.iter_mut().for_each(|transfers| transfers[code.len()] = transfers[index]);
             code.push(old[index]);
-            kept.push(Some(index));
             index += 1;
         }
     }
     map[old.len()] = code.len();
     if !changed {
         function.code = old;
-        if let Some(analysis) = analysis {
-            *current = Some(CodeFacts::Live(analysis));
+        if let (Some(transfers), Some((live, successors))) = (transfers, live) {
+            *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
         }
         return false;
     }
+    drop(live);
     relocate(
         &mut code,
         &mut function.wide,
@@ -989,23 +994,13 @@ fn rewrite_once(
         &old,
     );
     function.code = code;
-    // A kept instruction keeps its transfer masks, which name registers and not positions;
-    // only a replacement's are derived.
-    *current = analysis.map(|analysis| {
-        CodeFacts::Transfers(
-            kept.iter()
-                .enumerate()
-                .map(|(pc, kept)| match kept {
-                    Some(old_pc) => analysis.transfers[*old_pc],
-                    None => liveness::transfer(
-                        fixed_width(function.code[pc], &function.wide),
-                        methods,
-                        field_sites.as_slice(),
-                        superinstructions,
-                    ),
-                })
-                .collect(),
-        )
+    *current = transfers.map(|mut transfers| {
+        transfers.truncate(function.code.len());
+        for pc in replaced {
+            let replacement = fixed_width(function.code[pc], &function.wide);
+            transfers[pc] = liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
+        }
+        CodeFacts::Transfers(transfers)
     });
     true
 }

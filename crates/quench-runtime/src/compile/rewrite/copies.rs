@@ -79,7 +79,7 @@ impl Scope {
 /// The pcs of `function` some handler covers, from one sweep over the handlers.
 fn handled_pcs(function: &BcFunction) -> crate::bitset::BitSet {
     let mut handled = crate::bitset::BitSet::new(function.code.len());
-    crate::bytecode::for_each_covering_handler(&function.handlers, 0..function.code.len(), |pc, covering| {
+    crate::bytecode::Handler::for_each_covering(&function.handlers, 0..function.code.len(), |pc, covering| {
         if !covering.is_empty() {
             handled.insert(pc);
         }

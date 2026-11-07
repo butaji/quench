@@ -3981,55 +3981,6 @@ impl<H: Host> Vm<H> {
         Some(slot)
     }
 
-    /// One admitted Number store/update across packed and arena layouts. A
-    /// representation or dependency change declines before any value is stored.
-    pub(super) fn cached_number_field_update(
-        &mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16,
-        value: Value, update: Option<(super::operations::NumberBitwise, i32)>,
-    ) -> Option<()> {
-        debug_assert!(value.as_number().is_some());
-        let record = object.direct_object_index()?;
-        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
-        let value = if let Some((operation, right)) = update {
-            // SAFETY: the admitted own slot exists outside dictionary storage.
-            // No guest operation, allocation or collection intervenes.
-            let left = unsafe { self.heap.property_get_flat(self.heap.object_record_by_id(record), slot) }.as_int()?;
-            super::operations::number_bitwise_result(operation, left, right)
-        } else { value };
-        // SAFETY: the same admission owns this write. Numbers need no reference
-        // barrier; PreserveNative retires changed dependencies and declines
-        // before a value write or physical widening, using the shared store rule.
-        unsafe { self.heap.record_property_set_flat::<false>(record, slot, value,
-            crate::heap::PropertyStoreLayout::PreserveNative) }.then_some(())
-    }
-
-    /// Increment or decrement a cached own writable Number field without
-    /// falling through the ordinary get/coerce/set bytecodes. The successful
-    /// own-field load and strict-store caches prove the shape, data descriptor,
-    /// and writability; the value is checked as Number before the store helper
-    /// runs. Any miss leaves guest-visible state untouched.
-    #[inline(always)]
-    pub(super) fn cached_field_increment_hit(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        atom: Atom,
-        read_site: u16,
-        write_site: u16,
-        decrement: bool,
-    ) -> bool {
-        let Some(old) = self.primary_own_field_hit(p, object, read_site) else {
-            return false;
-        };
-        let Some(number) = old.as_number() else {
-            return false;
-        };
-        let next = Value::number(if decrement { number - 1.0 } else { number + 1.0 });
-        // A matching successful strict store cache proves this same shape has an own
-        // writable data property at the field slot. The store helper rechecks that guard.
-        self.cached_field_store_hit(p, object, atom, next, write_site)
-    }
-
     /// A cached own-data store or a cached property add to an ordinary object: neither runs
     /// guest code nor throws, so the dispatch loop's fast match completes both.
     #[inline(always)]
@@ -4864,25 +4815,34 @@ impl<H: Host> Vm<H> {
             }
         };
         let mut next = self.append_shape(shape, transition, next_storage_len);
-        if matches!(transition, ShapeTransition::Add { .. })
-            && self.shapes[next as usize].dictionary_trigger.is_none()
-            && next_storage_len > FIELD_CACHE_SLOT_CAPACITY
-        {
-            next = self.append_shape(
-                next,
-                ShapeTransition::Dictionary {
-                    trigger: DictionaryTrigger::PropertyCount,
-                },
-                next_storage_len,
-            );
-            self.profile
-                .dictionary_transition(DictionaryTrigger::PropertyCount);
+        // The dictionary shape stands for the transition in the cache (`shape_transitions::origin`),
+        // so every object taking it shares one dictionary shape and the transitions out of it.
+        if let Some(trigger) = self.dictionary_step(next, transition) {
+            next = self.append_shape(next, ShapeTransition::Dictionary { trigger }, next_storage_len);
+            self.profile.dictionary_transition(trigger);
         }
         if let Some(key) = key {
             self.transitions.insert(&self.shapes, shape, key, next);
             self.shapes[shape as usize].last_child.set(next);
         }
         next
+    }
+    /// The dictionary mode `transition`, which made `shape`, leads into: past the property
+    /// count field caches address, or once more of its slots are vacated than hold properties.
+    /// Its storage is then mostly holes, and add-and-delete churn (an object used as a map)
+    /// would otherwise grow its shape chain without bound.
+    fn dictionary_step(&self, shape: u32, transition: ShapeTransition) -> Option<DictionaryTrigger> {
+        let entry = &self.shapes[shape as usize];
+        let storage_len = entry.storage_len();
+        match transition {
+            _ if entry.dictionary_trigger.is_some() => None,
+            ShapeTransition::Add { .. } => (storage_len > FIELD_CACHE_SLOT_CAPACITY).then_some(DictionaryTrigger::PropertyCount),
+            ShapeTransition::Delete { .. } => {
+                let vacated = storage_len - self.shape_entry_count(shape);
+                (vacated > storage_len - vacated).then_some(DictionaryTrigger::DeletionPattern)
+            }
+            _ => None,
+        }
     }
     /// The shape an object of `shape` had before `shape` added `key` at `slot`, its last slot,
     /// when deleting `key` can return the object to it: a plain add from an ordinary shape,
@@ -4930,34 +4890,8 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_key(key);
             return;
         }
-        let next_id = self.append_cached_shape_transition(
-            shape,
-            ShapeTransition::Delete {
-                key,
-                slot: slot as u32,
-            },
-        );
-        // An object keeps a shape, which caches serve, until more of its slots are vacated
-        // than hold properties: its storage is then mostly holes, and add-and-delete churn
-        // (an object used as a map) would otherwise grow its shape chain without bound.
-        let storage_len = self.shapes[next_id as usize].storage_len();
-        let vacated = storage_len - self.shape_entry_count(next_id);
-        let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none()
-            && vacated > storage_len - vacated
-        {
-            let dictionary_shape = self.append_shape(
-                next_id,
-                ShapeTransition::Dictionary {
-                    trigger: DictionaryTrigger::DeletionPattern,
-                },
-                storage_len,
-            );
-            self.profile
-                .dictionary_transition(DictionaryTrigger::DeletionPattern);
-            dictionary_shape
-        } else {
-            next_id
-        };
+        let next_id =
+            self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
         self.heap.set_object_shape(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);

@@ -1,14 +1,3 @@
-/// glibc starts serving allocations of this size and larger with their own mappings, and
-/// raises the threshold each time such a mapping is freed, after which large allocations stay
-/// in the heap and remain resident once freed. Pinning glibc's initial threshold keeps a freed
-/// large allocation (a module's source, a compiler arena) returned to the system.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-const MMAP_THRESHOLD_BYTES: libc::c_int = 128 * 1024;
-
-/// The glibc tunable that, when set, already fixes the threshold.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-const MMAP_THRESHOLD_VARIABLE: &str = "MALLOC_MMAP_THRESHOLD_";
-
 /// glibc's per-thread cache keeps freed small chunks out of its bins, where they neither merge
 /// with free neighbours nor serve other sizes, so the heap grows past them; it is turned off
 /// (V8-v7 max RSS, static x86_64, 2026-10-18: RegExp 7344 -> 6868-7056 KiB, Crypto 3372 ->
@@ -96,42 +85,12 @@ static LIMIT_THREAD_CACHE: extern "C" fn(
     *mut *mut libc::c_char,
 ) = limit_thread_cache;
 
-/// Runs from `.init_array`, before the Rust runtime and `main`: from here on a fault on the
-/// read-only file mappings maps only the touched page, and the pages the C runtime's start
-/// faulted in with their neighbours are released.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-extern "C" fn fault_only_touched_pages() {
-    quench_node::host::resident_pages::phase_peak("load");
-    quench_node::host::resident_pages::map_touched_pages_only();
-    quench_node::host::resident_pages::release_read_only_pages();
-    quench_runtime::set_compile_phase_boundary(quench_node::host::resident_pages::at_compile_phase);
-}
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-#[used]
-#[unsafe(link_section = ".init_array")]
-static FAULT_ONLY_TOUCHED_PAGES: extern "C" fn() = fault_only_touched_pages;
-
-/// Reports the last phase's peak at exit (`resident_pages::phase_peak`).
-extern "C" fn report_exit_peak() {
-    quench_node::host::resident_pages::phase_peak("run to exit");
-}
+quench_node::install_process_start!();
 
 fn main() -> std::process::ExitCode {
-    // SAFETY: registers a handler that only reads and writes this process's proc files.
-    unsafe { libc::atexit(report_exit_peak) };
-    #[cfg(target_os = "linux")]
-    if let Err(error) = quench_node::shared_run::initialize_cli_process_signals() {
-        eprintln!("initialize CLI process signals: {error}");
+    if let Err(error) = quench_node::host::process_start::begin_main() {
+        eprintln!("{error}");
         return std::process::ExitCode::FAILURE;
-    }
-
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    if std::env::var_os(MMAP_THRESHOLD_VARIABLE).is_none() {
-        // SAFETY: mallopt only adjusts allocator parameters; no allocation is in flight.
-        unsafe {
-            libc::mallopt(libc::M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES);
-        }
     }
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     let result = if arguments.first().is_some_and(|argument| argument == "compile") {

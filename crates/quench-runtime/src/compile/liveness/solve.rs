@@ -118,7 +118,7 @@ pub(crate) fn add_suspended_exception_roots<M: LiveMask>(function: &Function, li
         .enumerate()
         .filter(|(_, instruction)| resumes_into_handler(instruction.op()))
         .map(|(pc, _)| pc);
-    crate::bytecode::for_each_covering_handler(&function.handlers, resumptions, |pc, covering| {
+    crate::bytecode::Handler::for_each_covering(&function.handlers, resumptions, |pc, covering| {
         for index in covering {
             let handler_live = live[function.handlers[*index].target as usize];
             live[pc + 1] |= handler_live;

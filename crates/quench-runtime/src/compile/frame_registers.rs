@@ -180,11 +180,7 @@ pub(super) fn promote<'a>(
         }
     }
     by_name.sort_unstable(); by_name.dedup();
-    for (slot, local) in function.local_atoms.iter().enumerate() {
-        if by_name.binary_search(local).is_ok() {
-            exclude(slot);
-        }
-    }
+    function.local_atoms.iter().enumerate().filter(|(_, local)| by_name.binary_search(local).is_ok()).for_each(|(slot, _)| exclude(slot));
     // New registers follow the existing ones while liveness still covers the function and
     // operands can name them. A function whose registers already outnumber what liveness
     // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain

@@ -111,7 +111,7 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     // this root in the legacy space so those paths remain covered.
     let root = heap.alloc(Cell::Set {
         object: Box::new(plain_object()),
-        entries: children.clone().into(),
+        entries: CollectionEntries::from_hashed(children.iter().map(|&child| (child, 0))).into(),
     });
 
     heap.collect([root]);
@@ -946,12 +946,9 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let external = heap.alloc(Cell::WasmExtern(value));
     let descriptor = heap.alloc(Cell::WasmBits64(!bits));
     let owner = heap.alloc(Cell::WasmGc {
-        declarations: Box::new(declarations),
+        declarations,
         ty: 0,
-        fields: Box::new(WasmGcFields {
-            values: vec![external],
-            descriptor: Some(descriptor),
-        }),
+        fields: WasmGcFields::try_new(1, Some(descriptor), |_| Some(external)).unwrap(),
     });
     let tag = heap.alloc(Cell::WasmTag { object: Box::new(plain_object()), declarations: crate::WasmTypes::default(), ty: 0 });
     let exception = heap.alloc(Cell::WasmException {
@@ -1298,7 +1295,7 @@ fn promoted_cells_remember_their_young_children() {
         |heap| {
             heap.alloc(Cell::Set {
                 object: Box::new(plain_object()),
-                entries: Vec::<Value>::new().into(),
+                entries: Default::default(),
             })
         },
         |heap| heap.alloc(Cell::Error("young child".into())),

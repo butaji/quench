@@ -95,28 +95,30 @@ pub(crate) enum ControlEdge {
     Handler,
 }
 
-/// Visits each of the ascending `pcs` with the indices of the handlers covering it, in table
-/// order. One sweep over the handlers in order of their starts, so a function with many try
-/// statements costs its pcs plus its handlers times their nesting, not its whole handler
-/// table at every pc.
-pub(crate) fn for_each_covering_handler(
-    handlers: &[super::Handler],
-    pcs: impl IntoIterator<Item = usize>,
-    mut visit: impl FnMut(usize, &[usize]),
-) {
-    let mut order = (0..handlers.len()).collect::<Vec<_>>();
-    order.sort_by_key(|&index| handlers[index].start);
-    let mut pending = order.into_iter().peekable();
-    let mut active = Vec::<usize>::new();
-    for pc in pcs {
-        let at = pc_index(pc);
-        active.retain(|&index| handlers[index].end > at);
-        while let Some(index) = pending.next_if(|&index| handlers[index].start <= at) {
-            if handlers[index].end > at {
-                active.insert(active.partition_point(|&other| other < index), index);
+impl super::Handler {
+    /// Visits each of the ascending `pcs` with the indices of the handlers covering it, in table
+    /// order. One sweep over the handlers in order of their starts, so a function with many try
+    /// statements costs its pcs plus its handlers times their nesting, not its whole handler
+    /// table at every pc.
+    pub(crate) fn for_each_covering(
+        handlers: &[Self],
+        pcs: impl IntoIterator<Item = usize>,
+        mut visit: impl FnMut(usize, &[usize]),
+    ) {
+        let mut order = (0..handlers.len()).collect::<Vec<_>>();
+        order.sort_by_key(|&index| handlers[index].start);
+        let mut pending = order.into_iter().peekable();
+        let mut active = Vec::<usize>::new();
+        for pc in pcs {
+            let at = pc_index(pc);
+            active.retain(|&index| handlers[index].end > at);
+            while let Some(index) = pending.next_if(|&index| handlers[index].start <= at) {
+                if handlers[index].end > at {
+                    active.insert(active.partition_point(|&other| other < index), index);
+                }
             }
+            visit(pc, &active);
         }
-        visit(pc, &active);
     }
 }
 
@@ -130,7 +132,7 @@ fn handler_successors(handler: &super::Handler, successor: &mut impl FnMut(usize
 }
 
 /// Every instruction's successors, normally or through a handler covering it, listed once
-/// for a pass over the whole function (`for_each_covering_handler`). `pc + 1` stands for the
+/// for a pass over the whole function (`Handler::for_each_covering`). `pc + 1` stands for the
 /// function's end after its last instruction.
 pub(crate) struct Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
@@ -147,7 +149,7 @@ impl Successors {
             targets: Vec::with_capacity(instructions.len()),
             edges: Vec::with_capacity(instructions.len()),
         };
-        for_each_covering_handler(handlers, 0..instructions.len(), |pc, covering| {
+        super::Handler::for_each_covering(handlers, 0..instructions.len(), |pc, covering| {
             table.starts.push(pc_index(table.targets.len()));
             let mut push = |target, edge| {
                 table.targets.push(pc_index(target));

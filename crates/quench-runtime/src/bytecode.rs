@@ -146,9 +146,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
     name.starts_with(HOME_BINDING_PREFIX)
         || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{
-    ControlEdge, Successors, branch_table_entries, for_each_covering_handler, for_each_instruction_successor,
-};
+pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -4096,14 +4094,9 @@ impl ResidualProgram {
             .register_roots
             .masks
             .get_or_init(|| {
-                crate::compile::liveness::analyze(
-                    function,
-                    self,
-                    &self.field_sites,
-                    &self.superinstructions,
-                )
-                .map(|masks| std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks)))
-                .expect("a covered function's liveness is derivable")
+                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                    .map(std::rc::Rc::new)
+                    .expect("a covered function's liveness is derivable")
             });
         Some(masks)
     }
