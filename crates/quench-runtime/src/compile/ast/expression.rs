@@ -803,7 +803,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
-        if let Some(constant) = binding_time::binary(value) {
+        if let Some(constant) = self.static_binary(value) {
             return self.literal(constant);
         }
         if let Some(test) = self.typeof_test(value) {
@@ -815,11 +815,11 @@ impl FunctionCompiler<'_, '_> {
 
     /// The operands of `value`: a static one as a constant, a register local as itself.
     fn binary_operands(&mut self, value: &BinaryExpression<'_>) -> (Operand, Operand) {
-        let left = match binding_time::expression(&value.left) {
+        let left = match self.static_value(&value.left) {
             Some(constant) => self.constant_operand(constant),
             None => Operand::register(self.expression(&value.left)),
         };
-        let right = if let Some(constant) = binding_time::expression(&value.right) {
+        let right = if let Some(constant) = self.static_value(&value.right) {
             self.constant_operand(constant)
         } else if let Expression::Identifier(identifier) = &value.right
             && let Some(operand) = self.local_operand(identifier.name.as_str())
