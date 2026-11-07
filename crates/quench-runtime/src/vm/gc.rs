@@ -896,7 +896,7 @@ impl<H: Host> Vm<H> {
         // A hint names its prototype by record id, which an allocation may give another object
         // once this one is swept.
         for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {
-            hint.epoch = crate::heap::NO_CONSTANT_EPOCH;
+            hint.watch.retire();
         }
         self.realm.jobs.extend(
             finalization_jobs

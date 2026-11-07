@@ -23,7 +23,7 @@ use std::ptr::NonNull;
 pub(crate) const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
 /// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct InheritedFieldCache {
     pub(crate) receiver: u32,
     pub(crate) atom: crate::bytecode::Atom,
@@ -40,18 +40,15 @@ pub(crate) struct InheritedFieldCache {
     /// The receiver's prototype link the proof holds for, compared undecoded.
     pub(crate) proved_prototype: super::ProtoLink,
     pub(crate) proved_holder: Value,
-    /// What `answer` read under the current proof while the prototype value epoch was
-    /// `constant_epoch` (`heap::prototype_value_epoch`), which every change to a prototype's
-    /// layout or slot values advances: a use under that epoch reads it without the holder.
-    /// `NO_CONSTANT_EPOCH` before a read and once a walk proves the chain again.
+    /// The value a `Slot` answer read under the current proof, held while `constant_watch`
+    /// is published (`heap::watch_prototype_values` of the holder): a use then reads it
+    /// without the holder. `None` before a read and once a walk proves the chain again.
     pub(crate) constant: Value,
-    pub(crate) constant_epoch: u64,
+    pub(crate) constant_watch: Option<crate::heap::PrototypeValueWatch>,
     /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
-/// An `InheritedFieldCache::constant_epoch` no epoch reaches: the entry holds no constant.
-pub(crate) const NO_CONSTANT_EPOCH: u64 = u64::MAX;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.

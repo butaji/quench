@@ -15,7 +15,7 @@ mod modes;
 mod prototype_values;
 mod snapshot;
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
-pub(crate) use prototype_values::{prototype_value_epoch, prototype_value_epoch_address, subscribe_prototype_values};
+pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose

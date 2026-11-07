@@ -379,7 +379,6 @@ impl<H: Host> Vm<H> {
             field_cache_writes: _,
             megamorphic_fields: _,
             holder_hints: _,
-            prototype_value_epoch: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,

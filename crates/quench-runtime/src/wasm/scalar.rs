@@ -403,11 +403,15 @@ pub(crate) struct CallableImport {
     pub(crate) exact: bool,
 }
 
+mod interning;
+
 /// One signature pool; function indices project into its type-index domain.
 #[derive(Clone)]
 pub(crate) struct WasmSignatures {
     pub(crate) declarations: super::WasmTypes,
     types: Vec<CallableSignature>,
+    /// The type indices of `types`, by their declarations' fingerprints.
+    by_fingerprint: rustc_hash::FxHashMap<Option<u64>, Vec<u32>>,
     functions: Vec<u32>,
     imports: Vec<CallableImport>,
 }
@@ -422,6 +426,7 @@ impl WasmSignatures {
         let mut pool = Self {
             declarations: declarations.clone(),
             types: Vec::new(),
+            by_fingerprint: Default::default(),
             functions: Vec::new(),
             imports: imports
                 .iter()
@@ -488,21 +493,7 @@ impl WasmSignatures {
                 )
             }
         };
-        let index = self
-            .types
-            .iter()
-            .position(|ty| match (ty.declaration, declaration) {
-                (Some(left), Some(right)) => {
-                    self.declarations
-                        .equivalent(left as usize, &self.declarations, right as usize)
-                }
-                (None, None) => ty.shape == shape,
-                _ => false,
-            })
-            .unwrap_or_else(|| {
-                self.types.push(CallableSignature { declaration, shape });
-                self.types.len() - 1
-            });
+        let index = self.interned(declaration, shape);
         u32::try_from(index)
             .map_err(|_| crate::Diagnostic::unsupported(name, "too many Wasm signature facts"))
     }
