@@ -14076,7 +14076,7 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn shared_osr_stencil_sweeps_keep_program_order_results() {
+fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
     // A Gauss-Seidel sweep's row loop runs natively: each case reads what program order
     // reads, bit for bit: an odd last row, integral results,
     // signed zeros and NaN, an element whose `valueOf` runs (which restores the pair and

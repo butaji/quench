@@ -13660,18 +13660,25 @@ impl<H: Host> Vm<H> {
         let installed = self.programs.install_js_tier(program_id, function_id, compiled.clone(),
             artifact_failed && js_general_dispatch_acyclic_candidate(program, function));
         if let Some(compile_started) = compile_started {
-            let code_bytes = if installed { compiled.as_ref().map_or(0, |compiled| compiled.mapped_bytes()) } else { 0 };
-            self.programs.record_js_jit_compile(
-                program_id,
-                function_id,
-                u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                code_bytes,
-                installed,
-                if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection },
-            );
+            let rejection = if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection };
+            self.record_js_tier_compile(program_id, function_id, compile_started, compiled.as_deref().filter(|_| installed), rejection);
         }
         installed.then_some(())?;
         compiled
+    }
+
+    /// Records a compile for the diagnostics: its time, the installed code's size, and why
+    /// nothing was installed.
+    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32, started: std::time::Instant,
+        installed: Option<&CompiledJsFunction>, rejection: Option<&'static str>) {
+        self.programs.record_js_jit_compile(
+            program_id,
+            function_id,
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            installed.map_or(0, CompiledJsFunction::mapped_bytes),
+            installed.is_some(),
+            rejection,
+        );
     }
 
     /// The JavaScript tier's direct entry of a plain call of a same-program user function,
