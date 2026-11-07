@@ -12100,8 +12100,8 @@ impl<H: Host> Vm<H> {
                 leaf: (entry == CallEntry::Activates)
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
-                    // A leaf runs records the tier may claim after this first resolution.
-                    .filter(|_| !self.js_tier_runs())
+                    // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
+                    .filter(|_| !tier_may_claim)
                     // SAFETY: the program store keeps a derived view alive with its program.
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }

@@ -14009,12 +14009,7 @@ impl<H: Host> Vm<H> {
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return self.programs.js_jit_diagnostics_enabled();
         }
-        // A loop-free candidate shorter than a native entry's overhead
-        // (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper as the frameless activation itself.
-        let pays_in_lane = |body: &crate::bytecode::Function| {
-            body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
-        };
-        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_in_lane);
+        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
@@ -16555,6 +16550,11 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+/// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
+/// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
+pub(super) fn pays_native_entry(body: &crate::bytecode::Function) -> bool {
+    body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
+}
 
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
 /// artifact, held weakly so that the tier retiring it ends the direct run,
