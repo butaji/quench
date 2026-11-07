@@ -6,7 +6,7 @@
 use crate::bitset::BitSet;
 
 use super::{
-    ControlEdge, FieldLayout, Function, ImmediateRole, InstructionField, Op, Operand,
+    ControlEdge, Function, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Superinstruction, WideInstruction,
 };
 
@@ -192,10 +192,7 @@ impl BasicBlocks {
 /// The local slots `instruction` touches, in execution order.
 fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut access: impl FnMut(usize, Access)) {
     for &field in InstructionField::ALL {
-        if matches!(
-            instruction.op().field_layout(field),
-            FieldLayout::Operand | FieldLayout::NumericIndexOperand
-        ) {
+        if instruction.op().field_layout(field).holds_operand() {
             let operand = Operand(instruction.field_value(field));
             if operand.kind() == Some(OperandKind::Local) {
                 access(usize::from(operand.payload()), Access::Read);

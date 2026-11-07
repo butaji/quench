@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !matches!(i.op(), Op::Call | Op::CallArray)
+        if !i.op().is_ordinary_call()
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval

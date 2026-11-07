@@ -35,11 +35,7 @@ use super::osr_loop::LoopRegion;
 use crate::bytecode::{Op, Operand, OperandKind, Register, WideInstruction};
 use crate::value::ValueLayout;
 use super::super::operations::{NumberArithmetic, NumberRelation, NumberUnary};
-use cranelift_codegen::ir::{
-    self, InstBuilder, UserFuncName,
-    condcodes::{FloatCC, IntCC},
-    types,
-};
+use cranelift_codegen::ir::{self, InstBuilder, UserFuncName, condcodes::{FloatCC, IntCC}, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -282,6 +278,11 @@ pub(super) fn recognize(region: &LoopRegion) -> Option<Nest> {
     Recognizer::new(region)?.nest()
 }
 
+/// Whether a loop header instruction only names an invariant: a captured binding or a constant.
+fn loads_header_invariant(op: Op) -> bool {
+    matches!(op, Op::LoadCapture | Op::LoadConst)
+}
+
 struct Recognizer<'a> {
     region: &'a LoopRegion,
     instructions: &'a [WideInstruction],
@@ -313,7 +314,7 @@ impl<'a> Recognizer<'a> {
         let mut state: BTreeMap<Register, Symbol> = BTreeMap::new();
         let mut scratch = Program::default();
         let mut pc = header;
-        while matches!(self.at(pc)?.op(), Op::LoadCapture | Op::LoadConst) {
+        while loads_header_invariant(self.at(pc)?.op()) {
             self.execute(self.at(pc)?, &mut state, &mut scratch)?;
             pc += 1;
         }
@@ -406,7 +407,7 @@ impl<'a> Recognizer<'a> {
             inner_state.insert(*register, symbol);
         }
         let mut pc = inner_header;
-        while matches!(self.at(pc)?.op(), Op::LoadCapture | Op::LoadConst) {
+        while loads_header_invariant(self.at(pc)?.op()) {
             self.execute(self.at(pc)?, &mut inner_state, &mut body)?;
             pc += 1;
         }
@@ -567,11 +568,8 @@ impl<'a> Recognizer<'a> {
 
 /// The register an instruction of a nest writes.
 fn written_register(instruction: WideInstruction) -> Option<Register> {
-    matches!(
-        instruction.op(),
-        Op::LoadConst | Op::LoadCapture | Op::Move | Op::IncDec | Op::Binary | Op::Unary | Op::GetIndex
-    )
-    .then(|| instruction.result_register())
+    let op = instruction.op();
+    (loads_header_invariant(op) || matches!(op, Op::Move | Op::IncDec | Op::Binary | Op::Unary | Op::GetIndex)).then(|| instruction.result_register())
 }
 
 /// The registers an instruction of a nest reads.

@@ -285,7 +285,7 @@ node_api! {
             let value = env.value(value)?;
             let global = c.global_root().napi(env, c)?;
             let object = c.startup_data_property_rooted(global, "Object").ok_or(Status::GenericFailure)?;
-            if matches!(value_type(c, value)?, ValueType::Undefined | ValueType::Null) {
+            if value_type(c, value)?.is_nullish() {
                 let error = c.type_error_rooted("Cannot convert undefined or null to object").napi(env, c)?;
                 return Err(env.throw_value(c, error));
             }

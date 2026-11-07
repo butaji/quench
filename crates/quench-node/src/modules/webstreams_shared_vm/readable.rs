@@ -69,31 +69,7 @@ members!(Member, "webReadable", [
     FromSyncNext,
 ]);
 
-/// A readable stream's state.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum State {
-    Readable,
-    Closed,
-    Errored,
-}
-
-impl State {
-    fn from(value: f64) -> Self {
-        match value as u8 {
-            0 => Self::Readable,
-            1 => Self::Closed,
-            _ => Self::Errored,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Readable => "readable",
-            Self::Closed => "closed",
-            Self::Errored => "errored",
-        }
-    }
-}
+pub(crate) use super::states::ReadableState as State;
 
 /// The record fields of streams, readers, controllers and read requests.
 pub(crate) mod field {

@@ -180,10 +180,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     }
     if function.code.iter().any(|packed| {
         !packed.is_wide()
-            && matches!(
-                packed.as_wide().op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            )
+            && packed.as_wide().op().is_js_jump()
             || (packed.as_wide().op() == Op::Unary
                 && packed.as_wide().unary_operator()
                     == oxc_ast::ast::UnaryOperator::LogicalNot as u32)
@@ -471,10 +468,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
     builder.finalize(isa.frontend_config());
     let mut context = cranelift_codegen::Context::for_function(native);
     let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
+        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
         .ok()?;
     if !compiled.buffer.relocs().is_empty() {
         return None;
@@ -603,7 +597,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
     for packed in function.code.iter().copied() {
         let instruction = packed.as_wide();
         let op = instruction.op();
-        if matches!(op, Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+        if op.is_js_jump() {
             branch_seen = true;
             continue;
         }
@@ -864,10 +858,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
     if function.params != 0
         && function.code.iter().any(|packed| {
             !packed.is_wide()
-                && matches!(
-                    packed.as_wide().op(),
-                    Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-                )
+                && packed.as_wide().op().is_js_jump()
         })
     {
         // Parameter-backed branch regions still use their established entry
@@ -959,10 +950,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 | Op::Return
         ) {
             return None;
-        } else if matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-        ) {
+        } else if instruction.op().is_js_jump() {
             if usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc) {
                 // Loops stay in the OSR compiler; this function collects
                 // inputs only for acyclic native regions.
@@ -986,10 +974,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
     }
     let has_branches = function.code.iter().any(|packed| {
         !packed.is_wide()
-            && matches!(
-                packed.as_wide().op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            )
+            && packed.as_wide().op().is_js_jump()
     });
     if has_branches
         && inputs
@@ -1824,10 +1809,7 @@ pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
             return false;
         }
         let instruction = instruction.as_wide();
-        matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-        ) && usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc)
+        instruction.op().is_js_jump() && usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc)
     })
 }
 
@@ -2334,12 +2316,7 @@ pub(super) fn lower_number_domain_boolean_tree(
             }
             Op::Return => {
                 if instruction.result_flags() != 0
-                    || !matches!(
-                        state.registers.get(usize::from(instruction.register_a()))?,
-                        BranchValue::BooleanLiteral { .. }
-                            | BranchValue::BooleanFolded(_)
-                            | BranchValue::BooleanDynamic
-                    )
+                    || !branch_value_is_boolean(*state.registers.get(usize::from(instruction.register_a()))?)
                 {
                     return None;
                 }
@@ -2850,6 +2827,10 @@ fn branch_value_is_number(value: BranchValue) -> bool {
     matches!(value, BranchValue::Number | BranchValue::NumberConstant(_))
 }
 
+fn branch_value_is_boolean(value: BranchValue) -> bool {
+    matches!(value, BranchValue::BooleanLiteral { .. } | BranchValue::BooleanFolded(_) | BranchValue::BooleanDynamic)
+}
+
 fn branch_operand(
     program: &ResidualProgram,
     registers: &[BranchValue],
@@ -3068,6 +3049,12 @@ enum NumericFlowKind {
     Conflict,
 }
 
+impl NumericFlowKind {
+    fn is_numeric(self) -> bool {
+        matches!(self, NumericFlowKind::Number | NumericFlowKind::Boolean)
+    }
+}
+
 /// Compile pure numeric loops as Cranelift CFGs. Every backedge polls the
 /// VM's cancellation flag; an interrupted function has no guest-visible
 /// effects, so it safely resumes through the ordinary interpreter path.
@@ -3125,7 +3112,7 @@ fn compile_numeric_loop(
                     return None;
                 }
                 let source = *state.get(usize::from(instruction.register_b()))?;
-                if !matches!(source, NumericFlowKind::Number | NumericFlowKind::Boolean) {
+                if !source.is_numeric() {
                     return None;
                 }
                 *state.get_mut(usize::from(instruction.result_register()))? = source;
@@ -3137,7 +3124,7 @@ fn compile_numeric_loop(
                 }
                 let local = registers.checked_add(instruction.local_slot())?;
                 let kind = *state.get(local)?;
-                if !matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean) {
+                if !kind.is_numeric() {
                     return None;
                 }
                 *state.get_mut(usize::from(instruction.result_register()))? = kind;
@@ -3148,7 +3135,7 @@ fn compile_numeric_loop(
                     return None;
                 }
                 let source = *state.get(usize::from(instruction.register_a()))?;
-                if !matches!(source, NumericFlowKind::Number | NumericFlowKind::Boolean) {
+                if !source.is_numeric() {
                     return None;
                 }
                 let local = registers.checked_add(instruction.local_slot())?;
@@ -3214,10 +3201,7 @@ fn compile_numeric_loop(
             }
             Op::JumpFalse | Op::JumpTrue => {
                 let condition = *state.get(usize::from(instruction.register_a()))?;
-                if !matches!(
-                    condition,
-                    NumericFlowKind::Number | NumericFlowKind::Boolean
-                ) {
+                if !condition.is_numeric() {
                     return None;
                 }
                 let target = usize::try_from(instruction.jump_target()).ok()?;
@@ -3655,7 +3639,7 @@ fn numeric_flow_operand(
     match operand.kind()? {
         OperandKind::Register => {
             let kind = *state.get(usize::from(operand.register_index()?))?;
-            matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean).then_some(kind)
+            kind.is_numeric().then_some(kind)
         }
         OperandKind::Constant => matches!(
             program.constants.get(usize::from(operand.payload()))?,
@@ -3665,7 +3649,7 @@ fn numeric_flow_operand(
         OperandKind::Local => {
             let local = usize::from(operand.payload());
             let kind = *state.get(registers.checked_add(local)?)?;
-            matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean).then_some(kind)
+            kind.is_numeric().then_some(kind)
         }
         OperandKind::Field => None,
     }
@@ -4033,17 +4017,7 @@ fn merge_branch_value(left: BranchValue, right: BranchValue) -> BranchValue {
     if branch_value_is_number(left) && branch_value_is_number(right) {
         return BranchValue::Number;
     }
-    if matches!(
-        left,
-        BranchValue::BooleanLiteral { .. }
-            | BranchValue::BooleanFolded(_)
-            | BranchValue::BooleanDynamic
-    ) && matches!(
-        right,
-        BranchValue::BooleanLiteral { .. }
-            | BranchValue::BooleanFolded(_)
-            | BranchValue::BooleanDynamic
-    ) {
+    if branch_value_is_boolean(left) && branch_value_is_boolean(right) {
         return BranchValue::BooleanDynamic;
     }
     BranchValue::Unknown
@@ -4363,7 +4337,7 @@ fn wide_boolean_tree_candidate(function: &Function) -> bool {
     let mut has_forward_branch = false;
     function.code.iter().enumerate().all(|(pc, instruction)| {
         let op = instruction.as_wide().op();
-        has_forward_branch |= matches!(op, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse);
+        has_forward_branch |= op.is_js_conditional_jump();
         let supported = matches!(
             op,
             Op::LoadConst
@@ -4381,10 +4355,7 @@ fn wide_boolean_tree_candidate(function: &Function) -> bool {
                 | Op::Return
         );
         supported
-            && (!matches!(
-                op,
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.as_wide().jump_target())
+            && (!op.is_js_jump() || usize::try_from(instruction.as_wide().jump_target())
                 .is_ok_and(|target| target > pc))
     }) && has_forward_branch
 }
