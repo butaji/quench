@@ -2825,7 +2825,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::compile_built_functions
 function-lines crates/quench-runtime/src/vm/compiled.rs::compile_osr_region 43
 function-lines crates/quench-runtime/src/vm/compiled.rs::direct_reference_entry 55
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_cached_field_slot 160
-function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_dense_array_get 53
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_int32_arithmetic 62
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_own_field_get 51
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_own_field_set 44
