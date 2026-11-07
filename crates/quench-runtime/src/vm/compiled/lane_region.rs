@@ -33,6 +33,7 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/literals.rs"] mod literals;
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -1239,7 +1240,8 @@ pub(super) fn lower_body(
     allow_first_entry: bool,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
-    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
+    // A call-free loop enters at its header (its lowering asks a native back-edge); one that calls, where it inlines.
+    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry || !unit.instructions.iter().any(|instruction| matches!(instruction.op(), Op::Call | Op::CallArray | Op::Construct))).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads,
         vm, generic, direct, frame_captures, None, &*isa, Coverage::Osr(header), Completion::StatusAndPc, ElementViews::Dense));
     let first_entry = osr.is_none();
     let region = osr.or_else(|| allow_first_entry.then(|| lower(program, function_id, unit, helpers, fields,
@@ -1478,8 +1480,7 @@ pub(super) fn lower(
     }
     if coverage.selected_entry() {
         lowering.written = CompoundBitSet::with_capacity(count);
-        for (pc, instruction) in instructions.iter().copied().enumerate() {
-            if !lowering.facts.reached(pc) { continue; }
+        for instruction in instructions.iter().copied() {
             for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
         }
         // Backedge definitions choose a numeric entry signature. Conformance
@@ -2327,7 +2328,6 @@ impl Lowering<'_, '_> {
         (self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0), domain.ty())
     }
 
-
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
@@ -2583,8 +2583,8 @@ impl Lowering<'_, '_> {
                 let value = if instruction.op() == Op::MakeObject {
                     self.helper_call(LaneHelper::NewObject, &[payload])
                 } else {
-                    let length = self.ins().iconst(types::I64, instruction.array_length() as i64);
-                    self.helper_call(LaneHelper::NewArray, &[payload, length])
+                    let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
+                    self.helper_call(LaneHelper::NewArray, &[payload, length, elements])
                 };
                 let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, made, exit);

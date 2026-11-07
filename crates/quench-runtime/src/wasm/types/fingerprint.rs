@@ -9,9 +9,9 @@ use wasmparser::{CompositeInnerType, FieldType, HeapType, StorageType, SubType, 
 impl WasmTypes {
     /// The fingerprint of declaration `index`: its position and its group's shapes.
     pub(crate) fn fingerprint(&self, index: usize) -> Option<u64> {
-        let &(group, member) = self.members.get(index)?;
+        let &(group, member) = self.0.members.get(index)?;
         let mut hasher = rustc_hash::FxHasher::default();
-        (member, self.shapes[group as usize]).hash(&mut hasher);
+        (member, self.0.shapes[group as usize]).hash(&mut hasher);
         Some(hasher.finish())
     }
 }

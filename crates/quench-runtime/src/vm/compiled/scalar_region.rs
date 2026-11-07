@@ -436,7 +436,6 @@ mod tests {
             let (native, _) = lower_js_general_dispatch(
                 &program,
                 id as u32,
-                false,
                 &*isa,
                 JsGeneralCallout::Dynamic,
                 &plans,

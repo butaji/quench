@@ -46,14 +46,7 @@ impl<H: Host> Vm<H> {
     /// `error` with the callee named when it is the call paths' failure to call or construct
     /// the callee of the call at `pc` (`NOT_CALLABLE_MESSAGE`, `NOT_CONSTRUCTOR_MESSAGE`):
     /// the TypeError V8 throws there. Any other error is returned as it is.
-    pub(super) fn name_non_callable_callee(
-        &mut self,
-        program: &ResidualProgram,
-        frame: usize,
-        function: usize,
-        pc: u32,
-        error: super::JsError,
-    ) -> super::JsError {
+    pub(super) fn name_non_callable_callee(&mut self, program: &ResidualProgram, frame: usize, function: usize, pc: u32, error: super::JsError) -> super::JsError {
         let construct = if error.has_message(NOT_CALLABLE_MESSAGE) {
             false
         } else if error.has_message(NOT_CONSTRUCTOR_MESSAGE) {
@@ -70,14 +63,7 @@ impl<H: Host> Vm<H> {
     /// The message for calling (or, with `construct`, constructing) a non-callable callee at
     /// `pc` of `function`, the instruction `frame` runs: `None` when that instruction is not a
     /// call whose own callee is not callable, so the failure is from inside the call.
-    pub(super) fn non_callable_call_site_message(
-        &self,
-        program: &ResidualProgram,
-        frame: usize,
-        function: usize,
-        pc: u32,
-        construct: bool,
-    ) -> Option<String> {
+    pub(super) fn non_callable_call_site_message(&self, program: &ResidualProgram, frame: usize, function: usize, pc: u32, construct: bool) -> Option<String> {
         let instruction = program.function(function).instructions().nth(pc as usize)?;
         let callee = self.call_instruction_callee(program, frame, instruction, construct)?;
         let value = match callee {
@@ -104,13 +90,7 @@ impl<H: Host> Vm<H> {
         Some(rendered + template)
     }
 
-    fn call_instruction_callee(
-        &self,
-        program: &ResidualProgram,
-        frame: usize,
-        instruction: WideInstruction,
-        construct: bool,
-    ) -> Option<Callee> {
+    fn call_instruction_callee(&self, program: &ResidualProgram, frame: usize, instruction: WideInstruction, construct: bool) -> Option<Callee> {
         let register = |index: u16| self.frames.get(frame)?.registers.get(usize::from(index)).copied();
         if call_kind(instruction)? != construct { return None; }
         Some(match instruction.op() {
@@ -220,9 +200,25 @@ pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u3
 type CallSites = BTreeMap<(u32, bool), crate::bytecode::CallSiteDescription>;
 
 fn parse_call_sites(source: &str, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
-    let allocator = Allocator::with_capacity(source.len());
+    // A data script's literal holds no call, and its tree takes several times its text: it
+    // is parsed blank, as its compilation parses it (`data_literal`).
+    let located = (!goal.is_typescript()).then(|| crate::compile::data_literal::locate(source)).flatten();
+    match located {
+        Some(literal) => parse_call_sites_in(source, &literal.substituted, Some(literal.start), goal, found),
+        None => parse_call_sites_in(source, source, None, goal, found),
+    }
+}
+
+/// `parse_call_sites` of `source` parsed as `text`, which blanks the data literal at `blank`;
+/// a literal that is not a top-level value is parsed as it is.
+fn parse_call_sites_in(source: &str, text: &str, blank: Option<u32>, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
+    let allocator = Allocator::with_capacity(text.len());
     let options = ParseOptions { allow_return_outside_function: true, ..ParseOptions::default() };
-    let parsed = Parser::new(&allocator, source, goal).with_options(options).with_config(TokensParserConfig).parse();
+    let parsed = Parser::new(&allocator, text, goal).with_options(options).with_config(TokensParserConfig).parse();
+    if blank.is_some_and(|start| !crate::compile::data_literal::is_top_level_value(&parsed.program, start)) {
+        drop(parsed);
+        return parse_call_sites_in(source, source, None, goal, found);
+    }
     if crate::compile::stack::validate_parsed(&parsed).is_err() { return Err(found); }
     let mut finder = CallFinder { source, comments: &parsed.program.comments, found };
     finder.visit_program(&parsed.program);
