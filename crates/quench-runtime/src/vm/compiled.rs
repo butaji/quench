@@ -53,7 +53,7 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
-mod facts;
+pub(super) mod facts;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
@@ -1046,17 +1046,7 @@ fn read_js_tagged_operand(
             ))
         }
         OperandKind::Constant => {
-            let value = match program.constants.get(usize::from(operand.payload()))? {
-                crate::bytecode::Constant::Number(number) => Value::number(*number),
-                crate::bytecode::Constant::Boolean(boolean) => Value::boolean(*boolean),
-                crate::bytecode::Constant::Null => Value::NULL,
-                crate::bytecode::Constant::Undefined => Value::UNDEFINED,
-                crate::bytecode::Constant::String(_)
-                | crate::bytecode::Constant::StringUnits(_)
-                | crate::bytecode::Constant::BigInt(_)
-                | crate::bytecode::Constant::WasmBits64(_)
-                | crate::bytecode::Constant::WasmV128(_) => return None,
-            };
+            let value = facts::immediate(program.constants.get(usize::from(operand.payload()))?)?;
             Some(builder.ins().iconst(types::I64, value.to_bits() as i64))
         }
         OperandKind::Field | OperandKind::Local => None,

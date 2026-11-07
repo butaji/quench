@@ -124,7 +124,7 @@ fn register(operand: Operand) -> Option<Register> {
 
 /// The value a constant denotes where it is an immediate (no heap allocation): numbers,
 /// booleans, `null` and `undefined`.
-pub(super) fn immediate(constant: &Constant) -> Option<Value> {
+pub(in crate::vm) fn immediate(constant: &Constant) -> Option<Value> {
     match constant {
         Constant::Number(number) => Some(Value::number(*number)),
         Constant::Boolean(value) => Some(Value::boolean(*value)),
@@ -135,13 +135,13 @@ pub(super) fn immediate(constant: &Constant) -> Option<Value> {
 }
 
 /// A numeric constant is a static semantic value, regardless of machine view.
-pub(super) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
+pub(in crate::vm) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
     (operand.kind() == Some(OperandKind::Constant)).then_some(())?;
     constants.get(usize::from(operand.payload())).and_then(immediate).and_then(Value::as_number)
 }
 
 /// The semantic type of an operand, independent of its selected machine view.
-pub(super) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
+pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
         Some(OperandKind::Register) => register_type(operand.payload()),
         Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
@@ -159,7 +159,7 @@ fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
 }
 
 /// Whether an immediate is an int32 Number in its tagged encoding.
-pub(super) fn is_int32(value: Value) -> bool {
+pub(in crate::vm) fn is_int32(value: Value) -> bool {
     Type::immediate(value).is_subtype(Type::INT32)
 }
 
@@ -491,5 +491,25 @@ mod tests {
         assert!(facts.at(1).is_none());
         assert_eq!(facts.at(2), Some([].as_slice()));
         assert!(facts.types.is_empty());
+    }
+}
+
+/// Hand-written reads of a constant's immediate meaning in the Cranelift front-ends outside
+/// this module: each is a second home of `immediate` or `constant_number`. The counts only go
+/// down; a front-end reads constants through the facts.
+#[cfg(test)]
+#[test]
+fn constant_decodes_outside_the_facts_only_shrink() {
+    const DECODES: &[(&str, &str, usize)] = &[
+        ("vm/js_compiled.rs", include_str!("../js_compiled.rs"), 19),
+        ("vm/compiled.rs", include_str!("../compiled.rs"), 4),
+        ("vm/compiled/osr_loop.rs", include_str!("osr_loop.rs"), 0),
+        ("vm/compiled/lane_region.rs", include_str!("lane_region.rs"), 0),
+        ("vm/compiled/lane_unit.rs", include_str!("lane_unit.rs"), 0),
+    ];
+    for (file, source, allowed) in DECODES {
+        let found = source.matches("Constant::Number(").count();
+        assert!(found <= *allowed, "{file} decodes constants {found} times (allowed {allowed}): use `facts::immediate`");
+        assert!(found >= *allowed, "{file} now decodes constants {found} times: lower its allowance to {found}");
     }
 }
