@@ -891,7 +891,7 @@ complexity crates/quench-runtime/src/vm/number.rs::f64_to_half 11
 complexity crates/quench-runtime/src/vm/number.rs::math_numbers 15
 complexity crates/quench-runtime/src/vm/number.rs::math_unary_operation 37
 complexity crates/quench-runtime/src/vm/number.rs::parse_float 17
-complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 13
+complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 11
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::append_shape 16
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_getter 11
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_field_value 13
@@ -1461,7 +1461,7 @@ file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 668
 file-lines crates/quench-runtime/src/vm/array_modern.rs 924
 file-lines crates/quench-runtime/src/vm/atomics.rs 909
-file-lines crates/quench-runtime/src/vm/builtins.rs 1455
+file-lines crates/quench-runtime/src/vm/builtins.rs 1448
 file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 524
@@ -1505,7 +1505,7 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 798
 file-lines crates/quench-runtime/src/vm/native_object.rs 517
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 4996
+file-lines crates/quench-runtime/src/vm/object.rs 4979
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1462
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
@@ -3340,12 +3340,11 @@ function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 57
 function-lines crates/quench-runtime/src/vm/number.rs::math_numbers 41
 function-lines crates/quench-runtime/src/vm/number.rs::math_unary_operation 56
 function-lines crates/quench-runtime/src/vm/number.rs::parse_float 56
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 59
+function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 51
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_shape 63
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_store_hit 44
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_field_value 77
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::define_field_cached 47
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::delete_shape_property 57
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::field_miss_data_value 74
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::field_site_report 52
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::get_field_miss 43
