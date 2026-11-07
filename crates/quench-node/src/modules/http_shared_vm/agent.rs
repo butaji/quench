@@ -39,20 +39,19 @@ crate::modules::host_members::members!(Member, "httpAgent", [
 ]);
 
 /// Node's `Agent` option defaults.
-const DEFAULT_PORT: f64 = 80.0;
+pub(crate) const DEFAULT_PORT: f64 = 80.0;
 const DEFAULT_KEEP_ALIVE_MSECS: f64 = 1000.0;
 const DEFAULT_MAX_FREE_SOCKETS: f64 = 256.0;
 const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER: f64 = 1000.0;
-const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+use crate::modules::net_socket_options::MILLISECONDS_PER_SECOND;
 /// The schedulings a pool may hand out free sockets in.
 const SCHEDULINGS: [&str; 2] = ["fifo", "lifo"];
-/// `http.globalAgent`'s options (lib/_http_agent.js).
-const GLOBAL_TIMEOUT: f64 = 5000.0;
+use crate::modules::https_shared_vm::GLOBAL_TIMEOUT;
 
 pub(crate) fn build(c: &mut Context<'_>) -> Outcome {
     let emitter = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Emitter);
     let class = super::constructor(c, Member::Construct, "Agent")?;
-    super::inherit(c, class, emitter)?;
+    crate::modules::stream_shared_vm::inherit(c, class, emitter)?;
     put_number(c, class, "defaultMaxSockets", f64::INFINITY)?;
     let prototype = get(c, class, "prototype")?;
     let net = super::class(c, Class::Net)?;

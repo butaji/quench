@@ -35,15 +35,15 @@ members!(Member, "webPipe", [
 
 /// A pipe's state: Node's `readableStreamPipeTo` closure variables.
 mod field {
-    pub(super) const SOURCE: &str = "source";
+    pub(crate) use crate::modules::keys::SOURCE;
     pub(super) const DEST: &str = "dest";
-    pub(super) const READER: &str = "reader";
-    pub(super) const WRITER: &str = "writer";
+    pub(crate) use crate::modules::keys::READER;
+    pub(crate) use crate::modules::keys::WRITER;
     pub(super) const PREVENT_CLOSE: &str = "preventClose";
     pub(super) const PREVENT_ABORT: &str = "preventAbort";
-    pub(super) const PREVENT_CANCEL: &str = "preventCancel";
-    pub(super) const SIGNAL: &str = "signal";
-    pub(super) const LISTENER: &str = "listener";
+    pub(crate) use crate::modules::keys::PREVENT_CANCEL;
+    pub(crate) use crate::modules::keys::SIGNAL;
+    pub(crate) use crate::modules::keys::LISTENER;
     pub(super) const SHUTTING_DOWN: &str = "shuttingDown";
     pub(super) const CURRENT_WRITE: &str = "currentWrite";
     /// An `Promise.all` aggregate's fields.

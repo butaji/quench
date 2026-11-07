@@ -58,8 +58,8 @@ fn fresh_random_seed() -> u64 {
     use std::hash::BuildHasher as _;
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
-pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+pub(super) use crate::units::MAX_SAFE_INTEGER;
+pub(crate) use crate::bytecode::MAX_ARRAY_LENGTH;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 /// The values a call roots besides its arguments: the callee and the receiver.
 const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
@@ -220,7 +220,7 @@ mod sort;
 mod string;
 mod string_cache;
 mod string_extra;
-mod value_serializer;
+pub(crate) mod value_serializer;
 mod owned_clone_native;
 mod superinstruction;
 mod symbol;

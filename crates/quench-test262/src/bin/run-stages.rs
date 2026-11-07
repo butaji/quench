@@ -14,7 +14,7 @@ use std::{
 use quench_test262::ratchet::{relative_test_path, PassSet, DEFAULT_RATCHET};
 use quench_test262::waivers::{Adjudication, Waivers};
 use quench_test262::{
-    discover_js_files, resolve_stages, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome,
+    discover_js_files, required_timeout_ms, resolve_stages, worker_jobs, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome,
 };
 use wait_timeout::ChildExt;
 
@@ -50,7 +50,7 @@ fn main() -> ExitCode {
             .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(run_test_worker)
         {
-            Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
+            Ok(worker) => worker.join().unwrap_or_else(|_| ExitCode::from(1)),
             Err(error) => {
                 eprintln!("FAIL: test worker thread: {error}");
                 ExitCode::from(1)
@@ -438,16 +438,6 @@ fn write_outcome_report(
     .map_err(|error| error.to_string())
 }
 
-fn required_timeout_ms() -> Result<u64, String> {
-    env::var("TEST262_TEST_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|timeout_ms| *timeout_ms > 0)
-        .ok_or_else(|| {
-            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".into()
-        })
-}
-
 fn run_test_worker() -> ExitCode {
     let Some(path) = env::args_os().nth(2).map(PathBuf::from) else {
         eprintln!("FAIL: --test-worker requires a test path");
@@ -574,13 +564,4 @@ fn run_batch(
             })
         })
         .collect()
-}
-
-fn worker_jobs() -> usize {
-    env::var("TEST262_JOBS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|jobs| *jobs > 0)
-        .or_else(|| thread::available_parallelism().ok().map(usize::from))
-        .unwrap_or(1)
 }

@@ -432,9 +432,9 @@ fn create(c: &mut Context<'_>, parent: NodeId, kind: Kind, forced: Override, arg
         }
     };
     let skip = option(c, "skip")?;
-    let skip = directive_option(c, skip)?.or((forced == Override::Skip).then(String::new));
+    let skip = directive_option(c, skip)?.or_else(|| (forced == Override::Skip).then(String::new));
     let todo = option(c, "todo")?;
-    let todo = directive_option(c, todo)?.or((forced == Override::Todo).then(String::new));
+    let todo = directive_option(c, todo)?.or_else(|| (forced == Override::Todo).then(String::new));
     let only = option(c, "only")?;
     let only = forced == Override::Only || match only {
         Some(only) => c.truthy_rooted(only)?,

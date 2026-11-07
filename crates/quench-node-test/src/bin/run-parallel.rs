@@ -339,7 +339,7 @@ fn run_all(
                 if let Err(error) =
                     write_checkpoint_record(writer, inventory_hash, &entries[index], &observation)
                 {
-                    checkpoint_error.get_or_insert(error.to_string());
+                    checkpoint_error.get_or_insert_with(|| error.to_string());
                 }
             }
             observations[index] = Some(observation);

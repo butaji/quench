@@ -1923,7 +1923,7 @@ pub(super) fn arguments_alias<'a>(
     (uses.safe && uses.bindings == 1 && uses.references == uses.reads).then(|| alias.to_owned())
 }
 
-const ARGUMENTS: &str = "arguments";
+pub(crate) const ARGUMENTS: &str = "arguments";
 
 struct AliasUses<'s> {
     alias: &'s str,

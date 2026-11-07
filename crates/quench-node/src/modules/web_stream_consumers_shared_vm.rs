@@ -38,12 +38,12 @@ const NOT_ASYNC_ITERABLE: &str = "stream is not async iterable";
 
 /// A consumption's state.
 mod field {
-    pub(super) const PROMISE: &str = "promise";
-    pub(super) const ITERATOR: &str = "iterator";
-    pub(super) const NEXT: &str = "next";
-    pub(super) const SYNC: &str = "sync";
-    pub(super) const KIND: &str = "kind";
-    pub(super) const CHUNKS: &str = "chunks";
+    pub(crate) use crate::modules::keys::PROMISE;
+    pub(crate) use crate::modules::keys::ITERATOR;
+    pub(crate) use crate::modules::keys::NEXT;
+    pub(crate) use crate::modules::keys::SYNC;
+    pub(crate) use crate::modules::keys::KIND;
+    pub(crate) use crate::modules::keys::CHUNKS;
     pub(super) const TEXT: &str = "text";
     pub(super) const DECODER: &str = "decoder";
 }

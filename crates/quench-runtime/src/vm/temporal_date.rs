@@ -1,7 +1,7 @@
 use super::*;
 pub(super) const ISO_MONTHS_PER_YEAR: i32 = 12;
 const HEBREW_LEAP_MONTH_FALLBACK: &str = "M06";
-pub(super) const ISO_DAYS_PER_WEEK: i64 = 7;
+pub(super) use crate::units::ISO_DAYS_PER_WEEK;
 const ISO_WEEK_NUMBER_ADJUSTMENT: i64 = 10;
 const ISO_UNIX_EPOCH_WEEKDAY: i64 = 4;
 const ISO_COMMON_WEEKS_PER_YEAR: i64 = 52;
@@ -13,7 +13,7 @@ const ISO_FEBRUARY: i32 = 2;
 const ISO_JANUARY_FIRST: u32 = 1;
 pub(super) const MIN_ISO_YEAR: i32 = -271_821;
 pub(super) const MAX_ISO_YEAR: i32 = 275_760;
-const MAX_BASIC_ISO_YEAR: i32 = 9_999;
+pub(crate) const MAX_BASIC_ISO_YEAR: i32 = 9_999;
 const BASIC_ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_ISO_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DAY_DIGITS: usize = 2;
@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
         let calendar = match args.get(3).copied().unwrap_or(Value::UNDEFINED) {
             value if value.is_undefined() => "iso8601".to_owned(),
             value if self.heap.is_string(value) => {
-                self.to_string(p, value)?.to_string()
+                self.to_string(p, value)?
             }
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
         let mut month_code_text = if month_code_value.is_undefined() {
             None
         } else {
-            Some(self.to_string(p, month_code_value)?.to_string())
+            Some(self.to_string(p, month_code_value)?)
         };
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, changes, year_atom)?;
@@ -489,7 +489,7 @@ impl<H: Host> Vm<H> {
         let overflow = if overflow_value.is_undefined() {
             "constrain".to_owned()
         } else {
-            self.to_string(p, overflow_value)?.to_string()
+            self.to_string(p, overflow_value)?
         };
         if !matches!(overflow.as_str(), "constrain" | "reject") {
             return Err(self.range_error(p, "Invalid overflow".into()));
@@ -606,7 +606,7 @@ impl<H: Host> Vm<H> {
         {
             let (epoch_nanoseconds, time_zone, calendar) = (
                 instant.epoch_nanoseconds,
-                instant.time_zone.to_string(),
+                instant.time_zone.clone(),
                 calendar.to_string(),
             );
             let _ = self.plain_date_overflow(p, options)?;
@@ -649,7 +649,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(true);
         }
-        match self.to_string(p, value)?.to_string().as_str() {
+        match self.to_string(p, value)?.as_str() {
             "constrain" => Ok(true),
             "reject" => Ok(false),
             _ => Err(self.range_error(p, "Invalid overflow option".into())),
@@ -676,7 +676,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 "auto".to_owned()
             } else {
-                self.to_string(p, value)?.to_string()
+                self.to_string(p, value)?
             }
         };
         if !matches!(
@@ -783,7 +783,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        Ok(self.to_string(p, value)?.to_string())
+        self.to_string(p, value)
     }
 
     pub(super) fn parse_plain_date_month_code(
@@ -869,7 +869,7 @@ impl<H: Host> Vm<H> {
         let era = if era_value.is_undefined() {
             None
         } else {
-            Some(self.to_string(p, era_value)?.to_string())
+            Some(self.to_string(p, era_value)?)
         };
         let era_year_atom = self.intern_atom("eraYear");
         let era_year_value = self.get_property(p, bag, era_year_atom)?;

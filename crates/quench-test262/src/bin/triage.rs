@@ -14,7 +14,7 @@ use std::{
 use serde_json::json;
 
 use quench_test262::{
-    discover_js_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
+    discover_js_files, required_timeout_ms, select_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
 };
 
 /// Per-thread outcomes for one contiguous chunk of files.
@@ -32,7 +32,7 @@ struct JsonOutcome {
     category: String,
 }
 
-const WORK_BATCH: usize = 32;
+use quench_test262::WORK_BATCH;
 
 /// Tests that crash the runtime regardless of runner state (stack
 /// overflow, panic, infinite loop, etc.). These are runtime bugs, not
@@ -162,16 +162,6 @@ fn main() -> ExitCode {
     } else {
         ExitCode::from(1)
     }
-}
-
-fn required_timeout_ms() -> Result<u64, String> {
-    env::var("TEST262_TEST_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|timeout_ms| *timeout_ms > 0)
-        .ok_or_else(|| {
-            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".into()
-        })
 }
 
 /// Emit a machine-readable JSON report consumable by
@@ -315,19 +305,6 @@ fn positional(values: &[OsString], index: usize) -> Result<Option<usize>, String
 
 fn default_threads() -> usize {
     thread::available_parallelism().map_or(1, |count| count.get())
-}
-
-fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<PathBuf> {
-    if filters.is_empty() {
-        return files;
-    }
-    files
-        .into_iter()
-        .filter(|path| {
-            let relative = path.strip_prefix(base).unwrap_or(path).to_string_lossy();
-            filters.iter().any(|filter| relative.contains(filter))
-        })
-        .collect()
 }
 
 /// Run the files across `threads` independent runners and merge the results.

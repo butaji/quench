@@ -81,8 +81,8 @@ impl State {
 
 /// A writable stream's, writer's and controller's fields beyond the readable family's.
 pub(crate) mod field {
-    pub(crate) const WRITER: &str = "writer";
-    pub(crate) const BACKPRESSURE: &str = "backpressure";
+    pub(crate) use crate::modules::keys::WRITER;
+    pub(crate) use crate::modules::keys::BACKPRESSURE;
     pub(crate) const CLOSE_REQUEST: &str = "closeRequest";
     pub(crate) const IN_FLIGHT_WRITE: &str = "inFlightWriteRequest";
     pub(crate) const IN_FLIGHT_CLOSE: &str = "inFlightCloseRequest";
@@ -90,12 +90,11 @@ pub(crate) mod field {
     pub(crate) const WRITE_REQUESTS: &str = "writeRequests";
     pub(crate) const READY: &str = "ready";
     pub(crate) const WRITE: &str = "write";
-    pub(crate) const CLOSE: &str = "close";
+    pub(crate) use crate::modules::keys::CLOSE;
     pub(crate) const ABORT: &str = "abort";
     pub(crate) const ABORT_CONTROLLER: &str = "abortController";
-    /// A pending abort request's fields.
-    pub(crate) const PROMISE: &str = "promise";
-    pub(crate) const REASON: &str = "reason";
+    pub(crate) use crate::modules::keys::PROMISE;
+    pub(crate) use crate::modules::keys::REASON;
     pub(crate) const WAS_ALREADY_ERRORING: &str = "wasAlreadyErroring";
 }
 use field::*;

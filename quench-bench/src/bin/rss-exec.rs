@@ -34,8 +34,9 @@ struct Request {
     command: Vec<OsString>,
 }
 
-/// The exit status a shell reports for a process a signal ended.
-const SIGNAL_STATUS_BASE: i32 = 128;
+#[path = "../process_status.rs"]
+mod process_status;
+use process_status::SIGNAL_STATUS_BASE;
 
 /// The status `rss-exec` itself exits with when it cannot run the command.
 const USAGE_STATUS: i32 = 2;

@@ -85,7 +85,7 @@ const FLAG_OPTIONS: [(&str, &str); 3] = [
     ("ipv6Only", "UV_UDP_IPV6ONLY"),
     ("reusePort", "UV_UDP_REUSEPORT"),
 ];
-const MAX_PORT: f64 = u16::MAX as f64;
+pub(crate) const MAX_PORT: f64 = u16::MAX as f64;
 /// The `net.BlockList`s a socket filters its peers through.
 #[derive(Clone, Copy)]
 enum BlockListOption {
@@ -158,26 +158,6 @@ fn capture(c: &mut Context<'_>, index: usize) -> Outcome {
 
 fn next_tick(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Result<(), RootedError> {
     super::stream_shared_vm::next_tick(c, callback, args)
-}
-
-fn coded(c: &mut Context<'_>, code: &'static str, message: &str) -> RootedError {
-    match c.error_rooted(message) {
-        Ok(error) => match super::node_errors_shared_vm::decorate_error(c, error, code) {
-            Ok(()) => c.throw(error),
-            Err(failure) => failure,
-        },
-        Err(failure) => failure,
-    }
-}
-
-fn coded_type(c: &mut Context<'_>, code: &'static str, message: &str) -> RootedError {
-    match c.type_error_rooted(message) {
-        Ok(error) => match super::node_errors_shared_vm::decorate_type_error(c, error, code) {
-            Ok(()) => c.throw(error),
-            Err(failure) => failure,
-        },
-        Err(failure) => failure,
-    }
 }
 
 /// Node's `ErrnoException(err, syscall)`.
@@ -331,7 +311,7 @@ fn running_handle(c: &mut Context<'_>, socket: RootId) -> Outcome {
     let state = state(c, socket)?;
     let handle = handle(c, state)?;
     if is_nullish(c, handle) {
-        return Err(coded(c, "ERR_SOCKET_DGRAM_NOT_RUNNING", "Not running"));
+        return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_SOCKET_DGRAM_NOT_RUNNING", "Not running"));
     }
     Ok(handle)
 }
@@ -347,7 +327,7 @@ fn new_handle(c: &mut Context<'_>, kind: RootId, lookup: RootId) -> Outcome {
         .string_text(kind)?
         .and_then(|text| TYPES.iter().find(|(name, _)| *name == text).map(|(_, family)| *family))
     else {
-        return Err(coded_type(c, "ERR_SOCKET_BAD_TYPE", "Bad socket type specified. Valid types are: udp4, udp6"));
+        return Err(super::node_errors_shared_vm::throw_coded_type_error(c, "ERR_SOCKET_BAD_TYPE", "Bad socket type specified. Valid types are: udp4, udp6"));
     };
     let lookup = if is_undefined(c, lookup) {
         let dns = crate::host::shared_vm::commonjs::dns_module(c)?;
@@ -474,7 +454,7 @@ pub(crate) fn create_socket(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 fn buffer_size(c: &mut Context<'_>, socket: RootId, size: RootId, receive: bool) -> Outcome {
     let valid = number(c, size).is_some_and(|value| value >= 0.0 && value.fract() == 0.0 && value <= f64::from(u32::MAX));
     if !valid {
-        return Err(coded_type(c, "ERR_SOCKET_BAD_BUFFER_SIZE", "Buffer size must be a positive integer"));
+        return Err(super::node_errors_shared_vm::throw_coded_type_error(c, "ERR_SOCKET_BAD_BUFFER_SIZE", "Buffer size must be a positive integer"));
     }
     let state = state(c, socket)?;
     let handle = handle(c, state)?;
@@ -612,7 +592,7 @@ pub(crate) fn bind(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     let handle = running_handle(c, this)?;
     let state = state(c, this)?;
     if phase::<BindState>(c, state)? != BindState::Unbound {
-        return Err(coded(c, "ERR_SOCKET_ALREADY_BOUND", "Socket is already bound"));
+        return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_SOCKET_ALREADY_BOUND", "Socket is already bound"));
     }
     set_phase(c, state, BindState::Binding)?;
     if let Some(&callback) = args.last() {
@@ -761,7 +741,7 @@ pub(crate) fn connect(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Out
     }
     let state = state(c, this)?;
     if phase::<ConnectState>(c, state)? != ConnectState::Disconnected {
-        return Err(coded(c, "ERR_SOCKET_DGRAM_IS_CONNECTED", "Already connected"));
+        return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_SOCKET_DGRAM_IS_CONNECTED", "Already connected"));
     }
     set_phase(c, state, ConnectState::Connecting)?;
     bind_implicitly(c, this, state)?;
@@ -851,7 +831,7 @@ pub(crate) fn emit_event(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcom
 pub(crate) fn disconnect(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     let state = state(c, this)?;
     if phase::<ConnectState>(c, state)? != ConnectState::Connected {
-        return Err(coded(c, "ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"));
+        return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"));
     }
     let handle = handle(c, state)?;
     let status = call_method(c, handle, "disconnect", &[])?;
@@ -967,7 +947,7 @@ pub(crate) fn send(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
             callback = offset;
         }
         if c.truthy_rooted(port)? || c.truthy_rooted(address)? {
-            return Err(coded(c, "ERR_SOCKET_DGRAM_IS_CONNECTED", "Already connected"));
+            return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_SOCKET_DGRAM_IS_CONNECTED", "Already connected"));
         }
     }
     let Some(mut list) = buffer_list(c, buffer)? else {
@@ -1208,7 +1188,7 @@ pub(crate) fn remote_address(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
     running_handle(c, this)?;
     let state = state(c, this)?;
     if phase::<ConnectState>(c, state)? != ConnectState::Connected {
-        return Err(coded(c, "ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"));
+        return Err(super::node_errors_shared_vm::throw_coded_error(c, "ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"));
     }
     name(c, this, "getpeername")
 }
@@ -1270,7 +1250,7 @@ fn membership(c: &mut Context<'_>, socket: RootId, method: &str, args: &[RootId]
     let handle = running_handle(c, socket)?;
     let (group, interface) = (arg(c, args, 0), arg(c, args, 1));
     if !c.truthy_rooted(group)? {
-        return Err(coded_type(c, "ERR_MISSING_ARGS", "The \"multicastAddress\" argument must be specified"));
+        return Err(super::node_errors_shared_vm::throw_coded_type_error(c, "ERR_MISSING_ARGS", "The \"multicastAddress\" argument must be specified"));
     }
     let status = call_method(c, handle, method, &[group, interface])?;
     check(c, status, method)?;

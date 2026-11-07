@@ -7,6 +7,7 @@
 
 use crate::modules::shared_event_loop::{SharedCallback, SharedImmediateOwner};
 use crate::modules::stream_shared_vm::{
+    inherit,
     arg, attempt, call_method, captures, closure, emit, eos, get, is_nullish, is_undefined, next_tick, number, once,
     put, put_bool, put_number, truthy_member, Context, Outcome,
 };
@@ -19,7 +20,7 @@ const DEFAULT_MODE: f64 = 0o666 as f64;
 /// The writes in a row that may make no progress before a write fails.
 const MAX_WRITE_RETRIES: f64 = 5.0;
 /// The largest integer a position may be, `Number.MAX_SAFE_INTEGER`.
-const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+use quench_runtime::units::MAX_SAFE_INTEGER;
 
 /// The private symbols a stream keys its state with.
 #[derive(Clone, Copy)]
@@ -880,10 +881,7 @@ fn class(c: &mut Context<'_>, name: &str, operation: &str, parent: &str) -> Outc
     let data = c.array_rooted(&[])?;
     let constructor = c.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
     put(c, data, "0", constructor)?;
-    let prototype = get(c, constructor, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(constructor, parent)?;
+    inherit(c, constructor, parent)?;
     Ok(constructor)
 }
 

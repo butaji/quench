@@ -292,6 +292,16 @@ pub(crate) fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId
     c.assign_named_property_rooted(object, name, value)
 }
 
+/// Makes `constructor` and its prototype inherit from `parent` and its prototype, as
+/// `class extends` does; returns the prototype.
+pub(crate) fn inherit(c: &mut Context<'_>, constructor: RootId, parent: RootId) -> Outcome {
+    let prototype = get(c, constructor, "prototype")?;
+    let parent_prototype = get(c, parent, "prototype")?;
+    c.set_prototype_rooted(prototype, parent_prototype)?;
+    c.set_prototype_rooted(constructor, parent)?;
+    Ok(prototype)
+}
+
 pub(crate) fn get_slot(c: &mut Context<'_>, object: RootId, slot: Slot) -> Outcome {
     let key = intrinsics(c)?.slot(slot);
     c.get_property_rooted(object, key)

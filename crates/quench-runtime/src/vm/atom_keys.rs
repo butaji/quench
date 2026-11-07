@@ -194,8 +194,8 @@ mod tests {
         let text = "abcdefghijklmnopq";
         for len in 0..=text.len() {
             let ascii = &text.as_bytes()[..len];
-            let wide: Vec<u16> = ascii.iter().map(|&byte| u16::from(byte)).collect();
-            assert_eq!(super::atom_hash_ascii(ascii), super::atom_hash_wide(len, wide.into_iter()));
+            
+            assert_eq!(super::atom_hash_ascii(ascii), super::atom_hash_wide(len, ascii.iter().map(|&byte| u16::from(byte))));
         }
     }
 }

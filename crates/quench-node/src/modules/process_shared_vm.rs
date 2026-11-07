@@ -30,7 +30,7 @@ pub(crate) fn collect_garbage(
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
-const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";
+use crate::CASE_RESULT_ENV;
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
@@ -273,7 +273,7 @@ fn install_identity(context: &mut NativeContext<'_, NodeHost>, process: RootId) 
     // remains useful when Quench is embedded in run-parallel, where argv0 is
     // the harness executable rather than this runtime.
     let node_executable = if argv0_is_runtime {
-        executable.clone()
+        executable
     } else {
         crate::shared_run::executable_path()
             .map_err(|error| RootedError::host(error.to_string()))?
@@ -1625,7 +1625,7 @@ fn errno_name(errno: i32) -> &'static str {
     }
 }
 
-const NANOSECONDS_PER_SECOND: f64 = 1_000_000_000.0;
+const NANOSECONDS_PER_SECOND: f64 = quench_runtime::units::NANOSECONDS_PER_SECOND as f64;
 
 /// The monotonic clock `process.hrtime` reads, in nanoseconds.
 fn monotonic_ns(context: &mut NativeContext<'_, NodeHost>) -> Result<f64, RootedError> {
@@ -2427,7 +2427,7 @@ pub(crate) fn finish_after_uncaught_error(
     if control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
         if control.fatal_uncaught_requested() {
-            return routed.and(exit.map(|_| false));
+            return routed.and_then(|_| exit.map(|_| false));
         }
         if control.fatal_exception_handler_failed() {
             return routed.and(exit).map(|_| true);

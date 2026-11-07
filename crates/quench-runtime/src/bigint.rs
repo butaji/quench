@@ -64,7 +64,7 @@ pub(crate) fn decimal_literal(digits: &str) -> BigInt {
 
 /// The Number nearest `value`, ties to even; magnitudes past the finite range are infinite.
 pub(crate) fn to_f64(value: &BigInt) -> f64 {
-    num_traits::ToPrimitive::to_f64(value).unwrap_or(if value.sign() == Sign::Minus {
+    num_traits::ToPrimitive::to_f64(value).unwrap_or_else(|| if value.sign() == Sign::Minus {
         f64::NEG_INFINITY
     } else {
         f64::INFINITY

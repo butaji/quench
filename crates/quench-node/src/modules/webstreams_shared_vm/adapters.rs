@@ -75,13 +75,13 @@ mod field {
     pub(super) const CLEANUP: &str = "cleanup";
     pub(super) const BACKPRESSURE: &str = "backpressurePromise";
     pub(super) const CLOSE: &str = "closed";
-    pub(super) const READER: &str = "reader";
-    pub(super) const WRITER: &str = "writer";
+    pub(crate) use crate::modules::keys::READER;
+    pub(crate) use crate::modules::keys::WRITER;
     pub(super) const READABLE_CLOSED: &str = "readableClosed";
     pub(super) const WRITABLE_CLOSED: &str = "writableClosed";
     pub(super) const DECODE_STRINGS: &str = "decodeStrings";
     pub(super) const CALLBACK: &str = "callback";
-    pub(super) const ERROR: &str = "error";
+    pub(crate) use crate::modules::keys::ERROR;
 }
 use field::*;
 
@@ -948,10 +948,10 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
 
 /// A pump's fields (pipeline's `pumpToWeb`).
 mod pump {
-    pub(super) const ITERATOR: &str = "iterator";
-    pub(super) const SYNC: &str = "sync";
-    pub(super) const WRITER: &str = "writer";
-    pub(super) const STREAM: &str = "stream";
+    pub(crate) use crate::modules::keys::ITERATOR;
+    pub(crate) use crate::modules::keys::SYNC;
+    pub(crate) use crate::modules::keys::WRITER;
+    pub(crate) use crate::modules::keys::STREAM;
     pub(super) const FINISH: &str = "finish";
     pub(super) const END: &str = "end";
 }

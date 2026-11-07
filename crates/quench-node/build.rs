@@ -15,19 +15,11 @@
 
 use std::{env, path::Path};
 
-/// The trained symbol orders for the x86-64 Linux executable, one per C runtime linkage, whose
-/// builds name symbols differently.
-const X86_64_LINUX_ORDER: &str = "link/x86_64-linux.order";
-const X86_64_LINUX_STATIC_ORDER: &str = "link/x86_64-linux-static.order";
+#[path = "../link_layout.rs"]
+mod link_layout;
 
 /// The Node-API functions `process.dlopen`ed addons import from the executable.
 const NODE_API_DYNAMIC_LIST: &str = "link/node-api.dynamic-list";
-
-/// The C runtime's frame registration hooks. A static C runtime's start code (`crtbeginT.o`)
-/// registers `.eh_frame` with the unwinder when these weak references resolve, which makes the
-/// whole section resident at startup. Production aborts on panic and the unwinder still finds
-/// frames through `PT_GNU_EH_FRAME`, so the hooks resolve to null and the start code skips them.
-const FRAME_REGISTRATION_HOOKS: &[&str] = &["__register_frame_info", "__deregister_frame_info"];
 
 /// The fields of OpenSSL 3's `OPENSSL_VERSION_NUMBER` (0xMNN00PP0).
 const OPENSSL_MAJOR_SHIFT: u32 = 28;
@@ -35,19 +27,11 @@ const OPENSSL_MINOR_SHIFT: u32 = 20;
 const OPENSSL_PATCH_SHIFT: u32 = 4;
 const OPENSSL_FIELD_MASK: u64 = 0xff;
 
-/// The linker that applies a symbol order.
-const ORDERING_LINKER: &str = "ld.lld";
-
 /// Set to `off` to link without the trained symbol order: a build whose code layout owes
 /// nothing to a recorded profile (no PGO, BOLT or ordering), for measurements of source
 /// changes alone.
 const LINK_ORDER_ENV: &str = "QUENCH_LINK_ORDER";
 const LINK_ORDER_OFF: &str = "off";
-
-fn on_path(program: &str) -> bool {
-    env::var_os("PATH")
-        .is_some_and(|paths| env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
-}
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_provider)");
@@ -64,8 +48,7 @@ fn main() {
     println!("cargo:rustc-env=QUENCH_OPENSSL_VERSION={version}");
     configure_icu();
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
-    println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
+    println!("cargo:rerun-if-changed=../link_layout.rs");
     println!("cargo:rerun-if-changed={NODE_API_DYNAMIC_LIST}");
     println!("cargo:rerun-if-env-changed={LINK_ORDER_ENV}");
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_engine)");
@@ -81,52 +64,18 @@ fn main() {
         println!("cargo:rustc-cfg=quench_openssl_engine");
     }
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let static_runtime = env::var("CARGO_CFG_TARGET_FEATURE")
-        .is_ok_and(|features| features.split(',').any(|feature| feature == "crt-static"));
+    let static_runtime = link_layout::static_runtime();
     if os == "linux" && !static_runtime {
-        let list = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
-            .join(NODE_API_DYNAMIC_LIST);
-        println!(
-            "cargo:rustc-link-arg-bins=-Wl,--dynamic-list={}",
-            list.display()
-        );
+        let list = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join(NODE_API_DYNAMIC_LIST);
+        println!("cargo:rustc-link-arg-bins=-Wl,--dynamic-list={}", list.display());
     }
-    // A static C runtime chooses its own executable kind.
     if os == "linux" && static_runtime {
-        for hook in FRAME_REGISTRATION_HOOKS {
-            println!("cargo:rustc-link-arg-bins=-Wl,--defsym={hook}=0");
-        }
         // The link's relocations stay in the file (never loaded), so `llvm-bolt` can move
         // basic blocks: the qualification build's block layout (`bolt-profile`).
         println!("cargo:rustc-link-arg-bins=-Wl,--emit-relocs");
-    } else if os == "linux" {
-        println!("cargo:rustc-link-arg-bins=-no-pie");
     }
-    let order =
-        Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join(if static_runtime {
-            X86_64_LINUX_STATIC_ORDER
-        } else {
-            X86_64_LINUX_ORDER
-        });
-    if os == "linux"
-        && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
-        && order.is_file()
-        && on_path(ORDERING_LINKER)
-        && env::var_os(LINK_ORDER_ENV).is_none_or(|value| value != LINK_ORDER_OFF)
-    {
-        println!("cargo:rustc-link-arg-bins=-fuse-ld=lld");
-        println!(
-            "cargo:rustc-link-arg-bins=-Wl,--symbol-ordering-file={}",
-            order.display()
-        );
-        println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
-    }
+    link_layout::link_binaries(env::var_os(LINK_ORDER_ENV).is_none_or(|value| value != LINK_ORDER_OFF));
 }
-
-
-
-
-
 
 /// Legacy TextDecoder mappings follow ICU, as Node does. Hosts without ICU
 /// retain the portable Unicode and single-byte decoders.

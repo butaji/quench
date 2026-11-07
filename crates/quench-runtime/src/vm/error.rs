@@ -737,7 +737,7 @@ impl<H: Host> Vm<H> {
                     source_captured = true;
                     // Share immutable compiler text, not a copied line per Error.
                     // Captured positions remain valid after its Script is collected.
-                    source = residual.source.clone();
+                    source.clone_from(&residual.source);
                 }
                 Self::map_call_site_source(&mut self.host, &mut record, module);
                 records.push(record);
@@ -1589,7 +1589,7 @@ impl<H: Host> Vm<H> {
                         }
                         let message = diagnostics
                             .first()
-                            .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                            .map_or_else(|| "invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
                         self.syntax_error_result(program, &message)
                             .expect_err("dynamic Function syntax errors must throw")
                     })?,
@@ -2008,7 +2008,7 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let async_generator_function = self
             .own_property(global, async_generator_function_atom)
-            .unwrap_or(self.native_value(Native::AsyncGeneratorFunction));
+            .unwrap_or_else(|| self.native_value(Native::AsyncGeneratorFunction));
         let async_generator_function_prototype = self
             .own_property(async_generator_function, prototype_atom)
             .unwrap_or(self.function_proto);

@@ -1260,7 +1260,7 @@ impl FieldCacheSet {
     pub(super) fn len(&self) -> usize {
         self.overflow
             .as_ref()
-            .map_or(usize::from(self.len), |entries| entries.len())
+            .map_or_else(|| usize::from(self.len), |entries| entries.len())
     }
 }
 

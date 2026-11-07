@@ -467,7 +467,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let shared = native == Native::SharedArrayBuffer;
         let length =
-            self.array_buffer_to_index(p, args.first().copied().unwrap_or(Value::number(0.0)))?;
+            self.array_buffer_to_index(p, args.first().copied().unwrap_or_else(|| Value::number(0.0)))?;
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let max_byte_length_option =
             if options.is_undefined() || self.object_data(options).is_none() {

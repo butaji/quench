@@ -40,13 +40,13 @@ members!(Member, "webTransform", [
 
 /// A transform stream's and its controller's fields.
 mod field {
-    pub(super) const READABLE: &str = "readable";
-    pub(super) const WRITABLE: &str = "writable";
-    pub(super) const BACKPRESSURE: &str = "backpressure";
+    pub(crate) use crate::modules::keys::READABLE;
+    pub(crate) use crate::modules::keys::WRITABLE;
+    pub(crate) use crate::modules::keys::BACKPRESSURE;
     pub(super) const BACKPRESSURE_CHANGE: &str = "backpressureChange";
-    pub(super) const TRANSFORM: &str = "transform";
+    pub(crate) use crate::modules::keys::TRANSFORM;
     pub(super) const FLUSH: &str = "flush";
-    pub(super) const CANCEL: &str = "cancel";
+    pub(crate) use crate::modules::keys::CANCEL;
     pub(super) const FINISH: &str = "finishPromise";
     /// Whether the stream's transform is the identity (`defaultTransformAlgorithm`).
     pub(super) const IDENTITY: &str = "identity";

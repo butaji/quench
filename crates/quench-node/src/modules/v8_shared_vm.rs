@@ -127,7 +127,7 @@ mod profiler {
     pub(super) const INITIALIZED: f64 = 0.0;
     pub(super) const STARTED: f64 = 1.0;
     pub(super) const STOPPED: f64 = 2.0;
-    pub(super) const STATE: &str = "state";
+    pub(crate) use crate::modules::keys::STATE;
     pub(super) const START_TIME: &str = "startTime";
     /// The profile format `stop()` reports.
     pub(super) const VERSION: f64 = 1.0;

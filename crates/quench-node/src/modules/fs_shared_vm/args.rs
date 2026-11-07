@@ -10,10 +10,10 @@ use std::path::PathBuf;
 const MAX_FD: f64 = i32::MAX as f64;
 pub(crate) const MAX_UINT32: f64 = u32::MAX as f64;
 /// `Number.MAX_SAFE_INTEGER`, the bound of integer offsets and lengths.
-pub(crate) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+pub(crate) use quench_runtime::units::MAX_SAFE_INTEGER;
+use crate::modules::net_socket_options::MILLISECONDS_PER_SECOND;
 /// The radix of a mode given as a string (`parseFileMode`).
-const OCTAL_RADIX: u32 = 8;
+use quench_runtime::units::OCTAL_RADIX;
 
 /// A validated path: the bytes the host opens, and the text Node's errors show.
 pub(crate) struct FsPath {

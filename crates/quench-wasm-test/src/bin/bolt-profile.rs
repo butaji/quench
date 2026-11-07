@@ -35,11 +35,9 @@ use std::{
     process::{Command, ExitCode, Stdio},
 };
 
-/// The mangling prefix of Rust symbols (v0).
-const RUST_SYMBOL_PREFIX: &str = "_R";
+use quench_wasm_test::RUST_SYMBOL_PREFIX;
 
-/// `nm` symbol kinds that name code.
-const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
+use quench_wasm_test::CODE_KINDS;
 
 /// The `nm` kind of local code, whose BOLT name carries a disambiguating count.
 const LOCAL_CODE_KIND: &str = "t";

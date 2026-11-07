@@ -97,7 +97,7 @@ const FILENAME: &str = "--report-filename";
 const COMPACT: &str = "--report-compact";
 const EXCLUDE_NETWORK: &str = "--report-exclude-network";
 const EXCLUDE_ENV: &str = "--report-exclude-env";
-const SIGNAL: &str = "--report-signal";
+use crate::modules::keys::SIGNAL;
 const REPORT_ON_SIGNAL: &str = "--report-on-signal";
 const REPORT_ON_UNCAUGHT_EXCEPTION: &str = "--report-uncaught-exception";
 
@@ -419,9 +419,8 @@ pub(crate) fn binding_write_report(context: &mut Context<'_>, receiver: RootId, 
     write_report(context, receiver, &[file, error])
 }
 
-/// The special report filenames that name the process's streams.
-const STDOUT: &str = "stdout";
-const STDERR: &str = "stderr";
+pub(crate) use crate::modules::keys::STDOUT;
+pub(crate) use crate::modules::keys::STDERR;
 
 /// Writes a report to `file`, the configured filename, or a generated name, in the report
 /// directory or the working directory: returns the name.
@@ -784,7 +783,7 @@ struct Usage {
 }
 /// `ru_maxrss` is in kibibytes.
 const RSS_UNIT_BYTES: f64 = 1024.0;
-const MICROS_PER_SECOND: f64 = 1_000_000.0;
+pub(crate) const MICROS_PER_SECOND: f64 = 1_000_000.0;
 const PERCENT: f64 = 100.0;
 
 fn rusage(who: libc::c_int) -> Result<Usage, RootedError> {

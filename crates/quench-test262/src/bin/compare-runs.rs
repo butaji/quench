@@ -21,10 +21,10 @@ use std::{
 };
 
 use quench_test262::{
-    discover_js_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
+    discover_js_files, select_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
 };
 
-const WORK_BATCH: usize = 32;
+use quench_test262::WORK_BATCH;
 
 /// Tests that crash the runtime with a stack overflow independent of runner
 /// state. These are real runtime bugs, not determinism issues; the comparison
@@ -190,19 +190,6 @@ fn parse_args() -> Result<Args, String> {
         threads: threads.max(1),
         out_dir,
     })
-}
-
-fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<PathBuf> {
-    if filters.is_empty() {
-        return files;
-    }
-    files
-        .into_iter()
-        .filter(|path| {
-            let relative = path.strip_prefix(base).unwrap_or(path).to_string_lossy();
-            filters.iter().any(|filter| relative.contains(filter))
-        })
-        .collect()
 }
 
 fn test262_root() -> PathBuf {

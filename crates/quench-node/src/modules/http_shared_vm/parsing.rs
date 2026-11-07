@@ -84,7 +84,7 @@ pub(crate) fn expired(c: &mut Context<'_>, parser: RootId, headers_timeout: f64,
     .unwrap_or(false))
 }
 
-const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+use crate::modules::net_socket_options::MILLISECONDS_PER_SECOND;
 
 /// `parser.execute(data)` with Node's callbacks.
 pub(crate) fn execute(c: &mut Context<'_>, parser: RootId, data: RootId) -> Result<Executed, RootedError> {

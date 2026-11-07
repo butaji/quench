@@ -33,7 +33,7 @@ const COORDINATOR_OPTIONS: [&str; 6] = [
 const IGNORED_DIRECTORY: &str = "node_modules";
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '{', '['];
 const FILE_FAILURE: &str = "test failed";
-const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+use quench_runtime::units::MILLISECONDS_PER_SECOND;
 
 pub(crate) fn stream_line(report: &TestReport) -> String {
     format!("{REPORT_PREFIX}{}\n", serde_json::to_string(report).unwrap_or_default())

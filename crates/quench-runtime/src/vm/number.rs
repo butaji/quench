@@ -6,8 +6,8 @@ const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
 const BINARY_RADIX: u32 = 2;
-const OCTAL_RADIX: u32 = 8;
-const DECIMAL_RADIX: u32 = 10;
+use crate::units::OCTAL_RADIX;
+use crate::vm::intl_datetime_parts::DECIMAL_RADIX;
 const HEXADECIMAL_RADIX: u32 = 16;
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
@@ -395,7 +395,7 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         Ok(match native {
             Native::Number => {
-                let value = args.first().copied().unwrap_or(Value::number(0.0));
+                let value = args.first().copied().unwrap_or_else(|| Value::number(0.0));
                 let primitive = if self.is_object_like(value) {
                     self.to_primitive(p, value, "number")?
                 } else {
@@ -768,7 +768,7 @@ impl PreciseSumState {
             self.invalid |= self
                 .infinity
                 .is_some_and(|sign| sign != value.is_sign_positive());
-            self.infinity.get_or_insert(value.is_sign_positive());
+            self.infinity.get_or_insert_with(|| value.is_sign_positive());
         } else if value == 0.0 {
             self.positive_zero |= value.is_sign_positive();
         } else {

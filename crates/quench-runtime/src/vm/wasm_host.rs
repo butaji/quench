@@ -441,7 +441,7 @@ mod tests {
     ) -> crate::WasmModule {
         let signature = WasmSignature {
             params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
-            results: import_results.clone(),
+            results: import_results,
         };
         let memarg = wasmparser::MemArg {
             align: 2,
@@ -709,7 +709,7 @@ mod tests {
             .create_wasm_host_function(
                 "_emscripten_memcpy_js",
                 crate::heap::WasmHostTarget::Js(shadowed_helper),
-                signature.clone(),
+                signature,
             )
             .unwrap();
         let shadowed_root = vm.root(shadowed_import);

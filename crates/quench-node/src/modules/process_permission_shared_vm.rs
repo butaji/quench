@@ -127,13 +127,6 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     args.get(index).copied().unwrap_or_else(|| c.undefined())
 }
 
-fn string_argument(c: &mut Context<'_>, value: RootId, name: &str) -> Result<String, RootedError> {
-    match c.string_text(value)? {
-        Some(text) => Ok(text),
-        None => Err(super::util_shared_vm::argument_type_error(c, value, name, "string")?),
-    }
-}
-
 /// A resource reference as the path it names for `scope`: a string as it is; a file URL
 /// or byte view only for a path scope (another scope ignores it).
 fn reference_path(c: &mut Context<'_>, scope: &str, reference: RootId) -> Result<Option<String>, RootedError> {
@@ -244,7 +237,7 @@ fn publish(c: &mut Context<'_>, scope: &Scope, message: RootId) -> Result<(), Ro
 /// `permission.has(scope[, reference])`.
 pub(crate) fn has(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let name = argument(c, args, 0);
-    let name = string_argument(c, name, "scope")?;
+    let name = super::util_shared_vm::validate_string(c, name, "scope")?;
     let reference = argument(c, args, 1);
     let target = reference_path(c, &name, reference)?;
     let Some(scope) = scope(&name) else {
@@ -279,7 +272,7 @@ fn publish_drop(c: &mut Context<'_>, scope: &Scope) -> Result<(), RootedError> {
 pub(crate) fn drop_permission(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
     let name = argument(c, args, 0);
-    let name = string_argument(c, name, "scope")?;
+    let name = super::util_shared_vm::validate_string(c, name, "scope")?;
     let reference = argument(c, args, 1);
     let target = reference_path(c, &name, reference)?;
     if !MODEL.with_borrow(|model| model.enabled || model.audit) {

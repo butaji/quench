@@ -122,11 +122,11 @@ const EXPORTS: [Brand; 17] = [
 
 /// The intrinsics record's members.
 pub(crate) mod key {
-    pub(crate) const STATE: &str = "state";
+    pub(crate) use crate::modules::keys::STATE;
     pub(crate) const THEN: &str = "then";
     pub(crate) const IS_CLOSED: &str = "isClosedPromise";
     pub(crate) const ERROR_FUNCTION: &str = "controllerErrorFunction";
-    pub(crate) const INSPECT: &str = "inspect";
+    pub(crate) use crate::modules::keys::INSPECT;
     pub(crate) const ASYNC_ITERATOR: &str = "AsyncIterator";
     pub(crate) const ASYNC_ITERATOR_KEY: &str = "asyncIterator";
     pub(crate) const TO_STRING_TAG: &str = "toStringTag";
@@ -252,9 +252,9 @@ pub(crate) mod list {
 
     const HEAD: &str = "head";
     const TAIL: &str = "tail";
-    const LENGTH: &str = "length";
-    const VALUE: &str = "value";
-    const NEXT: &str = "next";
+    use quench_runtime::property_names::LENGTH;
+    use crate::modules::keys::VALUE;
+    use crate::modules::keys::NEXT;
 
     pub(crate) fn new(c: &mut Context<'_>) -> Outcome {
         let empty = c.number(0.0);
@@ -570,8 +570,7 @@ pub(crate) fn run_algorithm(c: &mut Context<'_>, controller: RootId, name: &str,
 
 /// The controller fields that say how its algorithms are called.
 pub(crate) mod algorithm {
-    /// The underlying source, sink or transformer user callbacks are called on.
-    pub(crate) const SOURCE: &str = "source";
+    pub(crate) use crate::modules::keys::SOURCE;
     /// Whether the algorithms are the module's own (they return promises directly).
     pub(crate) const INTERNAL: &str = "internal";
 }
@@ -736,14 +735,7 @@ pub(crate) fn caught(error: RootedError) -> Outcome {
     }
 }
 
-/// A call's completion as `try`/`catch` sees it: its value or the value it threw.
-pub(crate) fn attempt<T>(result: Result<T, RootedError>) -> Result<Result<T, RootId>, RootedError> {
-    match result {
-        Ok(value) => Ok(Ok(value)),
-        Err(RootedError { exception: Some(exception), .. }) => Ok(Err(exception)),
-        Err(error) => Err(error),
-    }
-}
+pub(crate) use crate::modules::stream_shared_vm::attempt;
 
 /// One of the shared release errors, made once (Node's `lazyReadableReleasedError` and
 /// friends).

@@ -2,7 +2,7 @@
 //! duplex streams over a terminal descriptor, with their window size, color depth and
 //! cursor helpers.
 
-use super::stream_shared_vm::{arg, call_method, captures, get, is_undefined, put, put_bool, Context, Outcome};
+use super::stream_shared_vm::{arg, call_method, captures, get, inherit, is_undefined, put, put_bool, Context, Outcome};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 
@@ -440,7 +440,7 @@ pub(crate) fn set_raw_mode(c: &mut Context<'_>, this: RootId, args: &[RootId]) -
 }
 
 /// The bytes a terminal read takes at most.
-const READ_CHUNK_BYTES: usize = 64 * 1024;
+pub(crate) const READ_CHUNK_BYTES: usize = 64 * 1024;
 /// How long a terminal read waits before polling again, in milliseconds.
 const READ_POLL_INTERVAL_MS: f64 = 10.0;
 
@@ -572,10 +572,7 @@ fn class(c: &mut Context<'_>, name: &str, operation: &str, parent: RootId) -> Ou
     let data = c.array_rooted(&[])?;
     let constructor = c.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
     put(c, data, "0", constructor)?;
-    let prototype = get(c, constructor, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(constructor, parent)?;
+    inherit(c, constructor, parent)?;
     Ok(constructor)
 }
 

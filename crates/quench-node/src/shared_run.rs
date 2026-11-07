@@ -438,7 +438,7 @@ fn execute_shared_on_worker(
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;
-        host.eval_print = eval_print.clone();
+        host.eval_print.clone_from(&eval_print);
         host.eval_crypto = eval_crypto;
         let host = match commonjs_entry.clone() {
             Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
@@ -1121,7 +1121,7 @@ fn compile_cli_source(source: &str, name: &str, kind: SourceKind) -> Result<Exit
 fn unescape_eval_option_source(source: String) -> String {
     source
         .strip_prefix("\\-")
-        .map_or(source.clone(), |remainder| format!("-{remainder}"))
+        .map_or_else(|| source.clone(), |remainder| format!("-{remainder}"))
 }
 
 /// Permission allow-list options require Node's permission mode, even when

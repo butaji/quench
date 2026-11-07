@@ -16,7 +16,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1);
 pub const NODE_PARALLEL_DIR: &str = "tests/node/test/parallel";
 const WORKER_OPTION: &str = "--case-worker";
 const CASE_ID_ENV: &str = "QUENCH_NODE_TEST_CASE_ID";
-const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";
+use quench_node::CASE_RESULT_ENV;
 static NEXT_CASE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 macro_rules! case_results {

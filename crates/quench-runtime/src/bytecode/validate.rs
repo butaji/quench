@@ -1201,7 +1201,7 @@ mod tests {
         invalid.functions[0].binding_sites[0].bindings[0].location =
             super::super::EvalBindingLocation::Local(u16::MAX);
         assert!(invalid.validate().is_err());
-        let mut invalid = program.clone();
+        let mut invalid = program;
         let binding = invalid.functions[0].binding_sites[0].bindings[0];
         invalid.functions[0].binding_sites[0].bindings.push(binding);
         assert!(invalid.validate().is_err());

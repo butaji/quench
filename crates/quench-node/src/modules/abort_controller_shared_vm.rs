@@ -15,16 +15,16 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 pub(super) const SIGNAL_SLOT: &str = "signalSlot";
 pub(super) const CONTROLLER_SLOT: &str = "controllerSlot";
-const ABORT_EVENT: &str = "abort";
+pub(crate) use crate::modules::keys::ABORT_EVENT;
 
 /// A signal slot's fields.
 mod field {
     pub(super) const ABORTED: &str = "aborted";
-    pub(super) const REASON: &str = "reason";
+    pub(crate) use crate::modules::keys::REASON;
     pub(super) const DEPENDENTS: &str = "dependents";
     pub(super) const SOURCES: &str = "sources";
     pub(super) const COMPOSITE: &str = "composite";
-    pub(super) const HANDLER: &str = "handler";
+    pub(crate) use crate::modules::keys::HANDLER;
 }
 
 /// `AbortSignal.timeout`'s `validateUint32` bound.

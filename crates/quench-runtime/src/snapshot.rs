@@ -35,6 +35,8 @@ pub(crate) type SnapshotResult<T> = Result<T, SnapshotError>;
 
 /// The first bytes of every snapshot.
 const MAGIC: &[u8; 8] = b"QUENCHSS";
+/// The most items a decoded length reserves up front, so a corrupt length reserves little.
+const MAX_PREALLOCATED_ITEMS: usize = 1 << 20;
 
 /// A snapshot's bytes as they are written.
 #[derive(Default)]
@@ -344,7 +346,7 @@ pub(crate) fn read_list<T>(
     mut item: impl FnMut(&mut Reader<'_>) -> SnapshotResult<T>,
 ) -> SnapshotResult<Vec<T>> {
     let len = reader.len()?;
-    let mut items = Vec::with_capacity(len.min(1 << 20));
+    let mut items = Vec::with_capacity(len.min(MAX_PREALLOCATED_ITEMS));
     for _ in 0..len {
         items.push(item(reader)?);
     }
@@ -700,43 +702,29 @@ impl<A: Snap, B: Snap, C: Snap> Snap for (A, B, C) {
     }
 }
 
-impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Default> Snap for std::collections::HashMap<K, V, S> {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        writer.len(self.len());
-        self.iter().try_for_each(|(key, value)| {
-            key.snap(writer)?;
-            value.snap(writer)
-        })
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        let len = reader.len()?;
-        let mut map = Self::with_capacity_and_hasher(len.min(1 << 20), S::default());
-        for _ in 0..len {
-            let key = K::unsnap(reader)?;
-            map.insert(key, V::unsnap(reader)?);
+macro_rules! snap_map {
+    ($($map:ident)::+) => {
+        impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Default> Snap for $($map)::+<K, V, S> {
+            fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+                writer.len(self.len());
+                self.iter().try_for_each(|(key, value)| {
+                    key.snap(writer)?;
+                    value.snap(writer)
+                })
+            }
+            fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+                let len = reader.len()?;
+                let mut map = Self::with_capacity_and_hasher(len.min(MAX_PREALLOCATED_ITEMS), S::default());
+                for _ in 0..len {
+                    map.insert(K::unsnap(reader)?, V::unsnap(reader)?);
+                }
+                Ok(map)
+            }
         }
-        Ok(map)
-    }
+    };
 }
-
-impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Default> Snap for indexmap::IndexMap<K, V, S> {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        writer.len(self.len());
-        self.iter().try_for_each(|(key, value)| {
-            key.snap(writer)?;
-            value.snap(writer)
-        })
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        let len = reader.len()?;
-        let mut map = Self::with_capacity_and_hasher(len.min(1 << 20), S::default());
-        for _ in 0..len {
-            let key = K::unsnap(reader)?;
-            map.insert(key, V::unsnap(reader)?);
-        }
-        Ok(map)
-    }
-}
+snap_map!(std::collections::HashMap);
+snap_map!(indexmap::IndexMap);
 
 impl<K: Snap + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Snap for std::collections::HashSet<K, S> {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
@@ -745,7 +733,7 @@ impl<K: Snap + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Snap f
     }
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let len = reader.len()?;
-        let mut set = Self::with_capacity_and_hasher(len.min(1 << 20), S::default());
+        let mut set = Self::with_capacity_and_hasher(len.min(MAX_PREALLOCATED_ITEMS), S::default());
         for _ in 0..len {
             set.insert(K::unsnap(reader)?);
         }

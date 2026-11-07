@@ -27,8 +27,7 @@ pub(crate) const TIME_FIELDS: [&str; 4] = ["atime", "mtime", "ctime", "birthtime
 /// `StatFs`'s fields, in Node's order.
 pub(crate) const STATFS_FIELDS: [&str; 8] = ["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"];
 
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
-const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
+use quench_runtime::units::{NANOSECONDS_PER_MILLISECOND, NANOSECONDS_PER_SECOND};
 
 /// The predicates `StatsBase.prototype` and `Dirent.prototype` share, with the `S_IFMT` type
 /// each tests and the `UV_DIRENT_*` type a directory entry carries.

@@ -123,7 +123,7 @@ fn termination_stops_a_natively_compiled_loop() {
     let (tx, rx) = mpsc::channel();
     let (ready, wait) = mpsc::channel();
     let dropped = Arc::new(AtomicBool::new(false));
-    let d = dropped.clone();
+    let d = dropped;
     let join = thread::Builder::new()
         .stack_size(crate::WORKER_STACK_SIZE)
         .spawn(move || {

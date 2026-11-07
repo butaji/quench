@@ -11,7 +11,7 @@ use super::{
 const KEYWORD_PREFIX_LENGTH: usize = 3;
 /// Numerals keep only this many significant digits.
 const MAX_SIGNIFICANT_DIGITS: usize = 9;
-const DECIMAL_RADIX: u32 = 10;
+use crate::vm::intl_datetime_parts::DECIMAL_RADIX;
 /// Fractional seconds are read as this many digits of milliseconds.
 const MILLISECOND_DIGITS: usize = 3;
 /// Two-digit years: 0..=49 map into the 2000s, 50..=99 into the 1900s.

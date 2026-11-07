@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
         let old_size = elements.len();
         let limit = elements
             .maximum
-            .unwrap_or(crate::wasm::table::table_index_limit(*table64));
+            .unwrap_or_else(|| crate::wasm::table::table_index_limit(*table64));
         let Some(length) = usize::try_from(delta)
             .ok()
             .and_then(|delta| old_size.checked_add(delta))
@@ -770,7 +770,7 @@ mod element_owner_tests {
             "element-owner",
             [
                 WasmFunctionBody {
-                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    ty: crate::WasmCallableType::Embedded(signature),
                     locals: vec![],
                     operators: vec![Operator::GlobalGet { global_index: 0 }, Operator::End]
                         .into_iter()

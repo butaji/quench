@@ -33,12 +33,12 @@ members!(Member, "fetchResponse", [
 
 /// A response's fields.
 pub(crate) mod field {
-    pub(crate) const TYPE: &str = "type";
+    pub(crate) use crate::modules::keys::TYPE;
     pub(crate) const STATUS: &str = "status";
     pub(crate) const STATUS_TEXT: &str = "statusText";
-    pub(crate) const HEADERS: &str = "headers";
-    pub(crate) const HEADERS_STATE: &str = "headersState";
-    pub(crate) const BODY: &str = "body";
+    pub(crate) use crate::modules::keys::HEADERS;
+    pub(crate) use crate::modules::keys::HEADERS_STATE;
+    pub(crate) use crate::modules::keys::BODY;
     pub(crate) const URL_LIST: &str = "urlList";
 }
 use field::*;
@@ -46,17 +46,16 @@ use field::*;
 /// The response types this module makes.
 pub(crate) const DEFAULT: &str = "default";
 pub(crate) const BASIC: &str = "basic";
-const ERROR: &str = "error";
+use crate::modules::keys::ERROR;
 /// The status range a constructed Response may have, and its OK range.
-const STATUS_RANGE: std::ops::RangeInclusive<f64> = 200.0..=599.0;
+pub(crate) const STATUS_RANGE: std::ops::RangeInclusive<f64> = 200.0..=599.0;
 const OK_RANGE: std::ops::RangeInclusive<f64> = 200.0..=299.0;
 /// The statuses whose responses have no body, and the redirect statuses.
 pub(crate) const NULL_BODY_STATUSES: [u16; 4] = [101, 204, 205, 304];
 pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const DEFAULT_STATUS: f64 = 200.0;
 const DEFAULT_REDIRECT_STATUS: f64 = 302.0;
-/// Web IDL's `unsigned short` wraps modulo this.
-const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
+use crate::modules::message_event_shared_vm::UNSIGNED_SHORT_MODULUS;
 const JSON_TYPE: &str = "application/json";
 
 const MEMBERS: [ClassMember<Member>; 16] = [
