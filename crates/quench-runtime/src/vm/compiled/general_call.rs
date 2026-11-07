@@ -44,6 +44,17 @@ pub(super) fn lower_call(
         builder.ins().jump(next, &[]);
         builder.switch_to_block(user);
     }
+    let framed = builder.create_block();
+    if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
+        destination, framed).is_none() { builder.ins().jump(framed, &[]); }
+    builder.switch_to_block(framed);
+    emit_user_call(builder, (pc, next, fallback), payload, exact);
+    true
+}
+
+/// The framed call through `general_user_call`, its miss taking the exact step.
+fn emit_user_call(builder: &mut FunctionBuilder<'_>, (pc, next, fallback): (usize, ir::Block, ir::Block),
+    payload: ir::Value, exact: &JsExactFallback) {
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, user_call));
     let pc_value = builder.ins().iconst(types::I64, pc as i64);
     let status = emit_lane_helper_call(builder, payload, helper, &[payload, pc_value]);
@@ -54,7 +65,6 @@ pub(super) fn lower_call(
     let stopped = builder.ins().icmp_imm_u(IntCC::Equal, status, USER_CALL_STOPPED);
     builder.ins().brif(stopped, exact.stopped_block, &[], fallback, &[]);
     exact.emit(builder, fallback);
-    true
 }
 
 /// The registers of a `push` call with one argument or a `pop` call with none: callee,
@@ -74,7 +84,7 @@ fn builtin_call(program: &ResidualProgram, function: &Function, pc: usize, instr
         .map(|packed| super::super::dispatch_fast::decoded_instruction(function, *packed))
         .find(|earlier| earlier.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
             && earlier.result_register() == instruction.register_b())?;
-    let Some(FieldLookup::Atom { atom, .. }) = read.field_lookup().filter(|_| read.op() == Op::GetField) else { return None };
+    let Some(FieldLookup::Atom { atom, .. }) = (read.op() == Op::GetField).then(|| read.field_lookup()).flatten() else { return None };
     let name = program.atoms.get(atom as usize)?;
     if !((name == "push" && window.count == 1) || (name == "pop" && window.count == 0)) { return None; }
     Some(BuiltinCall {
@@ -137,6 +147,8 @@ pub(super) unsafe extern "C" fn general_user_call<H: Host>(vm: u64, residual: u6
 }
 
 fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch, pc: usize) -> u64 {
+    // A frameless activation's call runs in its frame, which only its exact step makes.
+    if vm.frameless.inside(dispatch) { return USER_CALL_MISSED; }
     // SAFETY: the entry's activation owns its function for the run.
     let body = unsafe { &*dispatch.body };
     let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);

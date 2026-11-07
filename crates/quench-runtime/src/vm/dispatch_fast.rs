@@ -2708,13 +2708,13 @@ const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
 #[inline(always)]
-fn capture_reads(capture: *const usize) -> *const usize {
+pub(super) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
 #[inline(always)]
-fn capture_stores(capture: *const usize) -> Option<*const usize> {
+pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
     (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture))
 }
 
@@ -12476,7 +12476,7 @@ impl<H: Host> Vm<H> {
     /// The capture slots a frameless target whose closure has environment `env` reads
     /// (`ScriptCallTarget::capture`), tagged `CAPTURE_STORES` when they admit every store,
     /// whose barrier this takes once.
-    fn target_capture(
+    pub(super) fn target_capture(
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,

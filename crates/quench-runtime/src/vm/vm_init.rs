@@ -154,6 +154,7 @@ impl<H: Host> Vm<H> {
             recent_atom_strings: None,
             bound_parts_layout: std::cell::Cell::new(None),
             call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
+            frameless: Default::default(),
             field_caches: Default::default(),
             inherited_field_indices: Default::default(),
             accessor_field_indices: Default::default(),

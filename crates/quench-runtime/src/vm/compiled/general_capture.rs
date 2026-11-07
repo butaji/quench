@@ -87,6 +87,8 @@ pub(super) unsafe extern "C" fn general_capture_slots<H: Host>(vm: u64, residual
     let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch)) };
     let frame = dispatch.frame;
+    // A frameless activation's slots are its admission's (`frameless::admit`).
+    if vm.frameless.inside(dispatch) { return 0; }
     vm.cached_direct_capture(frame, 0, 0);
     let Some((slots, None)) = vm.current_capture_slots(frame) else { return 0 };
     // SAFETY: the frame's cache names live slots this collection.

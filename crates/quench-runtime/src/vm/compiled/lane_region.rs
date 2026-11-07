@@ -20,7 +20,6 @@
 use super::*;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, CheckedObjectTable, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
-use crate::value::EXACT_I64_TRUNCATION_LIMIT;
 use crate::typed_ir::Division;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -1909,15 +1908,9 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
-    /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
+    /// The ToInt32 of `number` (`emit_number_to_int32`).
     fn number_to_int32(&mut self, number: ir::Value, exit: ir::Block) -> ir::Value {
-        let magnitude = self.ins().fabs(number);
-        let bound = self.ins().f64const(EXACT_I64_TRUNCATION_LIMIT);
-        let exact = self.ins().fcmp(ir::condcodes::FloatCC::LessThan, magnitude, bound);
-        emit_js_guard(&mut self.builder, exact, exit);
-        let wide = self.ins().fcvt_to_sint_sat(types::I64, number);
-        self.ins().ireduce(types::I32, wide)
+        super::emit_number_to_int32(&mut self.builder, number, exit)
     }
 
     /// `register`'s int32 view (`Registers::int`).
@@ -5325,6 +5318,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::value::EXACT_I64_TRUNCATION_LIMIT;
 
     #[test]
     fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {

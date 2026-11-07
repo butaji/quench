@@ -2148,6 +2148,7 @@ pub(crate) struct Vm<H> {
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
+    frameless: compiled::Frameless,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
@@ -2335,11 +2336,8 @@ impl<H: Host> Vm<H> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
     }
 
-    /// Retire weak callee bindings at their lifetime-changing edge. The fixed
-    /// direct-mapped cache pays no generation/realm polling on a hit.
-    fn clear_call_targets(&mut self) {
-        self.call_targets.fill(EMPTY_CALL_TARGET);
-    }
+    /// Retire weak callee bindings and frameless admissions at their lifetime-changing edge.
+    fn clear_call_targets(&mut self) { self.call_targets.fill(EMPTY_CALL_TARGET); self.frameless.clear(); }
 
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.

@@ -367,7 +367,7 @@ impl<H: Host> Vm<H> {
             string_atoms: _,
             recent_atom_strings: _,
             bound_parts_layout: _,
-            call_targets: _,
+            call_targets: _, frameless: _,
             field_caches: _,
             inherited_field_indices: _,
             accessor_field_indices: _,

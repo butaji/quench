@@ -81,6 +81,11 @@ mod direct_call;
 mod general_call;
 #[path = "compiled/general_capture.rs"]
 mod general_capture;
+#[path = "compiled/general_names.rs"]
+mod general_names;
+#[path = "compiled/frameless.rs"]
+mod frameless;
+pub(super) use frameless::Frameless;
 use direct_call::{direct_call, LeafCall};
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
@@ -1362,6 +1367,17 @@ fn emit_js_step_fallback(
 
 /// Continue native code only when one guard holds. All failures share the exact-PC
 /// VM fallback emitted after the direct path.
+/// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
+/// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
+pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
+    let magnitude = builder.ins().fabs(number);
+    let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
+    let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
+    emit_js_guard(builder, exact, exit);
+    let wide = builder.ins().fcvt_to_sint_sat(types::I64, number);
+    builder.ins().ireduce(types::I32, wide)
+}
+
 fn emit_js_guard(
     builder: &mut FunctionBuilder<'_>,
     condition: ir::Value,
@@ -2496,45 +2512,63 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
             &mut *(payload as *mut JsStepDispatch),
             std::slice::from_raw_parts(entries as *const InlineRecoveryFrame, count as usize))
     };
-    let mut recovered = super::dispatch_frame::RecoveredCalls {
-        calls: Vec::with_capacity(entries.len()), failure: None,
-    };
-    for (caller, entry) in (dispatch.frame..).zip(entries) {
-        let body = program.function(vm.frames[caller].function as usize);
-        let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
-        let callee = vm.read(caller, instruction.register_b());
-        let receiver = vm.read(caller, instruction.register_c());
-        let env = vm.heap.function(callee).expect("admitted inline closure").env;
-        let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
-        vm.frames[caller].pc = entry.call_pc as usize + 1;
-        vm.frames[caller].pc_is_resume = true;
-        let guard = vm.push_general_user_frame(program, entry.function, env, receiver,
-            unsafe { &*passed }, super::CallContext::user_function(entry.function, callee));
-        let guard = match guard {
-            Ok(guard) => guard,
-            Err(error) => { recovered.failure = Some((entry.call_pc, error)); break; }
-        };
-        let frame = vm.frames.last_mut().expect("recovered inline frame");
-        let snapshot = unsafe { std::slice::from_raw_parts(
-            (registers as *const Value).add(entry.registers as usize), frame.registers.len()) };
-        frame.registers.copy_from_slice(snapshot);
-        frame.pc = entry.source_pc as usize;
-        frame.pc_is_resume = true;
-        vm.active_registers = frame.registers.as_mut_ptr();
-        recovered.calls.push(super::dispatch_frame::PendingGeneralCall {
-            caller, caller_cursor: None, call_pc: entry.call_pc,
-            destination: instruction.result_register(), completion: super::CallCompletion::Value,
-            returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
-        });
-        #[cfg(test)] {
-            INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
-            INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((entry.function, entry.source_pc))));
+    let base = registers as *const Value;
+    // An inlined chain inside frameless activations follows theirs (`frameless::chain`).
+    let inlined = entries.iter().map(|entry|
+        (entry.function, entry.call_pc, entry.source_pc, base.wrapping_add(entry.registers as usize)));
+    #[cfg(test)] {
+        INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + entries.len()));
+        let last = entries.last().expect("a recovery chain");
+        INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((last.function, last.source_pc))));
+    }
+    let chain = frameless::chain(vm, dispatch, entries[0].call_pc, inlined);
+    materialize_chain(vm, program, dispatch, &chain);
+    0
+}
+
+/// Makes the frames of a chain of native activations, outer to inner, each `(function,
+/// call PC in its caller, PC it continues at, registers)`, above the payload's frame, and
+/// stops the payload with them (`StepResult::ResumeFrames`).
+fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch,
+    chain: &[(u32, u32, u32, *const Value)]) {
+    let mut recovered = super::dispatch_frame::RecoveredCalls { calls: Vec::with_capacity(chain.len()), failure: None };
+    for (caller, entry) in (dispatch.frame..).zip(chain) {
+        match recover_call(vm, program, caller, *entry) {
+            Ok(call) => recovered.calls.push(call),
+            Err(failure) => { recovered.failure = Some(failure); break; }
         }
     }
-    let call_pc = entries[0].call_pc as usize;
+    let call_pc = chain[0].1 as usize;
     dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
         result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
-    0
+}
+
+/// Makes the frame of one chain entry above `caller`, its registers copied from the entry's.
+fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize,
+    (function, call_pc, source_pc, registers): (u32, u32, u32, *const Value))
+    -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
+    let body = program.function(vm.frames[caller].function as usize);
+    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[call_pc as usize]);
+    let callee = vm.read(caller, instruction.register_b());
+    let receiver = vm.read(caller, instruction.register_c());
+    let env = vm.heap.function(callee).expect("admitted inline closure").env;
+    let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
+    vm.frames[caller].pc = call_pc as usize + 1;
+    vm.frames[caller].pc_is_resume = true;
+    let guard = vm.push_general_user_frame(program, function, env, receiver,
+        unsafe { &*passed }, super::CallContext::user_function(function, callee)).map_err(|error| (call_pc, error))?;
+    let frame = vm.frames.last_mut().expect("recovered inline frame");
+    let count = frame.registers.len();
+    // SAFETY: the chain's registers hold the frame's register count of live values.
+    frame.registers.copy_from_slice(unsafe { std::slice::from_raw_parts(registers, count) });
+    frame.pc = source_pc as usize;
+    frame.pc_is_resume = true;
+    vm.active_registers = frame.registers.as_mut_ptr();
+    Ok(super::dispatch_frame::PendingGeneralCall {
+        caller, caller_cursor: None, call_pc, destination: instruction.result_register(),
+        completion: super::CallCompletion::Value, returns: instruction.returns_from_frame(),
+        call_guard: Some(guard), caller_program: None,
+    })
 }
 
 unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
@@ -3164,19 +3198,12 @@ pub(super) fn lower_js_general_dispatch(
                 })
             && next.is_some()
         {
-            // The shared callout takes a cached data-property hit where the
-            // global environment proves it side-effect-free; every lexical,
-            // accessor, and miss case resumes Vm::step at this exact PC.
-            emit_js_step_fallback(
-                &mut builder,
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            );
+            let next = next.expect("a successor");
+            if !general_names::lower_global_read(&mut builder, (instruction, next), &register_offset, (arguments, payload),
+                &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
+                emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer,
+                    stopped_block, continue_block, pc);
+            }
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -3995,85 +4022,67 @@ pub(super) fn lower_js_general_dispatch(
         let bitwise_result = numeric_binary
             && bitwise.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
+            && (instruction.result_flags() == 0
+                || (arithmetic_returns && instruction.result_flags() == RETURN_REGISTER))
             && !instruction.writes_current_this()
-            && result_target.and_then(register_offset).is_some()
+            && (arithmetic_returns || (result_target.and_then(register_offset).is_some() && result_next.is_some()))
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
-        if let (true, Some(next), Some(operation), Some((left_operand, right_operand))) =
-            (bitwise_result, result_next, bitwise, operands)
-        {
-            let fallback = builder.create_block();
-            let native = builder.create_block();
-            let destination = result_target
-                .and_then(register_offset)
-                .expect("prevalidated JS bitwise destination");
-            let left_bits = read_js_tagged_operand(
-                &mut builder,
-                program,
-                left_operand,
-                arguments,
-                &register_offset,
-            )
-            .expect("prevalidated JS bitwise operand");
-            let right_bits = read_js_tagged_operand(
-                &mut builder,
-                program,
-                right_operand,
-                arguments,
-                &register_offset,
-            )
-            .expect("prevalidated JS bitwise operand");
+        if let (true, Some(operation), Some((left_operand, right_operand))) = (bitwise_result, bitwise, operands) {
+            let (fallback, native) = (builder.create_block(), builder.create_block());
+            // A returning result lands in the completion record once no interrupt is pending,
+            // as a returning arithmetic result does.
+            let (target, destination, next) = if arithmetic_returns {
+                let compute = builder.create_block();
+                let interrupted = emit_js_interrupt_requested(&mut builder);
+                builder.ins().brif(interrupted, fallback, &[], compute, &[]);
+                builder.switch_to_block(compute);
+                (result_pointer, 0, builder.create_block())
+            } else {
+                (arguments, result_target.and_then(register_offset).expect("prevalidated JS bitwise destination"),
+                    result_next.expect("prevalidated JS bitwise continuation"))
+            };
+            let left_bits = read_js_tagged_operand(&mut builder, program, left_operand, arguments, &register_offset)
+                .expect("prevalidated JS bitwise operand");
+            let right_bits = read_js_tagged_operand(&mut builder, program, right_operand, arguments, &register_offset)
+                .expect("prevalidated JS bitwise operand");
             let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
             let int_tag = (crate::value::ValueLayout::INT_TAG >> shift) as i64;
             let left_tag = builder.ins().ushr_imm_u(left_bits, shift);
             let right_tag = builder.ins().ushr_imm_u(right_bits, shift);
-            let left_integer = builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, left_tag, int_tag);
-            let right_integer = builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, right_tag, int_tag);
+            let left_integer = builder.ins().icmp_imm_u(IntCC::Equal, left_tag, int_tag);
+            let right_integer = builder.ins().icmp_imm_u(IntCC::Equal, right_tag, int_tag);
             let both_integer = builder.ins().band(left_integer, right_integer);
-            builder
-                .ins()
-                .brif(both_integer, native, &[], fallback, &[]);
-
+            let (numbers, left, right) = (builder.create_block(), builder.append_block_param(native, types::I32),
+                builder.append_block_param(native, types::I32));
+            let (left_int, right_int) = (builder.ins().ireduce(types::I32, left_bits), builder.ins().ireduce(types::I32, right_bits));
+            builder.ins().brif(both_integer, native, &[ir::BlockArg::Value(left_int), ir::BlockArg::Value(right_int)], numbers, &[]);
+            // Other Numbers take their ToInt32 (ECMA-262 7.1.6), as the lane's do.
+            builder.switch_to_block(numbers);
+            let converted = [left_bits, right_bits].map(|bits| {
+                let number = emit_js_tagged_number(&mut builder, bits, fallback);
+                ir::BlockArg::Value(emit_number_to_int32(&mut builder, number, fallback))
+            });
+            builder.ins().jump(native, &converted);
             builder.switch_to_block(native);
-            let left = builder.ins().ireduce(types::I32, left_bits);
-            let right = builder.ins().ireduce(types::I32, right_bits);
-            let encoded = if operation
-                == super::operations::NumberBitwise::ShiftRightUnsigned
-            {
+            let encoded = if operation == super::operations::NumberBitwise::ShiftRightUnsigned {
                 let number = emit_number_bitwise_operation(&mut builder, operation, left, right);
                 emit_js_box_number(&mut builder, number)
             } else {
                 let result = emit_number_bitwise_bits(&mut builder, operation, left, right);
                 let payload = builder.ins().uextend(types::I64, result);
-                builder
-                    .ins()
-                    .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
+                builder.ins().bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
             };
-            builder.ins().store(
-                MemFlagsData::trusted(),
-                encoded,
-                arguments,
-                destination,
-            );
+            builder.ins().store(MemFlagsData::trusted(), encoded, target, destination);
             builder.ins().jump(next, &[]);
+            if arithmetic_returns {
+                builder.switch_to_block(next);
+                emit_js_return_status(&mut builder, pc);
+            }
             builder.switch_to_block(fallback);
-            emit_js_step_fallback(
-                &mut builder,
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            );
+            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -7402,6 +7411,13 @@ struct JsStepDispatch {
     /// whether `capture_values` admits a direct write.
     captures: usize,
     capture_stores: usize,
+    /// A global name's cached read (`general_names`).
+    global_get: usize,
+    /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
+    /// `epoch`, and the admission a site whose entry misses asks.
+    call_cache: usize,
+    epoch: u64,
+    frameless: usize,
     /// The running heap's charged allocation weight and the weight a collection is due at,
     /// by address (`Heap::should_collect`), which a native back edge compares to leave for its
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
@@ -7598,11 +7614,6 @@ unsafe extern "C" fn general_field_get<H: Host>(vm: u64, residual: u64, receiver
     unsafe { cached_field_read::<H>(vm, residual, receiver, read) }
 }
 
-/// A general-dispatch call of an array builtin: `Array.prototype.push` of one value or `pop`
-/// onto a dense array, by the lane's own shortcuts (`Vm::array_push_dense`,
-/// `Vm::array_pop_dense`); `Value::DELETED`, having done nothing, for any other callee,
-/// receiver or argument count, which the exact step calls. A push may move the array's
-/// elements, which native code reads anew at every access.
 /// The VM's cached read of the field `read` names (its atom above its cache site): an array's
 /// `length`, a proved inherited entry, else the site's caches; `Value::DELETED` for a miss.
 ///
@@ -8415,7 +8426,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0,
-                native_call: 0, user_call: 0, captures: 0, capture_stores: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -8566,7 +8577,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8605,6 +8616,8 @@ impl JsStepDispatch {
         self.native_call = general_call::general_native_call::<H> as *const () as usize;
         self.user_call = general_call::general_user_call::<H> as *const () as usize;
         self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
+        self.global_get = general_names::general_global_get::<H> as *const () as usize;
+        self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         let heap = vm.cast::<u8>().wrapping_add(std::mem::offset_of!(Vm<H>, heap));
         self.allocated = heap.wrapping_add(crate::heap::Heap::ALLOCATED_OFFSET) as usize;
         self.collect_at = heap.wrapping_add(crate::heap::Heap::COLLECT_AT_OFFSET) as usize;
@@ -8616,6 +8629,7 @@ impl JsStepDispatch {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let atoms = vm.method_cache_atoms.words();
@@ -8638,6 +8652,7 @@ impl JsStepDispatch {
             })
             .unwrap_or((std::ptr::null(), 0));
         self.capture_stores = 0;
+        vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
     }
@@ -8900,10 +8915,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             .map_err(|_| JsError::validation("native JS PC does not fit usize".into()))?;
         let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
-        // SAFETY: the owning JsNativeActivation admits both pointers once and
-        // retains the shared program until native execution (including reentry)
-        // finishes. Record release requires unique ownership of that program.
+        // SAFETY: the owning JsNativeActivation admits both pointers once and retains the shared
+        // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
+        if let Some(step) = frameless::leave(vm, program, dispatch, pc) { return Ok(JsCalloutStep::Stop(step)); }
         let body = unsafe { &*dispatch.body };
         #[cfg(feature = "native-execution")]
         if SINGLE_OPERATION && dispatch.stop_pc == pc {
@@ -8954,49 +8969,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let next_pc = pc
             .checked_add(1)
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
-
-        let native_pc = !SINGLE_OPERATION && !dispatch.native_pcs.is_null()
-            && pc < dispatch.native_pc_count
-            // SAFETY: the compiled artifact owns this byte map for the entire
-            // native callout and the PC is bounded by its recorded length.
-            && unsafe { *dispatch.native_pcs.add(pc) != 0 };
-        if !SINGLE_OPERATION && native_pc
-            && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
-            && !vm.realm.global_lexical_declarations.contains(&instruction.atom_index())
-            && program
-                .atoms
-                .get(instruction.atom_index() as usize)
-                .is_some_and(|name| {
-                    !name.starts_with('\0') && !crate::bytecode::is_intrinsic_name(name)
-                })
-        {
-            let globals = vm.realm.globals;
-            let cache_site = instruction.cache_site_index();
-            let probe = vm.cached_field_hit(program, globals, cache_site);
-            if vm.programs.js_jit_diagnostics_enabled() {
-                vm.programs.record_js_jit_field_cache_probe(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    cache_site,
-                    matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
-                );
-            }
-            if let super::object::FieldCacheProbe::Hit(value) = probe {
-                #[cfg(test)]
-                {
-                    dispatch.global_name_cache_hits =
-                        dispatch.global_name_cache_hits.saturating_add(1);
-                }
-                let frame = &mut vm.frames[dispatch.frame];
-                frame.registers[usize::from(instruction.result_register())] = value;
-                if instruction.op() == Op::LoadNameCall {
-                    frame.registers[usize::from(instruction.register_b())] = Value::UNDEFINED;
-                }
-                frame.pc = next_pc;
-                frame.pc_is_resume = true;
-                return Ok(JsCalloutStep::Continue(next_pc));
-            }
-        }
 
         let frame = &mut vm.frames[dispatch.frame];
         // Entry admits these homes, and every effectful continuation validates
