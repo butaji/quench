@@ -2,7 +2,7 @@
 //! arithmetic, which is exact modulo 2^32 whenever the Number result is an exact integer
 //! (LLVM's Float2Int and demanded-bits reasoning, over the region's webs).
 use super::{Arithmetic, Definition, Lowering, LoopRegion, Range, Webs, arithmetic};
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::WideInstruction;
 use crate::vm::operations::NumberArithmetic;
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ pub(super) fn truncated_webs(
     candidates: impl Iterator<Item = Definition>,
 ) -> BTreeSet<Definition> {
     let sums = |instruction: WideInstruction| {
-        matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+        instruction.op().is_binary_arithmetic()
             .then(|| arithmetic(instruction.op(), instruction.binary_operator()))
             .flatten()
     };

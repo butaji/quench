@@ -568,7 +568,7 @@ fn pairs_from_object(c: &mut Context<'_>, init: RootId) -> Result<Pairs, RootedE
     let iterator_key = get(c, symbol, "iterator")?;
     let method = c.get_property_rooted(init, iterator_key)?;
     let mut pairs = Pairs::new();
-    if !matches!(type_of(c, method), ValueType::Undefined | ValueType::Null) {
+    if !type_of(c, method).is_nullish() {
         if !c.is_callable_rooted(method)? {
             return Err(coded_type_error(c, "Query pairs must be iterable", "ERR_ARG_NOT_ITERABLE")?);
         }
@@ -611,7 +611,7 @@ fn pairs_from_object(c: &mut Context<'_>, init: RootId) -> Result<Pairs, RootedE
 
 /// One query pair's strings: an array's elements or an iterable's values.
 fn pair_elements(c: &mut Context<'_>, pair: RootId, iterator_key: RootId) -> Result<Vec<String>, RootedError> {
-    if matches!(type_of(c, pair), ValueType::Undefined | ValueType::Null) {
+    if type_of(c, pair).is_nullish() {
         return Err(invalid_tuple(c)?);
     }
     if c.is_array_rooted(pair)? {

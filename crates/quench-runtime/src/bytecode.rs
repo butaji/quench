@@ -111,6 +111,7 @@ mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops;
+mod op_classes;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
 pub(crate) use atoms::{AtomSequence, AtomTable};
@@ -1314,10 +1315,7 @@ fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
         } else {
             packed.as_wide()
         };
-        matches!(
-            instruction.op().control_flow_layout(),
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
-        ) && instruction.jump_target() as usize <= pc
+        instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc
     })
 }
 
@@ -1993,10 +1991,10 @@ impl Function {
         }
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
-                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+                || instruction.op().addresses_env_local() && !selective
         }) || self.wide.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
-                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+                || instruction.op().addresses_env_local() && !selective
         });
         if has_legacy_environment_access {
             return Some(PlainLocalContextIneligibility::LegacyCaptureLayout);
@@ -2148,10 +2146,7 @@ impl Function {
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
-                matches!(
-                    instruction.op(),
-                    Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                instruction.op().loads_name() && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
                     tables
                         .atom_name(atom)
                         .is_none_or(|name| name.starts_with('\0') && !is_intrinsic_name(name))
@@ -2285,7 +2280,7 @@ impl Function {
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
         self.instructions()
-            .any(|instruction| matches!(instruction.op(), Op::Await | Op::Yield | Op::YieldStar))
+            .any(|instruction| instruction.op().suspends())
     }
 
     /// The function's `CallPlan`, derived on first use.
@@ -2351,7 +2346,7 @@ impl Function {
             let kept_arguments = self.kept_arguments();
             let forwards_arguments = kept_arguments == Some(KeptArguments::Forwards);
             let addresses_locals = self.instructions().any(|instruction| {
-                matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
+                instruction.op().captures_environment()
                     || instruction.addressed_local_slots().next().is_some()
             });
             let reaches_only_forwarded_arguments = kept_arguments.is_some()
@@ -2398,7 +2393,7 @@ impl Function {
                             || (op == Op::GetField
                                 && instruction.addressed_local_slots().eq(instruction.local_field_base()))
                             // The window keeps every value passed, which these answer.
-                            || matches!(op, Op::ArgumentsLength | Op::ArgumentGet))
+                            || op.reads_arguments())
                 });
             CallPlan {
                 environment_activation,
@@ -2607,7 +2602,7 @@ impl Function {
             && !self.local_slot_uses_environment(usize::from(slot))
             && !self.has_dynamic_scope_access()
             && self.instructions().all(|instruction| {
-                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet)
+                instruction.op().reads_arguments()
                     || !instruction
                         .addressed_local_slots()
                         .any(|addressed| addressed == slot)
@@ -2828,7 +2823,7 @@ impl Function {
         let mut forwarded = false;
         let mut passes = SmallVec::<[usize; 2]>::new();
         for (pc, instruction) in instructions.iter().enumerate() {
-            if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
+            if instruction.op().captures_environment() {
                 return None;
             }
             if !instruction
@@ -2837,14 +2832,14 @@ impl Function {
             {
                 continue;
             }
-            let loads = matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain);
+            let loads = instruction.op().loads_frame_local();
             let feeds_forwarding_call = loads
                 && instructions.get(pc + 1).is_some_and(|next| {
                     next.op() == Op::CallForwardingArguments
                         && next.call_window().last() == Some(instruction.result_register())
                 });
             let reads_kept_values =
-                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet);
+                instruction.op().reads_arguments();
             if feeds_forwarding_call || reads_kept_values {
                 forwarded = true;
             } else if loads {
@@ -2907,7 +2902,7 @@ impl Function {
     /// [`WITH_ENTER_BINDING`] in the owning program's atom table.
     pub(crate) fn contains_with_statement(&self, is_with_enter: impl Fn(usize) -> bool) -> bool {
         self.instructions().any(|instruction| {
-            matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+            instruction.op().is_throwing_name_load()
                 && usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter)
         })
     }
@@ -3919,15 +3914,9 @@ impl Clone for ValidationProof {
 #[inline(never)]
 fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
     code.iter().all(|instruction| {
-        !matches!(
-            instruction.op(),
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
-        ) || instruction.local_slot() < usize::from(locals)
+        !instruction.op().addresses_local_slot() || instruction.local_slot() < usize::from(locals)
     }) && wide.iter().all(|instruction| {
-        !matches!(
-            instruction.op(),
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
-        ) || instruction.local_slot() < usize::from(locals)
+        !instruction.op().addresses_local_slot() || instruction.local_slot() < usize::from(locals)
     })
 }
 
