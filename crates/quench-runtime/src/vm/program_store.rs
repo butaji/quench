@@ -1384,11 +1384,11 @@ impl ProgramStore {
     /// functions; a global-scope program's root body may still meet bindings its own
     /// declarations add, so only its nested functions qualify.
     pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
-        self.entry(id).is_some_and(|entry| {
-            entry.residual.kind == crate::bytecode::ProgramKind::Module
-                || (function != super::ROOT_FUNCTION_ID && self.runs_in_global_scope(id))
-        })
+        self.names_are_global(id) && (function != super::ROOT_FUNCTION_ID || self.module_kind(id))
     }
+    /// Whether unresolved names in the program's nested functions are global (`general_global_get`).
+    pub(crate) fn names_are_global(&self, id: ProgramId) -> bool { self.module_kind(id) || self.runs_in_global_scope(id) }
+    fn module_kind(&self, id: ProgramId) -> bool { self.entry(id).is_some_and(|entry| entry.residual.kind == crate::bytecode::ProgramKind::Module) }
 
     /// Whether the program's root body evaluates in the global environment.
     pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {

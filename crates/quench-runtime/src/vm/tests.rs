@@ -22976,19 +22976,16 @@ fn js_general_artifact_key_tracks_only_code_generation_dependencies() {
     let first_key = super::compiled::js_general_dispatch_cache_key(
         &first,
         function_id(&first, "f"),
-        true,
     )
     .expect("small function has a bounded cache key");
     let equivalent_key = super::compiled::js_general_dispatch_cache_key(
         &equivalent,
         function_id(&equivalent, "f"),
-        true,
     )
     .expect("equivalent function has a bounded cache key");
     let different_key = super::compiled::js_general_dispatch_cache_key(
         &different_constant,
         function_id(&different_constant, "f"),
-        true,
     )
     .expect("different function has a bounded cache key");
 
