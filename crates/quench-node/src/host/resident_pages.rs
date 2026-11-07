@@ -26,10 +26,6 @@ pub extern "C" fn quench_entry_compiled() {
 #[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
 
-/// Opts into platform-specific resident-memory readings at start-up phase boundaries.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const RSS_PHASES_ENV: &str = "QUENCH_RSS_PHASES";
-
 /// The kernel's per-process status, for `phase_peak`.
 #[cfg(target_os = "linux")]
 const STATUS_PATH: &str = "/proc/self/status";
@@ -40,13 +36,13 @@ const RESET_PEAK: &str = "5";
 #[cfg(target_os = "linux")]
 const CLEAR_REFS_PATH: &str = "/proc/self/clear_refs";
 
-/// Diagnostic (`RSS_PHASES_ENV`): reports on stderr the peak resident set since the previous
+/// Diagnostic (`QUENCH_TRACE=rss-phases`): reports on stderr the peak resident set since the previous
 /// boundary, and the resident anonymous and file pages now, then resets the peak, so that
 /// each phase of a run (load, start-up, entry compilation, the run up to its first
 /// collection, the rest) reports its own peak.
 #[cfg(target_os = "linux")]
 pub fn phase_peak(phase: &str) {
-    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+    if !quench_runtime::trace::Channel::RssPhases.on() {
         return;
     }
     let status = std::fs::read_to_string(STATUS_PATH).unwrap_or_default();
@@ -66,7 +62,7 @@ pub fn phase_peak(phase: &str) {
 /// boundary samples, not Linux's resettable per-phase peak or anonymous/file split.
 #[cfg(target_os = "macos")]
 pub fn phase_peak(phase: &str) {
-    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+    if !quench_runtime::trace::Channel::RssPhases.on() {
         return;
     }
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();

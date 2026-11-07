@@ -29,6 +29,8 @@ const FIXTURES: &[&str] = &[
 ];
 use analysis::{MIN_QUALIFYING_ROUNDS, SELECTIVE_HANDOFF_CONFIG};
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
+/// The development-experiment setting (`quench_runtime::trace::Dev`).
+const QUENCH_DEV: &str = "QUENCH_DEV";
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
 const SUITE_REPORT_SCHEMA: u32 = 16;
@@ -38,7 +40,6 @@ const FIXED_WORK_SUITE_COUNT: usize = 1;
 const FIXED_WORK_MARKER_COUNT: usize = 1;
 const FIXED_WORK_SAMPLE_ORDER_PERIOD: usize = 2;
 const HOST_CPU_CONSUMER_LIMIT: usize = 5;
-const QUENCH_JS_JIT_GENERAL_DISPATCH: &str = "QUENCH_JS_JIT_GENERAL_DISPATCH";
 const FIXED_WORK_PLANS: &[FixedWorkPlan] = &[
     FixedWorkPlan {
         fixture: "crypto.js",
@@ -1376,26 +1377,18 @@ fn quench_engine(options: &Options) -> EngineSpec {
     if options.jit_diagnostics {
         environment.insert("QUENCH_TRACE".into(), "wasm-jit,js-jit".into());
     }
-    if options.jit_js_general_dispatch {
-        environment.insert(QUENCH_JS_JIT_GENERAL_DISPATCH.into(), "1".into());
-    }
-    if options.jit_wasm_root.is_some() {
-        if let Ok(value) = std::env::var("QUENCH_WASM_JIT_ROOT_OPT_LEVEL") {
-            environment.insert("QUENCH_WASM_JIT_ROOT_OPT_LEVEL".into(), value);
-        }
-    }
-    if options.jit_wasm_selective {
-        let config = &SELECTIVE_HANDOFF_CONFIG;
-        environment.insert(config.switch_env.into(), config.on_value.into());
-    }
-    if options.jit_wasm_root_only {
-        environment.insert("QUENCH_WASM_JIT_ROOT_ONLY".into(), "1".into());
-    }
-    if options.jit_wasm_root_first {
-        environment.insert("QUENCH_WASM_JIT_ROOT_FIRST".into(), "1".into());
-    }
-    if let Some(root) = options.jit_wasm_root {
-        environment.insert("QUENCH_WASM_JIT_ROOT".into(), root.to_string());
+    let experiments: Vec<String> = [
+        options.jit_js_general_dispatch.then(|| "js-general-dispatch".into()),
+        options.jit_wasm_selective.then(|| SELECTIVE_HANDOFF_CONFIG.on_value.into()),
+        options.jit_wasm_root_only.then(|| "wasm-root-only".into()),
+        options.jit_wasm_root_first.then(|| "wasm-root-first".into()),
+        options.jit_wasm_root.map(|root| format!("wasm-root={root}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !experiments.is_empty() {
+        environment.insert(QUENCH_DEV.into(), experiments.join(","));
     }
     let mut quench = spec("quench", &options.quench, argv, environment);
     let execution_tier = if jit_enabled { "JIT" } else { "interpreter" };
@@ -1414,31 +1407,31 @@ fn quench_engine(options: &Options) -> EngineSpec {
         };
         if options.jit_js_general_dispatch {
             quench.jit_proof = format!(
-                "{}; experimental priced JavaScript GeneralDispatch enabled with QUENCH_JS_JIT_GENERAL_DISPATCH=1; not qualification mode",
+                "{}; experimental priced JavaScript GeneralDispatch enabled with QUENCH_DEV=js-general-dispatch; not qualification mode",
                 quench.jit_proof
             );
         }
         if let Some(root) = options.jit_wasm_root {
             quench.jit_proof = format!(
-                "{}; bounded experimental root compilation selected residual function {root} via QUENCH_WASM_JIT_ROOT; not qualification mode",
+                "{}; bounded experimental root compilation selected residual function {root} via QUENCH_DEV=wasm-root; not qualification mode",
                 quench.jit_proof
             );
         }
         if options.jit_wasm_root_only {
             quench.jit_proof = format!(
-                "{}; strict experimental single-root compilation enabled with QUENCH_WASM_JIT_ROOT_ONLY=1; hot callees remain interpreted; not qualification mode",
+                "{}; strict experimental single-root compilation enabled with QUENCH_DEV=wasm-root-only; hot callees remain interpreted; not qualification mode",
                 quench.jit_proof
             );
         }
         if options.jit_wasm_root_first {
             quench.jit_proof = format!(
-                "{}; experimental root-first tiering enabled with QUENCH_WASM_JIT_ROOT_FIRST=1; starts with the selected root and promotes hot fallback callees; not qualification mode",
+                "{}; experimental root-first tiering enabled with QUENCH_DEV=wasm-root-first; starts with the selected root and promotes hot fallback callees; not qualification mode",
                 quench.jit_proof
             );
         }
         if options.jit_wasm_selective {
             quench.jit_proof = format!(
-                "{}; opt-in selective Wasm hot-root tiering enabled with QUENCH_WASM_JIT_SELECTIVE=1; not qualification mode",
+                "{}; opt-in selective Wasm hot-root tiering enabled with QUENCH_DEV=wasm-selective; not qualification mode",
                 quench.jit_proof
             );
         }
@@ -2953,7 +2946,7 @@ mod fixture_selection_tests {
 mod jit_wasm_root_only_tests {
     use super::{
         JitMode, Options, Suite, jit_wasm_root_first_error, jit_wasm_root_only_error,
-        jit_wasm_selective_error, parse_options_from, quench_engine,
+        jit_wasm_selective_error, parse_options_from, quench_engine, QUENCH_DEV,
     };
 
     #[test]
@@ -3080,13 +3073,7 @@ mod jit_wasm_root_only_tests {
         };
         let engine = quench_engine(&options);
 
-        assert_eq!(
-            engine
-                .env
-                .get("QUENCH_WASM_JIT_ROOT_ONLY")
-                .map(String::as_str),
-            Some("1")
-        );
+        assert!(engine.env.get(QUENCH_DEV).is_some_and(|dev| dev.split(',').any(|name| name == "wasm-root-only")));
         assert!(engine.jit_proof.contains("single-root compilation"));
         assert!(engine.jit_proof.contains("not qualification mode"));
     }
@@ -3122,13 +3109,7 @@ mod jit_wasm_root_only_tests {
         };
         let engine = quench_engine(&options);
 
-        assert_eq!(
-            engine
-                .env
-                .get("QUENCH_WASM_JIT_ROOT_FIRST")
-                .map(String::as_str),
-            Some("1")
-        );
+        assert!(engine.env.get(QUENCH_DEV).is_some_and(|dev| dev.split(',').any(|name| name == "wasm-root-first")));
         assert!(engine.jit_proof.contains("root-first tiering"));
         assert!(engine.jit_proof.contains("promotes hot fallback callees"));
         assert!(engine.jit_proof.contains("not qualification mode"));
@@ -3139,7 +3120,7 @@ mod jit_wasm_root_only_tests {
 mod jit_js_general_dispatch_tests {
     use super::{
         jit_js_general_dispatch_error, parse_options_from, quench_engine, JitMode, Suite,
-        QUENCH_JS_JIT_GENERAL_DISPATCH,
+        QUENCH_DEV,
     };
 
     fn experimental_options() -> super::Options {
@@ -3178,13 +3159,7 @@ mod jit_js_general_dispatch_tests {
         options.quench = std::env::current_exe().expect("test executable path");
         let engine = quench_engine(&options);
         assert_eq!(engine.argv, vec!["--jit".to_string()]);
-        assert_eq!(
-            engine
-                .env
-                .get(QUENCH_JS_JIT_GENERAL_DISPATCH)
-                .map(String::as_str),
-            Some("1")
-        );
+        assert!(engine.env.get(QUENCH_DEV).is_some_and(|dev| dev.split(',').any(|name| name == "js-general-dispatch")));
         assert!(engine
             .jit_proof
             .contains("experimental priced JavaScript GeneralDispatch"));
@@ -3256,11 +3231,11 @@ mod jit_wasm_selective_ab_tests {
         let mut on_environment = selective_on.env.clone();
         assert_eq!(
             off_environment.remove(SELECTIVE_HANDOFF_CONFIG.switch_env).as_deref(),
-            Some("0")
+            Some(SELECTIVE_HANDOFF_CONFIG.off_value)
         );
         assert_eq!(
             on_environment.remove(SELECTIVE_HANDOFF_CONFIG.switch_env).as_deref(),
-            Some("1")
+            Some(SELECTIVE_HANDOFF_CONFIG.on_value)
         );
         assert_eq!(off_environment, on_environment);
         assert!(

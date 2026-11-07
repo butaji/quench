@@ -3956,7 +3956,7 @@ impl Heap {
         let Some(data) = slots.get_mut(index).and_then(|slot| slot.cell.as_mut()).and_then(Cell::object_mut) else {
             return false;
         };
-        if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
+        if data.exact_shape() != shape { // Carries the exotic bit: a match proves it ordinary.
             return false;
         }
         if !store_exact_slot(data, properties, slot, value, target, layout) {

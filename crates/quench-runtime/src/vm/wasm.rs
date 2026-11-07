@@ -5864,14 +5864,7 @@ mod tests {
         assert!(!root_artifact.has_function(1));
         assert!(!root_artifact.has_function(2));
         assert_eq!(root_artifact.native_entries(0), Some(1));
-        assert_eq!(
-            root_first_vm.programs.wasm_tier_entry_count(program, 1),
-            Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries)
-        );
-        assert_eq!(
-            root_first_vm.programs.wasm_tier_attempted(program, 1),
-            Some(true)
-        );
+        assert!(matches!(root_first_vm.programs.wasm_tier_state(program, 1), Some(super::super::program_store::WasmTierState::Attempted | super::super::program_store::WasmTierState::Compiled(_))));
         let tier = root_first_vm
             .programs
             .wasm_tier(program, 1)
@@ -5982,12 +5975,8 @@ mod tests {
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
         assert!(vm.programs.wasm_tier(program, 0).is_none(), "an entry never compiles mid-loop");
-        assert_eq!(
-            vm.programs.wasm_tier_entry_count(program, 0),
-            Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries - 1),
-            "the loop's work stops one short of the threshold"
-        );
-        assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
+        assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries - 1),
+            "the loop's work stops one short of the threshold");
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
         let tier = vm
@@ -6264,11 +6253,7 @@ mod tests {
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(1_680));
         assert!(matches!(vm.programs.compiled(program), Some(None)));
-        assert_eq!(
-            vm.programs.wasm_tier_entry_count(program, 1),
-            Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries)
-        );
-        assert_eq!(vm.programs.wasm_tier_attempted(program, 1), Some(true));
+        assert!(matches!(vm.programs.wasm_tier_state(program, 1), Some(super::super::program_store::WasmTierState::Attempted | super::super::program_store::WasmTierState::Compiled(_))));
         let tier = vm
             .programs
             .wasm_tier(program, 1)
@@ -6322,7 +6307,7 @@ mod tests {
                 .flatten()
                 .expect("default Wasm compilation installed");
             assert_eq!(compiled.native_entries(0), None);
-            assert_eq!(vm.programs.wasm_tier_entry_count(program, 0), Some(1));
+            assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == 1));
 
             for _ in 0..(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries as usize - 2) {
                 assert_eq!(
@@ -6330,11 +6315,7 @@ mod tests {
                     Some(crate::WasmTrap::Unreachable)
                 );
             }
-            assert_eq!(
-                vm.programs.wasm_tier_entry_count(program, 0),
-                Some(crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries - 1)
-            );
-            assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
+            assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries - 1));
             assert!(vm.programs.wasm_tier(program, 0).is_none());
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
@@ -6345,7 +6326,7 @@ mod tests {
                 .wasm_tier(program, 0)
                 .expect("hot Wasm root is tiered after the entry threshold");
             assert_eq!(tier.native_entries(0), Some(1));
-            assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(true));
+            assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Attempted | super::super::program_store::WasmTierState::Compiled(_))));
 
             let mut root_vm = Vm::new(crate::SystemHost);
 

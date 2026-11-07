@@ -1682,7 +1682,6 @@ dependencies = [
  "memchr",
  "oxc",
  "quench-stack",
- "regex",
 ]
 
 [[package]]

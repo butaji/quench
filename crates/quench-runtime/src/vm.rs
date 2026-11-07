@@ -1,4 +1,5 @@
 mod native_operands;
+mod shape_lookup;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
@@ -1601,8 +1602,7 @@ impl ShapeLookupIndex {
         }
     }
     /// The index of a child shape, from its parent's index and the transition between
-    /// them, as `derive_shape_lookup_index` would build it. A deletion moves entries, so it
-    /// leaves the child to derive its own index.
+    /// them, as `derive_shape_lookup_index` would build it.
     fn extended_by(mut self: Box<Self>, transition: ShapeTransition) -> Option<Box<Self>> {
         match transition {
             ShapeTransition::Add {
@@ -1623,7 +1623,7 @@ impl ShapeLookupIndex {
             ShapeTransition::Descriptor { slot, attributes } => {
                 self.record_attributes(slot, attributes);
             }
-            ShapeTransition::Delete { .. } => return None,
+            ShapeTransition::Delete { key, slot } => self.remove(key, slot)?,
             ShapeTransition::FunctionName { .. }
             | ShapeTransition::FunctionNameReconfigured
             | ShapeTransition::FunctionLengthReconfigured

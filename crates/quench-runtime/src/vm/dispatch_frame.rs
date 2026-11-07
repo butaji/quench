@@ -1,5 +1,7 @@
 use super::*;
 
+mod loop_stack;
+
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
@@ -1742,12 +1744,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            crate::stack::StackGuard::enter()
-                .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
-        } else {
-            self.enter_stack()?
-        };
+        let (_stack, raised) = self.enter_general_loop_stack(p.kind, raised)?;
         // Parameter-initialization stops observe every PC, so they run the general path only.
         let fast_lane = !STOPS && stop_pc.is_none() && Self::FRAME_ENTRY_LANE_RUNS;
         let initial_function = self.frames[frame].function as usize;
