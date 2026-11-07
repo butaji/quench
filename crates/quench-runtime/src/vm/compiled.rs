@@ -7512,8 +7512,6 @@ fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFie
 
 pub(super) struct LaneMethod {
     pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
-    /// The field cache indices its reads specialized on (`Vm::field_site_readers`).
-    pub(super) read_sites: Box<[u32]>,
     /// The Stable facts its code folded, each a dependency its publication takes.
     pub(super) stable: lane_region::StableFacts,
     /// The word its code reads at its invalidation points, set when it retires.
@@ -8188,7 +8186,7 @@ impl<H: Host> Vm<H> {
             let fault_poll = region.fault_poll || direct.iter().any(|callee| callee.body.fault_poll);
             let recovery_space = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames);
             let slot_dependencies = lane_slot_dependencies(&fields, &direct);
-            Some(LaneMethod { slot_dependencies, read_sites: self.lane_read_sites(program, &unit), stable: region.stable, invalidation, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
+            Some(LaneMethod { slot_dependencies, stable: region.stable, invalidation, _code: code, entry, first_entry: region.first_entry, recovery_space, fault_poll, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
         })();
         self.host.after_native_compilation();
         result

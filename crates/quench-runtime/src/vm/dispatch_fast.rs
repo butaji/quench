@@ -916,9 +916,9 @@ impl LaneView {
         }
     }
 
-    /// A specialized body whose publication a lifecycle edge (`ProgramStore::retire_dead_native_calls`)
-    /// or a read site's new cache entry (`ProgramStore::retire_field_site_readers`) retired warms
-    /// again, within `TIERS.lane_body.max_lifetimes`: its prologue takes back the tier's handler.
+    /// A specialized body whose publication a lifecycle edge retired
+    /// (`ProgramStore::retire_dead_native_calls`) warms again: its prologue takes back the
+    /// tier's handler.
     fn settle_retired_body(&self) {
         // SAFETY: as `lane_body`; settling runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };

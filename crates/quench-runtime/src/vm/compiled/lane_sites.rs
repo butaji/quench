@@ -1,5 +1,4 @@
-//! What a lane unit's read sites name at compile time: the global scope's bindings its
-//! by-name loads read, and the field caches its field reads specialize on.
+//! What a lane unit's by-name loads read at compile time: the global scope's bindings.
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -27,14 +26,5 @@ impl<H: Host> Vm<H> {
                 (pc, super::super::builtins::immutable_globals().into_iter().find(|(global, _)| *global == name).map(|(_, value)| value))
             })
             .collect()
-    }
-
-    /// The field cache indices `unit`'s reads specialize on (`LaneMethod::read_sites`), which
-    /// its publication subscribes to (`ProgramStore::field_site_readers`).
-    pub(super) fn lane_read_sites(&self, program: &ResidualProgram, unit: &lane_unit::Unit) -> Box<[u32]> {
-        unit.instructions.iter()
-            .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(_, read)| *read).map(|(site, _)| self.field_cache_index(site) as u32)
-            .collect::<std::collections::BTreeSet<_>>().into_iter().collect()
     }
 }

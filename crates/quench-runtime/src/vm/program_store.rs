@@ -885,8 +885,8 @@ struct OwnedScript {
 }
 
 pub(crate) struct ProgramStore {
-    /// The published lane bodies, by the facts that retire them (`lane_publication`).
-    lane_publications: lane_publication::LanePublications,
+    /// Weak native-call proofs; guest functions are never rooted by compiled code.
+    native_call_bindings: std::cell::RefCell<Vec<Weak<super::compiled::PublishedLaneMethod>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -944,7 +944,7 @@ pub(crate) struct ProgramStore {
 impl Default for ProgramStore {
     fn default() -> Self {
         Self {
-            lane_publications: Default::default(),
+            native_call_bindings: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),

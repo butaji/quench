@@ -14,13 +14,13 @@ use rustc_hash::FxHashSet;
 /// of one shape and prototype (`Vm::promise_species_proved`), held as a dependency: the walk
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
 /// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
-/// values it subscribes to (`heap::subscribe_prototype_values`): a write to their slots or a
+/// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their slots or a
 /// change to any prototype's layout retires it, as does a collection. A use reads no slot.
 pub(super) struct PromiseSpeciesProof {
     shape: u32,
     prototype: Value,
     realm: Value,
-    watch: crate::heap::PrototypeValueWatch,
+    watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
@@ -5692,7 +5692,7 @@ impl<H: Host> Vm<H> {
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let proofs = self.promise_species_proof.borrow();
-        let Some(proof) = proofs.as_ref().filter(|proof| proof.watch.is_published()) else {
+        let Some(proof) = proofs.as_ref().filter(|proof| proof.watches.iter().all(|watch| watch.is_published())) else {
             return false;
         };
         let Some(data) = self.heap.ordinary_object(promise) else {
@@ -5721,9 +5721,9 @@ impl<H: Host> Vm<H> {
         };
         self.heap.mark_prototype(holder);
         self.heap.mark_prototype(constructor);
-        let watched = [holder, constructor].into_iter().filter_map(|object| self.heap.object(object).map(Object::exact_shape));
-        *self.promise_species_proof.borrow_mut() = crate::heap::watch_prototype_values(watched.collect::<Vec<_>>())
-            .map(|watch| PromiseSpeciesProof { shape, prototype, realm: self.realm.globals, watch });
+        let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
+        *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
+            .map(|(holder, constructor)| PromiseSpeciesProof { shape, prototype, realm: self.realm.globals, watches: [holder, constructor] });
     }
 
     pub(super) fn promise_then(

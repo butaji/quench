@@ -1113,7 +1113,6 @@ impl<H: Host> Vm<H> {
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
     fn note_field_cache_write(&mut self, site: usize) {
-        self.programs.retire_field_site_readers(site);
         if let Some(sites) = &mut self.field_cache_writes {
             if sites.len() < self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE {
                 sites.push(site as u32);
@@ -2204,7 +2203,7 @@ impl<H: Host> Vm<H> {
                 let holder = self.heap.object_record(cache.proved_holder)?;
                 // SAFETY: the proof keeps the holder and its recorded shape.
                 let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
-                let watch = crate::heap::watch_prototype_values([holder.exact_shape()]);
+                let watch = crate::heap::watch_prototype_values(holder.exact_shape());
                 let cache = self.heap.dependencies_mut().inherited_mut(index);
                 (cache.constant, cache.constant_watch) = (value, watch);
                 value
@@ -2314,7 +2313,7 @@ impl<H: Host> Vm<H> {
     /// prototype is marked first, so a change to its values retires the hint's watch.
     fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, receiver: u32, prototype: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_prototype(prototype);
-        let watch = crate::heap::watch_prototype_values(self.heap.object(prototype).map(Object::exact_shape))?;
+        let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
         let hint = super::HolderHint { receiver, atom, prototype: crate::heap::ProtoLink::of(prototype), holder: prototype, value, watch };
         if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.len()) {
             self.holder_hints[usize::from(index)] = hint;
