@@ -37,7 +37,7 @@ use crate::wasm::float::{
 use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
 };
-use crate::wasm::memory::{MemoryLoad, MemoryStorage, MemoryStore};
+use crate::wasm::memory::{MemoryLoad, MemoryStore};
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
 /// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
@@ -1074,7 +1074,7 @@ impl Registers {
     }
 }
 
-/// The unshared memory bytes behind the active function's memory register.
+/// The direct memory bytes behind the active function's memory register.
 /// The view is resolved whenever that register can change under the lane:
 /// at lane entry, when a lane call or return switches functions, and when
 /// the binding instruction loads the register; no other lane instruction
@@ -1141,12 +1141,6 @@ impl MemoryView {
             bytes,
             reach: Slot::of(len as isize - WIDEST_DIRECT_ACCESS as isize),
         }
-    }
-
-    #[inline(always)]
-    fn len(self) -> usize {
-        // SAFETY: only a Wasm view's memory is measured, whose reach is set.
-        (unsafe { self.reach.get() } + WIDEST_DIRECT_ACCESS as isize) as usize
     }
 
     /// Direct load `load` at `address`, when the access lies within the
@@ -9751,27 +9745,24 @@ fn lane_address<const ACC: u8>(r: Registers, i: &LaneInstruction, view: Carried)
     u64::from(read::<ACC, ACC_C>(r, i.c, view).wasm_bits32()) + u64::from(i.imm())
 }
 
-/// The view of the unshared memory `binding` names, or the empty view.
-/// The bytes and length of the unshared memory `binding` names, when the
-/// lane or compiled code can access it directly.
-pub(super) fn unshared_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
-    let view = memory_view(vm, binding);
-    (!view.bytes.is_null()).then_some((view.bytes, view.len()))
+/// The bytes of memory binding `binding` code addresses in place (`MemoryStorage::direct_view`).
+pub(super) fn direct_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
+    direct_memory_and_guard(vm, binding).map(|(bytes, _)| bytes)
+}
+
+/// `direct_memory` with the memory's guard reservation, read together.
+pub(super) fn direct_memory_and_guard<H: Host>(
+    vm: &Vm<H>,
+    binding: Value,
+) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+        return None;
+    };
+    bytes.direct_view()
 }
 
 fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
-        return MemoryView::NONE;
-    };
-    let MemoryStorage::Unshared(state) = &**bytes else {
-        return MemoryView::NONE;
-    };
-    // An outstanding borrow belongs to a suspended host access; the general
-    // path reports it exactly.
-    let Ok(mut state) = state.try_borrow_mut() else {
-        return MemoryView::NONE;
-    };
-    MemoryView::new(state.as_mut_ptr(), state.len())
+    direct_memory(vm, binding).map_or(MemoryView::NONE, |(bytes, len)| MemoryView::new(bytes, len))
 }
 
 /// The view of memory binding `binding`, reusing the run's last resolution.
@@ -14326,8 +14317,7 @@ fn lane_pure_native<H: Host>(
             if vm.heap.string(argument).is_some() {
                 return Some(argument);
             }
-            let text = super::coercion::immediate_to_string(argument)?;
-            let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
+            let value = vm.heap.alloc_string(super::coercion::immediate_to_string(argument)?);
             note_allocation(vm);
             Some(value)
         }
@@ -14342,7 +14332,7 @@ fn lane_pure_native<H: Host>(
             if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
         {
             let number = receiver.as_number()?;
-            let text = vm.heap.alloc_string(super::number::number_to_decimal(number).into());
+            let text = vm.heap.alloc_string(super::wtf16::JsString::from_number(number));
             note_allocation(vm);
             Some(text)
         }
