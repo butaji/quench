@@ -6,6 +6,7 @@ use super::*;
 use std::hint::black_box;
 use test::Bencher;
 
+use crate::float_layout::BINARY64;
 use crate::number_inputs::Inputs;
 
 trait NumberEncoding {
@@ -30,10 +31,10 @@ impl NumberEncoding for Ieee {
     #[inline(always)]
     fn number(number: f64) -> Value {
         let bits = number.to_bits();
-        let exponent = ((bits >> F64_FRACTION_BITS) & F64_EXPONENT_MASK)
-            .wrapping_sub(F64_EXPONENT_BIAS as u64);
+        let exponent = ((bits >> BINARY64.fraction_bits) & BINARY64.exponent_mask())
+            .wrapping_sub(BINARY64.bias() as u64);
         const INT32_MAGNITUDE_EXPONENTS: u64 = (i32::BITS - 1) as u64;
-        if exponent < INT32_MAGNITUDE_EXPONENTS && bits & (F64_FRACTION_MASK >> exponent) == 0 {
+        if exponent < INT32_MAGNITUDE_EXPONENTS && bits & (BINARY64.fraction_mask() >> exponent) == 0 {
             return Value::integer(truncate_to_i32(number));
         }
         if bits == 0.0_f64.to_bits() {
@@ -140,12 +141,12 @@ fn primitive_encoding_algorithms_preserve_all_exponents_and_mantissa_boundaries(
         assert_eq!(outlined::<Truncated>(number), expected);
         assert_eq!(outlined::<Roundtrip>(number), expected);
     }
-    for exponent in 0..=F64_EXPONENT_MASK {
+    for exponent in 0..=BINARY64.exponent_mask() {
         for sign in [0, 1_u64 << (u64::BITS - 1)] {
-            for bit in 0..F64_FRACTION_BITS {
+            for bit in 0..BINARY64.fraction_bits {
                 let power = 1_u64 << bit;
                 for fraction in [0, power - 1, power, power + 1] {
-                    let number = f64::from_bits(sign | (exponent << F64_FRACTION_BITS) | fraction);
+                    let number = f64::from_bits(sign | (exponent << BINARY64.fraction_bits) | fraction);
                     check(number);
                 }
             }

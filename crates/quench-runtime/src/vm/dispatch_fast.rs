@@ -247,7 +247,7 @@ pub(super) struct LoopSite {
     hookable: bool,
     /// Backward jumps taken before the region compiles, up to `TIERS.loops.threshold`.
     taken: std::cell::Cell<u32>,
-    /// Native runs that left at an instruction the general path executes.
+    /// The entries native runs have not paid back (`LoopSite::note_run`).
     exits: std::cell::Cell<u32>,
     /// Entries declined since the last that ran native code.
     declines: std::cell::Cell<u32>,
@@ -267,6 +267,13 @@ pub(super) struct LoopSite {
 impl LoopSite {
     fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
+    }
+
+    /// Weighs a native run of `backedges` backward jumps: one of none paid its entry for no
+    /// iteration (toward `TIERS.loops.max_exits`); each iteration pays one such entry back.
+    fn note_run(&self, backedges: u64) {
+        let exits = self.exits.get();
+        self.exits.set(u32::try_from(backedges).map_or(0, |paid| if paid == 0 { exits.saturating_add(1) } else { exits.saturating_sub(paid) }));
     }
 
     fn is_admitted(&self) -> bool {
@@ -8363,16 +8370,9 @@ fn lane_loop_run<H: Host>(
             }
             LoopContinuation::Jump
         }
-        // A run that leaves the loop through its own exit did the loop's work natively: the
-        // exits counted against the site are the ones in a row since such a run.
-        LoopOutcome::Resume(pc) => {
-            site.exits.set(0);
-            LoopContinuation::Resume(pc)
-        }
-        LoopOutcome::Exit(pc) => {
-            site.exits.set(site.exits.get() + 1);
-            LoopContinuation::Exit(pc)
-        }
+        // A run pays for its entry with the iterations it completed, wherever it leaves.
+        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
+        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
@@ -22091,8 +22091,7 @@ impl<H: Host> Vm<H> {
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && !self.direct_eval
                 && !self.parameter_eval
-                && *frame + 1 == self.frames.len()
-                && self.frames[*frame].function != super::ROOT_FUNCTION_ID,
+                && *frame + 1 == self.frames.len(),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
@@ -22839,7 +22838,6 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
         {
             // The record's opcode from its packed instruction: the census needs the mix, and
             // the lane record keeps only the handler.
-            let vm = unsafe { vm(cx) };
             let function = lane_running_function(cx);
             let code = unsafe { &*(*cx).code };
             let pc = unsafe { ip.offset_from((*cx).base) as usize };
@@ -22871,29 +22869,7 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
 }
 
 #[cfg(test)]
-mod instruction_set_tests {
-    use super::*;
-
-    #[test]
-    fn instruction_membership_crosses_word_and_inline_boundaries() {
-        for count in [0, 1, INSTRUCTION_WORD_BITS, INSTRUCTION_WORD_BITS + 1,
-            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS,
-            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS + 1]
-        {
-            let mut set = InstructionSet::new(count);
-            assert_eq!(set.0.len(), count.div_ceil(INSTRUCTION_WORD_BITS));
-            assert_eq!(set.0.spilled(), count > INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS);
-            for pc in 0..count {
-                assert!(!set.contains(pc));
-                set.insert(pc);
-                assert!(set.contains(pc));
-                if pc + 1 < count { assert!(!set.contains(pc + 1)); }
-            }
-            for pc in 0..count { assert!(set.contains(pc)); }
-        }
-    }
-}
-
+mod instruction_set_tests;
 #[cfg(test)]
 mod call_site_history_tests;
 mod on_demand_metadata;

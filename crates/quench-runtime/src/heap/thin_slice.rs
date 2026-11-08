@@ -55,6 +55,7 @@ impl<T> ThinBoxSlice<T> {
     /// same offset for every length.
     const ELEMENTS_OFFSET: usize = size_of::<usize>().next_multiple_of(align_of::<T>());
 
+    #[inline(always)]
     fn elements(&self) -> *mut T {
         if self.is_empty() {
             return NonNull::dangling().as_ptr();
@@ -275,6 +276,7 @@ impl<T: Copy> ThinBoxSlice<T> {
 
 impl<T> std::ops::Deref for ThinBoxSlice<T> {
     type Target = [T];
+    #[inline(always)]
     fn deref(&self) -> &[T] {
         // SAFETY: `len` initialized elements start at `elements`, owned by `self`.
         unsafe { std::slice::from_raw_parts(self.elements(), self.len()) }
@@ -282,6 +284,7 @@ impl<T> std::ops::Deref for ThinBoxSlice<T> {
 }
 
 impl<T> std::ops::DerefMut for ThinBoxSlice<T> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
         // SAFETY: as in `deref`, with `&mut self` making the borrow unique.
         unsafe { std::slice::from_raw_parts_mut(self.elements(), self.len()) }
