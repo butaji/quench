@@ -97,13 +97,13 @@ vm/compiled/lane_region.rs JumpBinaryFalse 8
 vm/compiled/lane_region.rs JumpFalse 3
 vm/compiled/lane_region.rs JumpTrue 4
 vm/compiled/lane_region.rs LoadCapture 10
-vm/compiled/lane_region.rs LoadConst 3
+vm/compiled/lane_region.rs LoadConst 2
 vm/compiled/lane_region.rs LoadName 1
 vm/compiled/lane_region.rs LoadNameCall 1
 vm/compiled/lane_region.rs LoadThis 2
 vm/compiled/lane_region.rs MakeArray 1
 vm/compiled/lane_region.rs MakeObject 2
-vm/compiled/lane_region.rs Move 12
+vm/compiled/lane_region.rs Move 11
 vm/compiled/lane_region.rs Nop 5
 vm/compiled/lane_region.rs RequireObjectCoercible 1
 vm/compiled/lane_region.rs Return 6

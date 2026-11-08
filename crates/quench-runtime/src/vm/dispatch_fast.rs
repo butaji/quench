@@ -2818,17 +2818,9 @@ lane_handler! {
     }
 }
 
-lane_handler! {
-    fn lane_move<ACC: u8>(cx, r, ip, i, view) {
-        produce!(cx, r, ip, i.a, read::<ACC, ACC_B>(r, i.b, view), view)
-    }
-}
-
-lane_handler! {
-    fn lane_load_const<>(cx, r, ip, i, view) {
-        produce!(cx, r, ip, i.a, i.constant(), view)
-    }
-}
+#[path = "dispatch_fast/lane_frame.rs"]
+mod lane_frame;
+use lane_frame::{lane_load_const, lane_move};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {

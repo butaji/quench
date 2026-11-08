@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
-use super::object_slots::{CheckedObject, CheckedObjectTable, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
+use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
 use crate::typed_ir::Division;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -41,6 +41,8 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
 #[path = "lane_region/bindings.rs"] mod bindings;
+#[path = "lane_region/frame.rs"] mod frame;
+use frame::EmitFrame;
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -544,47 +546,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn tagged(&mut self, state: &mut State, register: Register) -> ir::Value {
-        let index = usize::from(register);
-        let fact = state.values[index];
-        if let TaggedView::Value(value) = fact.tagged { return value; }
-        if !fact.tagged.current() {
-            let bits = match fact.value.representation {
-                Representation::Int32 => {
-                    let int = { let variable = self.int_var(index); self.builder.use_var(variable) };
-                    int_tagged(&mut self.builder, int)
-                }
-                Representation::Float64 => {
-                    let number = { let variable = self.float_var(index); self.builder.use_var(variable) };
-                    emit_js_box_number(&mut self.builder, number)
-                }
-                Representation::Tagged => unreachable!("tagged view is current"),
-            };
-            self.builder.def_var(self.registers.tagged[index], bits);
-            state.values[index].tagged = TaggedView::Value(bits);
-            return bits;
-        }
-        let bits = self.builder.use_var(self.registers.tagged[index]);
-        state.values[index].tagged = TaggedView::Value(bits);
-        bits
+        frame::register_tagged(&mut self.builder, &mut self.registers, state, register)
     }
 
-    fn define(&mut self, state: &mut State, register: Register, value: ir::Value, mut fact: RegisterFact) {
-        let index = usize::from(register);
-        // Residual definitions include synthetic destinations, such as the
-        // canonical Return home of a fused returning arithmetic operation.
-        self.written.insert(index);
-        let variable = match fact.value.representation {
-            Representation::Tagged => self.registers.tagged[index],
-            Representation::Int32 => self.int_var(index),
-            Representation::Float64 => self.float_var(index),
-        };
-        self.builder.def_var(variable, value);
-        if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
-        state.values[index] = fact;
-        state.proofs.headers[index] = None;
-        state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
-        state.proofs.receivers.remove(&register);
-        state.proofs.fields.retain(|field| field.owner != Some(register));
+    fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
+        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
+            register, value, fact);
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -1887,12 +1854,12 @@ impl Lowering<'_, '_> {
 
     /// `register`'s int32 view (`Registers::int`).
     fn int_var(&mut self, register: usize) -> Variable {
-        *self.registers.int[register].get_or_insert_with(|| self.builder.declare_var(types::I32))
+        frame::register_int(&mut self.builder, &mut self.registers, register)
     }
 
     /// `register`'s float64 view (`Registers::float`).
     fn float_var(&mut self, register: usize) -> Variable {
-        *self.registers.float[register].get_or_insert_with(|| self.builder.declare_var(types::F64))
+        frame::register_float(&mut self.builder, &mut self.registers, register)
     }
 
     /// Leaves with `word`: a lane body stops with it as its result word (`stop`); a static
@@ -2413,24 +2380,23 @@ impl Lowering<'_, '_> {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
             },
-            Op::LoadConst if plain => {
+            op if plain && op.js_denotation() == JsDenotation::LoadConst => {
                 self.constant_value(instruction.constant_index()).map(|(value, ty)| {
-                    let (representation, native) = if let Some(int) = value.as_int() {
-                        (Representation::Int32, self.ins().iconst(types::I32, i64::from(int)))
-                    } else if let Some(number) = value.as_number() {
-                        (Representation::Float64, self.ins().f64const(number))
-                    } else {
-                        (Representation::Tagged, self.ins().iconst(types::I64, value.to_bits() as i64))
-                    };
-                    let fact = RegisterFact::admit(Fact { ty, representation,
-                        binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
-                        .expect("constant's canonical semantic type");
-                    self.define(state, instruction.result_register(), native, fact);
+                    let mut stage = Emit { builder: &mut self.builder, property_values: None };
+                    let mut frame = EmitFrame { registers: &mut self.registers,
+                        written: &mut self.written, state };
+                    crate::staged::step(&mut stage, &mut frame, crate::staged::Operation::LoadConst {
+                        destination: instruction.result_register(),
+                        constant: crate::staged::Constant { value, ty } });
                     true
                 })
             }
-            Op::Move if plain => {
-                self.copy(state, instruction.result_register(), instruction.register_b());
+            op if plain && op.js_denotation() == JsDenotation::Move => {
+                let mut stage = Emit { builder: &mut self.builder, property_values: None };
+                let mut frame = EmitFrame { registers: &mut self.registers,
+                    written: &mut self.written, state };
+                crate::staged::step(&mut stage, &mut frame, crate::staged::Operation::Move {
+                    destination: instruction.result_register(), source: instruction.register_b() });
                 Some(true)
             }
             Op::Return if plain && self.completion == Completion::Number => {
@@ -2995,34 +2961,9 @@ impl Lowering<'_, '_> {
     }
 
     /// `source`'s value into `destination`, with every fact proved of it.
-    fn copy(&mut self, state: &mut State, destination: Register, source: Register) {
-        let fact = state.values[usize::from(source)];
-        let variable = match fact.value.representation {
-            Representation::Tagged => self.registers.tagged[usize::from(source)],
-            Representation::Int32 => self.int_var(usize::from(source)),
-            Representation::Float64 => self.float_var(usize::from(source)),
-        };
-        let value = if fact.value.representation == Representation::Tagged { self.tagged(state, source) }
-            else { self.builder.use_var(variable) };
-        let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
-            .then(|| self.tagged(state, source));
-        let header = state.proofs.headers[usize::from(source)];
-        let receiver = state.proofs.receivers.contains(&source);
-        let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
-            (*owner == Some(source)).then_some((*shape, *projection))).collect();
-        let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
-            .filter(|field| field.owner == Some(source))
-            .map(|field| FieldValue { owner: Some(destination), ..*field }).collect();
-        self.define(state, destination, value, fact);
-        if let Some(bits) = tagged {
-            self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
-            state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
-        }
-        state.proofs.headers[usize::from(destination)] = header;
-        state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(usize::from(source)));
-        for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
-        if receiver { state.proofs.receivers.insert(destination); }
-        state.proofs.fields.extend(fields);
+    fn copy(&mut self, state: &mut State, destination: Register, source: Register) -> ir::Value {
+        frame::register_copy(&mut self.builder, &mut self.registers, &mut self.written, state,
+            destination, source)
     }
 
     /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function

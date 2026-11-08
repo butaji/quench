@@ -14,7 +14,9 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
+use crate::bytecode::Register;
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
+use crate::typed_ir::Type;
 use crate::value::{NarrowLayout, ValueLayout};
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
@@ -63,6 +65,73 @@ pub(crate) enum Table {
 
 impl Table {
     pub(crate) const COUNT: usize = 1;
+}
+
+/// A constant an instruction materializes: its value and the semantic type a stage that
+/// keeps type facts records for it.
+#[derive(Clone, Copy)]
+pub(crate) struct Constant {
+    pub(crate) value: crate::Value,
+    pub(crate) ty: Type,
+}
+
+impl Constant {
+    /// A constant whose type the stage does not keep.
+    #[inline(always)]
+    pub(crate) const fn untyped(value: crate::Value) -> Self {
+        Self { value, ty: Type::ANY }
+    }
+}
+
+/// A register frame: each register's word and the static fact the stage keeps about it. A
+/// stage with no register facts uses `()`.
+pub(crate) trait Frame<S: Stage> {
+    /// The static fact a stage keeps about a register.
+    type Fact: Copy;
+
+    /// The fact `register` currently carries.
+    fn fact(&self, register: Register) -> Self::Fact;
+
+    /// `register`'s word in the representation its fact names; tagged where it is tagged.
+    fn read(&mut self, stage: &mut S, register: Register) -> S::Word;
+
+    /// Define `register` with `value`, carrying `fact`.
+    fn write(&mut self, stage: &mut S, register: Register, value: S::Word, fact: Self::Fact);
+
+    /// Copy `source` into `destination` with its value and every fact derived from it; the
+    /// word copied.
+    #[inline(always)]
+    fn move_register(&mut self, stage: &mut S, destination: Register, source: Register) -> S::Word {
+        let fact = self.fact(source);
+        let value = self.read(stage, source);
+        self.write(stage, destination, value, fact);
+        value
+    }
+
+    /// `register`'s value from `constant`, with the fact the stage keeps of it.
+    fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
+}
+
+/// An instruction `step` runs, with the operands a tier decoded.
+#[derive(Clone, Copy)]
+pub(crate) enum Operation {
+    /// Copy register `source` into `destination` with its facts.
+    Move { destination: Register, source: Register },
+    /// Define `destination` from `constant`.
+    LoadConst { destination: Register, constant: Constant },
+}
+
+/// Run `operation` on `frame`; the word it produced.
+#[inline(always)]
+pub(crate) fn step<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> S::Word {
+    match operation {
+        Operation::Move { destination, source } => frame.move_register(stage, destination, source),
+        Operation::LoadConst { destination, constant } => {
+            let (value, fact) = frame.constant(stage, constant);
+            frame.write(stage, destination, value, fact);
+            value
+        }
+    }
 }
 
 /// What a site proved about where an object of an exact shape keeps its values. It is a

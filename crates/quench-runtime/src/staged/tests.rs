@@ -74,6 +74,45 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
     }
 }
 
+/// A concrete register frame: the interpreter keeps no facts about its registers.
+struct ConcreteFrame {
+    registers: Vec<u64>,
+}
+
+impl Frame<Concrete> for ConcreteFrame {
+    type Fact = ();
+
+    fn fact(&self, _register: Register) -> Self::Fact {}
+
+    fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
+        self.registers[usize::from(register)]
+    }
+
+    fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: Self::Fact) {
+        self.registers[usize::from(register)] = value;
+    }
+
+    fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Self::Fact) {
+        (constant.value.to_bits(), ())
+    }
+}
+
+#[test]
+fn step_moves_and_defines_constants_on_the_concrete_stage() {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 4] };
+    let moved = Value::number(41.0);
+    frame.registers[1] = moved.to_bits();
+    let word = step(&mut stage, &mut frame, Operation::Move { destination: 2, source: 1 });
+    assert_eq!(Value::from_bits(word), moved);
+    assert_eq!(Value::from_bits(frame.registers[2]), moved);
+    let constant = Value::number(7.0);
+    let word = step(&mut stage, &mut frame, Operation::LoadConst {
+        destination: 3, constant: Constant::untyped(constant) });
+    assert_eq!(Value::from_bits(word), constant);
+    assert_eq!(Value::from_bits(frame.registers[3]), constant);
+}
+
 #[test]
 fn a_narrow_decode_inverts_every_narrow_encoding() {
     let mut heap = Heap::new();
