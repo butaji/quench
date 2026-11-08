@@ -4950,7 +4950,7 @@ script_handler! {
         let slots = capture_reads(unsafe { (*cx).capture });
         // SAFETY: null or the running function's dense storage, found this run
         // (`LaneContext::capture`). The scoped read retains bounds/marker checks.
-        let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(ImmediateLayout::capture_slot(imm))) };
+        let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(imm)) };
         let Some(value) = value else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
@@ -7562,7 +7562,7 @@ script_handler! {
         let value = if CAPTURE {
             let slots = capture_reads(unsafe { (*cx).capture });
             // SAFETY: as `lane_load_capture`'s read.
-            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(ImmediateLayout::capture_slot(i.imm()))) };
+            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(i.imm())) };
             let Some(value) = value else {
                 sibling!(lane_load_capture_walk::<H>, r, ip, view)
             };
@@ -8413,7 +8413,7 @@ fn lane_loop_entry<H: Host>(
             }
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
-            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(*slot)) }
+            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, *slot) }
                 .or_else(|| lane_capture_value(cx, 0, *slot))
                 .or_else(|| {
                     // A projected global var aliases its global object's property. Native
@@ -16841,7 +16841,7 @@ unsafe fn lane_read_capture<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget) 
     let slots = capture_reads(target.capture);
     if depth == 0 && !slots.is_null() {
         // SAFETY: as `ScriptCallTarget::capture`.
-        return unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(slot)) };
+        return unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) };
     }
     let (slots, root) = vm.walked_capture_slots(target.env, false, depth)?;
     // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.

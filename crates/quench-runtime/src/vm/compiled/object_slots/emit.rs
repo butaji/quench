@@ -43,6 +43,9 @@ impl Stage for Emit<'_, '_> {
     }
     fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
     fn ne_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm as i64) }
+    fn ugt_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value {
+        self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm as i64)
+    }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
