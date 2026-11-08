@@ -5,10 +5,8 @@ use num_bigint::{BigInt, Sign};
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
-const BINARY_RADIX: u32 = 2;
-use crate::units::OCTAL_RADIX;
-use crate::vm::intl_datetime_parts::DECIMAL_RADIX;
-const HEXADECIMAL_RADIX: u32 = 16;
+use crate::float_layout::{BINARY16, BINARY64, power_of_two};
+use crate::units::{BINARY_RADIX, DECIMAL_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
 pub(super) fn parse_number_string(text: &str) -> f64 {
@@ -67,14 +65,7 @@ pub(super) fn integer_digits_value(digits: &str, radix: u32) -> f64 {
 }
 
 fn fixed_decimal(number: f64, digits: usize) -> String {
-    let bits = number.abs().to_bits();
-    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
-    let fraction = bits & ((1_u64 << 52) - 1);
-    let (significand, exponent) = if exponent_bits == 0 {
-        (fraction, -1074)
-    } else {
-        (fraction | (1_u64 << 52), exponent_bits - 1023 - 52)
-    };
+    let (significand, exponent) = crate::float_layout::binary64_parts(number);
     let scaled = BigInt::from(significand) * BigInt::from(10_u8).pow(digits as u32);
     let rounded = if exponent >= 0 {
         scaled << exponent as usize
@@ -849,10 +840,11 @@ fn scaled_binary_sum(sum: BigInt) -> f64 {
     let negative = sum.sign() == Sign::Minus;
     let magnitude = if negative { -sum } else { sum };
     let bits = magnitude.magnitude().bits() as usize;
-    let rounded = if bits <= 52 {
-        magnitude.to_string().parse::<f64>().unwrap_or(f64::NAN) * 2_f64.powi(-1074)
+    let least = BINARY64.subnormal_exponent();
+    let rounded = if bits < f64::MANTISSA_DIGITS as usize {
+        magnitude.to_string().parse::<f64>().unwrap_or(f64::NAN) * power_of_two(least)
     } else {
-        let shift = bits - 53;
+        let shift = bits - f64::MANTISSA_DIGITS as usize;
         let mut significand = &magnitude >> shift;
         let remainder = &magnitude - (&significand << shift);
         let halfway = BigInt::from(1_u8) << (shift - 1);
@@ -861,7 +853,7 @@ fn scaled_binary_sum(sum: BigInt) -> f64 {
         {
             significand += 1_u8;
         }
-        significand.to_string().parse::<f64>().unwrap_or(f64::NAN) * 2_f64.powi(shift as i32 - 1074)
+        significand.to_string().parse::<f64>().unwrap_or(f64::NAN) * power_of_two(shift as i32 + least)
     };
     if negative { -rounded } else { rounded }
 }
@@ -871,41 +863,38 @@ fn f16_round(value: f64) -> f64 {
 }
 
 pub(super) fn f64_to_half(value: f64) -> u16 {
+    let (wide, half) = (BINARY64, BINARY16);
+    let narrowing = wide.fraction_bits - half.fraction_bits;
     let bits = value.to_bits();
-    let sign = ((bits >> 63) as u16) << 15;
-    let exponent = ((bits >> 52) & 0x7ff) as u16;
-    let fraction = bits & 0x000f_ffff_ffff_ffff;
-    if exponent == 0x7ff {
+    let sign = ((bits >> wide.sign_shift()) as u16) << half.sign_shift();
+    let exponent = (bits >> wide.fraction_bits) & wide.exponent_mask();
+    let fraction = bits & wide.fraction_mask();
+    let infinity = half.infinity() as u16;
+    if exponent == wide.exponent_mask() {
+        // A NaN keeps its top payload bits, and at least one so it stays a NaN.
         return sign
-            | if fraction == 0 {
-                0x7c00
-            } else {
-                0x7c00 | ((fraction >> 42) as u16).max(1)
-            };
+            | if fraction == 0 { infinity } else { infinity | ((fraction >> narrowing) as u16).max(1) };
     }
-    let absolute = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
-    if absolute < 2f64.powi(-14) {
-        let rounded = round_half(absolute * 2f64.powi(24));
-        return sign | if rounded >= 0x0400 { 0x0400 } else { rounded };
+    let absolute = value.abs();
+    if absolute < power_of_two(half.min_normal_exponent()) {
+        // Rounding up past the subnormals gives the smallest normal.
+        let rounded = round_half(absolute * power_of_two(-half.subnormal_exponent()));
+        return sign | rounded.min(half.implicit_bit() as u16);
     }
-    let unbiased = exponent as i32 - 1023;
-    if unbiased > 15 {
-        return sign | 0x7c00;
+    let unbiased = exponent as i32 - wide.bias();
+    if unbiased > half.bias() {
+        return sign | infinity;
     }
-    let mut significand = (fraction >> 42) as u16;
-    let remainder = fraction & ((1_u64 << 42) - 1);
-    if remainder > (1_u64 << 41) || (remainder == (1_u64 << 41) && significand & 1 != 0) {
+    let mut significand = (fraction >> narrowing) as u16;
+    let remainder = fraction & ((1 << narrowing) - 1);
+    let halfway = 1 << (narrowing - 1);
+    if remainder > halfway || (remainder == halfway && significand & 1 != 0) {
         significand += 1;
     }
-    let half_exponent = (unbiased + 15) as u16;
-    if significand == 0x0400 {
-        let half_exponent = half_exponent + 1;
-        if half_exponent >= 0x1f {
-            return sign | 0x7c00;
-        }
-        return sign | (half_exponent << 10);
-    }
-    sign | (half_exponent << 10) | significand
+    // A significand rounded up to the implicit bit carries into the exponent, and from the
+    // largest exponent into infinity.
+    let encoded = (((unbiased + half.bias()) as u16) << half.fraction_bits) + significand;
+    sign | encoded.min(infinity)
 }
 
 fn round_half(value: f64) -> u16 {
@@ -915,23 +904,17 @@ fn round_half(value: f64) -> u16 {
 }
 
 pub(super) fn half_to_f64(bits: u16) -> f64 {
-    let sign_bits = (u64::from(bits & 0x8000)) << 48;
-    let exponent = (bits >> 10) & 0x1f;
-    let fraction = bits & 0x03ff;
-    match (exponent, fraction) {
-        (0, 0) => f64::from_bits(sign_bits),
-        (0, fraction) => f64::from(fraction) * 2_f64.powi(-24) * sign_factor(sign_bits),
-        (0x1f, 0) => f64::from_bits(sign_bits | 0x7ff0_0000_0000_0000),
-        (0x1f, fraction) => {
-            f64::from_bits(sign_bits | 0x7ff0_0000_0000_0000 | (u64::from(fraction) << 42))
-        }
-        (exponent, fraction) => {
-            let value = (1.0 + f64::from(fraction) / 1024.0) * 2_f64.powi(i32::from(exponent) - 15);
-            value * sign_factor(sign_bits)
-        }
-    }
-}
-
-fn sign_factor(sign: u64) -> f64 {
-    if sign == 0 { 1.0 } else { -1.0 }
+    let (wide, half) = (BINARY64, BINARY16);
+    let bits = u64::from(bits);
+    let sign = (bits >> half.sign_shift()) << wide.sign_shift();
+    let magnitude = bits & !(1 << half.sign_shift());
+    let magnitude = if magnitude >= half.infinity() {
+        // Infinity and NaN keep their payload in the top fraction bits.
+        let payload = (magnitude & half.fraction_mask()) << (wide.fraction_bits - half.fraction_bits);
+        f64::from_bits(wide.infinity() | payload)
+    } else {
+        let (significand, exponent) = half.parts(magnitude);
+        significand as f64 * power_of_two(exponent)
+    };
+    f64::from_bits(magnitude.to_bits() | sign)
 }

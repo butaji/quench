@@ -7,11 +7,6 @@ pub(crate) use value::{Bitwise, JsBigInt};
 
 use num_bigint::{BigInt, Sign};
 
-pub(crate) const IEEE754_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
-pub(crate) const IEEE754_EXPONENT_BIAS: i32 = 1023;
-pub(crate) const IEEE754_MAX_EXPONENT_BITS: u64 = 0x7ff;
-pub(crate) const IEEE754_SUBNORMAL_EXPONENT: i32 = -1074;
-
 pub(crate) fn parse_string(value: &str) -> Option<BigInt> {
     let value = value.trim();
     if value.is_empty() {
@@ -33,17 +28,12 @@ pub(crate) fn number_as_bigint(value: f64) -> Option<BigInt> {
     if value == 0.0 {
         return Some(BigInt::from(0));
     }
-    let bits = value.abs().to_bits();
-    let exponent =
-        i32::from(u16::try_from((bits >> IEEE754_FRACTION_BITS) & IEEE754_MAX_EXPONENT_BITS).ok()?)
-            - IEEE754_EXPONENT_BIAS;
-    let significand =
-        (bits & ((1_u64 << IEEE754_FRACTION_BITS) - 1)) | (1_u64 << IEEE754_FRACTION_BITS);
-    let mut integer = if exponent >= IEEE754_FRACTION_BITS as i32 {
-        BigInt::from(significand)
-            << usize::try_from(exponent - IEEE754_FRACTION_BITS as i32).ok()?
+    // An integral value's significand shifted right drops only zero bits.
+    let (significand, exponent) = crate::float_layout::binary64_parts(value);
+    let mut integer = if exponent >= 0 {
+        BigInt::from(significand) << exponent.unsigned_abs()
     } else {
-        BigInt::from(significand >> u32::try_from(IEEE754_FRACTION_BITS as i32 - exponent).ok()?)
+        BigInt::from(significand >> exponent.unsigned_abs())
     };
     if value.is_sign_negative() {
         integer = -integer;
