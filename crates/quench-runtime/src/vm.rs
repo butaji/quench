@@ -2818,6 +2818,7 @@ impl<H: Host> Vm<H> {
             out_of_line_property_values,
             narrowable_out_of_line_property_values,
         ) = self.heap.live_property_narrow_stats();
+        eprintln!("SHAPE_CENSUS\n{}", self.heap.shape_narrow_census());
         let (array_elements, array_capacity) = self.heap.array_element_stats();
         let (dense_array_values, narrowable_dense_array_values) =
             self.heap.dense_array_element_narrow_stats();

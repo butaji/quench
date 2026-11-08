@@ -586,6 +586,45 @@ impl Heap {
         stats
     }
 
+    /// TEMP census: out-of-line slots by shape population and per-slot narrowness.
+    pub(crate) fn shape_narrow_census(&self) -> String {
+        use std::collections::HashMap;
+        let mut shapes: HashMap<u32, (usize, Vec<bool>, usize)> = HashMap::new();
+        self.for_each_live_value(|identity| {
+            let Some(object) = self.object(identity) else { return };
+            let properties = object.properties();
+            if object.inline_properties().is_some() || properties.is_dictionary() { return; }
+            let length = self.properties.len(properties);
+            let entry = shapes.entry(object.shape()).or_insert_with(|| (0, vec![true; length], 0));
+            entry.0 += 1;
+            let mut all = true;
+            for index in 0..length.min(entry.1.len()) {
+                let narrow = self.properties.get(properties, index).is_none_or(|v| v.to_narrow().is_some());
+                entry.1[index] &= narrow;
+                all &= narrow;
+            }
+            entry.2 += usize::from(all);
+        });
+        let mut out = String::new();
+        let total_slots: usize = shapes.values().map(|e| e.0 * e.1.len()).sum();
+        for k in [1usize, 16, 256, 4096, 65536] {
+            let (mut per_slot, mut whole, mut objects, mut nshapes) = (0usize, 0usize, 0usize, 0usize);
+            for e in shapes.values().filter(|e| e.0 >= k) {
+                nshapes += 1;
+                objects += e.0;
+                per_slot += e.0 * e.1.iter().filter(|n| **n).count();
+                if e.1.iter().all(|n| *n) { whole += e.0 * e.1.len(); }
+            }
+            out += &format!("K={k} shapes={nshapes} objects={objects} perslot_narrow={per_slot} wholeshape_narrow={whole} of_total_slots={total_slots}\n");
+        }
+        let mut top: Vec<_> = shapes.iter().collect();
+        top.sort_by_key(|(_, e)| std::cmp::Reverse(e.0 * e.1.len()));
+        for (shape, e) in top.iter().take(12) {
+            out += &format!("  shape {shape}: n={} len={} narrow_slots={} all_narrow_objs={}\n", e.0, e.1.len(), e.1.iter().filter(|n| **n).count(), e.2);
+        }
+        out
+    }
+
     fn live_value_payload_bytes(&self) -> usize {
         let mut bytes = 0;
         self.for_each_live_value(|identity| {
