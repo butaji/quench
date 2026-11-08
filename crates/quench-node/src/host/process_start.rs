@@ -2,12 +2,15 @@
 //! [`install_process_start!`](crate::install_process_start) and call [`begin_main`] first, so a
 //! compiled program keeps resident only what it touches, as the CLI does.
 
-/// glibc starts serving allocations of this size and larger with their own mappings, and
-/// raises the threshold each time such a mapping is freed, after which large allocations stay
-/// in the heap and remain resident once freed. Pinning glibc's initial threshold keeps a freed
-/// large allocation (a module's source, a compiler arena) returned to the system.
+/// glibc serves allocations of this size and larger with their own mappings, and would raise
+/// the threshold each time such a mapping is freed, after which large allocations stay in the
+/// heap and remain resident once freed. Pinning it keeps a freed large allocation (a module's
+/// source, a compiler arena) returned to the system; at glibc's initial 128 KiB each mapped
+/// allocation refaulted all its pages (no-JIT x86_64, 2026-11-08, minor faults 128 KiB -> 1 MiB:
+/// web-ssr 36K -> 30K, first-inspector-code-load 24K -> 18K, Sunspider 50K -> 37K, typescript-lib
+/// 122K -> 119K; max RSS +0-2 MB, pdfjs 39 -> 29 MB). 4 MiB peaked 3-4 MB higher on mandreel.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-const MMAP_THRESHOLD_BYTES: libc::c_int = 128 * 1024;
+const MMAP_THRESHOLD_BYTES: libc::c_int = 1 << 20;
 
 /// The glibc tunable that, when set, already fixes the threshold.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
