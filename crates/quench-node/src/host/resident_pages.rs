@@ -156,10 +156,10 @@ pub fn release_read_only_pages() {
     }
 }
 
-/// The least time between the default policy's collection-time trims (`release_at_collection`):
-/// V8-v7 Richards no-JIT max RSS 3196-3296 KiB at 100 ms, 3048 at 10 and 2 ms (x86_64, 2026-11-01).
+/// The least time between collection-time trims (`release_at_collection`), whose freed pages refault (no-JIT x86_64,
+/// 2026-11-08, minor faults 10 -> 100 ms: Sunspider 62K -> 49K, Air 16.5K -> 9K, npm sharp 61K -> 41K; same RSS).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// A collection boundary's release (`at_collection_boundary`). Memory-first returns the
 /// read-only pages and the system allocator's free pages at every boundary. The default only
