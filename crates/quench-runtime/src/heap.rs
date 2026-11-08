@@ -654,6 +654,9 @@ pub(crate) struct Heap {
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
     peak_live: usize,
+    /// The last collection's emptied mark stack, the next one's root buffer: a fresh one was
+    /// mapped and faulted in by every collection (dotnet-aot-wasm: 2 MB each, 95K faults).
+    mark_stack: Vec<Value>,
     peak_survivors: usize,
     max_threshold: usize,
     collection_state: CollectionState,
@@ -2188,6 +2191,9 @@ impl Heap {
         full
     }
 
+    /// The emptied buffer a collection's roots go into, kept from the last collection.
+    pub(crate) fn take_mark_stack(&mut self) -> Vec<Value> { std::mem::take(&mut self.mark_stack) }
+
     pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
@@ -2210,11 +2216,7 @@ impl Heap {
         // The sweep may free an array whose record a later array reuses.
         retire_array_storage_proofs();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
-        self.collection_state = if full {
-            CollectionState::FullMarking
-        } else {
-            CollectionState::MinorMarking
-        };
+        self.collection_state = if full { CollectionState::FullMarking } else { CollectionState::MinorMarking };
         // Live slots grow only by allocation and shrink only by sweeping, so the peak is
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
@@ -2382,16 +2384,13 @@ impl Heap {
             }
         }
         self.clear_unread_environment_slots(environments);
+        self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             let mark_nanos = mark_started.elapsed().as_nanos() as u64;
             self.gc_profile.mark_nanos += mark_nanos;
-            if full {
-                self.gc_profile.full_mark_nanos += mark_nanos;
-            } else {
-                self.gc_profile.minor_mark_nanos += mark_nanos;
-            }
+            *if full { &mut self.gc_profile.full_mark_nanos } else { &mut self.gc_profile.minor_mark_nanos } += mark_nanos;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();

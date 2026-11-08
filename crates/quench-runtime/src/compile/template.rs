@@ -133,57 +133,44 @@ impl FunctionCompiler<'_, '_> {
         &mut self,
         template: &oxc_ast::ast::TemplateLiteral<'_>,
     ) -> Register {
-        let Some(first) = template.quasis.first() else {
-            return self.literal(Constant::String("".into()));
-        };
-        let Some(_) = first.value.cooked.as_ref() else {
-            self.owner
-                .reject(first.span, "invalid template escape sequence");
+        if let Some(invalid) = template.quasis.iter().find(|quasi| quasi.value.cooked.is_none()) {
+            self.owner.reject(invalid.span, "invalid template escape sequence");
             return self.literal(Constant::Undefined);
+        }
+        let Some(last) = template.expressions.len().checked_sub(1) else {
+            let text = template.quasis.first().map(|quasi| super::string::template_constant(&quasi.value));
+            return self.literal(text.unwrap_or_else(|| Constant::String("".into())));
         };
-        // Every substitution becomes a string (ToString) before it is concatenated, so an empty
-        // text part adds nothing: `"" + s` is `s`. The result starts at the first non-empty
-        // part, and empty parts are not concatenated.
-        let empty = |value: &oxc_ast::ast::TemplateElementValue<'_>| value.cooked.as_ref().is_some_and(|text| text.is_empty());
-        let mut result = (!empty(&first.value) || template.expressions.is_empty())
-            .then(|| self.literal(super::string::template_constant(&first.value)));
-        for (index, expression) in template.expressions.iter().enumerate() {
-            let expression_value = self.expression(expression);
-            let expression_string = self.reg();
-            self.emit(
-                Op::Unary,
-                expression_string,
-                expression_value,
-                0,
-                crate::bytecode::UNARY_TO_STRING,
-            );
-            let joined = match result {
-                Some(result) => self.emit_binary(
-                    BinaryOperator::Addition as u32,
-                    Operand::register(result),
-                    Operand::register(expression_string),
-                ),
-                None => expression_string,
-            };
-            result = Some(joined);
-            let Some(quasi) = template.quasis.get(index + 1) else {
+        // Every part becomes a string before the parts are joined, so an empty text adds
+        // nothing (`"" + s` is `s`) and is left out of the window.
+        let texts = template.quasis.iter().map(|quasi| &quasi.value).filter(|text| text.cooked.as_ref().is_some_and(|text| !text.is_empty()));
+        let parts = texts.count() + template.expressions.len();
+        let base = self.next_reg;
+        for _ in 0..parts {
+            self.reg();
+        }
+        let mut slot = base;
+        for (index, text) in template.quasis.iter().map(|quasi| &quasi.value).enumerate() {
+            if text.cooked.as_ref().is_some_and(|text| !text.is_empty()) {
+                let constant = self.owner.constant(super::string::template_constant(text));
+                self.emit(Op::LoadConst, slot, 0, 0, constant);
+                slot += 1;
+            }
+            let Some(expression) = template.expressions.get(index) else {
                 break;
             };
-            let Some(_) = quasi.value.cooked.as_ref() else {
-                self.owner
-                    .reject(quasi.span, "invalid template escape sequence");
-                return self.literal(Constant::Undefined);
-            };
-            if empty(&quasi.value) {
-                continue;
+            let value = self.expression(expression);
+            // The last substitution is converted by `StringConcat` itself: no evaluation
+            // follows it, so nothing can observe when its ToString runs.
+            if index == last {
+                self.emit(Op::Move, slot, value, 0, 0);
+            } else {
+                self.emit(Op::Unary, slot, value, 0, crate::bytecode::UNARY_TO_STRING_PRIMITIVE);
             }
-            let tail = self.literal(super::string::template_constant(&quasi.value));
-            result = Some(self.emit_binary(
-                BinaryOperator::Addition as u32,
-                Operand::register(joined),
-                Operand::register(tail),
-            ));
+            slot += 1;
         }
-        result.expect("a template with a substitution has a result")
+        debug_assert_eq!(usize::from(slot - base), parts);
+        self.emit(Op::StringConcat, base, base, parts as Register, 0);
+        base
     }
 }

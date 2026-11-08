@@ -23,21 +23,33 @@ pub(super) struct LanePlan {
     budget: usize,
 }
 
-/// A plan whose code compiles on the code generator's thread. Its proofs name heap slots
-/// and shape ids, so it holds only while no collection ran since it was planned (`epoch`),
-/// and while the facts it took hold (slot types, Stable facts): `watch` subscribes to them
-/// from the plan on, as the published method does from its publication.
+/// A plan whose code compiles on the code generator's thread. It holds while the facts it
+/// took hold, under the lifecycle the published method has: `watch` subscribes to its slot
+/// types and Stable facts from the plan on, a collection that frees a callee it names
+/// retires it (`ProgramStore::note_pending_native_calls`), and so does a shape compaction
+/// where it names shapes (`retire_named_shapes`). A collection alone leaves it valid: an
+/// allocation-heavy loop collects more often than a body compiles.
 pub(in crate::vm) struct PendingLaneMethod {
     plan: LanePlan,
+    /// The leaves it was planned from (`LaneBodyWork::Start`), which a plan again reuses.
+    generic: Vec<LaneExit>,
     watch: Rc<crate::code_dependencies::PublishedCode<()>>,
     code: super::jit_backend::Pending<LaneCode>,
-    epoch: u64,
+}
+
+/// What a pending body's compile came to.
+enum LaneCompile {
+    /// Its code needed more memory than a body may take: plan again from its feedback,
+    /// inlining half its budget.
+    Replan(Vec<LaneExit>, usize),
+    Done(Option<LaneMethod>),
 }
 
 /// What a function's lane body asks of the VM at an entry past its warm-up.
 pub(in crate::vm) enum LaneBodyWork<'a> {
-    /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code.
-    Start { generic: &'a [LaneExit] },
+    /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code, its
+    /// inlining budget halved `shrinks` times (`PendingLaneMethod::shrinks`).
+    Start { generic: &'a [LaneExit], shrinks: u8 },
     /// Look for the code of the body compiling.
     Poll(Box<PendingLaneMethod>),
 }
@@ -59,6 +71,8 @@ pub(in crate::vm) enum LaneBodyOutcome {
 /// (2.21, 8.63 ns) while richards (bodies 2k-17k) keeps 28.5 vs 26.9 all-backtracking and
 /// delta-blue 48.0 vs 43.9.
 const LANE_SINGLE_PASS_MIN_INSTS: usize = 2048;
+/// A replanned body inlines with this fraction of the budget whose compile failed.
+const REPLAN_BUDGET_DIVISOR: usize = 2;
 
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function) -> LaneCode {
@@ -160,7 +174,9 @@ impl<H: Host> Vm<H> {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-        let helpers = LaneHelpers::Process(LaneHelper::addresses::<H>());
+        let helpers = LaneHelper::addresses::<H>();
+        crate::jit_coverage::note_native_helpers(helpers);
+        let helpers = LaneHelpers::Process(helpers);
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
@@ -217,7 +233,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let code = super::jit_backend::run_in_background(move || lane_code(native));
-        Some(PendingLaneMethod { plan, watch, code, epoch: self.heap.collection_epoch() })
+        self.programs.note_pending_native_calls(&watch, plan.callees());
+        Some(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code })
     }
 
     /// Does `work` for `function`'s lane body (`LaneBodyWork`), whose direct callees
@@ -227,39 +244,40 @@ impl<H: Host> Vm<H> {
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, loop_header: Option<u32>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
         let mut pending = match work {
-            LaneBodyWork::Start { generic } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS),
-            LaneBodyWork::Poll(pending) => return self.lane_body_poll(pending),
+            LaneBodyWork::Start { generic, shrinks } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks),
+            LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
+                Ok(outcome) => return outcome,
+                Err(replan) => replan,
+            },
         };
-        // A plan again after a rejection starts at once; code the thread compiled at once
-        // (or the calling thread, without one) publishes at once.
+        // A plan again after its code was too large starts at once, from the background
+        // thread's result as from the calling thread's; code the thread compiled at once (or
+        // the calling thread, without one) publishes at once.
         loop {
             let (generic, budget) = pending;
             let direct = direct(self);
             let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, loop_header, &generic, budget)
             else { return LaneBodyOutcome::Declined };
             match self.lane_body_poll(Box::new(started)) {
-                LaneBodyOutcome::Stale => pending = (generic, budget / 2),
-                outcome => return outcome,
+                Ok(outcome) => return outcome,
+                Err(replan) => pending = replan,
             }
         }
     }
 
-    /// What a pending body's compile came to; `Stale` also asks for a plan again at half its
-    /// budget when its code was too large.
-    fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> LaneBodyOutcome {
-        if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
-            return LaneBodyOutcome::Stale;
+    /// What a pending body's compile came to, or the feedback and budget to plan it again with
+    /// where its code needed more memory than a body may take: half the inlining.
+    fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
+        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| !callee.method.is_published()) {
+            return Ok(LaneBodyOutcome::Stale);
         }
-        // A body still compiling stays where it is held: polling moves nothing (loop entries
-        // poll at each backward jump).
-        match pending.code.poll() {
-            std::task::Poll::Pending => LaneBodyOutcome::Compiling(pending),
-            std::task::Poll::Ready(Some(Err(reason))) if pending.plan.replans(reason) => LaneBodyOutcome::Stale,
-            std::task::Poll::Ready(Some(Ok(code))) => pending.plan.finish(&code)
+        Ok(match pending.poll() {
+            Err(pending) => LaneBodyOutcome::Compiling(pending),
+            Ok(LaneCompile::Replan(generic, budget)) => return Err((generic, budget / REPLAN_BUDGET_DIVISOR)),
+            Ok(LaneCompile::Done(method)) => method
                 .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
-            std::task::Poll::Ready(_) => LaneBodyOutcome::Declined,
-        }
+        })
     }
 }
 
@@ -270,7 +288,42 @@ fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
         lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
 }
 
+impl PendingLaneMethod {
+    /// Makes it stale where its code names shape ids, which a compaction renumbers.
+    pub(in crate::vm) fn retire_named_shapes(&self) {
+        if self.plan.names_shapes() { self.watch.retire(); }
+    }
+
+    /// How many times its plan halved the inlining budget for its code to fit, which a
+    /// successor plan of the function starts from.
+    pub(in crate::vm) fn shrinks(&self) -> u8 {
+        (lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS / self.plan.budget.max(1)).ilog2() as u8
+    }
+
+    /// What its compile came to, or itself while its code compiles.
+    fn poll(mut self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
+        Ok(match self.code.poll() {
+            std::task::Poll::Pending => return Err(self),
+            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
+            std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) =>
+                LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
+            std::task::Poll::Ready(_) => LaneCompile::Done(None),
+        })
+    }
+}
+
 impl LanePlan {
+    /// Whether its code names shape ids: its field sites', or its direct callees' bodies'.
+    fn names_shapes(&self) -> bool {
+        !self.fields.is_empty() || !self.direct.is_empty()
+    }
+
+    /// The callees its code names by identity: inlined frames' and direct calls'.
+    fn callees(&self) -> Box<[Value]> {
+        self.unit.frames.iter().filter_map(|frame| frame.target.identity())
+            .chain(self.direct.iter().map(|callee| callee.callee)).collect()
+    }
+
     /// Whether a rejection of its code is one planning again with less inlined addresses.
     fn replans(&self, reason: super::jit_backend::NativeCompileRejection) -> bool {
         reason.exceeds_code_budget() && !self.unit.frames.is_empty() && self.budget > 0
@@ -293,6 +346,7 @@ impl LanePlan {
             .all(|(pc, instruction)| instruction.op() != Op::Call || self.direct_sites.contains_key(&pc));
         let (slot_dependencies, recovery_space) = (self.slot_dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
+        let names_shapes = self.names_shapes();
         let memory = CodeMemory::new(code)?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
             dump_native_code(directory, self.function, &memory, clif);
@@ -307,10 +361,26 @@ impl LanePlan {
             slot_dependencies, stable, invalidation: self.invalidation, _code: memory, entry, first_entry: self.lowered.first_entry, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.fault_poll),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
-            names_shapes: !self.fields.is_empty() || !self.direct.is_empty(), inlined: self.unit.frames,
+            names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
             loop_header: self.loop_header, amortizes, direct: self.direct, closed,
         })
+    }
+}
+
+impl LaneMethod {
+    /// A leave as the next body's feedback (`LaneLeaves`): one at an inlined call whose
+    /// callee was none of the alternatives it inlined is the leave of the caller's call that
+    /// inlined its frame, which the next body then makes itself (`Vm::lane_bindings`), so its
+    /// callees run in their own bodies instead of the whole caller's remainder in the lane.
+    pub(in crate::vm) fn feedback(&self, exit: LaneExit) -> LaneExit {
+        let LaneExit::Inlined { frame, pc } = exit else { return exit };
+        if !self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc) {
+            return exit;
+        }
+        let mut root = &self.inlined[frame];
+        while let Some(parent) = root.parent { root = &self.inlined[parent]; }
+        LaneExit::At(root.call as usize)
     }
 }
 

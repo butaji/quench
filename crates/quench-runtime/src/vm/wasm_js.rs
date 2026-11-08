@@ -1512,7 +1512,7 @@ impl<H: Host> Vm<H> {
             _ => return false,
         };
         let Some((base, memory_length)) =
-            super::dispatch_fast::unshared_memory(self, current_memory)
+            super::dispatch_fast::direct_memory(self, current_memory)
         else {
             return false;
         };

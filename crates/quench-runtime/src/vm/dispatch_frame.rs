@@ -1644,7 +1644,7 @@ impl<H: Host> Vm<H> {
             return Some(FrameOutcome::Complete(value));
         }
         if asynchronous {
-            return self.lane_stop_awaits(p, frame, instruction, pc);
+            return self.lane_stop_awaits(p, frame, Some(instruction), pc);
         }
         if instruction.op() != Op::Yield {
             return None;
@@ -1669,12 +1669,10 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        instruction: WideInstruction,
+        instruction: Option<WideInstruction>,
         pc: usize,
     ) -> Option<FrameOutcome> {
-        if instruction.op() != Op::Await {
-            return None;
-        }
+        let instruction = instruction.filter(|instruction| instruction.op() == Op::Await)?;
         let awaited = self.read(frame, instruction.register_b());
         let value = if self.is_object_like(awaited) {
             self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
@@ -2145,10 +2143,10 @@ impl<H: Host> Vm<H> {
                 }
                 // A run that stopped at the `await` of the loop's own frame, whose `Op::Await`
                 // step would end the loop with it, suspends it here where the awaited value's
-                // conversion observes nothing (`lane_stop_awaits`).
+                // conversion observes nothing (`lane_stop_awaits`); not past a native step, whose next PC may end the function.
                 if pending_calls.is_empty()
                     && let Some(outcome) =
-                        self.lane_stop_awaits(unsafe { &*executing_residual }, frame, cursor.instruction(pc), pc)
+                        self.lane_stop_awaits(unsafe { &*executing_residual }, frame, native_step.is_none().then(|| cursor.instruction(pc)), pc)
                 {
                     return Ok(outcome);
                 }

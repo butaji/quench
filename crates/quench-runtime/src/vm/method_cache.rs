@@ -206,7 +206,7 @@ impl<H: Host> Vm<H> {
                 .find(|entry| entry.records_same(&cache))
             {
                 *entry = cache;
-            } else if usize::from(set.len) < METHOD_MEGAMORPHIC_LIMIT {
+            } else if usize::from(set.len) < super::compiled::tier_policy::POLYMORPHISM {
                 set.entries[usize::from(set.len)] = cache;
                 set.len += 1;
             }
@@ -222,7 +222,7 @@ impl<H: Host> Vm<H> {
         let mut set = MethodCacheSet {
             site,
             len: (METHOD_CACHE_WAYS + 1) as u8,
-            entries: [EMPTY_METHOD_CACHE; METHOD_MEGAMORPHIC_LIMIT],
+            entries: [EMPTY_METHOD_CACHE; super::compiled::tier_policy::POLYMORPHISM],
         };
         set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
         set.entries[METHOD_CACHE_WAYS] = cache;

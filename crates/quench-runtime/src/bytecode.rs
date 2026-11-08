@@ -53,50 +53,12 @@ pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
-/// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
-/// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
-pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
-/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
-/// values.
-pub(crate) const TYPEOF_NAMES: [&str; 8] =
-    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
-/// The `Unary` operators that compare `typeof` of their operand with a name in
-/// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
-/// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
-/// `typeof` and a literal would make has no effects, so it needs neither string.
-pub(crate) const UNARY_TYPEOF_IS: u32 = UNARY_TO_STRING + 1;
-const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
-
-/// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
-/// inequality; `None` when no value's `typeof` is `name`.
-pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
-    let index = typeof_name_index(name)? as u32;
-    Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
-}
-
-/// The `Unary` operator giving the index in `TYPEOF_NAMES` of the name `typeof` yields for
-/// its operand, as an integer: `switch (typeof x)` with string cases compares it with each
-/// case's index (`FunctionCompiler::switch_statement`), as `typeof x === "name"` would
-/// compare the two strings, and like that comparison it needs neither string.
-pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
-
-/// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
-pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
-    TYPEOF_NAMES.iter().position(|candidate| *candidate == name)
-}
-
-/// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
-#[inline(always)]
-pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {
-    let offset = operator.checked_sub(UNARY_TYPEOF_IS).filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
-    let names = TYPEOF_NAMES.len() as u32;
-    Some(((offset % names) as usize, offset >= names))
-}
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
 pub type Register = u16;
 
+mod source_text_snapshot;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
@@ -112,6 +74,8 @@ mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops;
 mod op_classes;
+mod unary_operators;
+pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
 pub(crate) use atoms::{AtomSequence, AtomTable};
@@ -415,7 +379,7 @@ impl ImmediateRole {
             | Self::WasmReferenceTarget
             | Self::WasmNonNullCheck
             | Self::WasmGcTypeIndex
-            | Self::WasmStructFieldIndex
+            | Self::WasmGcField
             | Self::WasmExceptionFieldIndex
             | Self::WasmI64BinaryOperator
             | Self::WasmI64UnaryOperator
@@ -512,7 +476,7 @@ pub(crate) enum ImmediateRole {
     WasmReferenceTarget,
     WasmNonNullCheck,
     WasmGcTypeIndex,
-    WasmStructFieldIndex,
+    WasmGcField,
     WasmExceptionFieldIndex,
     WasmI64BinaryOperator,
     WasmI64UnaryOperator,
@@ -875,6 +839,8 @@ pub(crate) enum JsDenotation {
     FieldStore,
     NumericBinary,
     NumericUnary,
+    /// ToString of each register of a window, concatenated in order.
+    StringConcatenation,
     CapturedValue,
     PlainLocalLoad,
     PlainLocalStore,
@@ -956,6 +922,9 @@ opcodes!(
     Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary, @ Returnable, @ fields(ResultRegister, Register, Unused),
+    // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
+    // order: a template literal's string (ECMA-262 13.15.5.1), made at once.
+    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -1131,20 +1100,20 @@ opcodes!(
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(Register, Register, Unused),
+    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Unused),
 
     WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 
-    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
+    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Register),
     WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
     WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
@@ -3484,6 +3453,9 @@ impl ProgramKind {
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
+    /// The text of a guest string the program compiled from (an eval's source), shared with
+    /// that string's storage.
+    Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
 }
@@ -3551,6 +3523,7 @@ impl std::ops::Deref for SourceText {
     fn deref(&self) -> &str {
         match self {
             Self::Shared(text) => text,
+            Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
         }
@@ -3585,59 +3558,6 @@ pub(crate) struct ProgramSource {
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
     pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
-}
-
-/// A static item at a fixed place in the executable image, from which a snapshot measures the
-/// embedded text a program retains (`SourceText::Static`): within one linked image the offset
-/// between two statics is fixed, and a snapshot is read only by the build that wrote it.
-static SNAPSHOT_TEXT_ANCHOR: u8 = 0;
-
-/// The bytes at each end of embedded text that a snapshot checks before using the text.
-const SNAPSHOT_TEXT_EDGE: usize = 32;
-
-impl SourceText {
-    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        match self {
-            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
-            Self::Shared(_) | Self::Kept(_) => {
-                writer.u8(0);
-                writer.str(self);
-            }
-            Self::Static(text) => {
-                writer.u8(1);
-                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
-                writer.u64((text.as_ptr() as usize as i64).wrapping_sub(anchor) as u64);
-                writer.len(text.len());
-                let edge = SNAPSHOT_TEXT_EDGE.min(text.len());
-                writer.bytes(&text.as_bytes()[..edge]);
-                writer.bytes(&text.as_bytes()[text.len() - edge..]);
-            }
-        }
-    }
-
-    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(match reader.u8()? {
-            0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
-            1 => {
-                let offset = reader.u64()? as i64;
-                let len = reader.len()?;
-                let head = reader.bytes()?;
-                let tail = reader.bytes()?;
-                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
-                let address = anchor.wrapping_add(offset) as usize as *const u8;
-                // SAFETY: the snapshot was written by this build (its header names the runtime
-                // ABI and the host keys it by the executable's identity), whose image holds the
-                // embedded text at this offset from the anchor; its edges are checked below.
-                let bytes = unsafe { std::slice::from_raw_parts(address, len) };
-                if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
-                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
-                }
-                // SAFETY: the text was a `&'static str` of this image when written.
-                Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
-            }
-            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
-        })
-    }
 }
 
 impl ProgramSource {

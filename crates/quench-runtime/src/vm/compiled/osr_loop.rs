@@ -5695,8 +5695,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if receiver.representation != Representation::Tagged {
             return None;
         }
-        if let Some(loads) = self.observation.native_field_loads.get(index).filter(|loads| !loads.is_empty()) {
-            return self.native_dynamic_field(pc, index, receiver.value, loads);
+        if let Some(groups) = self.observation.native_field_loads.get(index).and_then(|loads| super::object_slots::field_load_groups(loads)) {
+            return self.native_dynamic_field(pc, index, receiver.value, &groups);
         }
         let site = self.body.builder.ins().iconst(types::I64, i64::from(field.cache_site));
         let (callout, context, result) = self.callout_operands();
@@ -5757,12 +5757,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// Load through a checked receiver projection. Arena values are loaded afresh
     /// when the layout proof is reused, so admitted flat stores stay visible.
-    fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, loads: &[NativeFieldLoad]) -> Option<Typed> {
-        let bits = if let [load] = loads {
+    fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, groups: &[(NativeFieldLoad, Vec<u32>)]) -> Option<Typed> {
+        let bits = if let [(load, shapes)] = groups && let [_] = shapes[..] {
             let object = self.checked_object(pc, receiver, *load)?;
             self.object_field_bits(object, load.slot)
         } else {
-            if loads.iter().any(|load| !load.valid()) { return None; }
+            if groups.iter().any(|(load, _)| !load.valid()) { return None; }
             let chain = self.chain(self.body.builder.current_block().expect("field projection"));
             let heap_base = self.region.native_heap_word();
             let records = self.object_table?;
@@ -5771,10 +5771,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let base = self.word(heap_base + 1);
             let join = self.body.builder.create_block();
             let bits = self.body.builder.append_block_param(join, types::I64);
-            for load in loads {
+            for (load, shapes) in groups {
                 let matched = self.body.builder.create_block();
                 let next = self.body.builder.create_block();
-                let same = self.body.builder.ins().icmp_imm_u(IntCC::Equal, header.shape, i64::from(load.shape));
+                let same = super::object_slots::shape_in_set(&mut self.body.builder, header.shape, shapes);
                 self.body.builder.ins().brif(same, matched, &[], next, &[]);
                 self.body.builder.switch_to_block(matched);
                 self.body.builder.seal_block(matched);

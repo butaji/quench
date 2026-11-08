@@ -414,10 +414,10 @@ fn base64_byte_length(units: &[u16]) -> usize {
     (bytes * 3) >> 2
 }
 
-/// `Buffer.byteLength(string[, encoding])`.
+/// `Buffer.byteLength(string[, encoding])`, reading the string in place (only base64 copies units).
 pub(crate) fn byte_length(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let string = arg(c, args, 0);
-    let Some(units) = c.string_code_units(string)? else {
+    let Some(units) = c.string_units_within(string, u16::MAX)? else {
         if c.has_builtin_brand_rooted(string, BuiltinBrand::ArrayBufferView)?
             || c.has_builtin_brand_rooted(string, BuiltinBrand::AnyArrayBuffer)?
         {
@@ -433,10 +433,10 @@ pub(crate) fn byte_length(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Re
     };
     let encoding = arg(c, args, 1);
     let length = match encoding_of(c, encoding)?.unwrap_or(DEFAULT_ENCODING) {
-        "utf16le" => units.len() * 2,
-        "latin1" | "ascii" => units.len(),
-        "hex" => units.len() >> 1,
-        "base64" | "base64url" => base64_byte_length(&units),
+        "utf16le" => units * 2,
+        "latin1" | "ascii" => units,
+        "hex" => units >> 1,
+        "base64" | "base64url" => base64_byte_length(&c.string_code_units(string)?.unwrap_or_default()),
         _ => c.string_utf8_length(string)?.unwrap_or_default(),
     };
     Ok(c.number(length as f64))
