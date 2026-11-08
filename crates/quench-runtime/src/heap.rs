@@ -3721,7 +3721,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3751,7 +3751,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3799,8 +3799,7 @@ impl Heap {
         store_exact_slot(data, &mut self.properties, slot, value, target, layout)
     }
 
-    /// Whether the arena keeps slot representations, which observe every store
-    /// (`ValueArena::tracks`).
+    /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
     pub(crate) fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
     }
@@ -3836,6 +3835,7 @@ impl Heap {
             // caller.
             ExactStorage::Extended { .. } if data.was_used_as_prototype() => false,
             ExactStorage::Extended { inline } => {
+                data.note_value_write(slot);
                 // SAFETY: as `store_exact_slot`.
                 unsafe { store_extended_slot(data, &mut self.properties, slot, value, inline) };
                 true
@@ -4656,7 +4656,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
             }
         }
         ExactStorage::Extended { inline } => {
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             // SAFETY: as above.
             unsafe { store_extended_slot(data, properties, slot, value, inline) };
         }

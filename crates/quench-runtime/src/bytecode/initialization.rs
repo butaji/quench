@@ -118,9 +118,8 @@ pub(crate) fn initialized_before_reads(
                         ControlEdge::Normal => &state,
                         ControlEdge::Handler => &abrupt,
                     };
-                    if let Some(block) = blocks.at(successor) {
-                        changed |= maybe_uninitialized.join(block, incoming);
-                    }
+                    // A later block takes its gain in this sweep; only a loop asks for another.
+                    if let Some(target) = blocks.at(successor) { changed |= maybe_uninitialized.join(target, incoming) & (target <= block); }
                 });
                 if !falls_through {
                     break;
