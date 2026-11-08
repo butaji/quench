@@ -134,19 +134,25 @@ impl<H: Host> Vm<H> {
         let index = match location {
             GcFieldIndex::Struct(index) | GcFieldIndex::Array(index) => index as usize,
         };
+        // A read takes the cell without the write barrier, which would remember every old
+        // object a read touches for the next young collection to scan.
+        let Some(value) = value else {
+            let Some(Cell::WasmGc { fields, .. }) = self.heap.get(reference) else {
+                return Err(Self::wasm_gc_field_trap(reference, location));
+            };
+            let Some(slot) = fields.get(index) else {
+                return Err(Self::wasm_gc_field_trap(reference, location));
+            };
+            return Ok(Some(field.load(access, *slot)));
+        };
         let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
             return Err(Self::wasm_gc_field_trap(reference, location));
         };
         let Some(slot) = fields.get_mut(index) else {
             return Err(Self::wasm_gc_field_trap(reference, location));
         };
-        Ok(match value {
-            Some(value) => {
-                *slot = field.store(value);
-                None
-            }
-            None => Some(field.load(access, *slot)),
-        })
+        *slot = field.store(value);
+        Ok(None)
     }
 
     fn wasm_array_bulk_step(
