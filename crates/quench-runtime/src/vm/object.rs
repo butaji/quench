@@ -1656,13 +1656,13 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        if set.overflow.is_some() {
-            return Vec::new();
-        }
-        set.recorded()
+        // A site past its inline entries reads its hashed ones (`object_slots::field_load_groups`).
+        let overflow = set.overflow.iter().flat_map(|entries| entries.values());
+        let mut loads: Vec<_> = set.recorded().filter(|_| set.overflow.is_none()).chain(overflow)
             .filter(|entry| holders || entry.holder == NO_FIELD_HOLDER)
-            .filter_map(|entry| self.native_field_entry(*entry))
-            .collect()
+            .filter_map(|entry| self.native_field_entry(*entry)).collect();
+        loads.sort_unstable_by_key(|load| (load.shape, load.holder));
+        loads
     }
 
     /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the

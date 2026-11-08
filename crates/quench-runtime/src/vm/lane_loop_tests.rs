@@ -55,6 +55,38 @@ fn lane_body_run(source: &str) -> (Vec<String>, String) {
     (lines, report)
 }
 
+/// A loop's read at a site of many shapes that hold the field at one slot (a layout family)
+/// runs natively behind one shape-set guard (`object_slots::field_load_groups`); a shape
+/// outside the set leaves and reads by the interpreter's definition.
+#[test]
+fn a_loop_reads_a_megamorphic_layout_family_natively() {
+    let source = r#"
+      const family = Array.from({ length: 64 }, (_, i) => ({ ["q" + i]: i, k: i }));
+      function run(objects, n) {
+        let total = 0;
+        for (let i = 0; i < n; i++) total += objects[i & 63].k;
+        return total;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 32; repeat++) result = run(family, 4096);
+      const late = family.map((object, i) => i === 5 ? { other: 1, k: 1000 } : object);
+      print(result + " " + run(late, 64));
+    "#;
+    let program = Engine::specialize(source, "lane-loop-family.js").unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
+        .unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), [format!("{} {}", 64 * (0..64).sum::<u32>(), (0..64).sum::<u32>() - 5 + 1000)]);
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view");
+    assert!(view.osr_diagnostics().native_region_runs > 0, "the family read runs natively");
+}
+
 /// A string or BigInt operand takes the interpreter's own operator in the lane body; an
 /// object operand, whose coercion runs guest code, leaves to the interpreter first.
 #[test]

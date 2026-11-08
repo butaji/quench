@@ -668,7 +668,6 @@ complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::invariant_field_records 17
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 24
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_field 17
-complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 13
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'a,'f>::conform 12
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::invariant_callee_read 11
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::invariant_field_owner 11
@@ -1463,7 +1462,7 @@ file-lines crates/quench-runtime/src/vm/coercion.rs 521
 file-lines crates/quench-runtime/src/vm/collections.rs 1477
 file-lines crates/quench-runtime/src/vm/compiled.rs 19230
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5901
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5896
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7598
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
@@ -1472,7 +1471,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1944
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23293
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23292
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3030
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1508,7 +1507,7 @@ file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2670
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
-file-lines crates/quench-runtime/src/vm/primitives.rs 728
+file-lines crates/quench-runtime/src/vm/primitives.rs 726
 file-lines crates/quench-runtime/src/vm/program_store.rs 4026
 file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
@@ -2941,7 +2940,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 55
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_field 76
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_index 50
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 73
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 68
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::store_field 75
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::typeof_test 54
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::loop_fields 79
@@ -3070,7 +3069,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_memoize_read 
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_native_value 67
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_passed_frame_call 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_promise_native 52
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_pure_native 115
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_pure_native 114
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 138
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_read_capture_value 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_generator_frame 44
@@ -3430,7 +3429,7 @@ function-lines crates/quench-runtime/src/vm/primitive_bench/fields.rs::cached_ow
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::fractional_stencil 171
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::indexed_composition 62
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs::indexed_number_forwarding_restores_every_fallback_boundary 44
-function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 526
+function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 524
 function-lines crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 66
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 136
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 338
