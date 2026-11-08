@@ -4,7 +4,7 @@
 
 use super::super::*;
 use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
-use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcFieldAccess, StructConstruction};
+use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess, StructConstruction};
 use crate::wasm::reference::ReferenceTarget;
 
 /// Applies `$then!` to the opcodes `Vm::wasm_gc_value_step` makes: the one list that
@@ -17,7 +17,7 @@ macro_rules! wasm_gc_value_ops {
             WasmArrayNew WasmArrayNewDefault WasmArrayNewFixed
             WasmStructGet WasmStructGetS WasmStructGetU WasmStructSet
             WasmStructNew WasmStructNewDefault WasmStructNewDesc WasmStructNewDefaultDesc WasmRefGetDesc
-            WasmRefTest WasmRefCast WasmDescriptorTest WasmDescriptorCast)
+            WasmRefTest WasmRefCast WasmDescriptorTest WasmDescriptorCast WasmIndirectTarget WasmRefFunc)
     };
 }
 pub(in crate::vm) use wasm_gc_value_ops;
@@ -31,13 +31,14 @@ pub(in crate::vm) const fn wasm_gc_value_op(op: Op) -> bool {
 }
 
 impl<H: Host> Vm<H> {
-    /// One of the `wasm_gc_value_op`s of `program`, of the registers `read` answers: the value
+    /// One of the `wasm_gc_value_op`s of `program`'s instance `env`, of the registers `read` answers: the value
     /// it writes to its result register, if any. Inlined, so a lane handler of one opcode
     /// keeps only that opcode's arm.
     #[inline]
     pub(in crate::vm) fn wasm_gc_value_step(
         &mut self,
         program: ProgramId,
+        env: Value,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
@@ -60,8 +61,27 @@ impl<H: Host> Vm<H> {
             Op::WasmRefTest | Op::WasmRefCast | Op::WasmDescriptorTest | Op::WasmDescriptorCast => {
                 self.wasm_cast_step(program, i, read)
             }
+            Op::WasmIndirectTarget | Op::WasmRefFunc => self.wasm_call_target_step(program, env, i, read).map(Some),
             _ => self.wasm_reference_step(i, read),
         }
+    }
+
+    /// The function a call through a reference calls: a `call_indirect`'s table element, once
+    /// its signature matches, or `ref.func`'s reference to a function of instance `env`.
+    fn wasm_call_target_step(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+        i: WideInstruction,
+        read: impl Fn(&Self, u16) -> Value,
+    ) -> Result<Value, JsError> {
+        if i.op() == Op::WasmIndirectTarget {
+            let table = read(self, i.register_b());
+            let index = self.wasm_table_index(table, read(self, i.register_c()))?;
+            return self.wasm_indirect_target(program, table, index, i.imm());
+        }
+        let residual = self.programs.get(program).ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
+        self.wasm_function_reference(&residual, i.imm(), env)
     }
 
     /// The declarations of `program`, a Wasm module's.
@@ -79,17 +99,9 @@ impl<H: Host> Vm<H> {
         let access = GcFieldAccess::from_op(i.op()).expect("struct field opcode");
         let write = access == GcFieldAccess::Write;
         let reference = read(self, if write { i.register_a() } else { i.register_b() });
-        // Validation proved the field a value field of the reference's static type, which
-        // every subtype shares, and a value field stores the value a read gives.
-        if access == GcFieldAccess::Read
-            && let Some(Cell::WasmGc { fields, .. }) = self.heap.get(reference)
-            && let Some(stored) = fields.get(i.imm() as usize)
-        {
-            return Ok(Some(*stored));
-        }
         let value = write.then(|| read(self, i.register_b()));
-        let result = self.wasm_gc_field(reference, GcFieldIndex::Struct(i.imm()), access, value)?;
-        Ok((!write).then_some(result))
+        let field = GcField::from_tag(i.imm()).expect("validated field operand");
+        self.wasm_field_access(reference, GcFieldIndex::Struct(field.index()), field, access, value)
     }
 
     fn wasm_array_field_step(
@@ -102,15 +114,39 @@ impl<H: Host> Vm<H> {
         let (reference, index) =
             if write { (i.register_a(), i.register_b()) } else { (i.register_b(), i.register_c()) };
         let (reference, index) = (read(self, reference), Self::wasm_u32_operand(read(self, index))?);
-        if access == GcFieldAccess::Read
-            && let Some(Cell::WasmGc { fields, .. }) = self.heap.get(reference)
-            && let Some(stored) = fields.get(index as usize)
-        {
-            return Ok(Some(*stored));
-        }
         let value = write.then(|| read(self, i.register_c()));
-        let result = self.wasm_gc_field(reference, GcFieldIndex::Array(index), access, value)?;
-        Ok((!write).then_some(result))
+        let field = GcField::from_tag(i.imm()).expect("validated field operand");
+        self.wasm_field_access(reference, GcFieldIndex::Array(index), field, access, value)
+    }
+
+    /// One field access of a GC object: validation proved the field's storage and access for
+    /// the reference's static type, which every subtype shares, so only null and the
+    /// element bound remain to check.
+    #[inline(always)]
+    fn wasm_field_access(
+        &mut self,
+        reference: Value,
+        location: GcFieldIndex,
+        field: GcField,
+        access: GcFieldAccess,
+        value: Option<Value>,
+    ) -> Result<Option<Value>, JsError> {
+        let index = match location {
+            GcFieldIndex::Struct(index) | GcFieldIndex::Array(index) => index as usize,
+        };
+        let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
+            return Err(Self::wasm_gc_field_trap(reference, location));
+        };
+        let Some(slot) = fields.get_mut(index) else {
+            return Err(Self::wasm_gc_field_trap(reference, location));
+        };
+        Ok(match value {
+            Some(value) => {
+                *slot = field.store(value);
+                None
+            }
+            None => Some(field.load(access, *slot)),
+        })
     }
 
     fn wasm_array_bulk_step(
@@ -208,23 +244,23 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
-        let target = ReferenceTarget::from_tag(i.imm()).expect("validated reference target");
+        let target = ReferenceTarget::validated(i.imm());
         let reference = read(self, i.register_b());
-        let declarations = self.wasm_module_declarations(program)?;
-        let (valid, failure) = if matches!(i.op(), Op::WasmDescriptorTest | Op::WasmDescriptorCast) {
+        let fast = (i.op() == Op::WasmRefTest || i.op() == Op::WasmRefCast)
+            .then(|| self.wasm_gc_object_cast(program, target, reference))
+            .flatten();
+        let (valid, failure) = if let Some(valid) = fast {
+            (valid, crate::WasmTrap::CastFailure)
+        } else if matches!(i.op(), Op::WasmDescriptorTest | Op::WasmDescriptorCast) {
+            let declarations = self.wasm_module_declarations(program)?;
             let valid = self.wasm_descriptor_matches(&declarations, target, reference, read(self, i.register_c()))?;
             (valid, crate::WasmTrap::DescriptorCastFailure)
         } else {
+            let declarations = self.wasm_module_declarations(program)?;
             let target = target.reference_type().expect("validated reference target");
-            let valid = match self.wasm_gc_object_cast(&declarations, target, reference) {
-                Some(valid) => valid,
-                None => {
-                    let ty = declarations.callable_value_type(wasmparser::ValType::Ref(target))
-                        .ok_or_else(|| JsError::validation("invalid reference cast declaration".into()))?;
-                    self.wasm_reference_valid_in(reference, ty, Some(&declarations))
-                }
-            };
-            (valid, crate::WasmTrap::CastFailure)
+            let ty = declarations.callable_value_type(wasmparser::ValType::Ref(target))
+                .ok_or_else(|| JsError::validation("invalid reference cast declaration".into()))?;
+            (self.wasm_reference_valid_in(reference, ty, Some(&declarations)), crate::WasmTrap::CastFailure)
         };
         match i.op() {
             Op::WasmRefTest | Op::WasmDescriptorTest => Ok(Some(Value::integer(i32::from(valid)))),
@@ -233,19 +269,46 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Whether a cast to a declared type of `declarations` admits `reference` when that is
-    /// null or a GC object, read from the object's declared ancestry; `None` otherwise.
-    fn wasm_gc_object_cast(&self, declarations: &crate::WasmTypes, target: wasmparser::RefType, reference: Value) -> Option<bool> {
-        let wasmparser::HeapType::Concrete(wasmparser::UnpackedIndex::Module(index)) = target.heap_type() else {
-            return None;
-        };
+    /// Whether a cast to `target` admits `reference` when that is null, an i31 or a GC
+    /// object, read from the object's supertype display or kind; `None` otherwise.
+    #[inline]
+    fn wasm_gc_object_cast(&self, program: ProgramId, target: ReferenceTarget, reference: Value) -> Option<bool> {
+        use crate::wasm::reference::TargetHeap;
+        let heap = target.heap()?;
         if reference.is_null() {
             return Some(target.is_nullable());
         }
-        match self.heap.get(reference) {
-            Some(Cell::WasmGc { declarations: owner, ty, .. }) => Some(owner.is_subtype(*ty as usize, declarations, index as usize)),
-            _ => None,
+        let object = match self.heap.get(reference) {
+            Some(Cell::WasmGc { declarations: owner, ty, .. }) => Some((owner, *ty)),
+            _ if crate::wasm::i31::bits(reference).is_some() => None,
+            _ => return None,
+        };
+        match (heap, object) {
+            (TargetHeap::Module { index, exact }, Some((owner, ty))) => {
+                let declarations = &self.programs.wasm_signatures(program)?.declarations;
+                Some(if exact {
+                    owner.equivalent(ty as usize, declarations, index as usize)
+                } else {
+                    owner.is_subtype(ty as usize, declarations, index as usize)
+                })
+            }
+            (TargetHeap::Module { .. }, None) => Some(false),
+            (TargetHeap::Abstract(abstract_type), object) => Self::wasm_abstract_cast(abstract_type, object),
         }
+    }
+
+    /// Whether an abstract cast target admits a GC object of `object`'s type, or an i31 when
+    /// `object` is `None`; `None` for a target outside the internal hierarchy.
+    fn wasm_abstract_cast(target: wasmparser::AbstractHeapType, object: Option<(&crate::WasmTypes, u32)>) -> Option<bool> {
+        use wasmparser::AbstractHeapType as Abstract;
+        Some(match (target, object) {
+            (Abstract::Any | Abstract::Eq, _) => true,
+            (Abstract::Struct, Some((owner, ty))) => owner.struct_fields(ty).is_some(),
+            (Abstract::Array, Some((owner, ty))) => owner.array_field(ty).is_some(),
+            (Abstract::I31, object) => object.is_none(),
+            (Abstract::Struct | Abstract::Array | Abstract::None, _) => false,
+            _ => return None,
+        })
     }
 
     fn wasm_reference_step(

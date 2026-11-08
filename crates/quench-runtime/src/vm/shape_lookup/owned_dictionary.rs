@@ -12,11 +12,50 @@ fn is_owned(shape: &Shape) -> bool {
     shape.dictionary_trigger == Some(DictionaryTrigger::DeletionPattern)
 }
 
+/// Whether more of `storage_len` slots are vacated than hold the `live` properties: when an
+/// object enters dictionary mode by deleting, and when an owned dictionary packs its storage.
+fn mostly_vacated(storage_len: usize, live: usize) -> bool {
+    storage_len - live > live
+}
+
+/// `facts` with those the attributes of `slots` introduce.
+fn facts_with(facts: ShapeFacts, slots: &[SlotEntry]) -> ShapeFacts {
+    let live = slots.iter().enumerate().filter_map(|(slot, entry)| Some((slot as u32, entry.as_ref()?.1)));
+    live.fold(facts, |facts, (slot, attributes)| facts.extended_by(ShapeTransition::Descriptor { slot, attributes }))
+}
+
+/// The owned dictionary after `parent` of `storage_len` slots, which `index` holds: one shape
+/// however many there are, as its index, not its chain, holds them.
+fn owned_dictionary_shape(parent: u32, facts: ShapeFacts, storage_len: usize, index: Box<ShapeLookupIndex>) -> Shape {
+    let trigger = DictionaryTrigger::DeletionPattern;
+    let mut shape = Shape::child(Some(parent), ShapeTransition::Dictionary { trigger }, storage_len, Some(trigger), facts);
+    shape.lookup_index = OnceCell::from(index);
+    shape
+}
+
 /// The slots of owned dictionary `shape` from its index, which holds what its chain does not.
 /// Read by collections, which only read initialized indexes.
 pub(in crate::vm) fn owned_slots(shapes: &[Shape], shape: u32) -> Option<Vec<SlotEntry>> {
     let entry = &shapes[shape as usize];
     is_owned(entry).then(|| entry.lookup_index.get()).flatten().map(|index| index.slot_entries(entry.storage_len()))
+}
+
+/// Owned dictionary `old_shape` rebuilt after `parent` by a shape compaction: one shape however
+/// wide it is, its accessors rehomed, where a chain rebuild made one per slot.
+pub(in crate::vm) fn rebuild_owned_dictionary(
+    old_shapes: &[Shape],
+    old_accessors: &[ShapeAccessors],
+    old_shape: u32,
+    shapes: &mut Vec<Shape>,
+    accessors: &mut Vec<ShapeAccessors>,
+    parent: u32,
+) -> Option<u32> {
+    let slots: Vec<SlotEntry> = (owned_slots(old_shapes, old_shape)?.into_iter())
+        .map(|entry| entry.map(|(key, attributes)| (key, attributes.rehomed(old_accessors, accessors))))
+        .collect();
+    let (facts, index) = (facts_with(shapes[parent as usize].facts, &slots), Box::new(ShapeLookupIndex::from_slots(&slots)));
+    shapes.push(owned_dictionary_shape(parent, facts, slots.len(), index));
+    Some(u32::try_from(shapes.len() - 1).expect("object shape table exhausted"))
 }
 
 /// Every owned dictionary's slots, for a snapshot.
@@ -32,10 +71,7 @@ pub(in crate::vm) fn restore_owned_dictionaries(
 ) -> SnapshotResult<()> {
     for (id, slots) in owned {
         let shape = shapes.get_mut(id as usize).ok_or_else(|| SnapshotError("snapshot dictionary names no shape".into()))?;
-        let live = slots.iter().enumerate().filter_map(|(slot, entry)| Some((slot as u32, entry.as_ref()?.1)));
-        shape.facts = live.fold(shape.facts, |facts, (slot, attributes)| {
-            facts.extended_by(ShapeTransition::Descriptor { slot, attributes })
-        });
+        shape.facts = facts_with(shape.facts, &slots);
         shape.lookup_index = OnceCell::from(Box::new(ShapeLookupIndex::from_slots(&slots)));
     }
     Ok(())
@@ -97,9 +133,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// The dictionary mode `transition`, which made `shape`, leads into: past the property
-    /// count field caches address, or once more of its slots are vacated than hold properties.
-    /// Its storage is then mostly holes, and add-and-delete churn (an object used as a map)
-    /// would otherwise grow its shape chain without bound.
+    /// count field caches address, or at a chain's second deletion, or once more of its slots
+    /// are vacated than hold properties. One deletion (a temporary field dropped from every
+    /// object of a layout) stays a shared, cached shape; more mean the object is used as a
+    /// map, whose adds and deletes would otherwise grow a cached chain without bound that
+    /// every later such object retraces without an index.
     fn dictionary_step(&self, shape: u32, transition: ShapeTransition) -> Option<DictionaryTrigger> {
         let entry = &self.shapes[shape as usize];
         let storage_len = entry.storage_len();
@@ -109,10 +147,39 @@ impl<H: Host> Vm<H> {
                 (storage_len > object::FIELD_CACHE_SLOT_CAPACITY).then_some(DictionaryTrigger::PropertyCount)
             }
             ShapeTransition::Delete { .. } => {
-                let vacated = storage_len - self.shape_entry_count(shape);
-                (vacated > storage_len - vacated).then_some(DictionaryTrigger::DeletionPattern)
+                let deleted_before = entry.parent().is_some_and(|parent| self.shapes[parent as usize].facts.deletions());
+                (deleted_before || mostly_vacated(storage_len, self.shape_entry_count(shape)))
+                    .then_some(DictionaryTrigger::DeletionPattern)
             }
             _ => None,
         }
+    }
+
+    /// Packs owned dictionary `object`, of `shape`, into a shape whose slots hold its live
+    /// properties in definition order, once most of its slots are vacated. Adds append slots,
+    /// so an object used as a map otherwise kept one for every key it ever held: its storage,
+    /// for-in and collections grew with every add, however few properties it kept.
+    pub(in crate::vm) fn pack_owned_dictionary(&mut self, object: Value, shape: u32) {
+        let storage_len = self.shapes[shape as usize].storage_len();
+        if !is_owned(&self.shapes[shape as usize]) || !mostly_vacated(storage_len, self.shape_entry_count(shape)) {
+            return;
+        }
+        let Some(mut index) = self.shapes[shape as usize].lookup_index.take() else {
+            return;
+        };
+        let data = self.object_data(object).expect("an owned dictionary has its object");
+        let values: Vec<Value> = (index.pack().into_iter())
+            .map(|slot| self.heap.property_get(data, slot as usize).unwrap_or(Value::DELETED))
+            .collect();
+        // The packed shape starts a chain of its own, so the shapes its adds made are garbage.
+        let parent = provenance::metadata_transitions(&self.shapes, shape)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .fold(0, |parent, transition| self.append_cached_shape_transition(parent, transition));
+        let packed_shape = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
+        self.shapes.push(owned_dictionary_shape(parent, self.shapes[shape as usize].facts, values.len(), index));
+        self.heap.register_property_shape(packed_shape, values.len(), Some((parent, self.shapes[parent as usize].storage_len())));
+        self.heap.initialize_object_properties(object, packed_shape, &values);
+        self.heap.set_object_shape(object, packed_shape);
     }
 }

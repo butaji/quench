@@ -18,9 +18,10 @@ pub(in crate::vm) struct Loops {
     /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
     /// which run briefly never pay the compilation.
     pub(in crate::vm) threshold: u32,
-    /// Native runs in a row (no run leaving through the loop's own exit between them) that may
-    /// leave at a general-path instruction before the site stops entering native code: a loop
-    /// whose values keep leaving the subset is the interpreter's.
+    /// Native runs that complete no iteration, less the iterations other runs complete, before
+    /// the site stops entering native code: a loop whose runs keep leaving before their
+    /// backward jump (a guard that fails each iteration, a loop that seldom iterates) is the
+    /// interpreter's. Richards --jit entered one list walk 6M times for 0.02 iterations a run.
     pub(in crate::vm) max_exits: u32,
     /// Entries a site's guards may decline in a row before it stops trying: a field whose cache
     /// never hits at entry (an array's `length`) made V8-v7 Crypto's sum loop decline at each of
@@ -122,6 +123,11 @@ pub(in crate::vm) struct Wasm {
     /// 67 ms, which its one short parse never repays.
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
+
+/// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
+/// the generic case: the width of every polymorphic cache and of each guarded switch a tier
+/// specializes a site into. One bound for every lattice of site feedback.
+pub(in crate::vm) const POLYMORPHISM: usize = 4;
 
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.

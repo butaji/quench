@@ -883,7 +883,7 @@ struct OwnedScript {
 
 pub(crate) struct ProgramStore {
     /// Weak native-call proofs; guest functions are never rooted by compiled code.
-    native_call_bindings: std::cell::RefCell<Vec<Weak<super::compiled::PublishedLaneMethod>>>,
+    native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -1377,15 +1377,11 @@ impl ProgramStore {
         }
     }
 
-    /// Whether a by-name load the compiler left unresolved in `function` of the program can
-    /// only denote a global binding, given that the function's names resolve statically: a
-    /// module's environment holds only bindings the compiler resolved; a script's root reaches
-    /// even its vars by name (`frame_var`); an eval's root may meet bindings it adds.
-    pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
-        self.names_are_global(id)
-            && (function != super::ROOT_FUNCTION_ID || self.entry(id).is_some_and(|entry| entry.residual.kind != crate::bytecode::ProgramKind::Eval))
-    }
-    /// Whether unresolved names in the program's nested functions are global (`general_global_get`).
+    /// Whether a by-name load the compiler left unresolved in any function of the program,
+    /// its root included, can only denote a global binding, given that the function's names
+    /// resolve statically: a module's environment holds only bindings the compiler resolved;
+    /// a global-scope program reaches even its root's vars by name (`frame_var`), and declares
+    /// them on the global object before its body runs (`general_global_get` asks the same).
     pub(crate) fn names_are_global(&self, id: ProgramId) -> bool { self.module_kind(id) || self.runs_in_global_scope(id) }
     fn module_kind(&self, id: ProgramId) -> bool { self.entry(id).is_some_and(|entry| entry.residual.kind == crate::bytecode::ProgramKind::Module) }
 

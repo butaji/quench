@@ -5,10 +5,9 @@ use std::{cell::RefCell, rc::Rc};
 
 #[test]
 fn moved_shape_lookup_index_matches_the_derived_index() {
-    // A wide object built key by key, with non-default attributes, redefinitions and
-    // deletions, keeps
-    // its lookup index moving to each new shape; every index must match the one derived
-    // from that shape's whole chain.
+    // A wide object built key by key, with non-default attributes, redefinitions and a
+    // deletion (a second makes it its own dictionary), keeps its lookup index moving to each
+    // new shape; every index must match the one derived from that shape's whole chain.
     let source = r#"
       var wide = {};
       for (var i = 0; i < 300; i++) {
@@ -16,7 +15,7 @@ fn moved_shape_lookup_index_matches_the_derived_index() {
         if (i % 7 === 0) wide["k" + i];
         if (i % 5 === 0) Object.defineProperty(wide, "k" + i, { enumerable: false });
         if (i % 11 === 0) Object.defineProperty(wide, "g" + i, { get() { return i; } });
-        if (i % 3 === 0) delete wide["k" + (i - 1)];
+        if (i === 150) delete wide["k" + (i - 1)];
       }
       var keys = Object.keys(wide).length;
     "#;
@@ -102,6 +101,18 @@ fn an_object_used_as_a_map_edits_its_own_dictionary_in_place() {
     let (one, three) = (shapes_after(1), shapes_after(3));
     assert!(three - one < 16, "two more rounds cached {} transitions", three - one);
     assert!(one < 3000, "one round cached {one} transitions");
+}
+
+#[test]
+fn an_owned_dictionary_packs_its_storage_as_keys_come_and_go() {
+    // At most 256 keys live at once, while 100000 come and go: its slots stay near the live count.
+    let source = "var o = {}; for (var i = 0; i < 64; i++) o['k' + i] = i; for (var i = 0; i < 60; i++) delete o['k' + i];
+        for (var i = 0; i < 1e5; i++) { o['x' + (i & 255)] = i; delete o['x' + ((i * 7) & 255)]; }";
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&Engine::specialize(source, "churn.js").unwrap()).unwrap();
+    let owned = vm.shapes.iter().filter(|shape| shape.dictionary_trigger == Some(DictionaryTrigger::DeletionPattern));
+    let widest = owned.map(Shape::storage_len).max().unwrap_or(0);
+    assert!(widest <= 2 * 260, "an owned dictionary grew to {widest} slots");
 }
 
 #[test]

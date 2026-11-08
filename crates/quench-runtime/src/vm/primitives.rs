@@ -601,9 +601,7 @@ impl<H: Host> Vm<H> {
                     return Err(self.range_error(p, "Invalid radix".into()));
                 }
                 if radix == 10 || !number.is_finite() {
-                    return Ok(self.heap.alloc_string(
-                        super::number::number_to_decimal(number).into(),
-                    ));
+                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_number(number)));
                 }
                 Ok(self.heap.alloc_string(
                     super::string_extra::number_to_radix(number, radix).into(),

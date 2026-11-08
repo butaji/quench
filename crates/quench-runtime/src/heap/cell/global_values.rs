@@ -201,6 +201,9 @@ impl super::Object {
     pub(crate) fn note_value_write(&mut self, slot: usize) {
         if self.was_used_as_prototype() {
             super::prototype_values::retire(self.exact_shape());
+            if let Some(extras) = self.extras() {
+                extras.watch.note_slot_write(slot);
+            }
         }
         if let Some(values) = self.extras_mut_existing().and_then(|extras| extras.global_values.as_mut()) {
             values.note_slot_write(slot);

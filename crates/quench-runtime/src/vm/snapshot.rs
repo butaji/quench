@@ -294,7 +294,6 @@ impl<H: Host> Vm<H> {
             frames,
             native_stack_frames,
             native_root_lists: _,
-            gc_root_count: _,
             gc_owned_root_count: _,
             frame_pool: _,
             pending_call_stacks: _,
@@ -337,7 +336,7 @@ impl<H: Host> Vm<H> {
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
-            array_iteration_proof: _,
+            array_iteration_shape: _,
             array_species_proof: _,
             for_in_own_keys: _,
             json_plain: _,
@@ -397,7 +396,6 @@ impl<H: Host> Vm<H> {
             to_precision_atom,
             runtime_atoms,
             // A proof of the running heap's methods; a restored heap proves its own.
-            intact_builtins: _,
             constructed_shapes: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
@@ -510,7 +508,7 @@ impl<H: Host> Vm<H> {
         runtime_atoms.snap(&mut writer)?;
         descriptors.snap(&mut writer)?;
         writer.len(function_values.len());
-        for (key, handles) in function_values {
+        for (key, handles) in function_values.iter() {
             key.snap(&mut writer)?;
             let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
@@ -607,7 +605,7 @@ impl<H: Host> Vm<H> {
                         .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
-            self.function_values.insert(key, handles);
+            self.function_values.record(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;

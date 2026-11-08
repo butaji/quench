@@ -58,6 +58,7 @@ pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 pub type Atom = u32;
 pub type Register = u16;
 
+mod source_text_snapshot;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
@@ -378,7 +379,7 @@ impl ImmediateRole {
             | Self::WasmReferenceTarget
             | Self::WasmNonNullCheck
             | Self::WasmGcTypeIndex
-            | Self::WasmStructFieldIndex
+            | Self::WasmGcField
             | Self::WasmExceptionFieldIndex
             | Self::WasmI64BinaryOperator
             | Self::WasmI64UnaryOperator
@@ -475,7 +476,7 @@ pub(crate) enum ImmediateRole {
     WasmReferenceTarget,
     WasmNonNullCheck,
     WasmGcTypeIndex,
-    WasmStructFieldIndex,
+    WasmGcField,
     WasmExceptionFieldIndex,
     WasmI64BinaryOperator,
     WasmI64UnaryOperator,
@@ -1099,20 +1100,20 @@ opcodes!(
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(Register, Register, Unused),
+    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Unused),
 
     WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 
-    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
+    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Register),
     WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
     WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
@@ -1140,8 +1141,8 @@ opcodes!(
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
-    // A first-call stub's body: compiles and calls its function's chunk (`Vm::call_first_chunk`).
-    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );
 
 const _: () = {
@@ -3452,6 +3453,9 @@ impl ProgramKind {
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
+    /// The text of a guest string the program compiled from (an eval's source), shared with
+    /// that string's storage.
+    Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
 }
@@ -3519,6 +3523,7 @@ impl std::ops::Deref for SourceText {
     fn deref(&self) -> &str {
         match self {
             Self::Shared(text) => text,
+            Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
         }
@@ -3553,59 +3558,6 @@ pub(crate) struct ProgramSource {
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
     pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
-}
-
-/// A static item at a fixed place in the executable image, from which a snapshot measures the
-/// embedded text a program retains (`SourceText::Static`): within one linked image the offset
-/// between two statics is fixed, and a snapshot is read only by the build that wrote it.
-static SNAPSHOT_TEXT_ANCHOR: u8 = 0;
-
-/// The bytes at each end of embedded text that a snapshot checks before using the text.
-const SNAPSHOT_TEXT_EDGE: usize = 32;
-
-impl SourceText {
-    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        match self {
-            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
-            Self::Shared(_) | Self::Kept(_) => {
-                writer.u8(0);
-                writer.str(self);
-            }
-            Self::Static(text) => {
-                writer.u8(1);
-                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
-                writer.u64((text.as_ptr() as usize as i64).wrapping_sub(anchor) as u64);
-                writer.len(text.len());
-                let edge = SNAPSHOT_TEXT_EDGE.min(text.len());
-                writer.bytes(&text.as_bytes()[..edge]);
-                writer.bytes(&text.as_bytes()[text.len() - edge..]);
-            }
-        }
-    }
-
-    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(match reader.u8()? {
-            0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
-            1 => {
-                let offset = reader.u64()? as i64;
-                let len = reader.len()?;
-                let head = reader.bytes()?;
-                let tail = reader.bytes()?;
-                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
-                let address = anchor.wrapping_add(offset) as usize as *const u8;
-                // SAFETY: the snapshot was written by this build (its header names the runtime
-                // ABI and the host keys it by the executable's identity), whose image holds the
-                // embedded text at this offset from the anchor; its edges are checked below.
-                let bytes = unsafe { std::slice::from_raw_parts(address, len) };
-                if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
-                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
-                }
-                // SAFETY: the text was a `&'static str` of this image when written.
-                Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
-            }
-            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
-        })
-    }
 }
 
 impl ProgramSource {

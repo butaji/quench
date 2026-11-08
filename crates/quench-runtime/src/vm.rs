@@ -174,6 +174,7 @@ mod local_time;
 mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
+mod intact_fuses;
 mod iterators;
 mod json;
 mod method_cache;
@@ -1087,7 +1088,6 @@ const NO_OBJECT_SHAPE: u32 = u32::MAX;
 /// every site's entries (Node's library wires prototypes hundreds of times at load, each an
 /// invalidation that had refilled every table).
 const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
-const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
@@ -1095,7 +1095,7 @@ struct FieldCacheSet {
     /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
     /// only prototype holders, so a read probes no own entry.
     holds_own: bool,
-    entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
+    entries: [FieldCache; compiled::tier_policy::POLYMORPHISM],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
 #[derive(Clone, Copy)]
@@ -1114,11 +1114,10 @@ struct MethodGuard {
     slot: u16,
     depth: u16,
 }
-const METHOD_MEGAMORPHIC_LIMIT: usize = 8;
 struct MethodCacheSet {
     site: usize,
     len: u8,
-    entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
+    entries: [MethodCache; compiled::tier_policy::POLYMORPHISM],
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {
@@ -1668,6 +1667,9 @@ impl ShapeFacts {
     /// property is, rather than a getter alone: its functions in `Vm::shape_accessors`
     /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
     const ACCESSOR_PAIRS: u8 = 1 << 3;
+    /// Some property of the chain was deleted, or left a vacant slot when it was rebuilt: a
+    /// second deletion makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
+    const DELETIONS: u8 = 1 << 4;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1682,25 +1684,16 @@ impl ShapeFacts {
                 | introduced(
                     descriptor(|attributes| attributes.table_accessors() || attributes.slot_accessor_pair()),
                     Self::ACCESSOR_PAIRS,
-                ),
+                )
+                | introduced(matches!(transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant), Self::DELETIONS),
         )
     }
 
-    fn accessor_pairs(self) -> bool {
-        self.0 & Self::ACCESSOR_PAIRS != 0
-    }
-
-    fn accessors(self) -> bool {
-        self.0 & Self::ACCESSORS != 0
-    }
-
-    fn may_have_gc_roots(self) -> bool {
-        self.0 & Self::MAY_HAVE_GC_ROOTS != 0
-    }
-
-    fn slot_getters(self) -> bool {
-        self.0 & Self::SLOT_GETTERS != 0
-    }
+    fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
+    fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
+    fn deletions(self) -> bool { self.0 & Self::DELETIONS != 0 }
+    fn may_have_gc_roots(self) -> bool { self.0 & Self::MAY_HAVE_GC_ROOTS != 0 }
+    fn slot_getters(self) -> bool { self.0 & Self::SLOT_GETTERS != 0 }
 }
 /// Each shape's storage length and its parent's id and length, in table order (a parent
 /// precedes its children): the table as the heap registers slot owners from it.
@@ -1978,8 +1971,6 @@ pub(crate) struct Vm<H> {
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
-    /// The roots the last collection gathered, which sizes the next one's root vector.
-    gc_root_count: usize,
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
     // Boxed: pooled frames are reused as the `Box<Frame>` the stack and generators hold.
@@ -2082,7 +2073,8 @@ pub(crate) struct Vm<H> {
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
-    array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
+    array_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
@@ -2225,8 +2217,6 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
-    /// Where each `IntactBuiltin` was its realm's own method (`embedding_builtins_intact`).
-    intact_builtins: Option<IntactBuiltinsProof>,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
@@ -2239,7 +2229,7 @@ pub(crate) struct Vm<H> {
     object_shapes: site_table::SiteTable<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
-    function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
+    function_values: function_cache::FunctionValues,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
@@ -3107,7 +3097,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
-        self.array_iteration_proof = None;
+        self.array_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
@@ -3766,11 +3756,3 @@ enum StringConstantKey<'a> {
 
 #[cfg(feature = "native-execution")]
 pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
-
-/// A proof of `Vm::embedding_builtins_intact`: per `IntactBuiltin`, the prototype holding it,
-/// its slot there and the realm's own method in it, under `epoch`.
-#[derive(Clone, Copy)]
-pub(crate) struct IntactBuiltinsProof {
-    epoch: u64,
-    methods: [Option<(Value, u32, Value)>; crate::IntactBuiltin::ALL.len()],
-}

@@ -148,6 +148,7 @@ fn handler_successors(handler: &super::Handler, successor: &mut impl FnMut(usize
 /// Every instruction's successors, normally or through a handler covering it, listed once
 /// for a pass over the whole function (`Handler::for_each_covering`). `pc + 1` stands for the
 /// function's end after its last instruction.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
     starts: Vec<u32>,
@@ -174,6 +175,23 @@ impl Successors {
                 handler_successors(&handlers[index], &mut push);
             }
         });
+        table.starts.push(pc_index(table.targets.len()));
+        table
+    }
+
+    /// This table after dropping the instructions `map` (old pc to new, one entry past the
+    /// end) gives no pc of their own, as `relocate` renumbers the code: each kept pc's
+    /// successors, renumbered, without decoding the code again.
+    pub(crate) fn relocated(&self, map: &[usize]) -> Self {
+        let kept = map.last().copied().unwrap_or_default();
+        let mut table = Self { starts: Vec::with_capacity(kept + 1), targets: Vec::with_capacity(self.targets.len()), edges: Vec::with_capacity(self.edges.len()) };
+        for pc in (0..map.len() - 1).filter(|&pc| map[pc] != map[pc + 1]) {
+            table.starts.push(pc_index(table.targets.len()));
+            for (target, edge) in self.at(pc) {
+                table.targets.push(pc_index(map[target]));
+                table.edges.push(edge);
+            }
+        }
         table.starts.push(pc_index(table.targets.len()));
         table
     }

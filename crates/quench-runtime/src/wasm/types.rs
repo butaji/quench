@@ -23,9 +23,14 @@ struct Declarations {
     members: Box<[(u32, u32)]>,
     /// Each group's shapes, hashed once (`fingerprint`).
     shapes: Box<[u64]>,
-    /// Each declaration's canonical index and parent, found once (`ancestry`).
+    /// Each declaration's canonical index, found once (`ancestry`).
     canonical: Box<[u32]>,
-    parents: Box<[u32]>,
+    /// Each declaration's supertype display: where its run of `ancestors` starts and its
+    /// depth (`ancestry`).
+    displays: Box<[(u32, u32)]>,
+    /// The displays' runs, each the canonical indices of a declaration's ancestors from its
+    /// root down to itself, so a subtype check reads one entry at the target's depth.
+    ancestors: Box<[u32]>,
 }
 
 impl PartialEq for WasmTypes {
