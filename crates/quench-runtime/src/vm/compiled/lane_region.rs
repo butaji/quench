@@ -34,6 +34,7 @@ mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
+#[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/captures.rs"] mod captures;
 use polls::specialize_closed_polls;
 #[cfg(test)]
@@ -427,6 +428,9 @@ struct Lowering<'a, 'f> {
     /// The block leaders an entry or a lowered edge enters: a block none does is not
     /// lowered, its code reached only past a leave.
     entered: CompoundBitSet,
+    /// The block leaders sealed when lowered, which only edges lowered before enter
+    /// (`edges::leader_edges`): a variable read in one resolves without a parameter.
+    sealable: CompoundBitSet,
     /// Whether a run can do anything but leave: complete natively or run a loop natively. A
     /// body that can do neither declines (`lower`).
     finishes: bool,
@@ -704,10 +708,18 @@ impl<'a, 'f> Lowering<'a, 'f> {
         block
     }
 
+    /// Lowers into `block` from here, sealed where every edge into it is lowered.
+    fn switch_to(&mut self, block: ir::Block, sealed: bool) {
+        self.builder.switch_to_block(block);
+        if sealed { self.builder.seal_block(block); }
+    }
+
     fn continue_at(&mut self, state: &mut State, pc: usize) {
         // A block before this one that no edge entered was not lowered.
         let lowered = pc > self.at || self.entered.contains(pc);
         match self.blocks.get(pc).copied().flatten().filter(|_| lowered) {
+            // An edge the forward analysis did not see reaches a sealed block: decline.
+            Some(_) if pc <= self.at && self.sealable.contains(pc) => self.valid = false,
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
@@ -1207,20 +1219,6 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
     fields
 }
 
-/// Per block leader, the edges into it, all from before it; `None` for one the entry
-/// (`start`) or a later PC enters, whose proofs no earlier edge can give.
-fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize) -> Vec<Option<usize>> {
-    let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
-    if let Some(slot) = edges.get_mut(start) { *slot = None; }
-    for (pc, instruction) in instructions.iter().enumerate() {
-        for target in successors(pc, *instruction).into_iter().flatten() {
-            let Some(slot) = edges.get_mut(target) else { continue };
-            *slot = if target > pc { slot.map(|count| count + 1) } else { None };
-        }
-    }
-    edges
-}
-
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
@@ -1393,7 +1391,7 @@ pub(super) fn lower(
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         at: 0,
-        forward: Vec::new(),
+        forward: Vec::new(), sealable: CompoundBitSet::new(),
         arrived: BTreeMap::new(),
         entered: CompoundBitSet::with_capacity(unit.instructions.len()),
         finishes: false,
@@ -1514,7 +1512,7 @@ pub(super) fn lower(
         reads.sort_by_key(|read| (instructions[read.pc].op() == Op::LoadCapture,
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
-    lowering.forward = forward_edges(&instructions, &leaders, entry_pc);
+    (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
     {
@@ -1589,7 +1587,7 @@ pub(super) fn lower(
                 reachable = false;
                 continue;
             }
-            lowering.builder.switch_to_block(block);
+            lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
             reachable = true;
@@ -1613,7 +1611,7 @@ pub(super) fn lower(
     // A prefix pays for its entry with a loop, or with the calls it runs inlined.
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
     for (block, values, pc, line) in std::mem::take(&mut lowering.pending) {
-        lowering.builder.switch_to_block(block);
+        lowering.switch_to(block, true);
         let mut leaving = State { values, proofs: LocalProofs::default() };
         if lowering.vm.diagnostics {
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
@@ -1638,7 +1636,7 @@ pub(super) fn lower(
     } else { None };
     for pc in 0..lowering.exits.len() {
         let Some(block) = lowering.exits[pc] else { continue };
-        lowering.builder.switch_to_block(block);
+        lowering.switch_to(block, true);
         for register in lowering.written.iter().map(|register| register as Register)
             .take_while(|register| *register < unit.caller_registers) {
             if !lowering.is_live(pc, register) { continue; }
@@ -3451,10 +3449,10 @@ impl Lowering<'_, '_> {
     fn continue_branch(&mut self, state: &mut State, pc: usize, target: usize,
         taken_block: ir::Block, fall_block: ir::Block) {
         self.backedge |= target <= pc && target == self.coverage.entry();
-        self.builder.switch_to_block(taken_block);
+        self.switch_to(taken_block, true);
         let mut taken_state = state.clone();
         self.continue_at(&mut taken_state, target);
-        self.builder.switch_to_block(fall_block);
+        self.switch_to(fall_block, true);
         let mut fall_state = state.clone();
         self.continue_at(&mut fall_state, pc + 1);
     }
