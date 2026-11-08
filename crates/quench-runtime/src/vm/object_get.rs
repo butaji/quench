@@ -526,13 +526,39 @@ impl<H: Host> Vm<H> {
         self.plain_proved_get(object, PropertyKey::string(atom))
     }
 
+    /// The object a proved read of `key` starts from: an ordinary object for any key, and for
+    /// a symbol any object but a Proxy, since exotic objects differ only on string keys (a
+    /// typed array's, iterator's or collection's `@@iterator`). An array's reads walk unproved
+    /// (`plain_keyed_get`).
+    #[inline(always)]
+    fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
+        if let Some(data) = self.heap.ordinary_object(object) {
+            return Some(data);
+        }
+        if !matches!(key, PropertyKey::Symbol(_))
+            || self.heap.array(object).is_some()
+            || matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
+        {
+            return None;
+        }
+        self.heap.object(object)
+    }
+
+    /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
+    /// read starts from (`proved_read_receiver`), or an array where `array_ordinary` says
+    /// the key is none of its exotic ones.
+    fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
+        self.proved_read_receiver(object, key)
+            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object)).flatten())
+    }
+
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
     /// the proof of where the walk from a receiver of the same shape found it
     /// (`symbol_load_proofs`), or by `prove_symbol_load`.
     #[inline]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.proved_read_receiver(object, key)?;
         let epoch = crate::heap::prototype_layout_epoch();
         let answer = self.symbol_load_proofs.answer(data.shape(), key, epoch);
         // A proof's shape is an ordinary one, so the receiver is no namespace, deferred module
@@ -587,13 +613,13 @@ impl<H: Host> Vm<H> {
     fn prove_symbol_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let symbol = key;
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.proved_read_receiver(object, key)?;
         let (shape, prototype) = (data.shape(), data.proto());
         let mut current = object;
         let mut depth = 0u8;
         let (answer, value) = loop {
             let link = if depth == 0 {
-                self.heap.ordinary_object(current)
+                self.proved_read_receiver(current, key)
             } else {
                 self.heap.object_record(current)
             };
@@ -694,11 +720,7 @@ impl<H: Host> Vm<H> {
         };
         let mut current = object;
         loop {
-            let data = match self.heap.ordinary_object(current) {
-                Some(data) => data,
-                None if array_ordinary && self.heap.array(current).is_some() => self.heap.object(current)?,
-                None => return None,
-            };
+            let data = self.plain_link(current, key, array_ordinary)?;
             if data.is_module_namespace() || data.deferred_module().is_some() {
                 return None;
             }
