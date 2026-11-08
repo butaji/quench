@@ -695,7 +695,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.heap.kept_atom_strings().map(|(_, string)| string));
+        roots.extend(self.heap.kept_atom_roots(full));
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -856,7 +856,7 @@ impl<H: Host> Vm<H> {
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
-        self.prune_function_values();
+        self.prune_function_values(full);
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.

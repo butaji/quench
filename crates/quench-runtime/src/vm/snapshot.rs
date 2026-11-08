@@ -510,7 +510,7 @@ impl<H: Host> Vm<H> {
         runtime_atoms.snap(&mut writer)?;
         descriptors.snap(&mut writer)?;
         writer.len(function_values.len());
-        for (key, handles) in function_values {
+        for (key, handles) in function_values.iter() {
             key.snap(&mut writer)?;
             let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
@@ -607,7 +607,7 @@ impl<H: Host> Vm<H> {
                         .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
-            self.function_values.insert(key, handles);
+            self.function_values.record(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;

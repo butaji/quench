@@ -176,8 +176,7 @@ impl std::ops::DerefMut for LinearBytes {
     }
 }
 
-// SAFETY: the reservation is owned memory like a Vec's buffer; shared
-// memories synchronize their accesses through their lock.
+// SAFETY: owned memory like a Vec's buffer; agents share it as `MemoryStorage::direct_view` says.
 unsafe impl Send for LinearBytes {}
 unsafe impl Sync for LinearBytes {}
 
@@ -797,6 +796,7 @@ impl super::Lowering<'_> {
     }
 }
 
+mod direct;
 #[cfg(test)]
 mod storage_tests {
     use super::SharedMemory as MemoryStorage;

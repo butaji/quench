@@ -37,7 +37,7 @@ use crate::wasm::float::{
 use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
 };
-use crate::wasm::memory::{MemoryLoad, MemoryStorage, MemoryStore};
+use crate::wasm::memory::{MemoryLoad, MemoryStore};
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
 /// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
@@ -104,9 +104,6 @@ pub(super) struct LaneInstruction {
     call_link: std::cell::Cell<u16>,
 }
 
-/// The callees a call site's history keeps (`LaneStack::call_sites`): a region inlines a site
-/// of at most this many as a guarded switch, the polymorphic inline cache's width.
-const CALL_SITE_TARGETS: usize = 4;
 /// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
 /// polymorphic), so one keeps an entry at 32 bytes instead of 112.
 const INLINE_SITE_TARGETS: usize = 1;
@@ -1077,7 +1074,7 @@ impl Registers {
     }
 }
 
-/// The unshared memory bytes behind the active function's memory register.
+/// The direct memory bytes behind the active function's memory register.
 /// The view is resolved whenever that register can change under the lane:
 /// at lane entry, when a lane call or return switches functions, and when
 /// the binding instruction loads the register; no other lane instruction
@@ -1144,12 +1141,6 @@ impl MemoryView {
             bytes,
             reach: Slot::of(len as isize - WIDEST_DIRECT_ACCESS as isize),
         }
-    }
-
-    #[inline(always)]
-    fn len(self) -> usize {
-        // SAFETY: only a Wasm view's memory is measured, whose reach is set.
-        (unsafe { self.reach.get() } + WIDEST_DIRECT_ACCESS as isize) as usize
     }
 
     /// Direct load `load` at `address`, when the access lies within the
@@ -1927,7 +1918,7 @@ const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
     /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
-    /// in the order first seen, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
+    /// in the order first seen, up to `tier_policy::POLYMORPHISM` (`note_site_callee`): the targets a region
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
@@ -2145,7 +2136,7 @@ impl LaneStack {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
         if !site.contains(&target) {
-            if site.len() == CALL_SITE_TARGETS { site.remove(0); }
+            if site.len() == super::compiled::tier_policy::POLYMORPHISM { site.remove(0); }
             site.push(target);
         }
     }
@@ -9754,27 +9745,24 @@ fn lane_address<const ACC: u8>(r: Registers, i: &LaneInstruction, view: Carried)
     u64::from(read::<ACC, ACC_C>(r, i.c, view).wasm_bits32()) + u64::from(i.imm())
 }
 
-/// The view of the unshared memory `binding` names, or the empty view.
-/// The bytes and length of the unshared memory `binding` names, when the
-/// lane or compiled code can access it directly.
-pub(super) fn unshared_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
-    let view = memory_view(vm, binding);
-    (!view.bytes.is_null()).then_some((view.bytes, view.len()))
+/// The bytes of memory binding `binding` code addresses in place (`MemoryStorage::direct_view`).
+pub(super) fn direct_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
+    direct_memory_and_guard(vm, binding).map(|(bytes, _)| bytes)
+}
+
+/// `direct_memory` with the memory's guard reservation, read together.
+pub(super) fn direct_memory_and_guard<H: Host>(
+    vm: &Vm<H>,
+    binding: Value,
+) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+        return None;
+    };
+    bytes.direct_view()
 }
 
 fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
-        return MemoryView::NONE;
-    };
-    let MemoryStorage::Unshared(state) = &**bytes else {
-        return MemoryView::NONE;
-    };
-    // An outstanding borrow belongs to a suspended host access; the general
-    // path reports it exactly.
-    let Ok(mut state) = state.try_borrow_mut() else {
-        return MemoryView::NONE;
-    };
-    MemoryView::new(state.as_mut_ptr(), state.len())
+    direct_memory(vm, binding).map_or(MemoryView::NONE, |(bytes, len)| MemoryView::new(bytes, len))
 }
 
 /// The view of memory binding `binding`, reusing the run's last resolution.
@@ -11662,7 +11650,7 @@ impl<H: Host> Vm<H> {
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
             let current = &self.lane_stack.script_targets.entries[index];
-            self.lane_stack.note_site_callee(link, super::compiled::CallTarget {
+            self.note_site_callee(link, super::compiled::CallTarget {
                 callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
@@ -13268,7 +13256,7 @@ script_handler! {
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
-            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
+            vm.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(kind @ FunctionKind::Native(_)) = kind {
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
@@ -14331,8 +14319,7 @@ fn lane_pure_native<H: Host>(
             if vm.heap.string(argument).is_some() {
                 return Some(argument);
             }
-            let text = super::coercion::immediate_to_string(argument)?;
-            let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
+            let value = vm.heap.alloc_string(super::coercion::immediate_to_string(argument)?);
             note_allocation(vm);
             Some(value)
         }
@@ -14347,7 +14334,7 @@ fn lane_pure_native<H: Host>(
             if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
         {
             let number = receiver.as_number()?;
-            let text = vm.heap.alloc_string(super::number::number_to_decimal(number).into());
+            let text = vm.heap.alloc_string(super::wtf16::JsString::from_number(number));
             note_allocation(vm);
             Some(text)
         }
@@ -15812,7 +15799,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
                 callee: super::compiled::CalleeBinding::Identity(latest.callee), function: latest.function };
             std::iter::once(latest)
                 .chain(recorded.into_iter().flatten().rev().copied().filter(|target| *target != latest))
-                .take(CALL_SITE_TARGETS)
+                .take(super::compiled::tier_policy::POLYMORPHISM)
                 .collect()
         }
         // A site that runs only in its function's lane body, or that a read memo answers,
@@ -18200,7 +18187,7 @@ fn lane_memoize_read<H: Host>(
     // The memo answers the site from now on, so no call of it links its record: its record
     // names the callee for the bodies that inline it (`lane_site_targets`).
     // SAFETY: `site` is a record of the running view.
-    vm.lane_stack.note_site_callee(unsafe { &(*site).call_link }, super::compiled::CallTarget {
+    vm.note_site_callee(unsafe { &(*site).call_link }, super::compiled::CallTarget {
         callee: super::compiled::CalleeBinding::Identity(target.callee), function: target.function });
     if target.this_binding == ThisBinding::Lexical {
         return;
@@ -18979,9 +18966,7 @@ fn lane_return_script_frame<H: Host>(
     loop {
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
         // a generator resumed in place finishes here as there (`PendingGeneralCall::completion`).
-        let returns_here = pending.last().is_some_and(|call| {
-            call.caller + 1 == frame && frame + 1 == vm.frames.len() && !call.completion.completes_on_general_path()
-        });
+        let returns_here = pending.last().is_some_and(|call| lane_completes_return(cx, call, frame, retired));
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
             // call made, `retired`) completes the loop's own frame with the value there.
@@ -23051,30 +23036,9 @@ mod instruction_set_tests {
 }
 
 #[cfg(test)]
-mod call_site_history_tests {
-    use super::*;
-    use super::super::compiled::{CallTarget, CalleeBinding};
-
-    #[test]
-    fn a_call_sites_history_keeps_each_callee_once_in_first_seen_order() {
-        // A callee met again leaves the record as it is; a further one evicts the oldest
-        // (`LaneStack::note_site_callee`).
-        let stack = LaneStack::default();
-        let link = std::cell::Cell::new(NO_CALL_LINK);
-        let target = |k: i32| CallTarget { callee: CalleeBinding::Identity(Value::integer(k)), function: k as u32 };
-        let history = || {
-            stack.call_sites.borrow()[&std::ptr::from_ref(&link).addr()].iter().map(|target| target.function).collect::<Vec<_>>()
-        };
-        for k in [1, 2, 3, 2, 2] {
-            stack.note_site_callee(&link, target(k));
-        }
-        assert_eq!(history(), [1, 2, 3]);
-        for k in [4, 1, 5] {
-            stack.note_site_callee(&link, target(k));
-        }
-        assert_eq!(history(), [2, 3, 4, 5]);
-    }
-}
+mod call_site_history_tests;
+mod on_demand_metadata;
+use on_demand_metadata::lane_completes_return;
 
 #[cfg(test)]
 mod numeric_pair_tests {
