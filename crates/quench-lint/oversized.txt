@@ -668,7 +668,6 @@ complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::invariant_field_records 17
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 24
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_field 17
-complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 13
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'a,'f>::conform 12
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::invariant_callee_read 11
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::invariant_field_owner 11
@@ -1463,7 +1462,7 @@ file-lines crates/quench-runtime/src/vm/coercion.rs 521
 file-lines crates/quench-runtime/src/vm/collections.rs 1477
 file-lines crates/quench-runtime/src/vm/compiled.rs 19230
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5901
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5896
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7598
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
@@ -2941,7 +2940,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 55
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_field 76
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_index 50
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 73
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 68
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::store_field 75
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::typeof_test 54
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::loop_fields 79
