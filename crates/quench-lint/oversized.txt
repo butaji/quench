@@ -1405,8 +1405,8 @@ file-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs 714
 file-lines crates/quench-node/src/modules/zlib_shared_vm.rs 1397
 file-lines crates/quench-node/src/shared_run.rs 1553
 file-lines crates/quench-node/tests/aot-bootstrap.rs 2030
-file-lines crates/quench-regexp/src/backtrack.rs 2317
-file-lines crates/quench-regexp/src/lib.rs 2986
+file-lines crates/quench-regexp/src/backtrack.rs 2308
+file-lines crates/quench-regexp/src/lib.rs 2983
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2520
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
@@ -1509,7 +1509,7 @@ file-lines crates/quench-runtime/src/vm/program_store.rs 4026
 file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
-file-lines crates/quench-runtime/src/vm/regexp.rs 3425
+file-lines crates/quench-runtime/src/vm/regexp.rs 3424
 file-lines crates/quench-runtime/src/vm/relational.rs 638
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
 file-lines crates/quench-runtime/src/vm/snapshot.rs 982
@@ -2396,7 +2396,7 @@ function-lines crates/quench-regexp/src/backtrack.rs::Program::search 46
 function-lines crates/quench-regexp/src/backtrack.rs::consuming_starts 45
 function-lines crates/quench-regexp/src/backtrack.rs::tests::class_ascii_mask_matches_each_unit 41
 function-lines crates/quench-regexp/src/backtrack.rs::tests::matches_the_repository_matcher 238
-function-lines crates/quench-regexp/src/lib.rs::Regex::backtracking_find 59
+function-lines crates/quench-regexp/src/lib.rs::Regex::backtracking_find 50
 function-lines crates/quench-regexp/src/lib.rs::Regex::unit_match 49
 function-lines crates/quench-regexp/src/lib.rs::assertion_matches 44
 function-lines crates/quench-regexp/src/lib.rs::class_item_matches 50
@@ -3497,7 +3497,6 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_exec_result
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_from_meta 42
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_legacy_getter_native 52
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_literal_of 61
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_match_from 55
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_proven_symbol_method 46
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 68
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_split_builtin 61

@@ -487,7 +487,7 @@ impl Regex {
         if start > subject.len() {
             return Matches { item: None };
         }
-        if let Some(found) = self.backtracking_find(subject, start, false) {
+        if let Some(found) = self.backtracking_find(subject, start, false, true) {
             return Matches { item: found };
         }
         let units = subject.decoded(self.flags.unicode || self.flags.unicode_sets);
@@ -514,7 +514,7 @@ impl Regex {
         if start > subject.len() {
             return Matches { item: None };
         }
-        if let Some(found) = self.backtracking_find(subject, start, true) {
+        if let Some(found) = self.backtracking_find(subject, start, true, true) {
             return Matches { item: found };
         }
         let units = subject.decoded(self.flags.unicode || self.flags.unicode_sets);
@@ -524,23 +524,23 @@ impl Regex {
         }
     }
 
-    /// The range of the next match in `subject`, for callers that observe no captures.
-    /// A byte matcher that is sound for match ranges answers without capture bookkeeping.
-    pub fn find_range_in_subject(&self, subject: &Subject, start: usize) -> Option<Range<usize>> {
+    /// The range of the next match in `subject` (only at `start` when `sticky`), for callers
+    /// that observe no captures: the compiled matcher collects none.
+    pub fn find_range_in_subject(&self, subject: &Subject, start: usize, sticky: bool) -> Option<Range<usize>> {
         if start > subject.len() {
             return None;
         }
-        if let Some(found) = self.backtracking_find(subject, start, false) {
+        if let Some(found) = self.backtracking_find(subject, start, sticky, false) {
             return found.map(|matched| matched.range);
         }
-        self.find_in_subject(subject, start)
-            .next()
-            .map(|matched| matched.range)
+        let mut matches = if sticky { self.find_sticky_in_subject(subject, start) } else { self.find_in_subject(subject, start) };
+        matches.next().map(|matched| matched.range)
     }
 
     /// The match the compiled backtracking matcher finds from `start` (only at `start` when
-    /// `sticky`), or `None` when it does not answer: the pattern did not compile.
-    fn backtracking_find(&self, subject: &Subject, start: usize, sticky: bool) -> Option<Option<Match>> {
+    /// `sticky`), with its captures where `captures` asks for them, or `None` when it does
+    /// not answer: the pattern did not compile.
+    fn backtracking_find(&self, subject: &Subject, start: usize, sticky: bool, captures: bool) -> Option<Option<Match>> {
         if let Some(bytes) = subject.ascii() {
             let complete = self.complete();
             let program = complete.backtracking.as_ref()?;
@@ -555,12 +555,7 @@ impl Regex {
                     return Some(None);
                 }
             }
-            let found = program.find(bytes, start, sticky);
-            return Some(found.map(|found| Match {
-                range: found.start..found.end,
-                captures: found.captures,
-                named: self.names_for_match(),
-            }));
+            return Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)));
         }
         let unicode = self.flags.unicode || self.flags.unicode_sets;
         let complete = self.complete();
@@ -579,12 +574,7 @@ impl Regex {
             {
                 return Some(None);
             }
-            let found = program.find(units, start, sticky);
-            return Some(found.map(|found| Match {
-                range: found.start..found.end,
-                captures: found.captures,
-                named: self.names_for_match(),
-            }));
+            return Some(program.find(units, start, sticky, captures).map(|found| self.offset_match(found, captures)));
         }
         let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
@@ -594,8 +584,15 @@ impl Regex {
         {
             return Some(None);
         }
-        let found = program.find(units, first, sticky);
+        let found = program.find(units, first, sticky, captures);
         Some(found.map(|found| self.unit_match(units, found.start, found.end, found.captures)))
+    }
+
+    /// The match `found` over a subject whose positions are its offsets, with its group
+    /// names where its `captures` were collected.
+    fn offset_match(&self, found: backtrack::Found, captures: bool) -> Match {
+        let named = if captures { self.names_for_match() } else { Vec::new() };
+        Match { range: found.start..found.end, captures: found.captures, named }
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
@@ -854,7 +851,7 @@ impl RangeSearcher<'_> {
                 }
                 program.find_bounds(bytes, start, false)
             }
-            RangeBackend::General => regex.find_range_in_subject(self.subject, start),
+            RangeBackend::General => regex.find_range_in_subject(self.subject, start, false),
         }
     }
 }
@@ -2954,7 +2951,7 @@ mod tests {
             let subject = Subject::new(units);
             let found = regex.find_in_subject(&subject, start).next().map(|m| m.range);
             let sticky = regex.find_sticky_in_subject(&subject, start).next().map(|m| m.range);
-            let range = regex.find_range_in_subject(&subject, start);
+            let range = regex.find_range_in_subject(&subject, start, false);
             assert_eq!(found, range, "{pattern} on {text:?}");
             (found, sticky)
         };

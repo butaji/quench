@@ -21,14 +21,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let (slot, last_index, rejected) = self.regexp_steady_state(receiver, subject)?;
+        let (slot, last_index, prefilter) = self.regexp_steady_state(receiver, subject)?;
         if native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none() {
             return None;
         }
         // A search the prefilter excludes fails as the matcher's would: `null` from exec and
         // `false` from test, and a global or sticky regexp's `lastIndex` reset through the
         // slot `regexp_match_from` stores through.
-        if let Some(stateful) = rejected {
+        if let Prefilter::Excludes { stateful } = prefilter {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
@@ -36,7 +36,8 @@ impl<H: Host> Vm<H> {
         }
         // `test` with the builtin exec is that exec whose result array never escapes.
         let exec = native == Native::RegExpExec;
-        let result = self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used && exec);
+        let steady = SteadyMatch { slot, prefiltered: prefilter == Prefilter::Admits, captures: result_used && exec };
+        let result = self.regexp_steady_exec(p, receiver, subject, last_index, steady);
         Some(if exec { result } else { result.map(|result| Value::boolean(!result.is_null())) })
     }
 
@@ -117,7 +118,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `regexp_builtin_exec` of `steady_regexp_call`'s case: a string subject, whose
-    /// conversion runs no guest code, and `lastIndex` the Number in the own data `slot`, so
+    /// conversion runs no guest code, and `lastIndex` the Number in the own data slot, so
     /// neither its conversion nor the store runs guest code or allocates. A failed match is
     /// `null` with nothing to root; a match builds its result as the builtin does.
     fn regexp_steady_exec(
@@ -125,19 +126,23 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
         subject: Value,
-        slot: usize,
         last_index: Value,
-        result_used: bool,
+        steady: SteadyMatch,
     ) -> Result<Value, JsError> {
         let input = self.coerce_js_string(p, subject)?;
         let last_index = self.regexp_to_length_value(p, last_index)?;
-        let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(slot))? else {
+        let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(steady))? else {
             return Ok(Value::NULL);
         };
         // Nothing reads the result: building it allocates and runs no guest code, so only
-        // the match's own effect, the legacy statics, remains.
-        if !result_used {
-            self.record_regexp_legacy_match(receiver, input, matched)?;
+        // the match's own effect, the legacy statics, remains, and they find its captures
+        // again from its start only if read.
+        if !steady.captures {
+            let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
+                unreachable!("a steady call's receiver is a RegExp");
+            };
+            let matcher = Self::regexp_matcher(meta)?;
+            self.record_regexp_legacy_pending(receiver, input, &matcher, matched.range.start)?;
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
@@ -145,13 +150,11 @@ impl<H: Host> Vm<H> {
 
     /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string
     /// `subject` reads, in one look at the regexp: the slot and Number value of its own
-    /// writable data `lastIndex` (`regexp_last_index_slot`), and whether its compiled
-    /// regexp's prefilter excludes `regexp_match_from`'s search (`Regex::excludes_search`),
-    /// decided where neither conversion has an effect, over a flat subject. That `Some`
-    /// carries whether the regexp is global or sticky; `None` leaves the search to the
-    /// matcher, and a `None` result the call to the general path.
+    /// writable data `lastIndex` (`regexp_last_index_slot`), and what its compiled regexp's
+    /// prefilter says of `regexp_match_from`'s search (`Prefilter`). A `None` result leaves
+    /// the call to the general path.
     #[inline(always)]
-    fn regexp_steady_state(&mut self, receiver: Value, subject: Value) -> Option<(usize, Value, Option<bool>)> {
+    fn regexp_steady_state(&mut self, receiver: Value, subject: Value) -> Option<(usize, Value, Prefilter)> {
         let Some(Cell::RegExp { object, .. }) = self.heap.get(receiver) else {
             return None;
         };
@@ -173,12 +176,35 @@ impl<H: Host> Vm<H> {
         let index = last_index.as_number()?;
         let input = self.heap.string(subject)?;
         let (Some(regex), Some(units)) = (meta.matcher.0.get(), input.existing_flat()) else {
-            return Some((slot, last_index, None));
+            return Some((slot, last_index, Prefilter::Undecided));
         };
         let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
         let start = if stateful { regexp_to_length(index) } else { 0 };
         let length = input.len();
         let rejected = (stateful && start > length) || regex.excludes_search(length, start, meta.flags.contains(RegExpFlags::STICKY), || units.unit(start));
-        Some((slot, last_index, rejected.then_some(stateful)))
+        Some((slot, last_index, if rejected { Prefilter::Excludes { stateful } } else { Prefilter::Admits }))
     }
+}
+
+/// What a steady call's prefilter (`Regex::excludes_search`) says of its search, decided
+/// where neither conversion has an effect, over a flat subject.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Prefilter {
+    /// No compiled matcher or no flat subject: the search decides.
+    Undecided,
+    /// The search may match, and needs no second look.
+    Admits,
+    /// No match, and whether the regexp is global or sticky, whose `lastIndex` resets.
+    Excludes { stateful: bool },
+}
+
+/// What a steady call knows of its match (`regexp_match_from`): the slot of the RegExp's
+/// own writable data `lastIndex`, which no method cache observes a store to; whether the
+/// prefilter already admitted the search (`Prefilter::Admits`); and whether anything reads
+/// the match's captures.
+#[derive(Clone, Copy)]
+pub(super) struct SteadyMatch {
+    pub(super) slot: usize,
+    pub(super) prefiltered: bool,
+    pub(super) captures: bool,
 }

@@ -2607,16 +2607,15 @@ impl<H: Host> Vm<H> {
     }
 
     /// `regexp_builtin_match` past its `lastIndex` read: the match from `last_index` where
-    /// the flags make it stateful, storing the new `lastIndex` in `known_slot` when the
-    /// caller found its own writable data slot (`regexp_last_index_slot`) and no method
-    /// cache can observe the store, else as `store_regexp_last_index` does.
+    /// the flags make it stateful, storing the new `lastIndex` as `store_regexp_last_index`
+    /// does, or as a steady call's facts allow (`SteadyMatch`).
     fn regexp_match_from(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         input: &JsString,
         last_index: usize,
-        known_slot: Option<usize>,
+        steady: Option<steady::SteadyMatch>,
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
             Some(Cell::RegExp { meta, .. }) => (
@@ -2624,42 +2623,42 @@ impl<H: Host> Vm<H> {
                 meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
                 meta.flags.contains(RegExpFlags::STICKY),
             ),
-            _ => {
-                return Err(
-                    self.type_error(p, "RegExp method called on incompatible receiver".into())
-                );
-            }
+            _ => return Err(self.type_error(p, "RegExp method called on incompatible receiver".into())),
         };
         let start = if stateful { last_index } else { 0 };
-        let store = |vm: &mut Self, value: Value| match known_slot {
-            Some(slot) => {
-                vm.heap.property_set(this, slot, value);
-                Ok(())
-            }
-            None => vm.store_regexp_last_index(p, this, value),
-        };
-        let units = input.units();
-        if (stateful && start > units.len())
-            || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start)))
-        {
-            if stateful {
-                store(self, Value::number(0.0))?;
-            }
-            return Ok(None);
-        }
-        let subject = self.regexp_subject(input, &regex);
-        // A Unicode-mode start inside a surrogate pair is the pair's lead (RegExpBuiltinExec's
-        // inputIndex), where a sticky match may start and a search starts.
-        let matched = if sticky {
-            regex.find_sticky_in_subject(&subject, start).next()
-        } else {
-            regex.find_in_subject(&subject, start).next()
-        };
+        let matched = self.regexp_search(&regex, input, start, (stateful, sticky), steady);
+        // No match, excluded or failed, resets `lastIndex`.
         if stateful {
-            let last_index = matched.as_ref().map_or(0, |matched| matched.range.end);
-            store(self, Value::number(last_index as f64))?;
+            let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
+            match steady {
+                Some(steady) => _ = self.heap.property_set(this, steady.slot, last_index),
+                None => self.store_regexp_last_index(p, this, last_index)?,
+            }
         }
         Ok(matched)
+    }
+
+    /// `regexp_match_from`'s search from `start` of a regexp whose flags are `(stateful,
+    /// sticky)`: `None` where the prefilter excludes it (`Regex::excludes_search`), unless a
+    /// steady call's already admitted it, else the matcher's match, without its captures
+    /// where nothing reads them. A Unicode-mode start inside a surrogate pair is the pair's
+    /// lead (RegExpBuiltinExec's inputIndex), where a sticky match may start and a search starts.
+    #[inline(always)]
+    fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, start: usize, (stateful, sticky): (bool, bool),
+        steady: Option<steady::SteadyMatch>) -> Option<quench_regexp::Match> {
+        let units = input.units();
+        if !steady.is_some_and(|steady| steady.prefiltered)
+            && ((stateful && start > units.len())
+                || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start))))
+        {
+            return None;
+        }
+        let subject = self.regexp_subject(input, regex);
+        if steady.is_some_and(|steady| !steady.captures) {
+            return regex.find_range_in_subject(&subject, start, sticky).map(quench_regexp::Match::native);
+        }
+        let mut matches = if sticky { regex.find_sticky_in_subject(&subject, start) } else { regex.find_in_subject(&subject, start) };
+        matches.next()
     }
 
     pub(super) fn regexp_builtin_exec(
