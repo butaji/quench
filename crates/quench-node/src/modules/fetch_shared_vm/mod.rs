@@ -167,7 +167,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Outcome {
         return Ok(table);
     }
     let table = c.with_startup_intrinsics(|c| {
-        let table = record(c, &[])?;
+        let table = record(c, &[], &[])?;
         let retained = c.retain(table)?;
         c.host_mut().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
         let built = (|| {
@@ -217,4 +217,14 @@ pub(crate) fn initialize_globals(c: &mut Context<'_>, _: RootId, _: &[RootId]) -
     }
     crate::modules::message_event_shared_vm::define_globals(c, global)?;
     Ok(c.undefined())
+}
+
+/// A plain object of the `fields` a caller lists at run time (inspection views), in order.
+pub(crate) fn literal_fields(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Outcome {
+    let object = c.object_rooted()?;
+    for &(name, value) in fields {
+        let key = c.string_rooted(name);
+        c.define_data_property_rooted(object, key, value, true, true, true)?;
+    }
+    Ok(object)
 }

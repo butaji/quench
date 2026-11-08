@@ -71,7 +71,6 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(typed_array, "prototype", typed_array_proto)?;
         self.set_builtin_value_named(typed_array_proto, "constructor", typed_array)?;
         self.install_typed_array_species(typed_array, typed_array_proto, global)?;
-        self.set_builtin_value_named(global, "TypedArray", typed_array)?;
 
         for &crate::heap::TypedArrayRow { kind, native, name, .. } in &crate::heap::TYPED_ARRAYS {
             let constructor = self.native_with_realm(native, Value::NULL, global);

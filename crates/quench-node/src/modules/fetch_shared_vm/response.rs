@@ -4,7 +4,7 @@ use super::body::{self, Consume};
 use super::headers::{self, Guard};
 use super::{private_slot, type_error, usv_or_byte_string, usv_string, Context, Outcome, Slot};
 use crate::modules::host_members::{current, members};
-use crate::modules::webstreams_shared_vm::{self as web, arg, custom_inspect, get, install, is_nullish, is_undefined, literal, put, record, ClassMember};
+use crate::modules::webstreams_shared_vm::{self as web, arg, custom_inspect, get, install, is_nullish, is_undefined, put, record, ClassMember};
 use quench_runtime::{RootId, RootedError};
 
 members!(Member, "fetchResponse", [
@@ -114,18 +114,7 @@ pub(crate) fn initialize(
     let status_text = c.string_rooted(status_text);
     let urls = urls.iter().map(|url| c.string_rooted(url)).collect::<Vec<_>>();
     let urls = c.array_rooted(&urls)?;
-    let state = record(
-        c,
-        &[
-            (TYPE, kind),
-            (STATUS, status),
-            (STATUS_TEXT, status_text),
-            (HEADERS, headers_object),
-            (HEADERS_STATE, headers_state),
-            (BODY, body),
-            (URL_LIST, urls),
-        ],
-    )?;
+    let state = record(c, &[TYPE, STATUS, STATUS_TEXT, HEADERS, HEADERS_STATE, BODY, URL_LIST], &[kind, status, status_text, headers_object, headers_state, body, urls])?;
     private_slot::write(c, object, Slot::Response, state)?;
     Ok(state)
 }
@@ -218,7 +207,7 @@ fn clone(c: &mut Context<'_>, this: RootId) -> Outcome {
         return Err(type_error(c, "Response.clone: Body has already been consumed."));
     }
     let object = super::bare_instance(c, super::table::RESPONSE)?;
-    let copy = record(c, &[])?;
+    let copy = record(c, &[], &[])?;
     for name in [TYPE, STATUS, STATUS_TEXT, URL_LIST] {
         let value = get(c, state, name)?;
         put(c, copy, name, value)?;
@@ -315,7 +304,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             ] {
                 fields.push((name, getter(c, state, member)?));
             }
-            let data = literal(c, &fields)?;
+            let data = super::literal_fields(c, &fields)?;
             custom_inspect(c, this, "Response", data, args)
         }
         Member::Error => {

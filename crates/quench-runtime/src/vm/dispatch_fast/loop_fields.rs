@@ -20,7 +20,7 @@ pub(super) fn lane_loop_field_stores<H: Host>(
     let receiver = |receiver: super::compiled::FieldReceiver| match receiver {
         super::compiled::FieldReceiver::This => Some(unsafe { lane_held_this(cx) }),
         super::compiled::FieldReceiver::Register(register) => Some(r.get(register)),
-        super::compiled::FieldReceiver::Field(_) => None,
+        super::compiled::FieldReceiver::Field(_) | super::compiled::FieldReceiver::Capture(_) => None,
     };
     // Every receiver's slots get addresses before the first is taken (`spill_inline_properties`).
     for field in &region.field_store_sites {

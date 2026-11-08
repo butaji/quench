@@ -334,6 +334,8 @@ pub(crate) enum FieldReceiver {
     Register(Register),
     /// The value of the region's field at this index (`LoopRegion::fields`), an earlier one.
     Field(usize),
+    /// The value of this depth-0 capture slot, which no region stores (`receivers::captured`).
+    Capture(u16),
 }
 
 /// What a `GetField` reads: named fields one after another from a root receiver (`this` or
@@ -419,17 +421,17 @@ fn intern_field(fields: &mut Vec<FieldUse>, path: &FieldPath, tagged: bool) -> u
 /// field's value at every read: each definition of one in the region is a `GetField` of
 /// one path, and none is live at the header (`header_live`), so every read follows a
 /// definition. As the region writes no field, the value is the one the path reads at
-/// entry. With no liveness, none is.
+/// entry. With no liveness, none is. Each register holding a capture's value
+/// (`receivers::captured`) comes too, rooted at the capture with no steps.
 fn held_registers(
     instructions: &[WideInstruction],
     sites: &[FieldSite],
     header_live: Option<RegisterSet>,
     objects: &std::collections::BTreeSet<Register>,
 ) -> std::collections::BTreeMap<Register, FieldPath> {
-    let mut held = std::collections::BTreeMap::new();
-    let Some(header_live) = header_live else {
-        return held;
-    };
+    let Some(header_live) = header_live else { return std::collections::BTreeMap::new() };
+    // A register holding a capture's value roots the paths read through it, with no steps.
+    let mut held = receivers::captured(instructions, header_live);
     let definitions = |register: Register| {
         instructions.iter().copied().filter(move |instruction| number_definition(*instruction) == Some(register))
     };
@@ -1066,6 +1068,7 @@ pub(super) fn inline_region<'a>(
         })
         .collect();
     let mut checked_reads: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+    let captured = receivers::captured(caller, mask(header)?);
     for (offset, instruction) in caller.iter().copied().enumerate() {
         if instruction.op() != Op::Call {
             continue;
@@ -1090,14 +1093,7 @@ pub(super) fn inline_region<'a>(
         // reads until the call, nor after it. The region gives that read a register of its
         // own, holding the field's value (`held_registers`), and the setup resumes at it.
         let mut resume_offset = read_offset;
-        // A receiver read through a name the loop stores changes in the loop: the callee's
-        // read stays, and native code checks the callee after it (`InlineGuard::AtRead`).
-        let checked = defines(receiver)
-            && read_offset.checked_sub(1).is_some_and(|own| {
-                caller[own].defined_register() == Some(receiver)
-                    && field_path(caller[own], sites, &std::collections::BTreeMap::new())
-                        .is_some_and(|path| path.steps.iter().any(|(atom, _)| caller_stored.contains(atom)))
-            });
+        let checked = defines(receiver) && receivers::stored(caller, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom));
         if checked {
             checked_reads.insert(pc, read);
             // The callee resolves now through the receiver's own path; native code checks
@@ -1108,6 +1104,8 @@ pub(super) fn inline_region<'a>(
             (callee_path.root == FieldReceiver::Register(receiver)).then_some(())?;
             callee_path.root = receiver_path.root;
             callee_path.steps.splice(0..0, receiver_path.steps);
+        } else if let Some((root, held)) = receivers::rerooted(caller, read_offset, receiver, &defines, callee_path.as_ref(), &captured) {
+            (callee_path.as_mut()?.root, receiver) = (root, held);
         } else if defines(receiver) {
             let callee_path = callee_path.as_mut()?;
             let own = read_offset.checked_sub(1)?;
@@ -1391,7 +1389,7 @@ pub(super) fn inline_region<'a>(
     // Each callee's field, which the entry reads and guards still holds it, read through
     // the region's held registers.
     let held: std::collections::BTreeMap<Register, FieldPath> =
-        region.held.iter().map(|(register, (path, _))| (*register, path.clone())).collect();
+        region.held.iter().map(|(register, (path, _))| (*register, path.clone())).chain(captured).collect();
     let mut frames = Vec::with_capacity(calls.len());
     for (call_pc, site) in calls.into_iter() {
         let mut frame = site.frame;
@@ -2081,10 +2079,11 @@ fn admit_register_roles(
         .filter(|instruction| admitted_store(instruction.op()))
         .map(|instruction| instruction.atom_index())
         .collect();
-    let paths: std::collections::BTreeMap<Register, FieldPath> = held_registers(&instructions, sites, header_live, objects)
+    let rooted: std::collections::BTreeMap<Register, FieldPath> = held_registers(&instructions, sites, header_live, objects)
         .into_iter()
         .filter(|(_, path)| path.steps.iter().all(|(atom, _)| !stored_names.contains(atom)))
         .collect();
+    let paths: std::collections::BTreeMap<Register, FieldPath> = rooted.iter().filter(|(_, path)| !path.steps.is_empty()).map(|(register, path)| (*register, path.clone())).collect();
     // An indexed register the region defines, other than one holding a field's value at
     // every read (`paths`), holds no entry array: each access reads the array it holds then
     // (`LoopRegion::dynamic_arrays`). Its every definition reads an element, field, capture or
@@ -2157,8 +2156,7 @@ fn admit_register_roles(
         field_arrays: std::collections::BTreeMap::new(),
     };
     let mut field_reads = std::collections::BTreeMap::new();
-    let mut dynamic_field_reads = std::collections::BTreeMap::new();
-    let mut field_stores = std::collections::BTreeMap::new();
+    let (mut dynamic_field_reads, mut field_stores) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::new());
     // The names the region stores on a receiver it never rewrites (`this`, or an unchanged
     // register): a read of one through that receiver reads its current slot at the read.
     let written: std::collections::BTreeSet<Register> =
@@ -2180,7 +2178,7 @@ fn admit_register_roles(
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
-            let path = field_path(instruction, sites, &paths).ok_or_else(|| {
+            let path = field_path(instruction, sites, &rooted).ok_or_else(|| {
                 RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(Op::GetField),
                     header,
@@ -2224,7 +2222,7 @@ fn admit_register_roles(
                 && defined_registers.contains(&register)
             {
                 let current = |candidate: &WideInstruction| {
-                    field_path(*candidate, sites, &paths).is_some_and(|path| {
+                    field_path(*candidate, sites, &rooted).is_some_and(|path| {
                         path.steps.len() == 1
                             && matches!(path.root, FieldReceiver::Register(register) if defined_registers.contains(&register))
                     })
@@ -2244,7 +2242,7 @@ fn admit_register_roles(
                 if instructions.iter().any(|candidate| {
                     candidate.op() == Op::GetField
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
-                        && !field_path(*candidate, sites, &paths)
+                        && !field_path(*candidate, sites, &rooted)
                             .is_some_and(|path| path.steps.len() == 1 && path.root == receiver)
                 }) {
                     return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
@@ -5679,11 +5677,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let field = *self.region.fields.get(index)?;
         let receiver = match field.receiver {
             FieldReceiver::Register(receiver_register) => self.register(receiver_register),
-            FieldReceiver::This => {
-                let slot = self.region.captures.iter().position(|slot| *slot == THIS_CAPTURE)?;
-                self.capture(slot)
-            }
-            FieldReceiver::Field(_) => return None,
+            receiver => self.capture(self.region.captures.iter().position(|slot| Some(*slot) == receiver.capture_slot())?),
         };
         if receiver.representation != Representation::Tagged {
             return None;
@@ -7052,6 +7046,8 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
+#[path = "osr_loop/receivers.rs"]
+mod receivers;
 #[cfg(test)]
 #[path = "osr_loop/coverage_tests.rs"]
 mod coverage_tests;
