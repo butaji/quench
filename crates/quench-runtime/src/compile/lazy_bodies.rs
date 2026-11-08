@@ -13,8 +13,7 @@ mod reparse;
 pub(super) use reparse::{Nesting, reparse};
 use oxc_allocator::Allocator;
 mod parse_arena;
-pub(super) use parse_arena::{arena, release_after, sized_arena};
-pub(crate) use parse_arena::release_warm_arena;
+pub(super) use parse_arena::{arena, release_after, release_free_pages, sized_arena};
 use oxc_ast::ast::{
     Argument, CallExpression, Expression, ExpressionStatement, Function, FunctionBody,
     IdentifierReference, Program, Statement,
@@ -307,11 +306,10 @@ impl BodyFacts {
         if self.failed {
             return;
         }
-        // Its early errors are OXC's alone: the program carries the strictness the body
-        // inherits as a directive, which `early::program_early_errors` exists to supply where
-        // OXC cannot see it (a whole program in inherited strict code).
+        let strict = program.source_type.is_module() || has_use_strict(&program.directives);
         if super::stack::validate(program).is_err()
             || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
+            || !super::early::program_early_errors(program, strict).1.is_empty()
         {
             self.failed = true;
             return;

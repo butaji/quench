@@ -13,59 +13,11 @@ pub(crate) fn arena(text: &str) -> Allocator {
     Allocator::with_capacity(text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE))
 }
 
-thread_local! {
-    /// The largest whole-program parse arena so far, reset, with the pages its parses touched
-    /// still resident: the next parse writes over them instead of faulting in fresh pages, as
-    /// V8 reuses a zone's segments. A code-load benchmark parses its 2 MB source anew each
-    /// iteration; fresh arenas, and returning a parse's free pages after it, were half of its
-    /// minor faults (JetStream first-inspector-code-load, x86_64, 2026-11-08: 52K -> 27K,
-    /// max RSS 45 -> 47 MB). Memory-first returns it at collections (`release_warm_arena`).
-    static WARM: std::cell::Cell<Option<Allocator>> = const { std::cell::Cell::new(None) };
-}
-
-/// A whole program's parse arena (`sized_arena`): the warm one when it is large enough,
-/// handed back when dropped, warm if no larger one is.
-pub(crate) struct ParseArena(std::mem::ManuallyDrop<Allocator>);
-
-impl std::ops::Deref for ParseArena {
-    type Target = Allocator;
-    fn deref(&self) -> &Allocator {
-        &self.0
-    }
-}
-
-impl Drop for ParseArena {
-    fn drop(&mut self) {
-        // SAFETY: the allocator is taken once, here, and not used after.
-        let mut allocator = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
-        allocator.reset();
-        // The larger arena stays warm: it serves every parse the smaller one does.
-        let warm = WARM.take();
-        WARM.set(Some(match warm {
-            Some(warm) if warm.capacity() > allocator.capacity() => warm,
-            _ => allocator,
-        }));
-    }
-}
-
-/// The arena for parsing a whole program of `text`: the warm arena, when its chunk holds as
-/// much as `arena(text)` reserves.
-pub(crate) fn sized_arena(text: &str) -> ParseArena {
-    let reserved = text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE);
-    let warm = WARM.take();
-    let allocator = match warm {
-        Some(warm) if warm.capacity() >= reserved => warm,
-        warm => {
-            WARM.set(warm);
-            arena(text)
-        }
-    };
-    ParseArena(std::mem::ManuallyDrop::new(allocator))
-}
-
-/// Returns the warm arena's pages to the system (`WARM`).
-pub(crate) fn release_warm_arena() {
-    drop(WARM.take());
+/// `arena(text)`, with the capacity of its one chunk (`release_free_pages`).
+pub(crate) fn sized_arena(text: &str) -> (Allocator, usize) {
+    let allocator = arena(text);
+    let chunk = allocator.capacity();
+    (allocator, chunk)
 }
 
 /// Returns the pages of `allocator`'s free space to the system: a lazily parsed body's tree

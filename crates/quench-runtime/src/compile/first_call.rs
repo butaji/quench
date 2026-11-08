@@ -285,9 +285,8 @@ impl FunctionCompiler<'_, '_> {
             ImplicitBody::Super => self.emit_implicit_super(),
             ImplicitBody::FirstCallStub => {
                 let arguments = self.load_name(STUB_ARGUMENTS);
-                let new_target = self.load_name(crate::bytecode::NEW_TARGET_BINDING);
                 let result = self.reg();
-                self.emit(Op::CallFirstChunk, result, arguments, new_target, 0);
+                self.emit(Op::CallFirstChunk, result, arguments, 0, 0);
                 self.emit(Op::Return, result, 0, 0, 0);
             }
         }

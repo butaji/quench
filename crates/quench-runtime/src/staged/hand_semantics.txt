@@ -87,8 +87,9 @@ vm/compiled/general_capture.rs StoreCapture 1
 vm/compiled/general_names.rs LoadNameCall 2
 vm/compiled/lane_compile.rs Call 2
 vm/compiled/lane_region.rs Binary 2
-vm/compiled/lane_region.rs Call 4
-vm/compiled/lane_region.rs Construct 1
+vm/compiled/lane_region.rs Call 5
+vm/compiled/lane_region.rs CallArray 1
+vm/compiled/lane_region.rs Construct 2
 vm/compiled/lane_region.rs GetField 14
 vm/compiled/lane_region.rs GetIndex 3
 vm/compiled/lane_region.rs IncDec 3

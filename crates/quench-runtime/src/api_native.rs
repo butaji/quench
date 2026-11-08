@@ -218,6 +218,11 @@ pub enum IntactBuiltin {
     RegExpExec,
 }
 
+impl IntactBuiltin {
+    /// Every builtin a proof covers (`Vm::embedding_builtins_intact`).
+    pub(crate) const ALL: [Self; 4] = [Self::StringCharCodeAt, Self::StringIncludes, Self::RegExpTest, Self::RegExpExec];
+}
+
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {

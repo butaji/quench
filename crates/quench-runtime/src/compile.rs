@@ -58,7 +58,6 @@ mod class;
 mod early;
 mod frame_registers;
 mod lazy_bodies;
-pub(crate) use lazy_bodies::release_warm_arena;
 #[cfg(feature = "verify-replay")]
 mod free_names;
 mod syntax_message;
@@ -1114,7 +1113,7 @@ impl Engine {
         .then(|| data_literal::locate(&normalized))
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
-        let allocator = lazy_bodies::sized_arena(parsed_text);
+        let (allocator, chunk) = lazy_bodies::sized_arena(parsed_text);
         let mut facts = lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)));
         #[cfg(feature = "aot")]
         { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
@@ -1122,6 +1121,7 @@ impl Engine {
         // SAFETY: `check` lives through the parse, which alone calls it.
         let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
         let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check);
+        lazy_bodies::release_free_pages(&allocator, chunk);
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1332,11 +1332,11 @@ impl Engine {
                     .expect("validated eval context shape");
                 let statements = std::mem::replace(
                     &mut body.statements,
-                    oxc_allocator::Vec::new_in(&&*allocator),
+                    oxc_allocator::Vec::new_in(&&allocator),
                 );
                 let directives = std::mem::replace(
                     &mut body.directives,
-                    oxc_allocator::Vec::new_in(&&*allocator),
+                    oxc_allocator::Vec::new_in(&&allocator),
                 );
                 parsed.program.body = statements;
                 parsed.program.directives = directives;

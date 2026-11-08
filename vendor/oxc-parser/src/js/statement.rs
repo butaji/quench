@@ -494,7 +494,6 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
         match self.cur_kind() {
             Kind::In => {
-                self.check_for_in_of_identifier_target(&init_expression);
                 let target = AssignmentTarget::cover(init_expression, self);
                 let for_stmt_left = ForStatementLeft::from(target);
                 self.parse_for_in_loop(for_start, parenthesis_opening_span, r#await, for_stmt_left)
@@ -510,7 +509,6 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                         self.end_span(expr_start),
                     ));
                 }
-                self.check_for_in_of_identifier_target(&init_expression);
                 let target = AssignmentTarget::cover(init_expression, self);
                 let for_stmt_left = ForStatementLeft::from(target);
                 self.parse_for_of_loop(for_start, parenthesis_opening_span, r#await, for_stmt_left)
@@ -645,18 +643,6 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.error(diagnostics::initializer_in_for_in_lexical_declaration(
                 declaration.span,
             ));
-        }
-    }
-
-    /// A `for-in`/`for-of` head assigning `eval` or `arguments` in strict code: its target's
-    /// AssignmentTargetType is invalid (an assignment or update reports it in OXC's checker,
-    /// which does not see this head as one).
-    fn check_for_in_of_identifier_target(&mut self, init: &Expression<'a>) {
-        if let Expression::Identifier(identifier) = init.without_parentheses()
-            && self.strict
-            && matches!(identifier.name.as_str(), "eval" | "arguments")
-        {
-            self.error(diagnostics::for_loop_strict_restricted_target(identifier.name.as_str(), identifier.span));
         }
     }
 

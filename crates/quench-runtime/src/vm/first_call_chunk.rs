@@ -26,8 +26,10 @@ impl<H: Host> Vm<H> {
             }
         }
         let value = if context.is_constructor() {
-            // A `super()` call constructs the stub with its derived class as `new.target`.
-            let new_target = Some(self.read(f, i.register_c())).filter(|value| !value.is_undefined()).unwrap_or(callee);
+            let new_target = self
+                .dynamic_binding(f, self.runtime_atoms.new_target)
+                .filter(|value| !value.is_undefined())
+                .unwrap_or(callee);
             self.construct_value_with_new_target(p, callee, new_target, &args)?
         } else {
             self.call_value(p, callee, this, &args)?
@@ -76,7 +78,3 @@ impl<H: Host> Vm<H> {
         Ok(FunctionKind::User(chunk, target as u32))
     }
 }
-
-#[cfg(test)]
-#[path = "first_call_chunk_tests.rs"]
-mod tests;

@@ -1141,8 +1141,8 @@ opcodes!(
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
-    // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
-    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    // A first-call stub's body: compiles and calls its function's chunk (`Vm::call_first_chunk`).
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 );
 
 const _: () = {

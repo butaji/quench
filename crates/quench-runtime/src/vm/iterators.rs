@@ -25,6 +25,23 @@ impl From<JsError> for IteratorHelperFailure {
     }
 }
 
+/// Where arrays of one shape, whose prototype is `Array.prototype`, find what their
+/// iteration calls (`Vm::array_iteration_intact`) under one `prototype_layout_epoch`: no own
+/// `@@iterator`, that method in a data slot of `Array.prototype` and `next` in a data slot of
+/// `%ArrayIteratorPrototype%`. Both prototypes were marked when the proof was made, so a
+/// change to either's layout advances the epoch; shape compaction advances it too, so a proof
+/// never names a renumbered shape. The slots' values may change in place, so each use reads them.
+/// Realms share array shapes but not prototypes: the slots are those of `prototype`, the
+/// realm's `Array.prototype` the proof was made in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ArrayIterationProof {
+    shape: u32,
+    epoch: u64,
+    prototype: Value,
+    method_slot: usize,
+    next_slot: usize,
+}
+
 /// The slots of an iterator result's shape (`Vm::iterator_result`): `value`, then `done`.
 const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
 const ITERATOR_RESULT_DONE_SLOT: usize = 1;
@@ -149,6 +166,65 @@ impl<H: Host> Vm<H> {
         }
         let proto = data.proto();
         proto.is_null() || self.plain_property_lookup(proto, key) == Some(None)
+    }
+
+    /// Whether GetIterator on `source` calls the realm's intrinsic `Array.prototype.values`
+    /// and each step of the iterator it makes calls the intrinsic
+    /// `%ArrayIteratorPrototype%.next`, every Get on the way reading a data property: an
+    /// ordinary Array with no own `@@iterator` whose prototype is `Array.prototype`, which
+    /// holds that method as an own data property, as `%ArrayIteratorPrototype%` holds `next`.
+    /// A proof for the receiver's shape under the current `prototype_layout_epoch` names the
+    /// slots to read (`ArrayIterationProof`).
+    pub(super) fn array_iteration_intact(&mut self, source: Value) -> bool {
+        let Some(array) = self.heap.array(source) else {
+            return false;
+        };
+        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
+            return false;
+        }
+        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
+        let proof = match self.array_iteration_proof {
+            Some(proof) if proof.shape == shape && proof.epoch == epoch && proof.prototype == self.array_proto => proof,
+            _ => match self.prove_array_iteration(shape, epoch) {
+                Some(proof) => proof,
+                None => return false,
+            },
+        };
+        let intrinsic = |vm: &Self, holder: Value, slot: usize, native: Native| {
+            vm.object_data(holder)
+                .and_then(|data| vm.heap.property_get(data, slot))
+                .is_some_and(|value| vm.is_current_realm_native(value, native))
+        };
+        intrinsic(self, self.array_proto, proof.method_slot, Native::ArrayValues)
+            && intrinsic(self, self.array_iterator_proto, proof.next_slot, Native::ArrayIteratorNext)
+    }
+
+    /// `array_iteration_intact`'s lookups past its proof, recording where they found the
+    /// properties once both prototypes they read are marked prototypes, so a later change to
+    /// either's layout advances the epoch and retires the proof.
+    #[cold]
+    #[inline(never)]
+    fn prove_array_iteration(&mut self, shape: u32, epoch: u64) -> Option<ArrayIterationProof> {
+        let method = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
+        let next = PropertyKey::string(self.runtime_atoms.next);
+        let data_slot = |vm: &Self, holder: Value, key: PropertyKey| {
+            let data = vm.object_data(holder)?;
+            let slot = vm.property_shape_slot(data.shape(), key)?;
+            (!vm.slot_attributes(data, slot)?.accessor).then_some(slot)
+        };
+        if self.property_shape_slot(shape, method).is_some() {
+            return None;
+        }
+        let method_slot = data_slot(self, self.array_proto, method)?;
+        let next_slot = data_slot(self, self.array_iterator_proto, next)?;
+        let proof = ArrayIterationProof { shape, epoch, prototype: self.array_proto, method_slot, next_slot };
+        self.heap.mark_prototype(self.array_proto);
+        self.heap.mark_prototype(self.array_iterator_proto);
+        // Marking an object that was no prototype yet leaves the epoch where it was.
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.array_iteration_proof = Some(proof);
+        }
+        Some(proof)
     }
 
     pub(super) fn iterator_step_value(

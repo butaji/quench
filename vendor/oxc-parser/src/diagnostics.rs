@@ -499,10 +499,6 @@ parser_diagnostics! {
             .with_help("Did you mean to use a for await...of statement?")
     };
 
-    for_loop_strict_restricted_target(name: &'a str, span: Span) => {
-        OxcDiagnostic::error(format!("Cannot assign to '{name}' in strict mode")).with_label(span)
-    };
-
     for_loop_let_reserved_word(span: Span) => {
         OxcDiagnostic::error("The left-hand side of a `for...of` statement may not start with `let`")
             .with_label(span)

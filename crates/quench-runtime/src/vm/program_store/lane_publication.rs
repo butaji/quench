@@ -2,17 +2,7 @@
 //! and retirement when one changes (a slot widens, a Stable fact changes, a named callee
 //! dies, the realm or heap is replaced).
 use super::*;
-use crate::code_dependencies::PublishedCode;
 use crate::vm::compiled::{LaneMethod, PublishedLaneMethod};
-
-/// Code that names callees by identity, which a collection that frees one retires: a
-/// published body, or a body's plan whose code still compiles (`PendingLaneMethod`), whose
-/// `watch` the poll reads. Without it a collection during the compile would leave the plan
-/// naming a freed locator a later allocation may reuse.
-pub(in crate::vm) enum NativeCallBinding {
-    Published(Weak<PublishedLaneMethod>),
-    Pending { watch: Weak<PublishedCode<()>>, callees: Box<[Value]> },
-}
 
 impl ProgramStore {
     /// Publishes a lane body under the dependencies its code took: its slots' types
@@ -29,16 +19,8 @@ impl ProgramStore {
             published.retire();
             return None;
         }
-        if calls { self.native_call_bindings.borrow_mut().push(NativeCallBinding::Published(Rc::downgrade(&published))); }
+        if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
         Some(published)
-    }
-
-    /// Retires `watch`, a plan's, should a collection free any of `callees` before its code
-    /// publishes.
-    pub(in crate::vm) fn note_pending_native_calls(&self, watch: &Rc<PublishedCode<()>>, callees: Box<[Value]>) {
-        if !callees.is_empty() {
-            self.native_call_bindings.borrow_mut().push(NativeCallBinding::Pending { watch: Rc::downgrade(watch), callees });
-        }
     }
 
     /// Retires each published body whose code names a callee that died: an inlined one, or a
@@ -50,16 +32,7 @@ impl ProgramStore {
         let mut bindings = self.native_call_bindings.borrow_mut();
         loop {
             let before = bindings.len();
-            bindings.retain(|binding| {
-                let weak = match binding {
-                    NativeCallBinding::Published(weak) => weak,
-                    NativeCallBinding::Pending { watch, callees } => {
-                        let Some(watch) = watch.upgrade().filter(|watch| watch.is_published()) else { return false; };
-                        let dead = callees.iter().any(|callee| !live(*callee));
-                        if dead { watch.retire(); }
-                        return !dead;
-                    }
-                };
+            bindings.retain(|weak| {
                 let Some(code) = weak.upgrade() else { return false; };
                 let Some(method) = code.lease() else { return false; };
                 // Function bindings depend on the owned program definition,
@@ -79,10 +52,9 @@ impl ProgramStore {
     /// # Safety
     /// Realm/heap transition excludes execution using the old realm's guest locators.
     pub(in crate::vm) unsafe fn retire_native_calls(&self) {
-        for binding in self.native_call_bindings.borrow_mut().drain(..) {
-            match binding {
-                NativeCallBinding::Published(weak) => if let Some(code) = weak.upgrade() { code.retire() },
-                NativeCallBinding::Pending { watch, .. } => if let Some(watch) = watch.upgrade() { watch.retire() },
+        for weak in self.native_call_bindings.borrow_mut().drain(..) {
+            if let Some(code) = weak.upgrade() {
+                code.retire();
             }
         }
     }

@@ -675,7 +675,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether any key of `shape` is an array-index name, memoized on the immutable shape
     /// from its nearest known ancestor. A dictionary shape answers conservatively.
-    pub(super) fn shape_has_index_key(&self, shape: u32) -> bool {
+    fn shape_has_index_key(&self, shape: u32) -> bool {
         if self.shape_is_dictionary(shape) {
             return true;
         }
@@ -1023,7 +1023,7 @@ impl<H: Host> Vm<H> {
         }
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
-        self.array_iteration_shape = None;
+        self.array_iteration_proof = None;
         self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
@@ -1656,13 +1656,13 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        // A site past its inline entries reads its hashed ones (`object_slots::field_load_groups`).
-        let overflow = set.overflow.iter().flat_map(|entries| entries.values());
-        let mut loads: Vec<_> = set.recorded().filter(|_| set.overflow.is_none()).chain(overflow)
+        if set.overflow.is_some() {
+            return Vec::new();
+        }
+        set.recorded()
             .filter(|entry| holders || entry.holder == NO_FIELD_HOLDER)
-            .filter_map(|entry| self.native_field_entry(*entry)).collect();
-        loads.sort_unstable_by_key(|load| (load.shape, load.holder));
-        loads
+            .filter_map(|entry| self.native_field_entry(*entry))
+            .collect()
     }
 
     /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the

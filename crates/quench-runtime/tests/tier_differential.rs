@@ -173,9 +173,6 @@ const FOUND: &[&str] = &[
     // The general tier ran a generator's parameter initialization past its stop.
     "function* g(xs = [1, 2]) { for (let x of xs) yield x; }
      var s = 0; for (var k = 0; k < 40; k++) for (var v of g()) s += v; throw s;",
-    // A lane call that threw ran again where the general tier entered at its record.
-    "var n = 0; function inner(a) { for (var i = 0; i < 4; i++) {} a.forEach(function () { n++; throw 0; }); }
-     for (var k = 0; k < 40; k++) { try { inner([1]); } catch (e) {} } throw n;",
 ];
 
 #[test]

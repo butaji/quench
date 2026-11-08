@@ -9,8 +9,6 @@ mod append_buffer;
 mod short_ascii;
 mod concat_all;
 pub(super) use concat_all::JsStringBuilder;
-mod text_hash;
-pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
 
 /// Bytes of text made on demand since the collector last took them. A string is charged its
@@ -1294,7 +1292,11 @@ impl Eq for JsString {}
 
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u32(self.units().text_hash());
+        // Hashed by units, so a slice and a copy of the same text agree.
+        match self.units() {
+            Units::Ascii(bytes) => bytes.hash(state),
+            Units::Wide(units) => units.hash(state),
+        }
     }
 }
 

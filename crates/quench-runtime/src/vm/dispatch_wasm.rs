@@ -18,6 +18,13 @@ impl<H: Host> Vm<H> {
         pc: &mut usize,
     ) -> Result<StepResult, JsError> {
         match i.op() {
+            Op::WasmIndirectTarget => {
+                let table = self.read(f, i.register_b());
+                let index = self.wasm_table_index(table, self.read(f, i.register_c()))?;
+                let value =
+                    self.wasm_indirect_target(self.frames[f].program, table, index, i.imm())?;
+                self.write(f, i.result_register(), value);
+            }
             Op::WasmInstanceBinding => {
                 let value = self
                     .heap
@@ -32,8 +39,12 @@ impl<H: Host> Vm<H> {
             Op::WasmGlobalSet => {
                 self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
             }
+            Op::WasmRefFunc => {
+                let value = self.wasm_function_reference(p, i.imm(), self.frames[f].env)?;
+                self.write(f, i.result_register(), value);
+            }
             op if wasm_gc_value_op(op) => {
-                if let Some(value) = self.wasm_gc_value_step(self.frames[f].program, self.frames[f].env, i, |vm, register| vm.read(f, register))? {
+                if let Some(value) = self.wasm_gc_value_step(self.frames[f].program, i, |vm, register| vm.read(f, register))? {
                     self.write(f, i.result_register(), value);
                 }
             }

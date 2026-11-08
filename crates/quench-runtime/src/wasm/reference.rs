@@ -315,31 +315,3 @@ impl Lowering<'_> {
         ReferenceTarget::from_type(ty).ok_or_else(error)
     }
 }
-
-/// Whether `op` is a reference or GC operator that lowers through pop and push alone, so an
-/// aliased operand may be read from its local register (`Lowering::reads_aliases`): field and
-/// element accesses, tests, casts and comparisons. Those that address operand positions, as
-/// constructors, segments and bulk array operators do, are not.
-pub(super) fn reads_aliases(op: &Operator<'_>) -> bool {
-    matches!(
-        op,
-        Operator::StructGet { .. }
-            | Operator::StructGetS { .. }
-            | Operator::StructGetU { .. }
-            | Operator::StructSet { .. }
-            | Operator::ArrayGet { .. }
-            | Operator::ArrayGetS { .. }
-            | Operator::ArrayGetU { .. }
-            | Operator::ArraySet { .. }
-            | Operator::ArrayLen
-            | Operator::RefEq
-            | Operator::RefIsNull
-            | Operator::RefAsNonNull
-            | Operator::RefNull { .. }
-            | Operator::RefFunc { .. }
-            | Operator::RefTestNonNull { .. }
-            | Operator::RefTestNullable { .. }
-            | Operator::RefCastNonNull { .. }
-            | Operator::RefCastNullable { .. }
-    )
-}

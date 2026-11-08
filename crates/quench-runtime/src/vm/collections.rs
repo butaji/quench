@@ -1406,10 +1406,17 @@ impl<H: Host> Vm<H> {
     /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
     /// and every NaN as one, strings and BigInts by content, everything else by identity.
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
-        match key.as_number() {
-            Some(number) => crate::heap::number_key_hash(number),
-            None => self.heap.non_number_key_hash(key),
+        use std::hash::{Hash, Hasher};
+        if let Some(number) = key.as_number() {
+            return crate::heap::number_key_hash(number);
         }
+        let mut hasher = rustc_hash::FxHasher::default();
+        match self.heap.get(key) {
+            _ if let Some(text) = self.heap.string(key) => text.hash(&mut hasher),
+            Some(Cell::BigInt(value)) => value.hash(&mut hasher),
+            _ => key.hash(&mut hasher),
+        }
+        hasher.finish()
     }
     fn validate_weak_map_receiver(
         &mut self,

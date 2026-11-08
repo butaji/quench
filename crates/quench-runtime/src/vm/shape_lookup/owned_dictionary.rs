@@ -133,11 +133,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// The dictionary mode `transition`, which made `shape`, leads into: past the property
-    /// count field caches address, or at a chain's second deletion, or once more of its slots
-    /// are vacated than hold properties. One deletion (a temporary field dropped from every
-    /// object of a layout) stays a shared, cached shape; more mean the object is used as a
-    /// map, whose adds and deletes would otherwise grow a cached chain without bound that
-    /// every later such object retraces without an index.
+    /// count field caches address, or once more of its slots are vacated than hold properties.
+    /// Its storage is then mostly holes, and add-and-delete churn (an object used as a map)
+    /// would otherwise grow its shape chain without bound.
     fn dictionary_step(&self, shape: u32, transition: ShapeTransition) -> Option<DictionaryTrigger> {
         let entry = &self.shapes[shape as usize];
         let storage_len = entry.storage_len();
@@ -147,9 +145,7 @@ impl<H: Host> Vm<H> {
                 (storage_len > object::FIELD_CACHE_SLOT_CAPACITY).then_some(DictionaryTrigger::PropertyCount)
             }
             ShapeTransition::Delete { .. } => {
-                let deleted_before = entry.parent().is_some_and(|parent| self.shapes[parent as usize].facts.deletions());
-                (deleted_before || mostly_vacated(storage_len, self.shape_entry_count(shape)))
-                    .then_some(DictionaryTrigger::DeletionPattern)
+                mostly_vacated(storage_len, self.shape_entry_count(shape)).then_some(DictionaryTrigger::DeletionPattern)
             }
             _ => None,
         }
