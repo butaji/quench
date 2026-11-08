@@ -73,6 +73,38 @@ fn lower_call(
     true
 }
 
+/// Lowers the return-fused plain call at `pc` (`return f(...)`) frameless: the callee's value
+/// completes this frame. A requested interrupt or a refused activation takes the exact step,
+/// which makes the call and returns.
+pub(super) fn lower_returning_call(
+    builder: &mut super::RegionCore<'_>,
+    (pc, instruction): (usize, WideInstruction),
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    if instruction.op() != Op::Call || instruction.result_flags() != crate::bytecode::RETURN_REGISTER
+        || !instruction.returns_from_frame() || instruction.direct_eval() || instruction.parameter_eval() {
+        return false;
+    }
+    // The returned value passes through the call's register, dead once the frame completes.
+    let Some(destination) = register_offset(instruction.result_register()) else { return false };
+    let (call, returned, fallback) = (builder.create_block(), builder.create_block(), builder.create_block());
+    let interrupted = super::emit_js_interrupt_requested(builder);
+    builder.ins().brif(interrupted, fallback, &[], call, &[]);
+    builder.switch_to_block(call);
+    if super::frameless::emit_call(builder, (pc, instruction, returned), register_offset, (arguments, payload), exact,
+        destination, fallback).is_none() {
+        builder.ins().jump(fallback, &[]);
+    }
+    builder.switch_to_block(returned);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, destination);
+    builder.ins().store(MemFlagsData::trusted(), value, exact.result_pointer, 0);
+    super::emit_js_return_status(builder, pc);
+    exact.emit(builder, fallback);
+    true
+}
+
 /// Lowers the plain `new` at `pc` frameless, the exact step taking any miss.
 fn lower_construct(
     builder: &mut FunctionBuilder<'_>,

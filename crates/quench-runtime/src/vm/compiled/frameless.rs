@@ -218,6 +218,21 @@ fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, pc: usize, 
     builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
 }
 
+/// The dense capture slots (values, length) of `callee`'s admission (`emit_entry`), which a
+/// frameless activation of it reads; `declined` where the payload binds no admissions (a lane
+/// run's) or `callee` has none.
+pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value,
+    declined: ir::Block) -> (ir::Value, ir::Value) {
+    let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
+    let bound = builder.create_block();
+    builder.ins().brif(cache, bound, &[], declined, &[]);
+    builder.switch_to_block(bound);
+    let entry = emit_entry(builder, payload, callee, declined);
+    let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
+    (builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
+        builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
+}
+
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
 /// miss; `framed` where it declines.
 fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value, framed: ir::Block) -> ir::Value {

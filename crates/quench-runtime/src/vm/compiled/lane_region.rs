@@ -519,6 +519,36 @@ fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
 }
 
+/// The index in `bytecode::TYPEOF_NAMES` of `kind`'s `typeof` name.
+fn typeof_index_of(kind: crate::ValueType) -> i64 {
+    i64::try_from(crate::bytecode::typeof_name_index(super::super::coercion::typeof_text(kind))
+        .expect("a language typeof name")).expect("index fits i64")
+}
+
+/// The `typeof` switch index (`UNARY_TYPEOF_INDEX`) of the tagged `value` as an int32, read
+/// from its tag for a Number, `undefined`, `null` or a boolean; a heap value, whose cell
+/// decides its name, goes to `exit`. Lane bodies and general dispatch share it.
+pub(super) fn immediate_typeof_index(builder: &mut FunctionBuilder<'_>, value: ir::Value, exit: ir::Block) -> ir::Value {
+    use crate::value::ValueLayout;
+    let field = builder.ins().ushr_imm_u(value, i64::from(ValueLayout::TAG_SHIFT));
+    let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+    let double = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+    let int_tagged = is_int_tagged(builder, value);
+    let number = builder.ins().bor(double, int_tagged);
+    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+    let boolean = builder.ins().icmp_imm_u(IntCC::Equal, tag, (Value::TRUE.to_bits() & ValueLayout::TAG_MASK) as i64);
+    let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
+    let heap = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
+    emit_js_guard_not(builder, heap, exit);
+    let mut int = builder.ins().iconst(types::I32, typeof_index_of(crate::ValueType::Undefined));
+    for (holds, kind) in [(null, crate::ValueType::Null), (boolean, crate::ValueType::Boolean), (number, crate::ValueType::Number)] {
+        let named = builder.ins().iconst(types::I32, typeof_index_of(kind));
+        int = builder.ins().select(holds, named, int);
+    }
+    // Every other immediate is `undefined` or the deleted marker, whose name it is.
+    int
+}
+
 pub(super) fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
     let payload = builder.ins().uextend(types::I64, int);
     builder.ins().bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
@@ -2489,7 +2519,9 @@ impl Lowering<'_, '_> {
                         Some(array) => self.loop_element_read(array, index, exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
-                            super::emit_dense_element(&mut self.builder, view, index, exit).1
+                            let absent = self.builder.create_block();
+                            let present = super::emit_dense_element(&mut self.builder, view, index, absent).1;
+                            self.absent_element(base, index, present, absent, exit)
                         }
                     };
                     self.set_tagged(state, instruction.result_register(), value);
@@ -2532,7 +2564,7 @@ impl Lowering<'_, '_> {
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
-            Op::Construct if self.completion == Completion::StatusAndPc && !instruction.is_super_construct()
+            Op::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Op::IncDec if plain && instruction.numeric_local_target().is_none() => {
                 let decrement = instruction.boolean_flag();
@@ -2741,7 +2773,7 @@ impl Lowering<'_, '_> {
     /// else its activation.
     fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        if self.generic.contains(&pc)
+        if self.completion == Completion::StatusAndPc && self.generic.contains(&pc)
             && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
             && window.base + window.count <= self.unit.caller_registers
             && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
@@ -2749,21 +2781,32 @@ impl Lowering<'_, '_> {
         }
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,
-            (true, Some(super::lane_unit::Origin::Caller(record))) if instruction.result_flags() == crate::bytecode::RETURN_REGISTER => Some(record),
+            // A static region returns its source PC alone, so the frame's return stays its own.
+            (true, Some(super::lane_unit::Origin::Caller(record))) if self.completion == Completion::StatusAndPc
+                && instruction.result_flags() == crate::bytecode::RETURN_REGISTER => Some(record),
             _ => return None,
         };
-        // The body's register memory holds the caller's registers alone (`Lowering::call`).
-        if window.base + window.count > self.unit.caller_registers {
-            return None;
-        }
         let exit = self.guard_exit(state, pc as u32);
-        let base = self.registers_base;
-        for register in window.base..window.base + window.count {
-            let bits = self.tagged(state, register);
-            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
-        }
+        // The body's register memory holds the caller's registers alone (`Lowering::call`): an
+        // inlined frame's window, or a static region's, whose registers its exits write, passes
+        // its values from the native stack, which the helper only reads.
+        let arguments = if self.completion == Completion::StatusAndPc && window.base + window.count <= self.unit.caller_registers {
+            let base = self.registers_base;
+            for register in window.base..window.base + window.count {
+                let bits = self.tagged(state, register);
+                self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+            }
+            self.ins().iadd_imm_u(base, i64::from(register_offset(window.base)))
+        } else {
+            let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
+                u32::from(window.count.max(1)) * size_of::<Value>() as u32, align_of::<Value>().trailing_zeros() as u8));
+            for (index, register) in (window.base..window.base + window.count).enumerate() {
+                let bits = self.tagged(state, register);
+                self.ins().stack_store(types::I64, bits, slot, (index * size_of::<Value>()) as i32);
+            }
+            self.ins().stack_addr(types::I64, slot, 0)
+        };
         let callee = self.tagged(state, instruction.register_b());
-        let arguments = self.ins().iadd_imm_u(base, i64::from(register_offset(window.base)));
         let argc = self.ins().iconst(types::I64, i64::from(window.count));
         let payload = self.payload;
         let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
@@ -2862,36 +2905,17 @@ impl Lowering<'_, '_> {
     }
 
     fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        use crate::value::ValueLayout;
-        let index = |kind: crate::ValueType| i64::try_from(crate::bytecode::typeof_name_index(
-            super::super::coercion::typeof_text(kind)).expect("a language typeof name")).expect("index fits i64");
         let source = instruction.register_b();
         let ty = state.values[usize::from(source)].value.ty;
         let known = [crate::ValueType::Number, crate::ValueType::Boolean, crate::ValueType::Null,
             crate::ValueType::Undefined, crate::ValueType::String, crate::ValueType::BigInt, crate::ValueType::Symbol]
             .into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)));
         let int = match known {
-            Some(kind) => self.ins().iconst(types::I32, index(kind)),
+            Some(kind) => self.ins().iconst(types::I32, typeof_index_of(kind)),
             None => {
                 let exit = self.guard_exit(state, pc as u32);
                 let value = self.tagged(state, source);
-                let field = self.ins().ushr_imm_u(value, i64::from(ValueLayout::TAG_SHIFT));
-                let offset = self.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-                let double = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-                let int_tagged = is_int_tagged(&mut self.builder, value);
-                let number = self.ins().bor(double, int_tagged);
-                let tag = self.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-                let boolean = self.ins().icmp_imm_u(IntCC::Equal, tag, (Value::TRUE.to_bits() & ValueLayout::TAG_MASK) as i64);
-                let null = self.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
-                let heap = self.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
-                emit_js_guard_not(&mut self.builder, heap, exit);
-                let mut int = self.ins().iconst(types::I32, index(crate::ValueType::Undefined));
-                for (holds, kind) in [(null, crate::ValueType::Null), (boolean, crate::ValueType::Boolean), (number, crate::ValueType::Number)] {
-                    let named = self.ins().iconst(types::I32, index(kind));
-                    int = self.ins().select(holds, named, int);
-                }
-                // Every other immediate is `undefined` or the deleted marker, whose name it is.
-                int
+                immediate_typeof_index(&mut self.builder, value, exit)
             }
         };
         self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
@@ -3663,7 +3687,7 @@ impl Lowering<'_, '_> {
                 let receiver = !self.native_calls
                     && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 // A `length` read is made once, natively where its base is a direct array.
-                match register.filter(|_| atom == self.vm.length) {
+                match register.filter(|_| super::names_length(self.program, atom)) {
                     Some(register) => {
                         let length = self.array_length(state, register, (atom, cache_site), exit);
                         (int_tagged(&mut self.builder, length), true)
@@ -3946,6 +3970,24 @@ impl Lowering<'_, '_> {
 
     /// Element `index` (an int32) of a hoisted array's view, tagged: a dense array's present
     /// element, or a typed array's Number element. Any other element exits.
+    /// A read past the present dense elements (a hole, or an index past them), in block
+    /// `absent`, joined with the `present` element: what the array and its prototypes give it
+    /// by the general tier's rule (`general_elements::general_element_get`), else `exit`.
+    fn absent_element(&mut self, base: ir::Value, index: ir::Value, present: ir::Value, absent: ir::Block, exit: ir::Block) -> ir::Value {
+        let join = self.builder.create_block();
+        let value = self.builder.append_block_param(join, types::I64);
+        self.ins().jump(join, &[ir::BlockArg::Value(present)]);
+        self.builder.switch_to_block(absent);
+        self.builder.set_cold_block(absent);
+        let key = int_tagged(&mut self.builder, index);
+        let helper = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, element_get));
+        let read = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[base, key]);
+        let found = self.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
+        self.ins().brif(found, join, &[ir::BlockArg::Value(read)], exit, &[]);
+        self.builder.switch_to_block(join);
+        value
+    }
+
     fn loop_element_read(&mut self, array: LoopArray, index: ir::Value, exit: ir::Block) -> ir::Value {
         let (values, length) = self.hoisted_view(array);
         if self.views == ElementViews::Dense {
@@ -4109,7 +4151,7 @@ impl Lowering<'_, '_> {
         let (first, rest) = parts.split_first()?;
         // A direct array's `length` is its record's, an int32.
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
-            && first.0 == self.vm.length
+            && super::names_length(self.program, first.0)
         {
             let length = self.array_length(state, register, *first, exit);
             self.set_int(state, destination, length);

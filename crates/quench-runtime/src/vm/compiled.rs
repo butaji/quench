@@ -2227,11 +2227,16 @@ impl OnlineFacts<'_> {
     }
 }
 
+/// Whether `atom` of `program` names `length`, which a direct array answers from its record.
+/// The program's own name decides, so code compiled for no particular VM (a static image's)
+/// reads it as natively as a VM's own compile does.
+pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
+    program.atoms.get(atom as usize) == Some("length")
+}
+
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
 #[derive(Clone, Copy)]
 pub(super) struct VmFacts<'a> {
-    /// The VM's `length` name.
-    pub(super) length: Atom,
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
     /// it, loosely only `null` and `undefined` equal `null`.
     pub(super) html_dda: bool,
@@ -2244,15 +2249,14 @@ pub(super) struct VmFacts<'a> {
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
-    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
-    /// no Stable facts.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, online: None };
+    /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
     }
 }
 
@@ -2782,6 +2786,32 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
+        // `switch (typeof x)`'s name index from an immediate's tag; a heap value's cell
+        // decides its name at the exact step.
+        if instruction.op() == Op::Unary
+            && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+            && instruction.result_flags() == 0
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(source) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let fallback = builder.create_block();
+            let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+            let index = lane_region::immediate_typeof_index(&mut builder, value, fallback);
+            let index = lane_region::int_tagged(&mut builder, index);
+            builder.ins().store(MemFlagsData::trusted(), index, arguments, destination);
+            builder.ins().jump(next, &[]);
+            JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }
+                .emit(&mut builder, fallback);
+            general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
+            continue;
+        }
+        if general_call::lower_returning_call(&mut builder, (pc, instruction), &register_offset, (arguments, payload),
+            &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
+            general_dispatch_native_pcs[pc] = PcLowering::Stepped as u8;
+            continue;
+        }
         if let Some(next) = next && let Some(native) = general_call::lower_shortcut(&mut builder,
             (pc, instruction, next), &register_offset, (arguments, payload),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
@@ -2797,7 +2827,7 @@ pub(super) fn lower_js_general_dispatch(
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
             && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup()
-            && program.atoms.get(atom as usize).is_some_and(|name| name == "length")
+            && names_length(program, atom)
             && let Some(receiver @ JsFieldReceiver::Register(source)) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
@@ -6999,15 +7029,24 @@ unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64
 /// (`dispatch_fast::lane_body_construction`): the receiver, or `Value::DELETED`, which leaves
 /// the body at the construction. The allocation may have grown the heap's arenas, whose bases
 /// the dispatch then holds again for the body to reload (`JsStepDispatch::refresh_object_bases`).
-unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, arguments: u64, argc: u64) -> u64 {
-    let dispatch = payload as *mut JsStepDispatch;
-    // SAFETY: the body passes its own dispatch and argument registers; the construction runs
-    // no guest code and collects nothing.
-    let built = unsafe {
-        super::dispatch_fast::lane_body_construction::<H>((*dispatch).lane_context as *mut (), Value::from_bits(callee), arguments as *const Value, argc as u16)
+unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, arguments: u64, argc: u64) -> u64 {
+    // SAFETY: the body passes its own VM, running residual, dispatch and argument registers;
+    // the construction runs no guest code and collects nothing.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
     };
-    // SAFETY: as above; nothing else borrows the VM while the helper runs.
-    unsafe { (*dispatch).refresh_object_bases(&*(vm as *const Vm<H>)) };
+    // A lane run's frame decides as its context says; a linked region's, as its dispatch does
+    // for the general loop's in-place constructions.
+    let constructs = if dispatch.lane_context == 0 {
+        dispatch.allow_inline_calls
+    } else {
+        unsafe { super::dispatch_fast::lane_context_constructs::<H>(dispatch.lane_context as *mut ()) }
+    };
+    let built = constructs.then(|| unsafe {
+        super::dispatch_fast::lane_body_construction(vm, residual, Value::from_bits(callee), arguments as *const Value, argc as u16)
+    }).flatten();
+
+    dispatch.refresh_object_bases(vm);
     built.unwrap_or(Value::DELETED).to_bits()
 }
 

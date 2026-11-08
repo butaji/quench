@@ -2497,11 +2497,16 @@ fn script_below_floor<H: Host>(cx: *mut LaneContext<H>) -> bool {
     stack_pointer() < unsafe { &*(*cx).floor }.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// After a lane allocation, a due collection raises the floor.
+/// After a lane allocation, a due collection raises the floor of the running lane, where
+/// one runs: a linked region's general frame polls the heap's own counters instead.
 #[inline(always)]
 pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
     if vm.heap.should_collect() {
-        lane_floor().store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
+        let floor = LANE_FLOOR.with(std::cell::Cell::get);
+        // SAFETY: as `lane_floor`, while a lane runs; null otherwise.
+        if let Some(floor) = unsafe { floor.as_ref() } {
+            floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
+        }
         vm.lane_stack.activation_limit.set(0);
     }
 }
@@ -14327,7 +14332,7 @@ fn lane_super_construction<H: Host>(
     if !covered || !Vm::<H>::inline_constructible(body) || !body.only_initializes_this_fields(&code.constants) {
         return None;
     }
-    let (this, added) = lane_initialize_fields(vm, code, callee, parent, parent_function, r, i)?;
+    let (this, added) = lane_initialize_fields(vm, code, callee, parent, parent_function, lane_construct_argument(r, i))?;
     if !added {
         return None;
     }
@@ -14430,7 +14435,7 @@ script_handler! {
             match lane_planned_construction(vm, callee, r, i) {
                 Some(this) => Some((this, true)),
                 // SAFETY: the context's program outlives the lane run.
-                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i),
+                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i)),
             }
         } else {
             vm.inline_construct_receiver(callee).map(|this| (this, false))
@@ -15998,7 +16003,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     let built = if target.initializes {
         // SAFETY: the context's program outlives the lane run.
-        lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i)
+        lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
     } else {
         vm.inline_construct_receiver(callee).map(|this| (this, false))
     };
@@ -16525,10 +16530,8 @@ fn lane_initialize_fields<H: Host>(
     callee: Value,
     constructor: Value,
     function: u32,
-    r: Registers,
-    i: &LaneInstruction,
+    argument: impl Fn(u16) -> Value,
 ) -> Option<(Value, bool)> {
-    let argument = lane_construct_argument(r, i);
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template_by(callee, constructor)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
@@ -16613,26 +16616,55 @@ fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl F
     Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
 }
 
-/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, by the callee's
-/// construct plan (`planned_construction`): the finished receiver, or `None` (no plan, a
-/// construction the lane makes otherwise, or a collection due, which the lane runs) to
-/// leave the body at the construction, before any effect.
+/// Whether the running lane's frame constructs in place (`LaneContext::script_constructs`),
+/// which a body's constructions inherit (`lane_body_construction`).
 ///
 /// # Safety
-/// `context` is the running lane's context and `arguments` the body's `argc` registers.
-pub(super) unsafe fn lane_body_construction<H: Host>(context: *mut (), callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+/// `context` is the running lane's context.
+pub(super) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -> bool {
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return false; }
     let cx = context.cast::<LaneContext<H>>();
-    let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() || vm.heap.should_collect() {
+    unsafe { (*cx).script_calls && (*cx).script_constructs }
+}
+
+/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, in `code`, the
+/// running residual: the callee's construct plan (`planned_construction`), else the receiver
+/// its initializing body's cached adds finish (`initializer_construction`), which leaves the
+/// plan; `None` (a construction the lane makes otherwise, or a collection due, which the lane
+/// runs) to leave the body at the construction, before any effect.
+///
+/// # Safety
+/// `arguments` are the body's `argc` registers.
+pub(super) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+    if vm.construct_target.is_some() || vm.heap.should_collect() {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
     // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
-    let this = planned_construction(vm, callee, argument).or_else(|| lane_forwarded_fields(vm, callee, argument))?;
+    let this = planned_construction(vm, callee, argument)
+        .or_else(|| lane_forwarded_fields(vm, callee, argument))
+        .or_else(|| initializer_construction(vm, code, callee, argument))?;
     note_allocation(vm);
     Some(this)
+}
+
+/// The receiver `callee`'s cached adds finish where its body only stores its parameters and
+/// primitive constants into `this` (`Function::initializer_stores`) and an in-place
+/// construction admits it (`Vm::inline_constructible`): the static facts of
+/// `ScriptCallTarget::initializes`, so a region with no lane run constructs as the lane does,
+/// and the plan it leaves serves later constructions. Such a body runs no guest code, binds no
+/// environment and reads no `arguments`. A miss leaves the unreachable receiver to the
+/// collector. Out of line, so planned constructions keep their code.
+#[inline(never)]
+fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let (program, function, _) = vm.same_realm_user_target(callee)?;
+    if program != vm.active_program || function == super::ROOT_FUNCTION_ID
+        || !Vm::<H>::inline_constructible(code.function_get(function as usize)?) {
+        return None;
+    }
+    let (this, added) = lane_initialize_fields(vm, code, callee, callee, function, argument)?;
+    added.then_some(this)
 }
 
 /// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
