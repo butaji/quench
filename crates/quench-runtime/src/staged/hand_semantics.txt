@@ -188,7 +188,7 @@ vm/dispatch_fast.rs ArgumentGet 2
 vm/dispatch_fast.rs ArgumentsLength 3
 vm/dispatch_fast.rs Await 2
 vm/dispatch_fast.rs Binary 4
-vm/dispatch_fast.rs Call 15
+vm/dispatch_fast.rs Call 16
 vm/dispatch_fast.rs CallArray 4
 vm/dispatch_fast.rs CallForwardingArguments 6
 vm/dispatch_fast.rs CallKnown 3
@@ -257,7 +257,7 @@ vm/dispatch_fast.rs SetFunctionNameKey 1
 vm/dispatch_fast.rs SetIndex 3
 vm/dispatch_fast.rs SetThisField 1
 vm/dispatch_fast.rs SetThisFieldStrict 1
-vm/dispatch_fast.rs StoreCapture 2
+vm/dispatch_fast.rs StoreCapture 3
 vm/dispatch_fast.rs StoreEnvLocal 3
 vm/dispatch_fast.rs StoreLocal 2
 vm/dispatch_fast.rs StoreLocalPlain 2
@@ -311,8 +311,6 @@ vm/dispatch_fast.rs WasmSelect 2
 vm/dispatch_fast.rs WasmSimd 2
 vm/dispatch_fast.rs WasmSimdShuffle 2
 vm/dispatch_fast.rs Yield 1
-vm/dispatch_fast/wasm_calls.rs Call 1
-vm/dispatch_fast/wasm_calls.rs StoreCapture 1
 vm/dispatch_frame.rs Await 2
 vm/dispatch_frame.rs Binary 5
 vm/dispatch_frame.rs Call 2
