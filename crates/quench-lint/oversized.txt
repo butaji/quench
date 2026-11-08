@@ -1089,7 +1089,7 @@ complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::evaluate_wasm_initialize
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::execute_wasm_in_environment 11
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::instantiate_wasm_module_with_imports 26
 complexity crates/quench-runtime/src/vm/wasm_host.rs::Vm<H>::call_wasm_host 28
-complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 32
+complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 31
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::construct_wasm_js_native 14
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::emscripten_memcpy_view_capture 20
 complexity crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::js_to_wasm_value 14
@@ -1462,7 +1462,7 @@ file-lines crates/quench-runtime/src/vm/coercion.rs 521
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
 file-lines crates/quench-runtime/src/vm/compiled.rs 19164
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5734
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5732
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7598
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
@@ -1534,7 +1534,7 @@ file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
 file-lines crates/quench-runtime/src/vm/vector_region.rs 950
 file-lines crates/quench-runtime/src/vm/wasm.rs 6501
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1418
-file-lines crates/quench-runtime/src/vm/wasm_js.rs 1978
+file-lines crates/quench-runtime/src/vm/wasm_js.rs 1976
 file-lines crates/quench-runtime/src/vm/wasm_table.rs 1038
 file-lines crates/quench-runtime/src/vm/wtf16.rs 1422
 file-lines crates/quench-runtime/src/wasm.rs 2140
@@ -3988,7 +3988,7 @@ function-lines crates/quench-runtime/src/vm/wasm_host.rs::tests::compiled_js_imp
 function-lines crates/quench-runtime/src/vm/wasm_host.rs::tests::typed_host_imports_lease_roots_restore_native_guards_and_release_signature_owner 176
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_exported_function 86
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_import 98
-function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 199
+function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 197
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::construct_wasm_js_native 84
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::emscripten_memcpy_view_capture 114
 function-lines crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::install_webassembly 71
