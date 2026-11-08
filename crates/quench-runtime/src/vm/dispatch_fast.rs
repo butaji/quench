@@ -271,9 +271,7 @@ impl LoopSite {
 
     fn is_admitted(&self) -> bool {
         !self.promotion_only
-            && self.analysis_failure.is_none_or(|failure| {
-                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-            })
+            && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
     }
 }
 
@@ -456,9 +454,7 @@ impl LaneView {
                 backedge_pc: site.backedge,
                 status: if site.promotion_only {
                     OsrSiteStatus::PromotionOnly
-                } else if site.analysis_failure.is_some_and(|failure| {
-                    failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-                }) {
+                } else if site.analysis_failure.is_some_and(|failure| failure.is_call_boundary()) {
                     OsrSiteStatus::CallBoundary
                 } else if site.analysis_failure.is_some() {
                     OsrSiteStatus::Rejected
@@ -1669,7 +1665,7 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
                 PLAIN_LEAF
             }
             Op::LoadThis => CONTEXT_LEAF,
-            Op::LoadCapture | Op::StoreCapture => CAPTURE_LEAF,
+            op if op.addresses_capture() => CAPTURE_LEAF,
             // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
             // place (`lane_set_field_in_place`) or on the general path, either of which makes
             // the leaf an activation first.
@@ -7958,9 +7954,7 @@ script_handler! {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.analysis_failure.is_some_and(|failure| {
-            failure.reason != super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-        }) {
+        if site.analysis_failure.is_some_and(|failure| !failure.is_call_boundary()) {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
@@ -16924,16 +16918,11 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 /// Lane-stack room a frameless call's growth reserves at least: a common window.
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
-/// A Wasm view's handler for `op` where it differs from a JavaScript view's.
+/// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
+/// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
-    match op {
-        // A Wasm reference call enters Wasm functions, never a frameless script call.
-        Op::Call => Some(Some(LaneHandler { handler: reference_call_handler::<H>(), produces: false })),
-        // Its handler reads the context a JavaScript view carries where a Wasm view carries
-        // its memory; Wasm stores a capture only for the rare `data.drop` and `elem.drop`.
-        Op::StoreCapture => Some(None),
-        _ => None,
-    }
+    let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
+    match op { Op::Call => Some(Some(call)), Op::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
@@ -20552,8 +20541,7 @@ fn install_loop_sites<'live, H: Host>(
                 }
                 // A call may run inlined: the site makes its region once it is hot.
                 Err(failure)
-                    if failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-                        && live().is_some() =>
+                    if failure.is_call_boundary() && live().is_some() =>
                 {
                     (
                         std::cell::OnceCell::new(),
