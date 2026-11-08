@@ -907,7 +907,7 @@ complexity crates/quench-runtime/src/vm/object_assignment.rs::Vm<H>::rejected_as
 complexity crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::ordinary_own_string_property 11
 complexity crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::proxy_own_property_descriptor 17
 complexity crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::typed_array_index_key 11
-complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 71
+complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 64
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_property_with_receiver 12
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 13
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 18
@@ -939,7 +939,7 @@ complexity crates/quench-runtime/src/vm/primitive_bench/captures.rs::dense_read 
 complexity crates/quench-runtime/src/vm/primitive_bench/commutative_reads.rs::alias_states 14
 complexity crates/quench-runtime/src/vm/primitive_bench/field_reads.rs::entry_reads_at 28
 complexity crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::fractional_stencil 20
-complexity crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 100
+complexity crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 96
 complexity crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 17
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 31
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 53
@@ -1470,7 +1470,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1944
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22865
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22826
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3029
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 655
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1499,14 +1499,14 @@ file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 920
 file-lines crates/quench-runtime/src/vm/object.rs 4953
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
-file-lines crates/quench-runtime/src/vm/object_get.rs 1346
+file-lines crates/quench-runtime/src/vm/object_get.rs 1323
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
 file-lines crates/quench-runtime/src/vm/object_static.rs 906
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2670
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
-file-lines crates/quench-runtime/src/vm/primitives.rs 726
+file-lines crates/quench-runtime/src/vm/primitives.rs 683
 file-lines crates/quench-runtime/src/vm/program_store.rs 4026
 file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
@@ -1535,7 +1535,7 @@ file-lines crates/quench-runtime/src/vm/wasm.rs 6501
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1418
 file-lines crates/quench-runtime/src/vm/wasm_js.rs 1976
 file-lines crates/quench-runtime/src/vm/wasm_table.rs 1038
-file-lines crates/quench-runtime/src/vm/wtf16.rs 1422
+file-lines crates/quench-runtime/src/vm/wtf16.rs 1405
 file-lines crates/quench-runtime/src/wasm.rs 2140
 file-lines crates/quench-runtime/src/wasm/constant.rs 980
 file-lines crates/quench-runtime/src/wasm/control.rs 1087
@@ -3058,7 +3058,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlined_activ
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 57
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_literal_value 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 116
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 183
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 177
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_materialize_leaf 60
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_memo_read 46
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_memoize_read 91
@@ -3359,7 +3359,7 @@ function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::object
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::ordinary_own_string_property 91
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::proxy_own_property_descriptor 123
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::to_property_descriptor 41
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 257
+function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 223
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_property_with_receiver 60
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 41
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 104
@@ -3424,7 +3424,7 @@ function-lines crates/quench-runtime/src/vm/primitive_bench/fields.rs::cached_ow
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::fractional_stencil 171
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::indexed_composition 62
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs::indexed_number_forwarding_restores_every_fallback_boundary 44
-function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 524
+function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 502
 function-lines crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 66
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 136
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 338
