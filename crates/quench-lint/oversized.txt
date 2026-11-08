@@ -1462,7 +1462,7 @@ file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5684
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7587
-file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
+file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 594
 file-lines crates/quench-runtime/src/vm/construction.rs 1483
 file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
@@ -1495,7 +1495,7 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 798
 file-lines crates/quench-runtime/src/vm/native_object.rs 517
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 920
-file-lines crates/quench-runtime/src/vm/object.rs 4949
+file-lines crates/quench-runtime/src/vm/object.rs 4942
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1323
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
@@ -2982,7 +2982,7 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::tagged_registe
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::tests::native_object_fields_share_one_receiver_layout_proof 55
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::verify_region 165
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::webs 103
-function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::emit_entry 171
+function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::emit_entry 170
 function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::lower_regions 141
 function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::tests::arithmetic_region_reads_each_number_input_once 45
 function-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs::tests::bound_data_fields_reach_native_arithmetic_after_cache_warmup 108
@@ -3325,7 +3325,6 @@ function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_f
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::define_field_cached 47
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::field_miss_data_value 72
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::field_site_report 52
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::get_field_miss 43
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::get_field_uncached 81
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::inherited_field 61
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::invalidate_field_caches 50

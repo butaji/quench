@@ -2833,38 +2833,31 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: usize,
     ) -> Result<Value, JsError> {
-        match self.field_miss_data_value(object, atom, site) {
-            Some(value) => Ok(value),
-            None => {
-                // A getter the site's accessor entry answers is the `[[Get]]` result's whole
-                // computation: its call with the receiver, without walking the chain again.
-                let getter = self.cached_field_getter(object, atom, site).or_else(|| {
-                    self.record_accessor_field_cache(object, atom, site);
-                    self.cached_field_getter(object, atom, site)
-                });
-                #[cfg(feature = "profile-lane-exits")]
-                if getter.is_none() {
-                    super::lane_exits::record_detail(format!(
-                        "field miss {} function={} shape_answers={} dictionary={}",
-                        self.atom_name(atom),
-                        self.heap.function(object).is_some(),
-                        self.shape_property_lookup(object, atom).is_some(),
-                        self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
-                    ));
-                }
-                match getter {
-                    Some(getter) => {
-                        #[cfg(feature = "profile-lane-exits")]
-                        self.record_field_probe_path(site, atom, 6);
-                        self.call_value(p, getter, object, &[])
-                    }
-                    None => {
-                        #[cfg(feature = "profile-lane-exits")]
-                        self.record_field_probe_path(site, atom, 7);
-                        self.get_property(p, object, atom)
-                    }
-                }
-            }
+        // A getter the site's accessor entry answers is the `[[Get]]` result's whole
+        // computation: its call with the receiver, without the data walk, which it would fail.
+        if let Some(getter) = self.cached_field_getter(object, atom, site) {
+            return self.call_value(p, getter, object, &[]);
+        }
+        if let Some(value) = self.field_miss_data_value(object, atom, site) {
+            return Ok(value);
+        }
+        self.record_accessor_field_cache(object, atom, site);
+        let getter = self.cached_field_getter(object, atom, site);
+        #[cfg(feature = "profile-lane-exits")]
+        if getter.is_none() {
+            super::lane_exits::record_detail(format!(
+                "field miss {} function={} shape_answers={} dictionary={}",
+                self.atom_name(atom),
+                self.heap.function(object).is_some(),
+                self.shape_property_lookup(object, atom).is_some(),
+                self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
+            ));
+        }
+        #[cfg(feature = "profile-lane-exits")]
+        self.record_field_probe_path(site, atom, if getter.is_some() { 6 } else { 7 });
+        match getter {
+            Some(getter) => self.call_value(p, getter, object, &[]),
+            None => self.get_property(p, object, atom),
         }
     }
 

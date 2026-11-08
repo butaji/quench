@@ -251,10 +251,7 @@ pub(super) fn emit_entry(
                 JsFieldReceiver::Register(i32::from(register) * word_bytes as i32)
             }
             FieldReceiver::Field(parent) => {
-                assert!(
-                    parent < index,
-                    "entry field paths are ordered by dependency"
-                );
+                assert!(parent < index, "entry field paths are ordered by dependency");
                 JsFieldReceiver::Value(builder.ins().stack_load(
                     isa.pointer_type(),
                     types::I64,
@@ -262,6 +259,8 @@ pub(super) fn emit_entry(
                     offset(parent),
                 ))
             }
+            // Scalar ranges hold no capture reads (`scalar`), so no path roots at one.
+            FieldReceiver::Capture(_) => unreachable!("scalar regions read no captures"),
         };
         let (address, _) = emit_js_cached_field_slot(
             builder,
