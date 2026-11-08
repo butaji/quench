@@ -37,6 +37,9 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "delete target is not an object".into()));
         }
         let key = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if let Some(deleted) = self.plain_string_key_delete(source, key) {
+            return Ok(deleted);
+        }
         self.with_call_roots([source, key], |vm| {
             let key = vm.to_property_key(p, key)?;
             vm.delete_property_key(p, source, key)
@@ -93,11 +96,8 @@ impl<H: Host> Vm<H> {
                 let atom = vm.intern_js_atom(&key);
                 vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::string(atom))?;
-                if key.host_string() == "length"
-                    && vm.heap.array(target).is_some()
-                    && !vm
-                        .object_data(target)
-                        .is_some_and(Object::is_arguments_object)
+                if key.host_string() == "length" && vm.heap.array(target).is_some()
+                    && !vm.object_data(target).is_some_and(Object::is_arguments_object)
                 {
                     return Ok(Value::FALSE);
                 }
@@ -146,8 +146,7 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(Value::FALSE);
             }
-            vm.heap.property_set(target, slot, Value::DELETED);
-            vm.delete_shape_property(target, property_key);
+            vm.delete_shape_slot(target, slot, property_key);
             Ok(Value::TRUE)
         })
     }
