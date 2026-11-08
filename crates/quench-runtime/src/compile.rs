@@ -1121,7 +1121,7 @@ impl Engine {
         let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         // SAFETY: `check` lives through the parse, which alone calls it.
         let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
-        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check);
+        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict);
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1244,21 +1244,8 @@ impl Engine {
         }
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);
-        let semantic = oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program);
-        if !semantic.diagnostics.is_empty() {
-            return Err(semantic
-                .diagnostics
-                .into_iter()
-                .map(|error| Diagnostic {
-                    kind: DiagnosticKind::Syntax,
-                    source: name.into(),
-                    message: format!("SyntaxError: {error}"),
-                    span: Span::default(),
-                })
-                .collect());
-        }
+        let inherited_directive = add_use_strict(&mut parsed.program, &allocator, inherited_strict);
+        let semantic = checked_semantic(&parsed.program, name)?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
         let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
@@ -1307,6 +1294,7 @@ impl Engine {
             (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
         drop(semantic);
+        parsed.program.directives.drain(..usize::from(inherited_directive));
         Self::erase_type_only_module_syntax(&mut parsed.program);
         #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
@@ -1405,35 +1393,28 @@ impl Engine {
         replay::verify(&program);
         Ok(program)
     }
+}
 
-    pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
-        let normalized = early::normalize_hashbang(source);
-        let strict_source = format!("'use strict';\n{normalized}");
-        let source = strict_source.as_str();
-        let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
-        let parsed = Parser::new(
-            &allocator,
-            source,
-            if in_function {
-                SourceType::cjs()
-            } else {
-                SourceType::script()
-            },
-        )
-        .parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return Some(format!("{SYNTAX_ERROR_PREFIX}{}", syntax_message::parse_failure(source, &parsed.diagnostics[0])));
-        }
-        oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program)
-            .diagnostics
-            .first()
-            .map(|diagnostic| format!("SyntaxError: {diagnostic}"))
+/// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`.
+fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
+    let semantic = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(program);
+    if semantic.diagnostics.is_empty() {
+        return Ok(semantic);
     }
+    let syntax = |error| Diagnostic { kind: DiagnosticKind::Syntax, source: name.into(), message: format!("SyntaxError: {error}"), span: Span::default() };
+    Err(semantic.diagnostics.into_iter().map(syntax).collect())
+}
+
+/// Gives `program`, when it `inherits` strictness (eval code in strict code), a leading
+/// `"use strict"` directive unless it has one, and says whether it did: inherited strictness is
+/// no directive of its text, and OXC's checks see it only as one. The caller removes it before
+/// code generation, where a directive would be the program's completion value.
+fn add_use_strict<'a>(program: &mut Program<'a>, allocator: &'a Allocator, inherits: bool) -> bool {
+    let added = inherits && !program.has_use_strict_directive();
+    if added {
+        program.directives.insert(0, oxc_ast::ast::Directive::new_use_strict(&oxc_ast::builder::AstBuilder::new(allocator)));
+    }
+    added
 }
 
 /// A point in compilation where the code about to run differs from the code that ran, which
