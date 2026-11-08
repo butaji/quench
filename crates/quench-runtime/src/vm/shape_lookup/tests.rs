@@ -5,10 +5,9 @@ use std::{cell::RefCell, rc::Rc};
 
 #[test]
 fn moved_shape_lookup_index_matches_the_derived_index() {
-    // A wide object built key by key, with non-default attributes, redefinitions and
-    // deletions, keeps
-    // its lookup index moving to each new shape; every index must match the one derived
-    // from that shape's whole chain.
+    // A wide object built key by key, with non-default attributes, redefinitions and a
+    // deletion (a second makes it its own dictionary), keeps its lookup index moving to each
+    // new shape; every index must match the one derived from that shape's whole chain.
     let source = r#"
       var wide = {};
       for (var i = 0; i < 300; i++) {
@@ -16,7 +15,7 @@ fn moved_shape_lookup_index_matches_the_derived_index() {
         if (i % 7 === 0) wide["k" + i];
         if (i % 5 === 0) Object.defineProperty(wide, "k" + i, { enumerable: false });
         if (i % 11 === 0) Object.defineProperty(wide, "g" + i, { get() { return i; } });
-        if (i % 3 === 0) delete wide["k" + (i - 1)];
+        if (i === 150) delete wide["k" + (i - 1)];
       }
       var keys = Object.keys(wide).length;
     "#;
