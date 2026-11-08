@@ -17106,16 +17106,11 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 /// Lane-stack room a frameless call's growth reserves at least: a common window.
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
-/// A Wasm view's handler for `op` where it differs from a JavaScript view's.
+/// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
+/// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
-    match op {
-        // A Wasm reference call enters Wasm functions, never a frameless script call.
-        Op::Call => Some(Some(LaneHandler { handler: reference_call_handler::<H>(), produces: false })),
-        // Its handler reads the context a JavaScript view carries where a Wasm view carries
-        // its memory; Wasm stores a capture only for the rare `data.drop` and `elem.drop`.
-        Op::StoreCapture => Some(None),
-        _ => None,
-    }
+    let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
+    match op { Op::Call => Some(Some(call)), Op::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
