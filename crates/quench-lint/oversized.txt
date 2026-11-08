@@ -916,7 +916,7 @@ complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_get_p
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_integrity_level 12
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::prevent_extensions 11
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::set_prototype_of 21
-complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 35
+complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 32
 complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::define_ordinary_property_key 27
 complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::object_prototype_to_string 29
 complexity crates/quench-runtime/src/vm/object_symbols.rs::Vm<H>::copy_plain_properties 33
@@ -1499,8 +1499,8 @@ file-lines crates/quench-runtime/src/vm/object.rs 4942
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1323
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
-file-lines crates/quench-runtime/src/vm/object_static.rs 906
-file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
+file-lines crates/quench-runtime/src/vm/object_static.rs 896
+file-lines crates/quench-runtime/src/vm/object_symbols.rs 833
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2670
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
@@ -3367,9 +3367,8 @@ function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::set_inte
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::set_prototype_of 121
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::test_integrity_level 42
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::validate_proxy_define_property_record 56
-function-lines crates/quench-runtime/src/vm/object_keys.rs::Vm<H>::enumerable_own_properties 78
-function-lines crates/quench-runtime/src/vm/object_keys.rs::Vm<H>::shape_enumerable_data_items 43
-function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 100
+function-lines crates/quench-runtime/src/vm/object_keys.rs::Vm<H>::enumerable_own_properties 69
+function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 90
 function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::define_ordinary_property_key 70
 function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::install_object_prototype_methods 43
 function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::object_for_in_keys 69
