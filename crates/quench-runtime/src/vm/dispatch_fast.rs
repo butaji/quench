@@ -22014,6 +22014,8 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
         }
         match decoded[pc].op() {
             Op::Return => return true,
+            // An instruction fused with the return that followed it (`set_returns_from_frame`).
+            _ if decoded[pc].returns_from_frame() => return true,
             Op::Jump => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
