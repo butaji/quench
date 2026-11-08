@@ -1058,7 +1058,7 @@ impl Snap for IteratorHelper {
         match self {
             Self::RegExpStringMatchAll { input, global, unicode } => {
                 writer.u8(helper_tag::REGEXP_STRING_MATCH_ALL);
-                input.snap(writer)?;
+                writer.value(*input);
                 writer.bool(*global);
                 writer.bool(*unicode);
             }
@@ -1109,7 +1109,7 @@ impl Snap for IteratorHelper {
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(match reader.u8()? {
             helper_tag::REGEXP_STRING_MATCH_ALL => Self::RegExpStringMatchAll {
-                input: Snap::unsnap(reader)?,
+                input: reader.value()?,
                 global: reader.bool()?,
                 unicode: reader.bool()?,
             },

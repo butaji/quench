@@ -125,6 +125,7 @@ pub fn release_read_only_pages_after_load() {
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    if run_code_stays() { return }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -392,6 +393,7 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
+    if run_code_stays() { return }
     release_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
@@ -471,7 +473,6 @@ enum CompileRelease {
 impl CompileRelease {
     #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
     const COUNT: usize = 3;
-
 }
 
 /// The process's own memory counts in pages, space-separated (proc(5)).
@@ -544,12 +545,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    let recent = if shares_release_clock() {
-        !release_due()
-    } else {
-        last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL)
-    };
-    if recent {
+    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
         return;
     }
     *last = Some(std::time::Instant::now());
@@ -574,10 +570,31 @@ pub fn release_before_entry_compile() {
     ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The main entry is compiled; its execution can refault only the code it uses.
+/// The main entry is compiled; the default policy keeps the code its run touches (`CODE_STAYS_RESIDENT`).
 pub fn release_after_entry_compile() {
     release_read_only_code_and_data();
     release_main_text_at_phase_boundary();
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    CODE_STAYS_RESIDENT.store(!memory_first, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Set once the main entry has compiled under the default policy: start-up's releases drop the bootstrap's code
+/// (about 5 MB), and the run's own, which refaulted what it runs again, wait for `RUN_CODE_BUDGET_BYTES`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static CODE_STAYS_RESIDENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Resident file bytes a run keeps before releasing them (x86_64, 2026-11-08, minor faults and max RSS against
+/// releasing throughout: richards 11.9K -> 5.2K, 12 MB both; Air 23.6K -> 9.3K, 21 MB; octane-code-load 15K ->
+/// 8.6K, 17 -> 18 MB; npm fastify 32.8K -> 14.7K, 34 -> 31 MB; vite 35K -> 17K, 43 -> 35 MB). At 10 MB Air
+/// refaulted 18K; at 16 MB fastify peaked at 36 MB.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const RUN_CODE_BUDGET_BYTES: usize = 12 << 20;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn run_code_stays() -> bool {
+    CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed) && resident_file_bytes().is_some_and(|bytes| bytes < RUN_CODE_BUDGET_BYTES)
 }
 
 /// Retire the previous phase's resident main-image translations. Code needed by
@@ -638,20 +655,6 @@ fn released_within(interval: std::time::Duration) -> bool {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_due() -> bool {
     !released_within(LOAD_RELEASE_INTERVAL)
-}
-
-/// Whether every paced release shares one clock, the last release of any kind
-/// (`release_due`), rather than each compile phase keeping its own. Under throughput a 100 ms
-/// window held up to five full releases, one per phase clock, and npm runs refaulted after
-/// each (TOD-180: whatwg-url 78 ms with one clock vs 99 ms with five, 7.3K vs 9.8K faults).
-/// Memory-first keeps one clock per phase: each phase boundary leaves a distinct working set
-/// resident, and with one clock the collections' releases held back a cold run's encoding and
-/// kept-program releases (V8-v7 cold first run, same-binary toggle, 7 runs, 2026-10-25:
-/// median max RSS Richards 2096 -> 2608 KiB; worst DeltaBlue 2532 -> 2788, NavierStokes
-/// 3540 -> 3792).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn shares_release_clock() -> bool {
-    false
 }
 
 /// The loaded segments a release reaches, by the loader's program headers.
@@ -998,9 +1001,6 @@ fn register_touched_pages_only(start: usize, length: usize) {
     if fd == NO_FD {
         return;
     }
-    // A mapping covers whole pages, and the kernel refuses a range that does not: a file whose
-    // length is no page multiple ends its mapping on a partial page.
-    let length = length.next_multiple_of(page_size());
     let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
     // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
     // mapping with fault-around.

@@ -1806,47 +1806,42 @@ impl<H: Host> Vm<H> {
             std::iter::once(receiver).chain(args.iter().copied()),
             |vm| {
                 if !vm.is_object_like(receiver) {
-                    return Err(vm.type_error(
-                        p,
-                        "RegExp.prototype[@@matchAll] receiver is not an object".into(),
-                    ));
+                    return Err(vm.type_error(p, "RegExp.prototype[@@matchAll] receiver is not an object".into()));
                 }
-                let input =
-                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let constructor = vm.regexp_species_constructor(p, receiver)?;
-                let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
-                    let flags = vm.regexp_flags_text(p, receiver)?;
-                    let value = vm.heap.alloc_string(flags.clone());
-                    let matcher = vm.construct_value(p, constructor, &[receiver, value])?;
-                    Ok::<_, JsError>((flags, matcher))
-                })?;
-                vm.with_call_roots([matcher], |vm| {
-                    let atom = vm.intern_atom("lastIndex");
-                    let value = vm.get_property(p, receiver, atom)?;
-                    let index = vm.regexp_to_length_value(p, value)?;
-                    vm.set_property_with_program_mode(
-                        p,
-                        matcher,
-                        atom,
-                        Value::number(index as f64),
-                        true,
-                    )?;
-                    let flags = flags.host_string();
-                    Ok(vm.heap.alloc_iterator(IteratorRecord {
-                        object: Self::empty_object(vm.regexp_string_iterator_proto),
-                        source: matcher,
-                        kind: IteratorKind::RegExpStringMatchAll,
-                        index: 0,
-                        done: false,
-                        ext: crate::heap::IteratorExt {
-                            helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
-                                input,
-                                global: flags.contains('g'),
-                                unicode: flags.contains('u') || flags.contains('v'),
-                            })),
-                            ..Default::default()
-                        },
-                    }))
+                let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let text = vm.coerce_js_string(p, argument)?;
+                // Each step matches this value, made once, rather than a copy of its text.
+                let input = vm.string_value_from(argument, &text);
+                vm.with_call_roots([input], |vm| {
+                    let constructor = vm.regexp_species_constructor(p, receiver)?;
+                    let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
+                        let flags = vm.regexp_flags_text(p, receiver)?;
+                        let value = vm.heap.alloc_string(flags.clone());
+                        let matcher = vm.construct_value(p, constructor, &[receiver, value])?;
+                        Ok::<_, JsError>((flags, matcher))
+                    })?;
+                    vm.with_call_roots([matcher], |vm| {
+                        let atom = vm.intern_atom("lastIndex");
+                        let value = vm.get_property(p, receiver, atom)?;
+                        let index = vm.regexp_to_length_value(p, value)?;
+                        vm.set_property_with_program_mode(p, matcher, atom, Value::number(index as f64), true)?;
+                        let flags = flags.host_string();
+                        Ok(vm.heap.alloc_iterator(IteratorRecord {
+                            object: Self::empty_object(vm.regexp_string_iterator_proto),
+                            source: matcher,
+                            kind: IteratorKind::RegExpStringMatchAll,
+                            index: 0,
+                            done: false,
+                            ext: crate::heap::IteratorExt {
+                                helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
+                                    input,
+                                    global: flags.contains('g'),
+                                    unicode: flags.contains('u') || flags.contains('v'),
+                                })),
+                                ..Default::default()
+                            },
+                        }))
+                    })
                 })
             },
         )

@@ -4317,9 +4317,8 @@ impl Heap {
                 IteratorHelper::Map { callback, .. }
                 | IteratorHelper::Filter { callback, .. }
                 | IteratorHelper::FlatMap { callback, .. } => work.push(*callback),
-                IteratorHelper::Take { .. }
-                | IteratorHelper::Drop { .. }
-                | IteratorHelper::RegExpStringMatchAll { .. } => {}
+                IteratorHelper::RegExpStringMatchAll { input, .. } => work.push(*input),
+                IteratorHelper::Take { .. } | IteratorHelper::Drop { .. } => {}
                 IteratorHelper::Concat {
                     items,
                     methods,
