@@ -2,7 +2,6 @@ use crate::bytecode::private_identity_label;
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
-use crate::compile::eval_context_source;
 pub(crate) mod eval_source;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
@@ -309,9 +308,6 @@ impl<H: Host> Vm<H> {
         self.require_source_compilation(p)?;
         if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
             return self.run_global_eval_program(p, program);
-        }
-        if strict {
-            self.validate_strict_eval(p, source)?;
         }
         let context = self.direct_eval_context(p).unwrap_or_default();
         let private_names = if self.direct_eval {
@@ -1091,37 +1087,6 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {
         self.intern_atom(&format!("\0quench:private-home:{private}"))
-    }
-
-    fn validate_strict_eval(&mut self, p: &ResidualProgram, source: &str) -> Result<(), JsError> {
-        let private_names = if self.direct_eval {
-            self.direct_eval_private_names(p)
-                .map_or_else(Vec::new, |(_, names)| names)
-        } else {
-            Vec::new()
-        };
-        let method_context = self.direct_eval_context(p);
-        let context_source = if method_context.is_some_and(|context| context.home_atom.is_some())
-            || !private_names.is_empty()
-        {
-            Some(eval_context_source(
-                source,
-                &private_names,
-                method_context.is_some_and(|context| context.super_calls),
-            ))
-        } else {
-            None
-        };
-        let in_function = method_context.is_some_and(|context| context.in_function);
-        if let Some(error) = crate::Engine::strict_eval_syntax_error(
-            context_source.as_deref().unwrap_or(source),
-            in_function,
-        ) {
-            return self
-                .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error))
-                .map(drop);
-        }
-        Ok(())
     }
 
     fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {

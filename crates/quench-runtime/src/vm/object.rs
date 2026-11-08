@@ -1532,14 +1532,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
-    /// shape and slot, which `record_field_entry_hit` reads while the shape holds. `None` for
-    /// any other object, a dictionary's storage, an accessor or an absent name; with `STORES`,
-    /// also a read-only property, which a store through the hint may not replace.
+    /// shape and slot, which `record_field_entry_hit` reads while the shape, dictionary or not,
+    /// holds. `None` for any other object, dictionary storage, a shape edited in place
+    /// (`Vm::owned_shape_edits_in_place`), an accessor or an absent name; with `STORES`, also a read-only one.
     pub(super) fn own_data_field_hint<const STORES: bool>(&self, object: Value, atom: Atom) -> Option<FieldCache> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        // An exotic object's or a dictionary's exact shape is no shape (`Object::exact_shape`).
+        // An exotic object's exact shape, or dictionary storage's, is no shape (`Object::exact_shape`).
         let shape = receiver.exact_shape();
-        if shape != receiver.shape() || self.shape_is_dictionary(shape) || self.atom_class(atom).contains(AtomClass::PRIVATE) {
+        if shape != receiver.shape() || self.owned_shape_edits_in_place(shape) || self.atom_class(atom).contains(AtomClass::PRIVATE) {
             return None;
         }
         let slot = self.shape_slot(shape, atom)?;
@@ -2833,38 +2833,31 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: usize,
     ) -> Result<Value, JsError> {
-        match self.field_miss_data_value(object, atom, site) {
-            Some(value) => Ok(value),
-            None => {
-                // A getter the site's accessor entry answers is the `[[Get]]` result's whole
-                // computation: its call with the receiver, without walking the chain again.
-                let getter = self.cached_field_getter(object, atom, site).or_else(|| {
-                    self.record_accessor_field_cache(object, atom, site);
-                    self.cached_field_getter(object, atom, site)
-                });
-                #[cfg(feature = "profile-lane-exits")]
-                if getter.is_none() {
-                    super::lane_exits::record_detail(format!(
-                        "field miss {} function={} shape_answers={} dictionary={}",
-                        self.atom_name(atom),
-                        self.heap.function(object).is_some(),
-                        self.shape_property_lookup(object, atom).is_some(),
-                        self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
-                    ));
-                }
-                match getter {
-                    Some(getter) => {
-                        #[cfg(feature = "profile-lane-exits")]
-                        self.record_field_probe_path(site, atom, 6);
-                        self.call_value(p, getter, object, &[])
-                    }
-                    None => {
-                        #[cfg(feature = "profile-lane-exits")]
-                        self.record_field_probe_path(site, atom, 7);
-                        self.get_property(p, object, atom)
-                    }
-                }
-            }
+        // A getter the site's accessor entry answers is the `[[Get]]` result's whole
+        // computation: its call with the receiver, without the data walk, which it would fail.
+        if let Some(getter) = self.cached_field_getter(object, atom, site) {
+            return self.call_value(p, getter, object, &[]);
+        }
+        if let Some(value) = self.field_miss_data_value(object, atom, site) {
+            return Ok(value);
+        }
+        self.record_accessor_field_cache(object, atom, site);
+        let getter = self.cached_field_getter(object, atom, site);
+        #[cfg(feature = "profile-lane-exits")]
+        if getter.is_none() {
+            super::lane_exits::record_detail(format!(
+                "field miss {} function={} shape_answers={} dictionary={}",
+                self.atom_name(atom),
+                self.heap.function(object).is_some(),
+                self.shape_property_lookup(object, atom).is_some(),
+                self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
+            ));
+        }
+        #[cfg(feature = "profile-lane-exits")]
+        self.record_field_probe_path(site, atom, if getter.is_some() { 6 } else { 7 });
+        match getter {
+            Some(getter) => self.call_value(p, getter, object, &[]),
+            None => self.get_property(p, object, atom),
         }
     }
 

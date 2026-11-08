@@ -1974,9 +1974,9 @@ impl<H: Host> Vm<H> {
             };
             let planned_steps = state.steps;
             let keys = match &plan {
-                Some(_) => Vec::new(),
+                Some(_) => super::object_keys::EnumerableKeys::new(),
                 None => match &state.property_list {
-                    Some(property_list) => property_list.clone(),
+                    Some(property_list) => property_list.iter().copied().collect(),
                     None => self.json_enumerable_keys(p, object)?,
                 },
             };
@@ -2050,7 +2050,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         object: Value,
-    ) -> Result<Vec<Atom>, JsError> {
+    ) -> Result<super::object_keys::EnumerableKeys<Atom>, JsError> {
         if let Some(keys) = self.shape_enumerable_keys(object) {
             return Ok(keys);
         }
@@ -2066,7 +2066,7 @@ impl<H: Host> Vm<H> {
                 .array_elements(keys)
                 .map(|elements| elements.len())
                 .expect("OwnPropertyKeys projects an array");
-            let mut names = Vec::new();
+            let mut names = super::object_keys::EnumerableKeys::new();
             for index in 0..length {
                 let keys = self.heap.root_value(keys_handle).unwrap();
                 let key = self

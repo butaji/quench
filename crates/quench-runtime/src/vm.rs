@@ -1567,6 +1567,8 @@ struct ShapeLookupIndex {
     /// Positions in `entries`, hashed by key: the pairs themselves are stored once.
     positions: hashbrown::HashTable<u32>,
     attributes: FxHashMap<u32, ShapeAttributes>,
+    /// An owned dictionary's deletes and descriptor edits that made a shape (`owned_dictionary_edit`).
+    edits: u8,
 }
 impl ShapeLookupIndex {
     fn key_hash(key: property_key::PropertyKey) -> u64 {
@@ -1586,11 +1588,7 @@ impl ShapeLookupIndex {
                 Self::key_hash(entries[position as usize].0)
             });
         }
-        Self {
-            entries,
-            positions,
-            attributes,
-        }
+        Self { entries, positions, attributes, edits: 0 }
     }
     /// The index of a child shape, from its parent's index and the transition between
     /// them, as `derive_shape_lookup_index` would build it.

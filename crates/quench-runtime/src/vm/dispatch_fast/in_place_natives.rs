@@ -19,7 +19,8 @@ impl<H: Host> Vm<H> {
 }
 
 /// Object queries whose steps observe nothing: `Object.create` without properties, an own
-/// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, `super`
+/// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, an object's
+/// keys, values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
 /// property read ignores the receiver) and `Symbol.for` of a string.
 fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
@@ -36,6 +37,9 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
             vm.heap.ordinary_object(target)?;
             vm.plain_keyed_get(target, *args.get(1)?)
         }
+        // An object's own enumerable properties, where its shape lists them.
+        _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
+            vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>

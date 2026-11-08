@@ -8,10 +8,10 @@ use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
-/// The miss of a field read's primary row: the VM's cached read (`general_field_get`) on to
-/// `read`, then for a single read with a home (`getter`) its cached user getter, its value
-/// going to that destination and on to its block; the exact step at `fallback` where neither
-/// answers.
+/// The miss of a field read's primary row: for a single read with a home (`getter`) first its
+/// site's cached user getter, its value going to that destination and on to its block (a read
+/// the accessor entry answers would fail the data walk); then the VM's cached read
+/// (`general_field_get`) on to `read`; the exact step at `fallback` where neither answers.
 pub(super) fn emit_read_miss(
     builder: &mut FunctionBuilder<'_>,
     (arguments, payload): (ir::Value, ir::Value),
@@ -22,21 +22,23 @@ pub(super) fn emit_read_miss(
     (read, fallback): (ir::Block, ir::Block),
 ) {
     let named = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_get));
-    let probed = emit_lane_helper_call(builder, payload, helper, &[object, named]);
-    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, probed, Value::DELETED.to_bits() as i64);
-    let Some((destination, next)) = getter else {
+    let emit_data_read = |builder: &mut FunctionBuilder<'_>| {
+        let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_get));
+        let probed = emit_lane_helper_call(builder, payload, helper, &[object, named]);
+        let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, probed, Value::DELETED.to_bits() as i64);
         builder.ins().brif(hit, read, &[ir::BlockArg::Value(probed)], fallback, &[]);
+    };
+    let Some((destination, next)) = getter else {
+        emit_data_read(builder);
         return;
     };
-    let accessor = builder.create_block();
-    builder.ins().brif(hit, read, &[ir::BlockArg::Value(probed)], accessor, &[]);
-    builder.switch_to_block(accessor);
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_getter));
     let callee = emit_lane_helper_call(builder, payload, helper, &[object, named]);
     let found = builder.ins().icmp_imm_u(IntCC::NotEqual, callee, Value::DELETED.to_bits() as i64);
-    let call = builder.create_block();
-    builder.ins().brif(found, call, &[], fallback, &[]);
+    let (call, data) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(found, call, &[], data, &[]);
+    builder.switch_to_block(data);
+    emit_data_read(builder);
     builder.switch_to_block(call);
     frameless::emit_activation(builder, (exact.pc, next), (arguments, payload), exact, (callee, Some(object), &[]),
         (destination, fallback));

@@ -61,7 +61,7 @@ impl<H: Host> Vm<H> {
     /// at the first key. `null` and `undefined` list no key.
     pub(in crate::vm) fn for_in_start(&mut self, p: &ResidualProgram, source: Value) -> Result<Value, JsError> {
         if source.is_null() || source.is_undefined() {
-            let keys = self.array_of(ArrayElements::new());
+            let keys = self.array_of(&[]);
             return Ok(self.for_in_state(Value::UNDEFINED, keys));
         }
         let object = self.box_object(source)?;
@@ -87,7 +87,9 @@ impl<H: Host> Vm<H> {
             elements.into_iter().enumerate().for_each(|(index, value)| values.set(index, value));
             return state;
         }
-        self.array_of(ArrayElements::from_slice(&elements))
+        // Its own backing, not a young run, which the cursor's first write would copy.
+        let object = crate::heap::ArrayObject::fresh(self.array_proto, ArrayElements::from_slice(&elements));
+        self.heap.alloc(Cell::Array { object })
     }
 
     /// The next key of the for-in `state` that is still an enumerable property of its
@@ -196,7 +198,7 @@ impl<H: Host> Vm<H> {
         }
         let (shape, epoch) = (self.object_data(receiver)?.shape(), self.heap.collection_epoch());
         let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
-        let keys = self.array_of(keys);
+        let keys = self.array_of(&keys);
         self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slots, chain: chain.into(), stepped: None });
         Some(keys)
     }

@@ -306,7 +306,7 @@ impl<H: Host> Vm<H> {
             return Ok(keys);
         }
         if let Some(keys) = self.shape_for_in_keys(current) {
-            return Ok(self.array_of(keys));
+            return Ok(self.array_of(&keys));
         }
         let mut visited_objects = FxHashMap::default();
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
@@ -590,18 +590,8 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectDefineProperty => self.object_define_property(p, args),
             Native::ObjectDefineProperties => self.object_define_properties(p, args),
-            Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries => {
-                let kind = match native {
-                    Native::ObjectKeys => EnumerableOwnPropertyKind::Key,
-                    Native::ObjectValues => EnumerableOwnPropertyKind::Value,
-                    Native::ObjectEntries => EnumerableOwnPropertyKind::KeyValue,
-                    _ => unreachable!("enumeration native selected by dispatch"),
-                };
-                self.enumerable_own_properties(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                    kind,
-                )
+            _ if let Some(kind) = EnumerableOwnPropertyKind::of(native) => {
+                self.enumerable_own_properties(p, args.first().copied().unwrap_or(Value::UNDEFINED), kind)
             }
             Native::ObjectFromEntries => {
                 self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
