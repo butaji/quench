@@ -2382,20 +2382,13 @@ impl Lowering<'_, '_> {
             },
             op if plain && op.js_denotation() == JsDenotation::LoadConst => {
                 self.constant_value(instruction.constant_index()).map(|(value, ty)| {
-                    let mut stage = Emit { builder: &mut self.builder, property_values: None };
-                    let mut frame = EmitFrame { registers: &mut self.registers,
-                        written: &mut self.written, state };
-                    crate::staged::step(&mut stage, &mut frame, crate::staged::Operation::LoadConst {
-                        destination: instruction.result_register(),
-                        constant: crate::staged::Constant { value, ty } });
+                    self.step(state, frame::Edges::Value, crate::staged::Operation::LoadConst {
+                        destination: instruction.result_register(), constant: crate::staged::Constant { value, ty } });
                     true
                 })
             }
             op if plain && op.js_denotation() == JsDenotation::Move => {
-                let mut stage = Emit { builder: &mut self.builder, property_values: None };
-                let mut frame = EmitFrame { registers: &mut self.registers,
-                    written: &mut self.written, state };
-                crate::staged::step(&mut stage, &mut frame, crate::staged::Operation::Move {
+                self.step(state, frame::Edges::Value, crate::staged::Operation::Move {
                     destination: instruction.result_register(), source: instruction.register_b() });
                 Some(true)
             }
@@ -2537,15 +2530,18 @@ impl Lowering<'_, '_> {
                         return self.instruction(state, target, header);
                     }
                 }
+                self.step(state, frame::Edges::Jump, crate::staged::Operation::Jump);
                 self.continue_at(state, target);
                 return false;
             }
-            Op::JumpFalse | Op::JumpTrue if plain => {
-                let take_when_truthy = instruction.op() == Op::JumpTrue;
+            op if plain && op.is_truthiness_jump() => {
+                let target = instruction.jump_target() as usize;
                 let exit = self.guard_exit(state, pc32);
-                let truthy = self.truthiness(state, instruction.register_a(), exit);
-                let taken = if take_when_truthy { truthy } else { self.ins().icmp_imm_u(IntCC::Equal, truthy, 0) };
-                self.branch(state, pc, instruction.jump_target() as usize, taken);
+                let taken_block = self.builder.create_block();
+                let fall_block = self.builder.create_block();
+                self.step(state, frame::Edges::Branch { target: taken_block, following: fall_block, miss: exit },
+                    crate::staged::Operation::JumpIf { register: instruction.register_a(), taken: op == Op::JumpTrue });
+                self.continue_branch(state, pc, target, taken_block, fall_block);
                 return false;
             }
             Op::JumpBinaryFalse if plain => {
@@ -2762,26 +2758,18 @@ impl Lowering<'_, '_> {
     /// leaves at the instruction.
     /// ToBoolean of `register` as an i8, from its proved representation; a tagged value
     /// whose truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `exit`.
+    /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
+    /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
+    /// no step is left unresolved.
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation) {
+        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written, state, edges };
+        let step = crate::staged::step(&mut stage, &mut frame, operation);
+        debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
+    }
+
     fn truthiness(&mut self, state: &mut State, register: Register, exit: ir::Block) -> ir::Value {
-        let fact = state.values[usize::from(register)].value;
-        match fact.representation {
-            Representation::Int32 => {
-                let int = { let variable = self.int_var(usize::from(register)); self.builder.use_var(variable) };
-                self.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
-            }
-            Representation::Float64 => {
-                let number = { let variable = self.float_var(usize::from(register)); self.builder.use_var(variable) };
-                emit_number_truthiness(&mut self.builder, number)
-            }
-            Representation::Tagged => {
-                let bits = self.tagged(state, register);
-                if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
-                    self.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-                } else {
-                    emit_js_tagged_truthiness(&mut self.builder, bits, exit)
-                }
-            }
-        }
+        frame::register_truthiness(&mut self.builder, &mut self.registers, state, register, exit)
     }
 
     fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {

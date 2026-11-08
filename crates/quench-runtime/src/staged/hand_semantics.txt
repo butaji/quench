@@ -94,8 +94,8 @@ vm/compiled/lane_region.rs GetIndex 3
 vm/compiled/lane_region.rs IncDec 3
 vm/compiled/lane_region.rs Jump 5
 vm/compiled/lane_region.rs JumpBinaryFalse 8
-vm/compiled/lane_region.rs JumpFalse 3
-vm/compiled/lane_region.rs JumpTrue 4
+vm/compiled/lane_region.rs JumpFalse 2
+vm/compiled/lane_region.rs JumpTrue 3
 vm/compiled/lane_region.rs LoadCapture 10
 vm/compiled/lane_region.rs LoadConst 2
 vm/compiled/lane_region.rs LoadName 1

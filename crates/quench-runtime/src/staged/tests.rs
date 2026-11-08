@@ -74,13 +74,16 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
     }
 }
 
-/// A concrete register frame: the interpreter keeps no facts about its registers.
-struct ConcreteFrame {
+/// A concrete register frame: the interpreter keeps no facts about its registers. A heap
+/// value whose cell decides its truthiness reads the cell through `heap`, as the lane does.
+struct ConcreteFrame<'a> {
     registers: Vec<u64>,
+    heap: Option<&'a Heap>,
 }
 
-impl Frame<Concrete> for ConcreteFrame {
+impl Frame<Concrete> for ConcreteFrame<'_> {
     type Fact = ();
+    type Control = Edge;
 
     fn fact(&self, _register: Register) -> Self::Fact {}
 
@@ -95,22 +98,75 @@ impl Frame<Concrete> for ConcreteFrame {
     fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Self::Fact) {
         (constant.value.to_bits(), ())
     }
+
+    fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
+        let value = Value::from_bits(self.read(stage, register));
+        value.truthiness().or_else(|| self.heap?.string(value).map(|text| !text.units().is_empty()))
+    }
+
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
+        if condition { Edge::Target } else { Edge::Following }
+    }
+
+    fn jump(&mut self, _stage: &mut Concrete) -> Edge {
+        Edge::Target
+    }
 }
 
 #[test]
 fn step_moves_and_defines_constants_on_the_concrete_stage() {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = ConcreteFrame { registers: vec![0; 4] };
+    let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
     let moved = Value::number(41.0);
     frame.registers[1] = moved.to_bits();
-    let word = step(&mut stage, &mut frame, Operation::Move { destination: 2, source: 1 });
+    let Step::Value(word) = step(&mut stage, &mut frame, Operation::Move { destination: 2, source: 1 })
+        else { panic!("a move produces a value") };
     assert_eq!(Value::from_bits(word), moved);
     assert_eq!(Value::from_bits(frame.registers[2]), moved);
     let constant = Value::number(7.0);
-    let word = step(&mut stage, &mut frame, Operation::LoadConst {
-        destination: 3, constant: Constant::untyped(constant) });
+    let Step::Value(word) = step(&mut stage, &mut frame, Operation::LoadConst {
+        destination: 3, constant: Constant::untyped(constant) }) else { panic!("a constant produces a value") };
     assert_eq!(Value::from_bits(word), constant);
     assert_eq!(Value::from_bits(frame.registers[3]), constant);
+}
+
+/// The edge a `JumpIf` takes on the concrete stage for `value`.
+fn jump_if_edge(value: Value, taken: bool, heap: &Heap) -> Edge {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: Some(heap) };
+    match step(&mut stage, &mut frame, Operation::JumpIf { register: 0, taken }) {
+        Step::Control(edge) => edge,
+        Step::Unresolved => panic!("{value:?} needs its cell, which the frame bound"),
+        Step::Value(_) => panic!("a jump produces no value"),
+    }
+}
+
+#[test]
+fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
+    let mut heap = Heap::new();
+    let empty = heap.alloc_string("".into());
+    let text = heap.alloc_string("x".into());
+    let cases = [
+        (Value::number(1.0), Edge::Target),
+        (Value::number(-3.5), Edge::Target),
+        (Value::number(0.0), Edge::Following),
+        (Value::number(-0.0), Edge::Following),
+        (Value::number(f64::NAN), Edge::Following),
+        (Value::TRUE, Edge::Target),
+        (Value::FALSE, Edge::Following),
+        (Value::NULL, Edge::Following),
+        (Value::UNDEFINED, Edge::Following),
+        (empty, Edge::Following),
+        (text, Edge::Target),
+    ];
+    for (value, truthy_edge) in cases {
+        assert_eq!(jump_if_edge(value, true, &heap), truthy_edge, "JumpTrue {value:?}");
+        let falsy_edge = match truthy_edge { Edge::Target => Edge::Following, Edge::Following => Edge::Target };
+        assert_eq!(jump_if_edge(value, false, &heap), falsy_edge, "JumpFalse {value:?}");
+    }
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0], heap: None };
+    assert!(matches!(step(&mut stage, &mut frame, Operation::Jump), Step::Control(Edge::Target)));
 }
 
 #[test]

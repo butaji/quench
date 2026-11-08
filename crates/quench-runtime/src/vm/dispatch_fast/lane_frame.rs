@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::bytecode::Register;
-use crate::staged::{Concrete, Constant, Frame, Operation};
+use crate::staged::{Concrete, Constant, Edge, Frame, Operation, Step};
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
@@ -13,6 +13,7 @@ struct LaneFrame<const ACC: u8> {
 
 impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     type Fact = ();
+    type Control = Edge;
 
     #[inline(always)]
     fn fact(&self, _register: Register) -> Self::Fact {}
@@ -31,14 +32,52 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Self::Fact) {
         (constant.value.to_bits(), ())
     }
+
+    #[inline(always)]
+    fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
+        Value::from_bits(self.read(stage, register)).truthiness()
+    }
+
+    #[inline(always)]
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
+        if condition { Edge::Target } else { Edge::Following }
+    }
+
+    #[inline(always)]
+    fn jump(&mut self, _stage: &mut Concrete) -> Edge {
+        Edge::Target
+    }
+}
+
+/// The edge a staged jump test takes, or `None` where the value's heap cell decides it.
+#[inline(always)]
+pub(super) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, register: u16) -> Option<Edge> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    match crate::staged::step(&mut stage, &mut frame, Operation::JumpIf { register, taken: TAKEN }) {
+        Step::Control(edge) => Some(edge),
+        Step::Unresolved => None,
+        Step::Value(_) => unreachable!("a jump produces no value"),
+    }
+}
+
+/// The edge a staged unconditional jump takes.
+#[inline(always)]
+pub(super) fn staged_jump(r: Registers, view: Carried) -> Edge {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
+        Step::Control(edge) => edge,
+        _ => unreachable!("a jump produces no value"),
+    }
 }
 
 lane_handler! {
     pub(super) fn lane_move<ACC: u8>(cx, r, ip, i, view) {
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = LaneFrame::<ACC> { registers: r, view };
-        let value = crate::staged::step(&mut stage, &mut frame, Operation::Move {
-            destination: i.a, source: i.b });
+        let Step::Value(value) = crate::staged::step(&mut stage, &mut frame, Operation::Move {
+            destination: i.a, source: i.b }) else { unreachable!("a move produces a value") };
         next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
     }
 }
@@ -47,8 +86,9 @@ lane_handler! {
     pub(super) fn lane_load_const<>(cx, r, ip, i, view) {
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
-        let value = crate::staged::step(&mut stage, &mut frame, Operation::LoadConst {
-            destination: i.a, constant: Constant::untyped(i.constant()) });
+        let Step::Value(value) = crate::staged::step(&mut stage, &mut frame, Operation::LoadConst {
+            destination: i.a, constant: Constant::untyped(i.constant()) })
+            else { unreachable!("a constant produces a value") };
         next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
     }
 }

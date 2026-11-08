@@ -2820,7 +2820,7 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
-use lane_frame::{lane_load_const, lane_move};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -7890,7 +7890,10 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
 
 lane_handler! {
     fn lane_jump_always<BACKWARD: bool>(cx, r, ip, i, view) {
-        resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None))
+        match staged_jump(r, view) {
+            crate::staged::Edge::Target => resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None)),
+            crate::staged::Edge::Following => unreachable!("an unconditional jump takes its target"),
+        }
     }
 }
 
@@ -8661,26 +8664,26 @@ script_handler! {
     /// `JumpFalse` of a value that decides its own truthiness (`Value::truthiness`); a heap
     /// value whose cell decides it takes `lane_jump_test_cell`.
     fn lane_jump_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(truthy) = r.get(i.a).truthiness() else {
-            sibling!(lane_jump_test_cell::<H, BACKWARD, false>, r, ip, Carried::script(cx))
-        };
-        if !truthy {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
+        match staged_jump_if::<false>(r, Carried::script(cx), i.a) {
+            Some(crate::staged::Edge::Target) =>
+                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None)),
+            Some(crate::staged::Edge::Following) =>
+                next!(cx, r, following(ip), Carried::script(cx)),
+            None => sibling!(lane_jump_test_cell::<H, BACKWARD, false>, r, ip, Carried::script(cx)),
         }
-        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
 script_handler! {
     /// `JumpTrue` as `lane_jump_false`: ToBoolean runs no guest code.
     fn lane_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(truthy) = r.get(i.a).truthiness() else {
-            sibling!(lane_jump_test_cell::<H, BACKWARD, true>, r, ip, Carried::script(cx))
-        };
-        if truthy {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
+        match staged_jump_if::<true>(r, Carried::script(cx), i.a) {
+            Some(crate::staged::Edge::Target) =>
+                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None)),
+            Some(crate::staged::Edge::Following) =>
+                next!(cx, r, following(ip), Carried::script(cx)),
+            None => sibling!(lane_jump_test_cell::<H, BACKWARD, true>, r, ip, Carried::script(cx)),
         }
-        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 

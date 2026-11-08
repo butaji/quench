@@ -110,6 +110,20 @@ pub(crate) trait Frame<S: Stage> {
 
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
+
+    /// Where control goes: the edge the interpreter returns, or the branch a specializer
+    /// emits.
+    type Control;
+
+    /// ToBoolean of `register` from the frame's facts; `None` where a value's heap cell
+    /// decides it, leaving the test to the interpreter's fallback.
+    fn truthiness(&mut self, stage: &mut S, register: Register) -> Option<S::Cond>;
+
+    /// Continue at the jump target when `condition` holds, else after this instruction.
+    fn branch(&mut self, stage: &mut S, condition: S::Cond) -> Self::Control;
+
+    /// Continue at the jump target.
+    fn jump(&mut self, stage: &mut S) -> Self::Control;
 }
 
 /// An instruction `step` runs, with the operands a tier decoded.
@@ -119,18 +133,51 @@ pub(crate) enum Operation {
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
     LoadConst { destination: Register, constant: Constant },
+    /// Continue at the jump target.
+    Jump,
+    /// Continue at the jump target when register `register` is truthy, or when it is falsy
+    /// where `taken` is false; otherwise continue after this instruction.
+    JumpIf { register: Register, taken: bool },
 }
 
-/// Run `operation` on `frame`; the word it produced.
+/// Which of an instruction's two control edges it takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Edge {
+    /// The jump target.
+    Target,
+    /// The instruction after this one.
+    Following,
+}
+
+/// A staged instruction's outcome: the word it produced, or where control goes.
+pub(crate) enum Step<W, C> {
+    /// The operation produced `W`; control falls through.
+    Value(W),
+    /// The operation transferred control to `C`.
+    Control(C),
+    /// A value's heap cell decides its truthiness, so the interpreter must take its
+    /// fallback path.
+    Unresolved,
+}
+
+/// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
-pub(crate) fn step<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> S::Word {
+pub(crate) fn step<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::Move { destination, source } => frame.move_register(stage, destination, source),
+        Operation::Move { destination, source } => Step::Value(frame.move_register(stage, destination, source)),
         Operation::LoadConst { destination, constant } => {
             let (value, fact) = frame.constant(stage, constant);
             frame.write(stage, destination, value, fact);
-            value
+            Step::Value(value)
         }
+        Operation::Jump => Step::Control(frame.jump(stage)),
+        Operation::JumpIf { register, taken } => match frame.truthiness(stage, register) {
+            Some(condition) => {
+                let condition = if taken { condition } else { stage.not(condition) };
+                Step::Control(frame.branch(stage, condition))
+            }
+            None => Step::Unresolved,
+        },
     }
 }
 

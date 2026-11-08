@@ -2,16 +2,30 @@
 
 use super::*;
 
+/// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
+#[derive(Clone, Copy)]
+pub(super) enum Edges {
+    /// A value operation: no control transfer.
+    Value,
+    /// The jump target and the following instruction; a value's cell truthiness leaves at
+    /// `miss`.
+    Branch { target: ir::Block, following: ir::Block, miss: ir::Block },
+    /// The jump target, which the lowering continues at itself.
+    Jump,
+}
+
 /// The lane specializer's register frame (`crate::staged::Frame`): the SSA homes and the facts
 /// `State` keeps, with the stage's builder emitting each operation's IR.
 pub(super) struct EmitFrame<'a> {
     pub(super) registers: &'a mut Registers,
     pub(super) written: &'a mut CompoundBitSet,
     pub(super) state: &'a mut State,
+    pub(super) edges: Edges,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     type Fact = RegisterFact;
+    type Control = ();
 
     #[inline(always)]
     fn fact(&self, register: Register) -> RegisterFact {
@@ -47,6 +61,51 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
             .expect("constant's canonical semantic type");
         (value, fact)
+    }
+
+    #[inline(always)]
+    fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
+        let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };
+        Some(register_truthiness(stage.builder, self.registers, self.state, register, miss))
+    }
+
+    #[inline(always)]
+    fn branch(&mut self, stage: &mut Emit<'_, '_>, condition: ir::Value) {
+        let Edges::Branch { target, following, .. } = self.edges else {
+            unreachable!("a branch needs both edges")
+        };
+        stage.builder.ins().brif(condition, target, &[], following, &[]);
+    }
+
+    #[inline(always)]
+    fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
+        debug_assert!(matches!(self.edges, Edges::Jump));
+    }
+}
+
+/// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose
+/// truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `miss`.
+#[inline(always)]
+pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, register: Register, miss: ir::Block) -> ir::Value {
+    let fact = state.values[usize::from(register)].value;
+    match fact.representation {
+        Representation::Int32 => {
+            let int = { let variable = register_int(builder, registers, usize::from(register)); builder.use_var(variable) };
+            builder.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
+        }
+        Representation::Float64 => {
+            let number = { let variable = register_float(builder, registers, usize::from(register)); builder.use_var(variable) };
+            emit_number_truthiness(builder, number)
+        }
+        Representation::Tagged => {
+            let bits = register_tagged(builder, registers, state, register);
+            if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
+                builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
+            } else {
+                emit_js_tagged_truthiness(builder, bits, miss)
+            }
+        }
     }
 }
 
