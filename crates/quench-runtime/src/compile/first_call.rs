@@ -13,6 +13,9 @@ use super::*;
 use program_shape::ParsedProgramShape;
 use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
+mod nested;
+pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
+pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, free_names};
 
 impl ReplayViews {
     /// The line starts and UTF-16 excess table of `text`, the program's source, which a
@@ -40,6 +43,8 @@ pub(super) enum ImplicitBody {
 pub(super) struct ChunkWindow<'a> {
     source: &'a crate::bytecode::ProgramSource,
     start: u32,
+    /// A nested stub's function start and the scopes it compiles against.
+    outer: Option<(u32, &'a std::rc::Rc<FirstCallScopes>)>,
     line_starts: &'a [usize],
     utf16_excess: &'a [(usize, usize)],
 }
@@ -89,14 +94,16 @@ impl<'a> ChunkWindow<'a> {
             std::borrow::Cow::Borrowed(self.utf16_excess),
         );
         compiler.first_call.kept_source = Some(self.source);
+        compiler.first_call.outer = self.outer.map(|(start, scopes)| (start, scopes.clone()));
         compiler
     }
 }
 
 impl Engine {
-    /// The chunk of the stub of `program`'s function at `span` (`Vm::call_first_chunk`).
+    /// The chunk of stub `function` of `program`, at `span` (`Vm::call_first_chunk`).
     pub(crate) fn specialize_first_call_chunk(
         program: &ResidualProgram,
+        function: u32,
         span: crate::bytecode::SourceSpan,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -111,7 +118,9 @@ impl Engine {
         // character before its place, so the function itself starts where it did.
         let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
         let (snippet, start) = if anonymous && span.start > 0 { (std::borrow::Cow::Owned(format!("({snippet})")), span.start - 1) } else { (std::borrow::Cow::Borrowed(snippet), span.start) };
-        let window = ChunkWindow { source, start, line_starts, utf16_excess };
+        let stubs = &program.first_call_scopes;
+        let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
+        let window = ChunkWindow { source, start, outer, line_starts, utf16_excess };
         Self::specialize_script_shaped(&snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
 }
@@ -119,11 +128,14 @@ impl Engine {
 /// The rest parameter that holds a stub's arguments.
 const STUB_ARGUMENTS: &str = "\0quench:first-call-args";
 
+/// Functions by their starts in the program's text: sparse offsets, so a set hashes them.
+type Starts = FxHashSet<u32>;
+
 impl ParsedProgramShape<'_> {
     /// The starts of the function declarations of `program`, of this shape, that may compile
     /// as first-call stubs: an eval's whose functions compile again from their text alone
     /// (`replayable`), when its root is sloppy and declares no lexical binding.
-    pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> FxHashSet<u32> {
+    pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
         let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
         let lexical = program.body.iter().any(|statement| match statement {
             Statement::VariableDeclaration(declaration) => !declaration.kind.is_var(),
@@ -140,12 +152,12 @@ impl ParsedProgramShape<'_> {
 /// The anonymous function expressions of a top-level statement's expressions, outside every
 /// function and class: their free names are the root's, all global. Anonymous, a chunk tells
 /// one from a declaration by its text (`specialize_first_call_chunk`).
-struct TopLevelFunctions(FxHashSet<u32>);
+struct TopLevelFunctions(Starts);
 
 impl TopLevelFunctions {
     /// The starts of `program`'s named function declarations and of the anonymous function
     /// expressions of its expression statements and variable initializers.
-    fn of(program: &Program<'_>) -> FxHashSet<u32> {
+    fn of(program: &Program<'_>) -> Starts {
         let mut roots = Self(FxHashSet::default());
         for statement in &program.body {
             match statement {
@@ -177,15 +189,35 @@ impl<'a> oxc_ast_visit::Visit<'a> for TopLevelFunctions {
 #[derive(Default)]
 pub(super) struct Stubs<'a> {
     /// The starts of the root's function declarations that may compile as stubs.
-    pub(super) roots: FxHashSet<u32>,
+    pub(super) roots: Starts,
     /// The source of the program a chunk compiles from, which the chunk shares.
     pub(super) kept_source: Option<&'a crate::bytecode::ProgramSource>,
+    /// Nested functions may compile as stubs: the source is an indirect eval's.
+    pub(super) nested_allowed: bool,
+    /// The free names of the lazily parsed functions (`BodyFacts::check`).
+    pub(super) free_names: FreeNames,
+    /// The nested stubs by id, in order, with the scopes their chunks compile against.
+    pub(super) nested: Vec<(u32, std::rc::Rc<FirstCallScopes>)>,
+    /// The scope levels named so far, by scope (`Compiler::scope_level`).
+    levels: FxHashMap<usize, (std::rc::Rc<capture_scope::CaptureScope>, nested::ScopeLevel)>,
+    /// In a chunk, its stub's function start and the scopes it compiles against.
+    pub(super) outer: Option<(u32, std::rc::Rc<FirstCallScopes>)>,
 }
 
-/// Whether a program keeps a replay: it has functions a replay compiles (unless
-/// `no_replays`), or first-call stubs (`roots`), whose chunks compile with its layout tables.
-pub(super) fn keeps_replay(roots: &FxHashSet<u32>, no_replays: bool) -> bool {
-    !no_replays || !roots.is_empty()
+impl Stubs<'_> {
+    /// Plans the stubs of a program of `shape`: its root functions, and its nested ones when
+    /// the source is an indirect eval's, whose captures `free_names` predict.
+    pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, free_names: FreeNames) {
+        self.roots = shape.first_call_roots(replayable, program, inherited_strict);
+        self.nested_allowed = replayable && matches!(shape, ParsedProgramShape::Eval(..));
+        self.free_names = free_names;
+    }
+
+    /// Whether a program keeps a replay: it has functions a replay compiles (unless
+    /// `no_replays`), or first-call stubs, whose chunks compile with its layout tables.
+    pub(super) fn keep_replay(&self, no_replays: bool) -> bool {
+        !no_replays || !self.roots.is_empty() || !self.nested.is_empty()
+    }
 }
 
 impl Compiler<'_> {
@@ -194,6 +226,11 @@ impl Compiler<'_> {
     pub(super) fn compile_released_function(&mut self, function: &oxc_ast::ast::Function<'_>, body: u32, context: replay::PlainFunctionContext) -> u32 {
         if self.stubs_first_call(function) {
             return self.compile_first_call_stub(function, context);
+        }
+        if let Some(captures) = self.nested_stub_captures(function, &context) {
+            let id = self.compile_first_call_stub(function, context.clone());
+            self.note_nested_stub(id, captures, &context);
+            return id;
         }
         self.lazy_compiled.push(body);
         self.compile_lazy_function(function, context)
@@ -211,7 +248,7 @@ impl Compiler<'_> {
     /// `function` compiled as its first-call stub: a function of its name, length,
     /// strictness and source that forwards its first call to its chunk.
     fn compile_first_call_stub(&mut self, function: &oxc_ast::ast::Function<'_>, context: replay::PlainFunctionContext) -> u32 {
-        let strict = function
+        let strict = context.inherited_strict || function
             .body
             .as_ref()
             .is_some_and(|body| body.directives.iter().any(|directive| directive.directive == "use strict"));

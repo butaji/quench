@@ -714,11 +714,8 @@ impl<H: Host> Vm<H> {
                         .copied()
                         .filter(|value| !value.is_deleted())
                 })
-                .or_else(|| {
-                    self.heap
-                        .sparse_get(target, index)
-                        .filter(|value| !value.is_deleted())
-                });
+                .or_else(|| self.heap.sparse_get(target, index).filter(|value| !value.is_deleted()))
+                .or_else(|| self.string_index_value(target, index));
             if let Some(value) = value {
                 return Ok(Some((value, attributes)));
             }

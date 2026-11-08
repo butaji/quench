@@ -687,15 +687,7 @@ function.plain_local_slots(&self.superinstructions)
                 ));
             }
 
-            if function.environment_clones.iter().any(|clone| {
-                [&clone.fresh, &clone.reset].into_iter().any(|slots| {
-                    slots.iter().any(|slot| *slot >= function.locals)
-                        || slots.windows(2).any(|pair| pair[0] >= pair[1])
-                }) || clone
-                    .reset
-                    .iter()
-                    .any(|slot| clone.fresh.binary_search(slot).is_ok())
-            }) {
+            if !function.environment_clones.valid(function.locals) {
                 return Err(format!(
                     "function {index} has invalid environment clone slots"
                 ));
@@ -1357,7 +1349,7 @@ mod tests {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
-            replay: None,
+            replay: None, first_call_scopes: Default::default(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),

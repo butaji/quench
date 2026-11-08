@@ -1,5 +1,7 @@
 use super::*;
 
+mod spelling_tests;
+
 #[test]
 fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
     let wide_count = (1..=u16::MAX)

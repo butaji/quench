@@ -58,9 +58,23 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
+/// Lane bodies with at least this many IR instructions allocate registers in one pass; smaller
+/// ones keep the backtracking allocator. One pass pays off where compile latency dominates (large
+/// bodies), backtracking where a small hot loop runs millions of times. Experiment build, 3
+/// interleaved rounds (2026-11-07): one pass everywhere cost call-method 2.2 -> 5.2 ns and
+/// call-polymorphic 8.6 -> 15.9 ns (bodies of 400-1900 instructions); at 2048 those recover
+/// (2.21, 8.63 ns) while richards (bodies 2k-17k) keeps 28.5 vs 26.9 all-backtracking and
+/// delta-blue 48.0 vs 43.9.
+const LANE_SINGLE_PASS_MIN_INSTS: usize = 2048;
+
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = super::jit_backend::lane_body_isa().ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
+    let isa = if function.dfg.num_insts() >= LANE_SINGLE_PASS_MIN_INSTS {
+        super::jit_backend::lane_body_isa()
+    } else {
+        super::jit_backend::target_isa()
+    }
+    .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 
@@ -224,7 +238,7 @@ impl<H: Host> Vm<H> {
         direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, loop_header: Option<u32>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
         let mut pending = match work {
             LaneBodyWork::Start { generic } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS),
-            LaneBodyWork::Poll(pending) => return self.lane_body_poll(*pending),
+            LaneBodyWork::Poll(pending) => return self.lane_body_poll(pending),
         };
         // A plan again after a rejection starts at once; code the thread compiled at once
         // (or the calling thread, without one) publishes at once.
@@ -233,7 +247,7 @@ impl<H: Host> Vm<H> {
             let direct = direct(self);
             let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, loop_header, &generic, budget)
             else { return LaneBodyOutcome::Declined };
-            match self.lane_body_poll(started) {
+            match self.lane_body_poll(Box::new(started)) {
                 LaneBodyOutcome::Stale => pending = (generic, budget / 2),
                 outcome => return outcome,
             }
@@ -242,7 +256,8 @@ impl<H: Host> Vm<H> {
 
     /// What a pending body's compile came to; `Stale` also asks for a plan again at half its
     /// budget when its code was too large.
-    fn lane_body_poll(&mut self, pending: PendingLaneMethod) -> LaneBodyOutcome {
+    /// A poll moves nothing while the code compiles: loop entries poll at each backward jump.
+    fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> LaneBodyOutcome {
         if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
             return LaneBodyOutcome::Stale;
         }
@@ -265,9 +280,9 @@ fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
 
 impl PendingLaneMethod {
     /// What its compile came to, or itself while its code compiles.
-    fn poll(self) -> Result<LaneCompile, Box<Self>> {
+    fn poll(self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
-            std::task::Poll::Pending => return Err(Box::new(self)),
+            std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) => LaneCompile::Replan,
             std::task::Poll::Ready(_) => LaneCompile::Done(None),

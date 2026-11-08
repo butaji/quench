@@ -1,7 +1,13 @@
-//! Top-level functions whose load deferred their compilation (`Op::CallFirstChunk`): the
-//! load compiled a stub in their place, and the first call compiles the function's source
-//! as a program of its own, a chunk, whose function then stands for it.
+//! Functions whose load deferred their compilation (`Op::CallFirstChunk`): the load
+//! compiled a stub in their place, and the first call compiles the function's source as a
+//! program of its own, a chunk, whose function then stands for it. Every closure of the
+//! stub shares the chunk, compiled once.
 use super::*;
+use std::rc::{Rc, Weak};
+
+/// The chunk of each stub, by the stub's program and function: the programs are held weakly
+/// and checked on each read, as either id may name another program once its own is reclaimed.
+pub(super) type FirstChunks = FxHashMap<(ProgramId, u32), (Weak<ResidualProgram>, Weak<ResidualProgram>, FunctionKind)>;
 
 impl<H: Host> Vm<H> {
     /// `i`, at `pc`, the stub body of frame `f`'s callee (`Op::CallFirstChunk`): points the
@@ -35,9 +41,27 @@ impl<H: Host> Vm<H> {
     /// The chunk of stub `function` of program `p` (`stub.0`): the function's source alone,
     /// compiled as a Script at its place in `p`'s text.
     fn compile_first_chunk(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Result<FunctionKind, JsError> {
+        let live = |id: ProgramId, held: &Weak<ResidualProgram>| self.programs.get(id).is_some_and(|now| held.upgrade().is_some_and(|held| Rc::ptr_eq(&now, &held)));
+        if let Some((stub, chunk, kind @ FunctionKind::User(id, _))) = self.first_chunks.get(&(program, function))
+            && live(program, stub)
+            && live(*id, chunk)
+        {
+            return Ok(*kind);
+        }
+        let kind = self.compile_first_chunk_anew(p, (program, function))?;
+        if let FunctionKind::User(id, _) = kind
+            && let (Some(stub), Some(chunk)) = (self.programs.get(program), self.programs.get(id))
+        {
+            self.first_chunks.retain(|_, (stub, chunk, _)| stub.strong_count() > 0 && chunk.strong_count() > 0);
+            self.first_chunks.insert((program, function), (Rc::downgrade(&stub), Rc::downgrade(&chunk), kind));
+        }
+        Ok(kind)
+    }
+
+    fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Result<FunctionKind, JsError> {
         let span = p.functions[function as usize].header().source_span
             .ok_or_else(|| JsError::validation("a first-call stub keeps no source".into()))?;
-        let residual = crate::Engine::specialize_first_call_chunk(p, span, &*self)
+        let residual = crate::Engine::specialize_first_call_chunk(p, function, span, &*self)
             .map_err(|_| JsError::validation("a first-call chunk does not compile".into()))?;
         let target = residual
             .functions

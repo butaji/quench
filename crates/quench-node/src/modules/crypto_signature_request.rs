@@ -118,10 +118,7 @@ impl Request {
                 // Hash the supplied bytes once and use the same prehashed
                 // operation as Sign.final() for RSA-PSS.
                 if self.options.padding == Some(openssl::rsa::Padding::PKCS1_PSS)
-                    && matches!(
-                        self.key.public_ref().id(),
-                        openssl::pkey::Id::RSA | openssl::pkey::Id::RSA_PSS
-                    )
+                    && crate::modules::crypto_provider_facts::is_rsa(self.key.public_ref().id())
                 {
                     let digest_bytes = digest.hash(&data, None).map_err(|error| match error {
                         super::crypto_digest::DigestError::OpenSsl(stack) => {

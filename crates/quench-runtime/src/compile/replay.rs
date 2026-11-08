@@ -574,10 +574,7 @@ impl ProgramReplay {
 
 impl std::fmt::Debug for ProgramReplay {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ProgramReplay")
-            .field("functions", &self.functions.len())
-            .finish_non_exhaustive()
+        formatter.debug_struct("ProgramReplay").field("functions", &self.functions.len()).finish_non_exhaustive()
     }
 }
 

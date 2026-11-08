@@ -94,6 +94,8 @@ setting! {
         Replay = "replay",
         RssPhases = "rss-phases",
         CodeResidency = "code-residency",
+        /// Compiled code's share of CPU time, sampled (`jit_coverage`).
+        JitCoverage = "jit-coverage",
         /// Whether a startup snapshot was restored, and why not.
         StartupSnapshot = "startup-snapshot",
     }

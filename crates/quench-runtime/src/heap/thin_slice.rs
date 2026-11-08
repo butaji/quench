@@ -36,10 +36,12 @@ impl<T> ThinBoxSlice<T> {
     }
 
     fn layout(len: usize) -> (Layout, usize) {
-        let (layout, offset) = Layout::new::<usize>()
-            .extend(Layout::array::<T>(len).expect("slice layout overflow"))
-            .expect("slice layout overflow");
-        (layout.pad_to_align(), offset)
+        Self::try_layout(len).expect("slice layout overflow")
+    }
+
+    fn try_layout(len: usize) -> Option<(Layout, usize)> {
+        let (layout, offset) = Layout::new::<usize>().extend(Layout::array::<T>(len).ok()?).ok()?;
+        Some((layout.pad_to_align(), offset))
     }
 
     fn empty() -> Self {
@@ -125,7 +127,7 @@ impl<T> ThinBoxSlice<T> {
     }
 
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
-    /// missing, which drops those made before it.
+    /// missing, which drops those made before it, or when no room is left for them.
     pub(crate) fn try_from_fn(len: usize, mut element: impl FnMut(usize) -> Option<T>) -> Option<Self> {
         /// Owns the allocation and its initialized prefix until every element exists.
         struct Partial<T> {
@@ -147,12 +149,10 @@ impl<T> ThinBoxSlice<T> {
         if len == 0 {
             return Some(Self::empty());
         }
-        let (layout, offset) = Self::layout(len);
+        let (layout, offset) = Self::try_layout(len)?;
         // SAFETY: the layout is non-zero sized, as it always holds the header.
         let raw = unsafe { alloc(layout) };
-        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
-            handle_alloc_error(layout)
-        };
+        let header = NonNull::new(raw.cast::<usize>())?;
         let mut partial = Partial {
             raw,
             layout,

@@ -67,10 +67,7 @@ pub(crate) fn lower_regions(
         .collect();
     let mut leaders = std::collections::BTreeSet::new();
     for instruction in &decoded {
-        if matches!(
-            instruction.op().control_flow_layout(),
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
-        ) {
+        if instruction.op().control_flow_layout().jumps() {
             leaders.insert(instruction.jump_target() as usize);
         }
     }
@@ -439,7 +436,6 @@ mod tests {
             let (native, _) = lower_js_general_dispatch(
                 &program,
                 id as u32,
-                false,
                 &*isa,
                 JsGeneralCallout::Dynamic,
                 &plans,

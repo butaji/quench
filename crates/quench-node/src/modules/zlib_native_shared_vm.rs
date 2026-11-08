@@ -9,6 +9,10 @@ const CACHE: &str = "\0binding:zlib/native";
 #[derive(Default)]
 pub(crate) struct State {
     entries: Vec<Entry>,
+    /// The synchronous writes' input copy, kept between them: a chunk past the allocator's
+    /// mapping threshold was mapped, faulted in and unmapped on every write (FlightPlanner's
+    /// 1 MB chunks, 1400 a run).
+    input: Vec<u8>,
 }
 struct Entry {
     identity: HostWeakRoot,
@@ -92,10 +96,6 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let api = c.null_object_rooted()?;
         put(c, api, "handles", map)?;
         put(c, api, "set", set)?;
-        let u8 = get(c, global, "Uint8Array")?;
-        let p = get(c, u8, "prototype")?;
-        let set = get(c, p, "set")?;
-        put(c, api, "copy", set)?;
         let result = c.object_rooted()?;
         let constructors = [
             ("Zlib", "Zlib"),
@@ -212,7 +212,7 @@ pub(crate) fn initialize(
         return Err(fail(c, "Compression handle already initialized"));
     }
     let (engine, state_index, callback_index) =
-        if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+        if mode.is_zstd() {
             let params = parameter_values(c, args)?;
             let pledge = pledged_size(c, args.get(1).copied())?;
             let dictionary = dictionary_bytes(c, args.get(4).copied())?;
@@ -234,7 +234,7 @@ pub(crate) fn initialize(
         Ok(engine) => engine,
         Err(error) => {
             emit_error(c, handle, &error)?;
-            let init_message = if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+            let init_message = if mode.is_zstd() {
                 &error.message
             } else {
                 "Initialization failed"
@@ -346,39 +346,33 @@ struct Delivery {
     capacity: usize,
     input_length: usize,
 }
-fn arguments(c: &mut Context<'_>, args: &[RootId]) -> Result<Write, RootedError> {
+fn arguments(c: &mut Context<'_>, args: &[RootId], mut copy: Vec<u8>) -> Result<Write, RootedError> {
     let flush = number(c, args, 0)? as i32;
     let input = *args
         .get(1)
         .ok_or_else(|| RootedError::host("compression input missing"))?;
     let begin = number(c, args, 2)?;
     let length = number(c, args, 3)?;
-    let bytes = if c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0 {
-        Vec::new()
-    } else {
-        c.view_bytes_rooted(input)
+    let range = begin..begin.checked_add(length).ok_or_else(|| fail(c, "Compression input range overflow"))?;
+    // Only the input's range is copied: the view is often a whole file's bytes.
+    copy.clear();
+    if !(c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0) {
+        c.with_view_bytes_rooted(input, |bytes| bytes.get(range).map(|bytes| copy.extend_from_slice(bytes)))
             .ok_or_else(|| fail(c, "Compression input is not a buffer view"))?
-    };
-    let input = bytes
-        .get(
-            begin
-                ..begin
-                    .checked_add(length)
-                    .ok_or_else(|| fail(c, "Compression input range overflow"))?,
-        )
-        .ok_or_else(|| fail(c, "Compression input range out of bounds"))?
-        .to_vec();
+            .ok_or_else(|| fail(c, "Compression input range out of bounds"))?;
+    }
+    let input = copy;
     let output = *args
         .get(4)
         .ok_or_else(|| RootedError::host("compression output missing"))?;
     let offset = number(c, args, 5)?;
     let capacity = number(c, args, 6)?;
-    let bytes = c
-        .view_bytes_rooted(output)
+    let output_length = c
+        .with_view_bytes_rooted(output, <[u8]>::len)
         .ok_or_else(|| fail(c, "Compression output is not a buffer view"))?;
     if offset
         .checked_add(capacity)
-        .is_none_or(|end| end > bytes.len())
+        .is_none_or(|end| end > output_length)
     {
         return Err(fail(c, "Compression output range out of bounds"));
     }
@@ -400,16 +394,19 @@ fn complete(
     handle: RootId,
     delivery: Delivery,
     result: &Result<Step, Failure>,
-    output: &[u8],
+    output: Option<&[u8]>,
     asynchronous: bool,
 ) -> Result<(), RootedError> {
     let data = payload(c, api, handle)?;
     match result {
         Ok(step) => {
-            let bytes = c.uint8_array_rooted(&output[..step.produced])?;
-            let copy = get(c, api, "copy")?;
-            let offset = c.number(delivery.offset as f64);
-            c.call_rooted(copy, delivery.target, &[bytes, offset])?;
+            // A worker's output is copied in; a synchronous write wrote in place.
+            if let Some(output) = output {
+                let range = delivery.offset..delivery.offset + step.produced;
+                c.with_buffer_bytes_mut_rooted(delivery.target, |bytes| bytes.get_mut(range).map(|to| to.copy_from_slice(&output[..step.produced])))
+                    .flatten()
+                    .ok_or_else(|| fail(c, "Compression output is not writable"))?;
+            }
             let state = get(c, data, "state")?;
             for (name, n) in [
                 ("0", delivery.capacity - step.produced),
@@ -434,13 +431,10 @@ pub(crate) fn write_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
-    let write = arguments(c, args)?;
-    let api = c.host_function_data()?;
     let shared = c.host_mut().shared_state();
-    let phase = std::mem::replace(
-        &mut shared.borrow_mut().zlib_native.entries[i].phase,
-        Phase::New,
-    );
+    let write = arguments(c, args, std::mem::take(&mut shared.borrow_mut().zlib_native.input))?;
+    let api = c.host_function_data()?;
+    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
         other => {
@@ -448,11 +442,18 @@ pub(crate) fn write_sync(
             return Err(fail(c, "Compression handle is not ready"));
         }
     };
-    let mut output = vec![0; write.delivery.capacity];
-    let result = engine.write(write.flush, &write.input, &mut output);
+    // The engine writes into the output view itself, as Node's does.
+    let range = write.delivery.offset..write.delivery.offset + write.delivery.capacity;
+    let result = c
+        .with_buffer_bytes_mut_rooted(write.delivery.target, |bytes| bytes.get_mut(range).map(|to| engine.write(write.flush, &write.input, to)))
+        .flatten();
     // Restore the real engine before any guest callback can close or re-enter it.
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
-    complete(c, api, handle, write.delivery, &result, &output, false)?;
+    let result = result.ok_or_else(|| fail(c, "Compression output is not writable"))?;
+    let mut input = write.input;
+    input.clear();
+    shared.borrow_mut().zlib_native.input = input;
+    complete(c, api, handle, write.delivery, &result, None, false)?;
     Ok(c.undefined())
 }
 fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
@@ -484,13 +485,10 @@ pub(crate) fn write(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
-    let write = arguments(c, args)?;
+    let write = arguments(c, args, Vec::new())?;
     let api = c.host_function_data()?;
     let shared = c.host_mut().shared_state();
-    let phase = std::mem::replace(
-        &mut shared.borrow_mut().zlib_native.entries[i].phase,
-        Phase::New,
-    );
+    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
         other => {
@@ -583,7 +581,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
             input_length: length,
         },
         &result,
-        &output,
+        Some(&output),
         true,
     )?;
     if close_requested {
@@ -713,4 +711,4 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     }
 }
 
-crate::host::startup_snapshot::host_snap_empty!(State { entries } "a zlib stream");
+crate::host::startup_snapshot::host_snap_empty!(State { entries, input } "a zlib stream");

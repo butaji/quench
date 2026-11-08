@@ -1,5 +1,6 @@
 mod native_operands;
 mod shape_lookup;
+mod string_wrapper;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
@@ -24,6 +25,7 @@ mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
+pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
@@ -194,8 +196,8 @@ mod object_integrity;
 mod object_keys;
 mod object_static;
 mod object_symbols;
-#[cfg(test)]
-mod object_tests;
+#[cfg(test)] mod lane_loop_tests;
+#[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
@@ -1477,10 +1479,7 @@ impl ShapeAttributes {
         if self.slot_accessors() {
             return slot();
         }
-        accessors
-            .get(self.accessors as usize)
-            .copied()
-            .unwrap_or((None, None))
+        accessors.get(self.accessors as usize).copied().unwrap_or((None, None))
     }
 
     fn attributes(self, accessors: &[ShapeAccessors], slot: impl FnOnce() -> ShapeAccessors) -> PropertyAttributes {
@@ -2085,10 +2084,10 @@ pub(crate) struct Vm<H> {
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
-    /// The JSON text buffer `JSON.stringify` writes into, kept between calls: a payload's
-    /// text otherwise regrows from empty on each call, copying and faulting in its pages
-    /// again at every doubling (`json::JSON_RETAINED_OUTPUT_BYTES` bounds what it keeps).
-    json_output: Vec<u8>,
+    /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
+    /// payload's text would otherwise regrow from empty on each call, and its member plans
+    /// (`json::JsonPlainCache`).
+    json_plain: json::JsonPlainCache,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
@@ -2116,6 +2115,8 @@ pub(crate) struct Vm<H> {
     intrinsic_natives: Vec<(Atom, Native)>,
     /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
     native_families: Vec<operations::NativeFamily>,
+    /// The compiled chunk of each first-call stub, by its program and function, while both live.
+    first_chunks: first_call_chunk::FirstChunks,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     /// The `typeof` result string of each value type, made on first use; `undefined` until
     /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
@@ -2587,11 +2588,7 @@ impl<H: Host> Vm<H> {
     /// Publishes a finished script root's global lexical bindings; every other activation
     /// returns without leaving the caller.
     #[inline(always)]
-    pub(super) fn persist_global_lexical_bindings(
-        &mut self,
-        program: &ResidualProgram,
-        frame: &Frame,
-    ) {
+    pub(super) fn persist_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         if program.kind == crate::bytecode::ProgramKind::Script && frame.function == ROOT_FUNCTION_ID {
             self.persist_root_global_lexical_bindings(program, frame);
         }
@@ -3122,15 +3119,13 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear();
-        self.shape_attribute_memo.clear();
-        self.heap.clear_string_atoms();
+        self.enumerable_keys.clear(); self.shape_attribute_memo.clear(); self.heap.clear_string_atoms();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
-        self.json_parse_cache = Default::default();
+        self.json_parse_cache = Default::default(); self.json_plain = Default::default();
         self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();

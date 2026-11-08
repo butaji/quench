@@ -287,7 +287,7 @@ impl LoopRegion {
         self.instructions
             .iter()
             .enumerate()
-            .filter(|(_, instruction)| matches!(instruction.op(), Op::Call | Op::CallArray))
+            .filter(|(_, instruction)| instruction.op().is_ordinary_call())
             .map(|(offset, _)| self.header.saturating_add(offset as u32))
             .collect()
     }
@@ -583,7 +583,7 @@ fn tagged_registers_with_failure(
             _ => None,
         }).filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
-            if !matches!(instruction.op(), Op::Call | Op::CallArray) {
+            if !instruction.op().is_ordinary_call() {
                 return Vec::new();
             }
             // Keep field-resolved calls under the existing inliner's representation and
@@ -666,7 +666,7 @@ fn tagged_registers_with_failure(
         }))
         // A branch on a value only field reads give tests its truthiness tagged
         // (`Lowering::tagged_truthiness`): a field may hold an object.
-        .chain(instructions.iter().filter(|instruction| matches!(instruction.op(), Op::JumpFalse | Op::JumpTrue)).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
             let value = instruction.register_a();
             let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
             (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
@@ -1442,16 +1442,6 @@ pub(super) fn inline_region<'a>(
 }
 
 impl LoopRegion {
-    /// The region's instructions, from its header.
-    pub(super) fn instructions(&self) -> &[WideInstruction] {
-        &self.instructions
-    }
-
-    /// The Number constant at `index` the region reads.
-    pub(super) fn number_constant(&self, index: usize) -> Option<f64> {
-        self.constants.get(&index).copied()
-    }
-
     fn entry_count(&self) -> usize {
         self.numbers.len() + self.tagged.len()
     }
@@ -1977,7 +1967,7 @@ fn admit_lifetime_roles(
     for (offset, instruction) in canonical.iter_mut().enumerate() {
         // Field receivers rename as values do; only array accesses read through an entry
         // array's root.
-        if !matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) {
+        if !instruction.op().is_indexed_access() {
             continue;
         }
         if let Some(receiver) = object_reads(*instruction) {
@@ -2118,7 +2108,7 @@ fn admit_register_roles(
     let mut dynamic_arrays = std::collections::BTreeSet::new();
     for register in instructions
         .iter()
-        .filter(|instruction| matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible))
+        .filter(|instruction| instruction.op().is_indexed_access())
         .filter_map(|instruction| object_reads(*instruction))
         .filter(|register| !paths.contains_key(register))
     {
@@ -2221,7 +2211,7 @@ fn admit_register_roles(
                 // A field result used as an array base is entry-pinned separately by the
                 // array lowering, so leave that combination on the conservative path.
                 && !instructions.iter().any(|candidate| {
-                    matches!(candidate.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+                    candidate.op().is_indexed_access()
                         && object_reads(*candidate) == Some(instruction.result_register())
                 })
             {
@@ -2287,7 +2277,7 @@ fn admit_register_roles(
         // the generic exact-PC gateway here would run its loop out of line and regress the
         // inliner's behavior and coverage. Dynamic/direct calls have no such owner.
         // An inlining region (one with call receivers, `objects`) leaves at a call it kept.
-        if objects.is_empty() && matches!(instruction.op(), Op::Call | Op::CallArray) {
+        if objects.is_empty() && instruction.op().is_ordinary_call() {
             let callee_register = instruction.register_b();
             if instructions[..offset]
                 .iter()
@@ -2416,7 +2406,7 @@ fn admit_register_roles(
             Role::Array { written } | Role::TaggedArray { written }
                 if !dynamic_arrays.contains(register)
                     && instructions.iter().any(|instruction| {
-                    matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+                    instruction.op().is_indexed_access()
                         && object_reads(*instruction) == Some(*register)
                 }) => Some(ArrayUse { register: *register, written: *written, field: None }),
             Role::Number | Role::Tagged => None,
@@ -2426,7 +2416,7 @@ fn admit_register_roles(
     for (register, written) in &admission.field_arrays {
         // A held register read as an object only by field reads indexes nothing.
         if !instructions.iter().any(|instruction| {
-            matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+            instruction.op().is_indexed_access()
                 && object_reads(*instruction) == Some(*register)
         }) {
             continue;
@@ -3113,10 +3103,6 @@ pub(super) struct VerifiedRegion<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DefinitionObligation { None, NumberLoad, Int32Result, BooleanTest, TypeofTest }
 
-impl VerifiedRegion<'_> {
-    pub(super) fn region(&self) -> &LoopRegion { self.region }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TypeError {
     InvalidInputFact { kind: &'static str, index: usize },
@@ -3253,7 +3239,7 @@ pub(super) fn verify_region<'a>(
                 .ok_or(TypeError::MissingDefinition { pc, register })?;
             let fact = values[definition];
             if fact.ty == Type::NEVER { return Err(TypeError::InvalidRepresentation { definition }); }
-            if matches!(instruction.op(), Op::JumpFalse | Op::JumpTrue)
+            if instruction.op().is_truthiness_jump()
                 && fact.representation == Representation::Tagged
                 && !fact.ty.is_subtype(Type::language(crate::ValueType::Boolean))
             {
@@ -3549,7 +3535,7 @@ struct Int32Facts {
     /// The PCs of products whose zero needs no sign: no factor is ever negative, or every
     /// read of the product treats -0 as +0 and no leave writes it back.
     signless_zero: std::collections::BTreeSet<u32>,
-    /// The PCs of sums and differences every read of which takes ToInt32 of them (a
+    /// The PCs of sums, differences and exact products every read of which takes ToInt32 of them (a
     /// bitwise operand, or an operand of another such sum) and no leave writes back: the
     /// wrapped `i32` is the exact result modulo 2^32, which is all any read observes, so it
     /// needs no overflow guard. An exit's write-back gives the interpreter that `i32`, which
@@ -3689,7 +3675,7 @@ fn entry_bounds(
         let pc = region.header + offset as u32;
         if !webs.reachable[offset]
             || facts.exact.contains(&pc)
-            || !matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+            || !instruction.op().is_binary_arithmetic()
             || arithmetic(instruction.op(), instruction.binary_operator()) != Some(Arithmetic::Float(NumberArithmetic::Multiply))
         {
             continue;
@@ -3828,38 +3814,8 @@ fn int32_facts(
             }
         })
     };
-    // The webs only ToInt32 reads, as the greatest fixpoint: a sum's operand counts while
-    // the sum is one.
-    let sums = |instruction: WideInstruction| {
-        matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply).then(|| arithmetic(instruction.op(), instruction.binary_operator())).flatten()
-    };
-    let mut truncated: std::collections::BTreeSet<Definition> = (0..webs.parent.len())
-        .filter(|definition| webs.find(*definition) == *definition && int32(*definition) && !written_back.contains(definition))
-        .collect();
-    loop {
-        let before = truncated.len();
-        let kept: std::collections::BTreeSet<Definition> = truncated
-            .iter()
-            .copied()
-            .filter(|web| {
-                readers[*web].iter().all(|offset| {
-                    let instruction = region.instructions[*offset];
-                    let pc = region.header + *offset as u32;
-                    match sums(instruction) {
-                        Some(Arithmetic::Int32(_)) => true,
-                        Some(Arithmetic::Float(NumberArithmetic::Add | NumberArithmetic::Subtract)) => {
-                            truncated.contains(&webs.defined(region, pc))
-                        }
-                        _ => false,
-                    }
-                })
-            })
-            .collect();
-        truncated = kept;
-        if truncated.len() == before {
-            break;
-        }
-    }
+    let truncated = truncation::truncated_webs(region, webs, &readers, (0..webs.parent.len())
+        .filter(|definition| webs.find(*definition) == *definition && int32(*definition) && !written_back.contains(definition)));
     let mut facts = Int32Facts { ranges: ranges.clone(), bounds: bounds.clone(), ..Int32Facts::default() };
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
         if !webs.reachable[offset] {
@@ -3867,7 +3823,7 @@ fn int32_facts(
         }
         let pc = region.header + offset as u32;
         let Some(Arithmetic::Float(operator @ (NumberArithmetic::Add | NumberArithmetic::Subtract | NumberArithmetic::Multiply))) =
-            matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+            instruction.op().is_binary_arithmetic()
                 .then(|| arithmetic(instruction.op(), instruction.binary_operator()))
                 .flatten()
         else {
@@ -3877,12 +3833,12 @@ fn int32_facts(
         if !int32(web) {
             continue;
         }
-        if operator != NumberArithmetic::Multiply && truncated.contains(&web) {
+        let operand = |operand: Operand| operand_range(&ranges, pc, operand);
+        let range = exact_range(instruction, &operand, &|register| register_range(&ranges, pc, register), &region.constants);
+        if truncated.contains(&web) && truncation::wraps_exactly(operator, range) {
             facts.truncated.insert(pc);
         }
-        let operand = |operand: Operand| operand_range(&ranges, pc, operand);
-        if let Some((low, high)) =
-            exact_range(instruction, &operand, &|register| register_range(&ranges, pc, register), &region.constants)
+        if let Some((low, high)) = range
             && low >= INT32_RANGE.0
             && high <= INT32_RANGE.1
         {
@@ -3930,7 +3886,7 @@ fn counted_loop(
     let at = |pc: u32| region.instructions[(pc - region.header) as usize];
     let body = header..backedge;
     let jumps = |instruction: WideInstruction| {
-        matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+        instruction.op().is_js_jump()
     };
     // The test leaves the loop, and every path of the body reaches it: before it, the body
     // branches nowhere. Every other branch of the body jumps forward within it.
@@ -6500,7 +6456,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let (result, overflow) = match operator {
             NumberArithmetic::Add | NumberArithmetic::Subtract =>
                 operator.apply(&mut super::EmitArithmetic::<true> { builder: &mut self.body.builder }, left, right),
-            NumberArithmetic::Multiply if self.proved(pc) => {
+            NumberArithmetic::Multiply if self.wraps(pc) => {
                 return self.body.builder.ins().imul(left, right);
             }
             NumberArithmetic::Multiply if exact && self.facts.signless_zero.contains(&pc) => {
@@ -7122,6 +7078,8 @@ mod iteration;
 #[cfg(test)]
 #[path = "osr_loop/coverage_tests.rs"]
 mod coverage_tests;
+#[path = "osr_loop/truncation.rs"]
+mod truncation;
 
 #[cfg(test)]
 mod tests {

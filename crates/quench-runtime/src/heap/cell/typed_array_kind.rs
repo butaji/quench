@@ -59,6 +59,11 @@ impl TypedArrayKind {
         matches!(self, Self::BigInt64 | Self::BigUint64)
     }
 
+    /// Whether `Atomics.wait` and `Atomics.notify` accept the kind.
+    pub(crate) const fn is_waitable(self) -> bool {
+        matches!(self, Self::Int32 | Self::BigInt64)
+    }
+
     pub(crate) const fn width(self) -> usize {
         TYPED_ARRAYS[self as usize].width
     }

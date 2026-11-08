@@ -6,7 +6,7 @@ use super::*;
 use crate::wasm::integer::I32BinaryOperator;
 
 mod gc;
-pub(super) use gc::wasm_gc_value_op;
+pub(super) use gc::{wasm_gc_value_op, wasm_gc_value_ops};
 
 impl<H: Host> Vm<H> {
     #[inline(never)]

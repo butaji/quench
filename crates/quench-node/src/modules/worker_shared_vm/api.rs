@@ -72,7 +72,7 @@ fn is_undefined(c: &Context<'_>, value: RootId) -> bool {
 }
 
 fn is_nullish(c: &Context<'_>, value: RootId) -> bool {
-    matches!(kind(c, value), ValueType::Undefined | ValueType::Null)
+    kind(c, value).is_nullish()
 }
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {

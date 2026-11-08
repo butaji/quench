@@ -974,7 +974,7 @@ impl<H: Host> Vm<H> {
         };
         let slots = self
             .heap
-            .clone_environment_slots(environment, &[], &[])
+            .clone_environment_slots(environment, &[], crate::bytecode::Resets::listed(&[]))
             .ok_or_else(|| JsError("invalid eval scope slots".into()))?;
         let owner = self
             .heap
