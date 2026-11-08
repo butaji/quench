@@ -1,4 +1,5 @@
 use super::*;
+mod shortcut;
 
 /// The shapes an ordinary closure's own properties step through as `Vm::closure_in_realm`
 /// defines them, each with its final attributes: `length`, then `name`, then for a
@@ -687,10 +688,8 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        // Guest code observes the frame stack; a native's construction reaches it only through
-        // the calls, errors and collections that make deferred activations frames first.
-        if !self.constructs_beside_activations(callee) {
-            self.materialize_deferred_lane();
+        if let Some(constructed) = self.construction_shortcut(p, callee, new_target, args) {
+            return constructed;
         }
         self.with_call_roots(
             std::iter::once(callee)
