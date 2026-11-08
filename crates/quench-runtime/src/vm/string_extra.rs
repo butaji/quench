@@ -14,9 +14,9 @@ const ESCAPE_LATIN1_MAX: u16 = 0xff;
 const ESCAPE_WIDE_MARKER: u16 = b'u' as u16;
 const ESCAPE_BYTE_HEX_DIGITS: usize = 2;
 const ESCAPE_WIDE_HEX_DIGITS: usize = 4;
-const HEX_RADIX: u32 = 16;
+use crate::units::HEXADECIMAL_RADIX;
 /// Bits one hex digit spells.
-const HEX_DIGIT_BITS: u32 = HEX_RADIX.ilog2();
+const HEX_DIGIT_BITS: u32 = HEXADECIMAL_RADIX.ilog2();
 /// A URI escape is `%` and two hex digits.
 const URI_ESCAPE_LEN: usize = 1 + ESCAPE_BYTE_HEX_DIGITS;
 /// The longest UTF-8 sequence.
@@ -26,7 +26,7 @@ const URI_UNESCAPED: &[u8] = b"-_.!~*'()";
 const ESCAPE_UNESCAPED: &[u8] = b"@*_+-./";
 
 fn hex_digit(unit: u16) -> Option<u8> {
-    let digit = char::from_u32(u32::from(unit))?.to_digit(HEX_RADIX)?;
+    let digit = char::from_u32(u32::from(unit))?.to_digit(HEXADECIMAL_RADIX)?;
     u8::try_from(digit).ok()
 }
 

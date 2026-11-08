@@ -2,7 +2,7 @@
 16 quench-bench/jetstream/Octane/richards.js
 9 quench-bench/jetstream/Octane/deltablue.js
 60 quench-bench/jetstream/Octane/navier-stokes.js
-92 quench-bench/jetstream/Octane/raytrace.js
+80 quench-bench/jetstream/Octane/raytrace.js
 31 quench-bench/jetstream/SeaMonster/gaussian-blur.js
 182 quench-bench/jetstream/simple/hash-map.js
 1 quench-bench/micros/001.js

@@ -1,5 +1,7 @@
 use super::*;
 
+mod in_place;
+
 fn is_ecma_whitespace(unit: u16) -> bool {
     matches!(
         unit,
@@ -97,37 +99,13 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.string_search_in_place(native, receiver, args) {
             return Some(value);
         }
+        if let Some(value) = self.substring_in_place(native, receiver, args) {
+            return Some(value);
+        }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
         // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
         result
-    }
-
-    /// `indexOf`, `includes` or `startsWith` of a flat string receiver searching for a flat
-    /// string, from a position left out or passed as an integer: every conversion the
-    /// method makes is then the value itself, so the search reads the units in place, as
-    /// `call_primitive_native` would after copying them. `None` leaves any other call to it.
-    fn string_search_in_place(&self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-        if !matches!(native, Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith) {
-            return None;
-        }
-        let [search, rest @ ..] = args else {
-            return None;
-        };
-        let text = self.heap.string(receiver)?.existing_flat()?.view();
-        let needle = self.heap.string(*search)?.existing_flat()?.view();
-        let length = text.len();
-        // A position below zero reads as zero and one past the end as the end, for all three.
-        let position = match rest.first() {
-            None => 0,
-            Some(position) if position.is_undefined() => 0,
-            Some(position) => usize::try_from(position.as_int()?).unwrap_or(0).min(length),
-        };
-        Some(match native {
-            Native::StringIndexOf => Value::number(text.find(needle, position).map_or(-1.0, |index| index as f64)),
-            Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
-            _ => Value::boolean(text.slice(position..length).starts_with(needle)),
-        })
     }
 
     pub(super) fn call_primitive_native(
@@ -266,34 +244,12 @@ impl<H: Host> Vm<H> {
                 );
                 Ok(self.heap.alloc_string(value))
             }
-            Native::StringSlice => {
+            Native::StringSlice | Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
-                let units = text.units();
-                let length = units.len() as i64;
-                let normalize = |value: i64| {
-                    if value < 0 {
-                        (length + value).max(0)
-                    } else {
-                        value.min(length)
-                    }
-                };
-                let start = normalize(self.argument_integer(p, args, 0, 0)?);
-                let end = normalize(self.argument_integer(p, args, 1, length)?);
-                if start >= end {
-                    return self.string_from_units(&[]);
-                }
-                self.string_substring(&text, start as usize..end as usize)
-            }
-            Native::StringSubstring => {
-                let text = self.string_receiver_text(this)?;
-                let units = text.units();
-                let length = units.len() as i64;
-                let mut start = self.argument_integer(p, args, 0, 0)?.clamp(0, length);
-                let mut end = self.argument_integer(p, args, 1, length)?.clamp(0, length);
-                if start > end {
-                    std::mem::swap(&mut start, &mut end);
-                }
-                self.string_substring(&text, start as usize..end as usize)
+                let length = text.units().len() as i64;
+                let start = self.argument_integer(p, args, 0, 0)?;
+                let end = self.argument_integer(p, args, 1, length)?;
+                self.string_substring(&text, in_place::substring_range(native, length, start, end))
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
@@ -724,3 +680,4 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc_string(text))
     }
 }
+

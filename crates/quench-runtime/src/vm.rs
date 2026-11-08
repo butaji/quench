@@ -1667,6 +1667,9 @@ impl ShapeFacts {
     /// property is, rather than a getter alone: its functions in `Vm::shape_accessors`
     /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
     const ACCESSOR_PAIRS: u8 = 1 << 3;
+    /// Some property of the chain was deleted, or left a vacant slot when it was rebuilt: a
+    /// second deletion makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
+    const DELETIONS: u8 = 1 << 4;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1681,25 +1684,16 @@ impl ShapeFacts {
                 | introduced(
                     descriptor(|attributes| attributes.table_accessors() || attributes.slot_accessor_pair()),
                     Self::ACCESSOR_PAIRS,
-                ),
+                )
+                | introduced(matches!(transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant), Self::DELETIONS),
         )
     }
 
-    fn accessor_pairs(self) -> bool {
-        self.0 & Self::ACCESSOR_PAIRS != 0
-    }
-
-    fn accessors(self) -> bool {
-        self.0 & Self::ACCESSORS != 0
-    }
-
-    fn may_have_gc_roots(self) -> bool {
-        self.0 & Self::MAY_HAVE_GC_ROOTS != 0
-    }
-
-    fn slot_getters(self) -> bool {
-        self.0 & Self::SLOT_GETTERS != 0
-    }
+    fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
+    fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
+    fn deletions(self) -> bool { self.0 & Self::DELETIONS != 0 }
+    fn may_have_gc_roots(self) -> bool { self.0 & Self::MAY_HAVE_GC_ROOTS != 0 }
+    fn slot_getters(self) -> bool { self.0 & Self::SLOT_GETTERS != 0 }
 }
 /// Each shape's storage length and its parent's id and length, in table order (a parent
 /// precedes its children): the table as the heap registers slot owners from it.

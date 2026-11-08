@@ -9,14 +9,14 @@
 //! too, so a proof never names a reused prototype record or shape. A key the shape holds
 //! keeps its symbol alive. The receiver's own layout is its shape, which the proof names.
 
-use super::Value;
+use super::{Host, Value, Vm};
 use super::property_key::PropertyKey;
 
 /// Direct-mapped entries: a power of two. Node's streams and Fastify's request and reply
-/// objects read a few dozen distinct symbol keys through a handful of receiver shapes per
-/// request, which 256 entries held; the named reads natives make on many shapes share the
-/// table, doubled for them.
-const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 9;
+/// objects read a few dozen symbol keys per request, and host natives read named keys on
+/// many shapes through the same table: at 512 entries, collisions alone missed 12-21% of
+/// undici's and Fastify's reads, at 4096 entries 4-10%.
+const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 12;
 
 /// Where a proved walk found the key.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -116,4 +116,27 @@ const SITE_ADDRESS_SHIFT: u32 = std::mem::size_of::<usize>().trailing_zeros() + 
 /// address) maps to: its address past the alignment of a record.
 pub(super) fn site_index(site: usize) -> usize {
     (site >> SITE_ADDRESS_SHIFT) & (SITE_OWN_READ_ENTRIES - 1)
+}
+
+impl<H: Host> Vm<H> {
+    /// The getter a symbol-keyed read of `key` on `object` calls, where a proof records it
+    /// (`SymbolLoadAnswer::Getter`).
+    pub(super) fn proved_symbol_getter(&self, object: Value, key: Value) -> Option<Value> {
+        self.proved_getter(object, PropertyKey::symbol(key))
+    }
+
+    /// The getter a read of `key` on `object` calls, where a proof records it.
+    pub(super) fn proved_getter(&self, object: Value, key: PropertyKey) -> Option<Value> {
+        let data = self.heap.ordinary_object(object)?;
+        let epoch = crate::heap::prototype_layout_epoch();
+        match self.symbol_load_proofs.answer(data.shape(), key, epoch)? {
+            SymbolLoadAnswer::Getter { prototype, holder, slot }
+                if !data.has_side_descriptors() && data.proto() == prototype =>
+            {
+                self.slot_attributes(self.heap.ordinary_object(holder)?, slot as usize)?
+                    .getter
+            }
+            _ => None,
+        }
+    }
 }
