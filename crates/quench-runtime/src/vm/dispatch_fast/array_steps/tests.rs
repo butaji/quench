@@ -2,15 +2,7 @@ use crate::Engine;
 use crate::test_host::TestHost;
 use crate::vm::Vm;
 
-/// `reduce` and `reduceRight` over dense arrays step their callbacks' lane activations
-/// (`lane_begin_array_iteration`) with the accumulator first: initial values and their
-/// absence, holes and inherited elements, array-likes, strings and typed arrays on the native's
-/// loop, the length read once, a strict callback's `this`, collections inside callbacks,
-/// throws, nesting, callbacks that become frames, and bound and native callbacks behave as
-/// Node's (`node --expose-gc`), specialized or not.
-#[test]
-fn lane_reducers_keep_reduce_semantics() {
-    let source = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
+const SOURCE: &str = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
 var out = [];
 out.push([1, 2, 3, 4].reduce(function (p, x, i, a) { return p + x * i + a.length + arguments.length; }, 10));
 out.push([1, 2, 3, 4].reduceRight(function (p, x, i) { return p + "," + x + i; }));
@@ -40,6 +32,16 @@ out.push(stacks);
 out.push([1, 2, 3].reduce(function (p, x) { return p + this; }.bind(5), 0), [1, 2, 3].reduce(Math.max));
 var result = out.join("|");
 "#;
+
+/// `reduce` and `reduceRight` over dense arrays step their callbacks' lane activations
+/// (`lane_begin_array_iteration`) with the accumulator first: initial values and their
+/// absence, holes and inherited elements, array-likes, strings and typed arrays on the native's
+/// loop, the length read once, a strict callback's `this`, collections inside callbacks,
+/// throws, nesting, callbacks that become frames, and bound and native callbacks behave as
+/// Node's (`node --expose-gc`), specialized or not.
+#[test]
+fn lane_reducers_keep_reduce_semantics() {
+    let source = SOURCE;
     for specialized in [false, true] {
         let mut vm = Vm::new(TestHost::default().with_test262());
         let program = if specialized {

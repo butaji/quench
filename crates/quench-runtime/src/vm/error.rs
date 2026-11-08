@@ -1898,17 +1898,10 @@ impl<H: Host> Vm<H> {
                     },
                 );
             }
-            self.set_builtin_value_named(global, name, constructor)?;
             self.install_builtin_to_string_tag(prototype, name)?;
         }
-        let async_generator_function_atom = self.intern_atom("AsyncGeneratorFunction");
         let prototype_atom = self.prototype_atom();
-        let async_generator_function = self
-            .own_property(global, async_generator_function_atom)
-            .unwrap_or_else(|| self.native_value(Native::AsyncGeneratorFunction));
-        let async_generator_function_prototype = self
-            .own_property(async_generator_function, prototype_atom)
-            .unwrap_or(self.function_proto);
+        let async_generator_function_prototype = self.realm.intrinsics.builtin_prototypes[&(global, Native::AsyncGeneratorFunction)];
         self.install_async_generator_prototype(
             realm_async_generator_proto,
             async_generator_function_prototype,

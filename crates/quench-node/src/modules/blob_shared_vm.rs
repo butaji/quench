@@ -112,7 +112,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
 }
 
 fn build(c: &mut Context<'_>) -> Outcome {
-    let table = record(c, &[])?;
+    let table = record(c, &[], &[])?;
     let blob = class(c, Member::BlobConstruct, BLOB, 0, Member::BlobInspect)?;
     let prototype = get(c, blob, "prototype")?;
     install(c, prototype, &BLOB_MEMBERS)?;
@@ -173,7 +173,7 @@ fn normalize_type(c: &mut Context<'_>, value: RootId) -> Outcome {
 /// The Blob slots over `handle`.
 fn blob_record(c: &mut Context<'_>, handle: RootId, length: f64, kind: RootId) -> Outcome {
     let length = c.number(length);
-    record(c, &[(HANDLE, handle), (LENGTH, length), (TYPE, kind)])
+    record(c, &[HANDLE, LENGTH, TYPE], &[handle, length, kind])
 }
 
 /// `createBlob(handle, length, type)`: a new Blob over `handle`.
@@ -322,7 +322,7 @@ fn array_buffer(c: &mut Context<'_>, state: RootId) -> Outcome {
     let views = chunks.into_iter().map(|chunk| c.uint8_array_from_rooted(chunk)).collect::<Result<Vec<_>, _>>()?;
     let views = c.array_rooted(&views)?;
     let zero = c.number(0.0);
-    let read = record(c, &[(CHUNKS, views), (NEXT, zero)])?;
+    let read = record(c, &[CHUNKS, NEXT], &[views, zero])?;
     read_step(c, read, promise)?;
     Ok(promise)
 }
@@ -354,7 +354,7 @@ fn stream(c: &mut Context<'_>, state: RootId) -> Outcome {
     let views = c.array_rooted(&views)?;
     let zero = c.number(0.0);
     let pending = c.array_rooted(&[])?;
-    let read = record(c, &[(CHUNKS, views), (NEXT, zero), (PENDING, pending)])?;
+    let read = record(c, &[CHUNKS, NEXT, PENDING], &[views, zero, pending])?;
     let source = c.object_rooted()?;
     let kind = c.string_rooted("bytes");
     put(c, source, "type", kind)?;
@@ -421,9 +421,9 @@ fn inspect_blob(c: &mut Context<'_>, this: RootId, args: &[RootId], file: bool) 
     let data = if file {
         let name = get(c, state, NAME)?;
         let modified = get(c, state, LAST_MODIFIED)?;
-        literal(c, &[("size", size), ("type", kind), ("name", name), ("lastModified", modified)])?
+        literal(c, &["size", "type", "name", "lastModified"], &[size, kind, name, modified])?
     } else {
-        literal(c, &[("size", size), ("type", kind)])?
+        literal(c, &["size", "type"], &[size, kind])?
     };
     custom_inspect(c, this, if file { FILE } else { BLOB }, data, args)
 }

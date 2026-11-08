@@ -113,7 +113,7 @@ pub(crate) fn create(c: &mut Context<'_>, guard: Guard) -> Result<(RootId, RootI
 fn initialize(c: &mut Context<'_>, object: RootId, guard: Guard) -> Outcome {
     let map = c.null_object_rooted()?;
     let cookies = c.array_rooted(&[])?;
-    let state = record(c, &[(MAP, map), (COOKIES, cookies)])?;
+    let state = record(c, &[MAP, COOKIES], &[map, cookies])?;
     put_num(c, state, GUARD, guard as usize as f64)?;
     private_slot::write(c, object, Slot::Headers, state)?;
     Ok(state)
@@ -186,7 +186,7 @@ pub(crate) fn append_raw(c: &mut Context<'_>, state: RootId, name: &str, value: 
     } else {
         let name_value = c.string_rooted(name);
         let value_value = c.string_rooted(value);
-        let created = record(c, &[(NAME, name_value), (VALUE, value_value)])?;
+        let created = record(c, &[NAME, VALUE], &[name_value, value_value])?;
         let map = get(c, state, MAP)?;
         put(c, map, &format!("{KEY_PREFIX}{lower}"), created)?;
     }
@@ -206,7 +206,7 @@ pub(crate) fn set_raw(c: &mut Context<'_>, state: RootId, name: &str, value: &st
     delete_raw(c, state, &lower)?;
     let name_value = c.string_rooted(name);
     let value_value = c.string_rooted(value);
-    let created = record(c, &[(NAME, name_value), (VALUE, value_value)])?;
+    let created = record(c, &[NAME, VALUE], &[name_value, value_value])?;
     let map = get(c, state, MAP)?;
     put(c, map, &format!("{KEY_PREFIX}{lower}"), created)?;
     if lower == SET_COOKIE {
@@ -348,7 +348,7 @@ fn iterator(c: &mut Context<'_>, this: RootId, kind: f64) -> Outcome {
     c.set_prototype_rooted(object, prototype)?;
     let kind = c.number(kind);
     let index = c.number(0.0);
-    let state = record(c, &[(TARGET, this), (KIND, kind), (INDEX, index)])?;
+    let state = record(c, &[TARGET, KIND, INDEX], &[this, kind, index])?;
     private_slot::write(c, object, Slot::HeadersIterator, state)?;
     Ok(object)
 }

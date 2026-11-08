@@ -709,7 +709,7 @@ pub(crate) fn timerify(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outco
             return Err(type_error_arg(c, histogram, "options.histogram", "RecordableHistogram"));
         }
     }
-    let data = c.record_rooted(&TIMERIFIED, &[function, histogram])?;
+    let data = c.record_rooted(false, &TIMERIFIED, &[function, histogram])?;
     let timerified = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("perfTimerified"), "", data)?;
     let length = get(c, function, "length")?;
     c.define_named_data_property_rooted(timerified, "length", length, false, true, false)?;
@@ -733,7 +733,7 @@ pub(crate) fn timerified(c: &mut Context<'_>, receiver: RootId, args: &[RootId])
     let result = if constructing { c.construct_rooted(function, function, args)? } else { c.call_rooted(function, receiver, args)? };
     let start = c.number(start);
     let arguments = c.array_rooted(args)?;
-    let call = c.record_rooted(&TIMED_CALL, &[data, start, arguments])?;
+    let call = c.record_rooted(false, &TIMED_CALL, &[data, start, arguments])?;
     if !constructing && !is_nullish(c, result) {
         let finally = get(c, result, "finally")?;
         if c.is_callable_rooted(finally)? {

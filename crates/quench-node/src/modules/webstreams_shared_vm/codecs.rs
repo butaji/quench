@@ -117,7 +117,7 @@ fn decode(c: &mut Context<'_>, state: RootId, chunk: RootId, controller: RootId)
     }
     let handle = get(c, state, HANDLE)?;
     let decode = get(c, handle, "decode")?;
-    let options = literal(c, &[])?;
+    let options = literal(c, &[], &[])?;
     let yes = c.boolean(true);
     put(c, options, "stream", yes)?;
     let value = c.call_rooted(decode, handle, &[chunk, options])?;
@@ -180,7 +180,7 @@ fn compression(c: &mut Context<'_>, this: RootId, args: &[RootId], brand: Brand)
     let decompressing = brand == Brand::DecompressionStream;
     let factory = get(c, zlib, if decompressing { decompress } else { compress })?;
     let options = if decompressing && strict {
-        let options = literal(c, &[])?;
+        let options = literal(c, &[], &[])?;
         let yes = c.boolean(true);
         put(c, options, "rejectGarbageAfterEnd", yes)?;
         options
@@ -189,7 +189,7 @@ fn compression(c: &mut Context<'_>, this: RootId, args: &[RootId], brand: Brand)
     };
     let handle = c.call_rooted(factory, zlib, &[options])?;
     let (readable, writable) = super::adapters::pair_from_duplex(c, handle)?;
-    let state = record(c, &[(HANDLE, handle), (READABLE, readable), (WRITABLE, writable)])?;
+    let state = record(c, &[HANDLE, READABLE, WRITABLE], &[handle, readable, writable])?;
     attach(c, this, brand, state)?;
     if decompressing {
         let listener = function(c, Member::DecompressionError, "", &[writable])?;
@@ -249,7 +249,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         Member::EncoderConstruct => {
             super::require_new(c, Brand::TextEncoderStream.name())?;
             let undefined = c.undefined();
-            let state = record(c, &[(PENDING, undefined)])?;
+            let state = record(c, &[PENDING], &[undefined])?;
             attach(c, this, Brand::TextEncoderStream, state)?;
             codec_transform(c, state, Member::EncodeTransform, Member::EncodeFlush)?;
             Ok(c.undefined())
@@ -261,7 +261,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let encoding = if is_undefined(c, encoding) { c.string_rooted(UTF8) } else { encoding };
             let options = arg(c, args, 1);
             let handle = c.construct_rooted(decoder, decoder, &[encoding, options])?;
-            let state = record(c, &[(HANDLE, handle)])?;
+            let state = record(c, &[HANDLE], &[handle])?;
             attach(c, this, Brand::TextDecoderStream, state)?;
             codec_transform(c, state, Member::DecodeTransform, Member::DecodeFlush)?;
             Ok(c.undefined())
@@ -298,16 +298,16 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let data = match brand {
                 Brand::TextEncoderStream => {
                     let encoding = c.string_rooted(UTF8);
-                    literal(c, &[("encoding", encoding), (READABLE, readable), (WRITABLE, writable)])?
+                    literal(c, &["encoding", READABLE, WRITABLE], &[encoding, readable, writable])?
                 }
                 Brand::TextDecoderStream => {
                     let handle = get(c, state, HANDLE)?;
                     let encoding = get(c, handle, "encoding")?;
                     let fatal = get(c, handle, "fatal")?;
                     let ignore_bom = get(c, handle, "ignoreBOM")?;
-                    literal(c, &[("encoding", encoding), ("fatal", fatal), ("ignoreBOM", ignore_bom), (READABLE, readable), (WRITABLE, writable)])?
+                    literal(c, &["encoding", "fatal", "ignoreBOM", READABLE, WRITABLE], &[encoding, fatal, ignore_bom, readable, writable])?
                 }
-                _ => literal(c, &[(READABLE, readable), (WRITABLE, writable)])?,
+                _ => literal(c, &[READABLE, WRITABLE], &[readable, writable])?,
             };
             custom_inspect(c, this, brand.name(), data, args)
         }

@@ -114,7 +114,7 @@ fn put_size(c: &mut Context<'_>, object: RootId, name: &str, value: usize) -> Do
 
 /// The elements of the queue: `{ buffer, byteOffset, byteLength }`.
 fn chunk_record(c: &mut Context<'_>, buffer: RootId, offset: usize, length: usize) -> Outcome {
-    let entry = record(c, &[(desc::BUFFER, buffer)])?;
+    let entry = record(c, &[desc::BUFFER], &[buffer])?;
     put_size(c, entry, desc::BYTE_OFFSET, offset)?;
     put_size(c, entry, desc::BYTE_LENGTH, length)?;
     Ok(entry)
@@ -135,7 +135,7 @@ fn setup(
     let queue = list::new(c)?;
     let pending = list::new(c)?;
     let null = c.null();
-    let controller = record(c, &[(STREAM, stream), (QUEUE, queue), (PENDING, pending), (BYOB_REQUEST, null), (AUTO_ALLOCATE, auto_allocate)])?;
+    let controller = record(c, &[STREAM, QUEUE, PENDING, BYOB_REQUEST, AUTO_ALLOCATE], &[stream, queue, pending, null, auto_allocate])?;
     for &(name, value) in algorithms {
         put(c, controller, name, value)?;
     }
@@ -350,7 +350,7 @@ fn pull_into(c: &mut Context<'_>, controller: RootId, view: RootId, minimum: usi
         Ok(buffer) => buffer,
         Err(failure) => return readable::error_steps(c, request, failure),
     };
-    let descriptor = record(c, &[(desc::BUFFER, transferred), (desc::CTOR, constructor)])?;
+    let descriptor = record(c, &[desc::BUFFER, desc::CTOR], &[transferred, constructor])?;
     for (name, value) in [
         (desc::BUFFER_BYTE_LENGTH, buffer_byte_length),
         (desc::BYTE_OFFSET, parts.offset),
@@ -700,7 +700,7 @@ pub(crate) fn pull_steps(c: &mut Context<'_>, controller: RootId, request: RootI
             Ok(buffer) => {
                 let chunk_size = c.to_number(auto_allocate)? as usize;
                 let constructor = super::intrinsic(c, key::UINT8_ARRAY)?;
-                let descriptor = record(c, &[(desc::BUFFER, buffer), (desc::CTOR, constructor)])?;
+                let descriptor = record(c, &[desc::BUFFER, desc::CTOR], &[buffer, constructor])?;
                 for (name, value) in [
                     (desc::BUFFER_BYTE_LENGTH, chunk_size),
                     (desc::BYTE_OFFSET, 0),
@@ -791,7 +791,7 @@ fn reader_read_steps(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         return Err(throw(c, WebError::InvalidState("The reader is not attached to a stream")));
     }
     let promise = deferred(c)?;
-    let request = new_request(c, ReadSteps::Into, &[(PROMISE, promise)])?;
+    let request = new_request(c, ReadSteps::Into, &[PROMISE, crate::modules::keys::KIND], &[promise])?;
     byob_read(c, reader, view, minimum as usize, request)?;
     Ok(promise)
 }
@@ -815,7 +815,7 @@ pub(crate) fn tee(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let reader = readable::default_reader(c, stream)?;
     let reader = slots(c, reader)?;
     let cancel_promise = deferred(c)?;
-    let tee = record(c, &[(tee::STREAM, stream), (tee::READER, reader), (tee::CANCEL_PROMISE, cancel_promise)])?;
+    let tee = record(c, &[tee::STREAM, tee::READER, tee::CANCEL_PROMISE], &[stream, reader, cancel_promise])?;
     for name in [tee::READING, tee::READ_AGAIN1, tee::READ_AGAIN2, tee::CANCELED1, tee::CANCELED2, tee::CANCEL_RESOLVED] {
         put_flag(c, tee, name, false)?;
     }
@@ -860,7 +860,7 @@ fn pull_with_default_reader(c: &mut Context<'_>, tee: RootId) -> Done {
         forward_reader_error(c, tee, fresh)?;
     }
     let reader = get(c, tee, tee::READER)?;
-    let request = new_request(c, ReadSteps::ByteTee, &[(request::TEE, tee)])?;
+    let request = new_request(c, ReadSteps::ByteTee, &[request::TEE, crate::modules::keys::KIND], &[tee])?;
     readable::default_reader_read(c, reader, request)
 }
 
@@ -876,7 +876,7 @@ fn pull_with_byob_reader(c: &mut Context<'_>, tee: RootId, view: RootId, second:
     }
     let reader = get(c, tee, tee::READER)?;
     let branch = c.boolean(second);
-    let request = new_request(c, ReadSteps::ByteTeeInto, &[(request::TEE, tee), (request::BRANCH, branch)])?;
+    let request = new_request(c, ReadSteps::ByteTeeInto, &[request::TEE, request::BRANCH, crate::modules::keys::KIND], &[tee, branch])?;
     byob_read(c, reader, view, 1, request)
 }
 
@@ -1042,7 +1042,7 @@ fn byob_request(c: &mut Context<'_>, controller: RootId) -> Outcome {
         let filled = size(c, first, desc::BYTES_FILLED)?;
         let length = size(c, first, desc::BYTE_LENGTH)?;
         let view = uint8_view(c, buffer, offset + filled, length - filled)?;
-        let request = record(c, &[(CONTROLLER, controller), (VIEW, view)])?;
+        let request = record(c, &[CONTROLLER, VIEW], &[controller, view])?;
         let request = instance(c, Brand::ByobRequest, request)?;
         put(c, controller, BYOB_REQUEST, request)?;
         return Ok(request);
@@ -1186,7 +1186,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let view = get(c, request, VIEW)?;
             let controller = get(c, request, CONTROLLER)?;
             let controller = if is_undefined(c, controller) { controller } else { get(c, controller, SELF)? };
-            let data = literal(c, &[("view", view), ("controller", controller)])?;
+            let data = literal(c, &["view", "controller"], &[view, controller])?;
             custom_inspect(c, this, Brand::ByobRequest.name(), data, args)
         }
         Member::ReaderConstruct => {
@@ -1202,7 +1202,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let reason = arg(c, args, 0);
             readable::reader_cancel(c, this, Brand::ByobReader, reason)
         }
-        Member::ReaderInspect => readable::reader_inspect(c, this, Brand::ByobReader, "readIntoRequests", args),
+        Member::ReaderInspect => readable::reader_inspect(c, this, Brand::ByobReader, &["stream", "readIntoRequests", "close"], args),
         Member::StartFulfilled => {
             let [controller] = captured(c)?;
             put_flag(c, controller, STARTED, true)?;

@@ -2274,7 +2274,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `polymorphic_field_hit` among the inline entries alone: `None` for a site whose
-    /// entries moved to the hash, which the general cached read (`cached_field_polymorphic_hit`)
+    /// entries moved to the hash, which the general cached read (`probed_field_miss_value`)
     /// answers. Its probe keeps few values live, so a lane handler inlining it saves no
     /// registers.
     #[inline(always)]
@@ -2380,33 +2380,12 @@ impl<H: Host> Vm<H> {
         None
     }
 
-    /// `get_field_polymorphic` for an object receiver up to the point where it
-    /// would run guest code: hashed megamorphic and prototype-holder entries, then the data
-    /// lookup of `get_field_miss`. `None` leaves the read to `get_property`.
-    pub(super) fn cached_field_polymorphic_hit(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        atom: Atom,
-        site: u16,
-    ) -> Option<Value> {
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
-        let index = self.field_cache_index(site);
-        // A record's own and holder entries; any other object (a function, say) goes
-        // straight to the data lookup, whose shape proof covers every object kind.
-        let receiver = self.heap.record_object(object.heap_reference()?);
-        if let Some(hit) = receiver.and_then(|receiver| {
-            self.cached_field_value(index, receiver)
-                .or_else(|| self.cached_holder_field_value(index, receiver, atom))
-        }) {
-            self.profile
-                .field_cache_hit(usize::from(hit.tier), hit.depth);
-            return Some(hit.value);
-        }
+    /// A read after `cached_field_hit` missed, up to the point where it would run guest code:
+    /// that probe tried the site's own, megamorphic and holder entries, so the data lookup of
+    /// `get_field_miss` alone. `None` leaves the read to `get_property`.
+    pub(super) fn probed_field_miss_value(&mut self, object: Value, atom: Atom, site: u16) -> Option<Value> {
         self.profile.field_cache(false);
-        self.field_miss_data_value(object, atom, index)
+        self.field_miss_data_value(object, atom, self.field_cache_index(site))
     }
 
     /// Whether the site's shapes moved to megamorphic entries, inline or hashed:
@@ -2910,9 +2889,7 @@ impl<H: Host> Vm<H> {
             // of the shape holds its own getter in the slot, read from it at each hit.
             let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
                 && !receiver.has_side_descriptors()
-                && self
-                    .slot_attributes(receiver, slot)
-                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some());
+                && self.slot_holds_getter(receiver, slot);
             if own_getter {
                 self.record_accessor_entry(
                     site,
@@ -2951,9 +2928,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if slot >= FIELD_CACHE_SLOT_CAPACITY
-            || !self
-                .slot_attributes(holder_object, slot)
-                .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
+            || !self.slot_holds_getter(holder_object, slot)
         {
             return;
         }
@@ -3112,13 +3087,11 @@ impl<H: Host> Vm<H> {
             self.record_field_probe_path(site, atom, 3);
             return Some(hit.value);
         }
-        if self
-            .property_attributes(object, PropertyKey::string(atom))
-            .is_some_and(|attributes| attributes.accessor)
-        {
+        let own = self.shape_slot(receiver.shape(), atom);
+        if self.own_field_accessor(object, receiver, own, atom) {
             return None;
         }
-        if let Some(slot) = self.shape_slot(receiver.shape(), atom)
+        if let Some(slot) = own
             && let Some(value) = self.heap.property_get(receiver, slot)
         {
             #[cfg(feature = "profile-lane-exits")]
@@ -3164,6 +3137,37 @@ impl<H: Host> Vm<H> {
             self.record_inherited_field(site, cache);
         }
         Some(value)
+    }
+
+    /// Whether `object`'s own `atom`, at `slot` of `receiver`'s shape where it has one, is an
+    /// accessor, as `property_attributes` tells: a shape chain that never made one holds data
+    /// properties alone, so its slot needs no attribute lookup.
+    #[inline(always)]
+    fn own_field_accessor(&self, object: Value, receiver: &Object, slot: Option<usize>, atom: Atom) -> bool {
+        if slot.is_some() && !self.shape_may_have_accessors(receiver.shape()) {
+            return false;
+        }
+        match slot.and_then(|slot| self.shape_slot_attributes(receiver.shape(), slot)) {
+            Some(attributes) => attributes.accessor,
+            None => self.side_descriptor(object, PropertyKey::string(atom)).is_some_and(|attributes| attributes.accessor),
+        }
+    }
+
+    /// Whether `object`'s property at `slot` is an accessor (`slot_attributes`), without
+    /// building its attributes: a shape that may hold no accessor answers at once.
+    #[inline(always)]
+    fn slot_holds_accessor(&self, object: &Object, slot: usize) -> bool {
+        self.shape_may_have_accessors(object.shape())
+            && self.shape_slot_attributes(object.shape(), slot).is_some_and(|attributes| attributes.accessor)
+    }
+
+    /// Whether `object`'s property at `slot` is an accessor with a getter, as `slot_attributes`
+    /// tells, building them only where its shape may hold an accessor.
+    fn slot_holds_getter(&self, object: &Object, slot: usize) -> bool {
+        self.slot_holds_accessor(object, slot)
+            && self
+                .slot_attributes(object, slot)
+                .is_some_and(|attributes| attributes.getter.is_some())
     }
 
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
@@ -3375,12 +3379,7 @@ impl<H: Host> Vm<H> {
             cache.depth = (depth + 1) as u8;
             if let Some(slot) = self.shape_slot(shape, atom) {
                 // The immediate prototype is the regular field cache's holder tier.
-                if depth == 0
-                    || slot >= FIELD_CACHE_SLOT_CAPACITY
-                    || self
-                        .slot_attributes(data, slot)
-                        .is_some_and(|attributes| attributes.accessor)
-                {
+                if depth == 0 || slot >= FIELD_CACHE_SLOT_CAPACITY || self.slot_holds_accessor(data, slot) {
                     return None;
                 }
                 cache.answer = InheritedFieldAnswer::Slot(slot as u16);
@@ -3409,10 +3408,7 @@ impl<H: Host> Vm<H> {
         }
         let holder_shape = holder.shape();
         let slot = self.shape_slot(holder_shape, atom)?;
-        if self
-            .slot_attributes(holder, slot)
-            .is_some_and(|attributes| attributes.accessor)
-        {
+        if self.slot_holds_accessor(holder, slot) {
             return None;
         }
         Some((holder_shape, slot, self.heap.property_get(holder, slot)?))

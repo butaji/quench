@@ -888,7 +888,7 @@ pub(crate) struct ProgramStore {
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
-    global_eval_programs: FxHashMap<JsString, ProgramId>,
+    global_eval_programs: FxHashMap<super::eval::eval_source::EvalSource, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
@@ -1003,12 +1003,12 @@ impl ProgramStore {
         })))
     }
 
-    pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
+    pub(super) fn cached_global_eval(&self, source: &super::eval::eval_source::EvalSource) -> Option<ProgramId> {
         let program = *self.global_eval_programs.get(source)?;
         self.entry(program).map(|_| program)
     }
 
-    pub(super) fn cache_global_eval(&mut self, source: JsString, program: ProgramId) {
+    pub(super) fn cache_global_eval(&mut self, source: super::eval::eval_source::EvalSource, program: ProgramId) {
         self.global_eval_programs.insert(source, program);
     }
 
@@ -1919,7 +1919,7 @@ impl ProgramStore {
         {
             return false;
         }
-        entry.jit_tiers.note_wasm_entry(function, true)
+        entry.jit_tiers.note_wasm_entry(function, true) && self.wasm_tier_has_room() // else nothing is attempted
     }
 
     pub(super) fn wasm_tier(

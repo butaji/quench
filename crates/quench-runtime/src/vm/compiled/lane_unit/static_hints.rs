@@ -12,15 +12,20 @@ pub(crate) type StaticTargets = smallvec::SmallVec<[u32; super::super::tier_poli
 #[derive(Clone, Copy)]
 enum Definition { Closure(u32), Name(Atom) }
 
+/// The distinct bodies stored to one name or slot, every one: a call site narrows them to the
+/// targets it guards (`Hints::narrow`).
+type Candidates = Vec<u32>;
+
 /// What a program's definitions name: per method atom, per global name and per local slot of
-/// every function (flat, by `offsets`), the bodies stored there; `None` once more than a site
-/// admits have been observed.
+/// every function (flat, by `offsets`), the bodies stored there.
 struct Hints {
-    methods: Vec<Option<StaticTargets>>,
-    named: Vec<Option<StaticTargets>>,
-    captured: Vec<Option<StaticTargets>>,
+    methods: Vec<Candidates>,
+    named: Vec<Candidates>,
+    captured: Vec<Candidates>,
     offsets: Vec<usize>,
     parents: Vec<Option<u32>>,
+    /// Each function's declared parameter count.
+    params: Vec<u16>,
     /// Each constant's atom when it is a string naming one, projected once.
     constant_names: Vec<Option<Atom>>,
 }
@@ -40,14 +45,12 @@ fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction)
     for register in instruction.written_registers() { hints[usize::from(register)] = None; }
 }
 
-fn observe(slot: &mut Option<StaticTargets>, target: u32) {
-    if let Some(targets) = slot && !targets.contains(&target) {
-        if targets.len() == targets.inline_size() { *slot = None } else { targets.push(target) }
-    }
+fn observe(slot: &mut Candidates, target: u32) {
+    if !slot.contains(&target) { slot.push(target) }
 }
 
 /// The one body `targets` names, as a definition.
-fn single(targets: Option<&StaticTargets>) -> Option<Definition> {
+fn single(targets: Option<&Candidates>) -> Option<Definition> {
     match targets.map(|targets| targets.as_slice()) { Some(&[target]) => Some(Definition::Closure(target)), _ => None }
 }
 
@@ -60,19 +63,19 @@ impl Hints {
             Constant::String(name) => names.binary_search_by(|(candidate, _)| candidate.cmp(&name.as_ref())).ok().map(|index| names[index].1),
             _ => None,
         }).collect();
-        let atoms = vec![Some(StaticTargets::new()); program.atoms.len()];
+        let atoms = vec![Candidates::new(); program.atoms.len()];
         Self { methods: atoms.clone(), named: atoms, captured: Vec::new(), offsets: Vec::with_capacity(program.function_count() + 1),
-            parents: Vec::with_capacity(program.function_count()), constant_names }
+            parents: Vec::with_capacity(program.function_count()), params: Vec::with_capacity(program.function_count()), constant_names }
     }
 
     /// The bodies the slot a capture of function `id` reads holds. The lexical owner and
     /// source slot come from the same layout as capture execution: this identifies a possible
     /// body, never the closure; admission checks its body, and captures read its environment.
-    fn captured(&self, id: usize, instruction: WideInstruction) -> Option<&StaticTargets> {
+    fn captured(&self, id: usize, instruction: WideInstruction) -> Option<&Candidates> {
         let owner = (0..=instruction.capture_depth()).try_fold(id, |owner, _|
             self.parents.get(owner).copied().flatten().map(|parent| parent as usize))?;
         let end = self.offsets.get(owner + 1).copied().unwrap_or(self.captured.len());
-        self.captured[self.offsets[owner]..end].get(usize::from(instruction.capture_slot()))?.as_ref()
+        self.captured[self.offsets[owner]..end].get(usize::from(instruction.capture_slot()))
     }
 
     /// Observes the definitions of function `id`, in order.
@@ -80,7 +83,8 @@ impl Hints {
         let start = self.captured.len();
         self.offsets.push(start);
         self.parents.push(function.parent);
-        self.captured.resize(start + usize::from(function.locals), Some(StaticTargets::new()));
+        self.params.push(function.params);
+        self.captured.resize(start + usize::from(function.locals), Candidates::new());
         let mut definitions = vec![None; usize::from(function.registers)];
         for instruction in function.instructions() {
             self.note_store(start, function, instruction, &definitions);
@@ -123,24 +127,36 @@ impl Hints {
             Op::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
             Op::LoadConst => self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
             Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
-            op if op.loads_name() => single(self.named[instruction.atom_index() as usize].as_ref()),
+            op if op.loads_name() => single(self.named.get(instruction.atom_index() as usize)),
             op if op.addresses_capture() => single(self.captured(id, instruction)),
             _ => None,
         }
     }
 
+    /// The targets a call of `argc` arguments guards among `candidates`: all of them within a
+    /// switch's width (`tier_policy::POLYMORPHISM`), else those declaring as many parameters as
+    /// it passes, the bodies written for such a call, where those fit; else none. Any choice
+    /// is sound: each target sits behind its body guard and every other callee calls generically.
+    fn narrow(&self, candidates: &[u32], argc: u16) -> StaticTargets {
+        let width = super::super::tier_policy::POLYMORPHISM;
+        if candidates.len() <= width { return candidates.iter().copied().collect(); }
+        let matching: StaticTargets = candidates.iter().copied()
+            .filter(|&target| self.params.get(target as usize) == Some(&argc)).take(width + 1).collect();
+        if matching.len() <= width { matching } else { StaticTargets::new() }
+    }
+
     /// The targets of function `id`'s calls, per PC.
     fn targets(&self, id: usize, function: &Function) -> Vec<StaticTargets> {
-        let mut methods_by_register = vec![None::<StaticTargets>; usize::from(function.registers)];
+        let mut methods_by_register = vec![None::<Candidates>; usize::from(function.registers)];
         function.instructions().map(|instruction| {
-            let target = (instruction.op() == Op::Call).then(||
-                methods_by_register[usize::from(instruction.register_b())].clone()).flatten().unwrap_or_default();
+            let target = (instruction.op() == Op::Call).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
+                .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
             let method = match instruction.op() {
                 Op::GetField => match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, .. }) => self.methods.get(atom as usize).cloned().flatten(),
+                    Some(FieldLookup::Atom { atom, .. }) => self.methods.get(atom as usize).cloned(),
                     _ => None,
                 },
-                Op::MakeClosure => Some(smallvec::smallvec![instruction.closure_function_index()]),
+                Op::MakeClosure => Some(vec![instruction.closure_function_index()]),
                 Op::LoadCapture => self.captured(id, instruction).cloned(),
                 Op::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
                 _ => None,

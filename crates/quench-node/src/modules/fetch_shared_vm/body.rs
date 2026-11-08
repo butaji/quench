@@ -62,17 +62,17 @@ const DISTURBED: &str = "Response body object should not be disturbed or locked"
 pub(crate) fn from_bytes(c: &mut Context<'_>, bytes: Vec<u8>) -> Outcome {
     let length = c.number(bytes.len() as f64);
     let source = c.uint8_array_from_rooted(bytes)?;
-    let cell = record(c, &[])?;
+    let cell = record(c, &[], &[])?;
     let pull = function(c, Member::SourcePull, "", &[source, cell])?;
     let cancel = function(c, Member::Ignore, "", &[])?;
     let stream = byte::create_byte_readable(c, pull, cancel)?;
     let object = get(c, stream, readable::field::SELF)?;
-    record(c, &[(STREAM, object), (SOURCE, source), (LENGTH, length)])
+    record(c, &[STREAM, SOURCE, LENGTH], &[object, source, length])
 }
 
 /// A body over a ReadableStream, of unknown length.
 pub(crate) fn from_stream(c: &mut Context<'_>, stream: RootId) -> Outcome {
-    record(c, &[(STREAM, stream)])
+    record(c, &[STREAM], &[stream])
 }
 
 /// `extractBody(object)`: the body and the content type it implies.
@@ -166,7 +166,7 @@ pub(crate) fn clone(c: &mut Context<'_>, body: RootId) -> Outcome {
     let first = get(c, branches, "0")?;
     let second = get(c, branches, "1")?;
     put(c, body, STREAM, first)?;
-    let copy = record(c, &[(STREAM, second)])?;
+    let copy = record(c, &[STREAM], &[second])?;
     for name in [SOURCE, LENGTH] {
         let value = get(c, body, name)?;
         put(c, copy, name, value)?;
@@ -188,7 +188,7 @@ pub(crate) fn pipe_through_identity(c: &mut Context<'_>, body: RootId) -> Outcom
     let undefined = c.undefined();
     let piped = web::pipe::pipe(c, source, destination, false, false, false, undefined)?;
     web::mark_handled(c, piped)?;
-    let copy = record(c, &[(STREAM, readable)])?;
+    let copy = record(c, &[STREAM], &[readable])?;
     for name in [SOURCE, LENGTH] {
         let value = get(c, body, name)?;
         put(c, copy, name, value)?;
@@ -209,7 +209,7 @@ pub(crate) fn consume(c: &mut Context<'_>, body: RootId, headers_state: RootId, 
     let mime = c.string_rooted(&mime);
     let kind_value = c.number(kind as usize as f64);
     let chunks = c.array_rooted(&[])?;
-    let state = record(c, &[(read::PROMISE, promise), (read::KIND, kind_value), (read::CHUNKS, chunks), (read::MIME, mime)])?;
+    let state = record(c, &[read::PROMISE, read::KIND, read::CHUNKS, read::MIME], &[promise, kind_value, chunks, mime])?;
     if is_nullish(c, body) {
         finish(c, state)?;
         return Ok(promise);
