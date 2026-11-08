@@ -163,7 +163,10 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let left_at = unit_leaves(&unit, generic);
-        let fields = self.lane_unit_fields(program, &unit, &left_at);
+        let mut fields = self.lane_unit_fields(program, &unit, &left_at);
+        // Admitting the stores' writes once, here, widens what they widen; the fields then
+        // read the widened slots, and the body's entries admit nothing again.
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| fields.get(&site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
@@ -280,6 +283,15 @@ impl<H: Host> Vm<H> {
 fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
         lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
+}
+
+impl<H: Host> Vm<H> {
+    /// Registers the writes a unit's raw stores may make (`lane_region::store_domains`) with
+    /// the slots' observations; whether every slot already admitted them. A body's slot
+    /// dependencies hold its slots at the admitted types, so its runs need not admit again.
+    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, crate::typed_ir::Type)>) -> bool {
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain)| self.heap.admit_slot_writes(shape, usize::from(slot), domain) && admitted)
+    }
 }
 
 impl PendingLaneMethod {
