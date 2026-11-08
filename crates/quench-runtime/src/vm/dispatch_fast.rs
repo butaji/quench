@@ -269,18 +269,6 @@ impl LoopSite {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
     }
 
-    /// Weighs a native run that took `backedges` backward jumps: a run that took none paid its
-    /// entry for no iteration and counts toward `TIERS.loops.max_exits`, and each iteration
-    /// a run took pays one such entry back.
-    fn note_run(&self, backedges: u64) {
-        let exits = self.exits.get();
-        self.exits.set(match u32::try_from(backedges) {
-            Ok(0) => exits.saturating_add(1),
-            Ok(paid) => exits.saturating_sub(paid),
-            Err(_) => 0,
-        });
-    }
-
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| {
@@ -587,6 +575,7 @@ mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields;
+mod loop_runs;
 use loop_fields::lane_loop_field_stores;
 mod construct_plan;
 use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
