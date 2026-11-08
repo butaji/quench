@@ -22025,7 +22025,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn lane_runs_call(view: *const LaneView) -> bool {
         // SAFETY: a non-null view lives with its program.
-        Self::lane_runs(view, 0) || !view.is_null() && unsafe { (*view).returns_from_entry }
+        Self::lane_runs(view, 0) || crate::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { (*view).returns_from_entry }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
