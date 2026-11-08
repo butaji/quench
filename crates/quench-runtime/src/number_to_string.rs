@@ -35,18 +35,48 @@ impl Output for Vec<u8> {
 
 /// Every Number::toString(10) text fits: at most 21 integer digits or 17 significant ones,
 /// with a sign, a point and an exponent or leading zeros.
-pub(crate) type Short = smallvec::SmallVec<[u8; 32]>;
+const SHORT_TEXT_CAPACITY: usize = 32;
 
-impl Output for Short {
-    fn push(&mut self, byte: u8) {
-        smallvec::SmallVec::push(self, byte);
+/// Short ASCII text written on the stack: a Number's text, or a key joined from short parts.
+#[derive(Clone, Copy)]
+pub(crate) struct Short {
+    bytes: [u8; SHORT_TEXT_CAPACITY],
+    len: usize,
+}
+
+impl Short {
+    pub(crate) const fn new() -> Self {
+        Self { bytes: [0; SHORT_TEXT_CAPACITY], len: 0 }
     }
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        smallvec::SmallVec::extend_from_slice(self, bytes);
+    /// Appends `bytes` when they fit; `None` leaves the text as it was.
+    pub(crate) fn try_extend(&mut self, bytes: &[u8]) -> Option<()> {
+        let end = self.len.checked_add(bytes.len()).filter(|end| *end <= SHORT_TEXT_CAPACITY)?;
+        self.bytes[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Some(())
+    }
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
     }
 }
 
-/// Appends Number::toString(10) of `value` to `out`.
+impl std::ops::Deref for Short {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl Output for Short {
+    fn push(&mut self, byte: u8) {
+        self.bytes[self.len] = byte;
+        self.len += 1;
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.try_extend(bytes).expect("a Number's text fits `SHORT_TEXT_CAPACITY`");
+    }
+}
+
 pub(crate) fn write(value: f64, out: &mut impl Output) {
     if value.is_nan() {
         out.extend_from_slice(b"NaN");
@@ -68,6 +98,12 @@ pub(crate) fn write(value: f64, out: &mut impl Output) {
         out.extend_from_slice(itoa::Buffer::new().format(magnitude as u64).as_bytes());
         return;
     }
+    if let Some((digits, fraction_digits)) = short_decimal(magnitude) {
+        let mut buffer = itoa::Buffer::new();
+        let digits = buffer.format(digits).as_bytes();
+        lay_out(digits, digits.len() as i32 - fraction_digits, out);
+        return;
+    }
     let mut shortest = ryu::Buffer::new();
     let text = shortest.format_finite(magnitude);
     // Ryu writes positional notation for a decimal point position in (-5, 16], within
@@ -79,6 +115,35 @@ pub(crate) fn write(value: f64, out: &mut impl Output) {
     }
     let (digits, point) = decimal_digits(text);
     lay_out(&digits, point, out);
+}
+
+/// Powers of ten a double holds exactly, for scaling to a few fraction digits.
+const EXACT_POWERS_OF_TEN: [f64; 18] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17,
+];
+/// Below this, `round(x * 10^j)` recovers any integer `m` with `m / 10^j` rounding to `x`:
+/// the two roundings move the product by under two of its ulps, which stay below one half.
+const RECOVERABLE_DIGITS_MAGNITUDE: f64 = (1u64 << (f64::MANTISSA_DIGITS - 2)) as f64;
+
+/// The shortest round-trip digits of a positive non-integer `magnitude` at a fixed-point
+/// position, as an integer `m` and its count of fraction digits `j` (value = m / 10^j), found
+/// by trying fraction digit counts in order: the first `m / 10^j` that rounds back to the
+/// value is the shortest, and the spacing of `10^-j` past two ulps leaves it unique. `None`
+/// for a value outside fixed-point layout or one needing more digits, which Ryu then writes.
+fn short_decimal(magnitude: f64) -> Option<(u64, i32)> {
+    if magnitude < EXACT_POWERS_OF_TEN[(-MIN_FIXED_POINT_POSITION) as usize].recip() {
+        return None;
+    }
+    for (fraction_digits, &scale) in EXACT_POWERS_OF_TEN.iter().enumerate().skip(1) {
+        let scaled = (magnitude * scale).round();
+        if scaled >= RECOVERABLE_DIGITS_MAGNITUDE {
+            return None;
+        }
+        if scaled / scale == magnitude {
+            return Some((scaled as u64, fraction_digits as i32));
+        }
+    }
+    None
 }
 
 /// The significant digits of Ryu's shortest round-trip text for a positive double, without
@@ -222,5 +287,28 @@ mod tests {
             );
         }
         assert_eq!(format(f64::from_bits(0x4302_f5a9_40e2_7caa)), "667082108456853.2");
+    }
+
+    #[test]
+    fn short_decimals_match_ryu() {
+        // Few-digit decimals at every scale the fixed-point fast path takes, and their
+        // neighbouring doubles, which need the longest digits.
+        let mut bits: u64 = 0x2545_F491_4F6C_DD1D;
+        for _ in 0..300_000 {
+            bits = bits.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            let digits = (bits >> 11) % 10u64.pow((bits % 17) as u32 + 1);
+            let scale = 10f64.powi(((bits >> 5) % 24) as i32 - 8);
+            let value = digits as f64 / scale;
+            for value in [value, f64::from_bits(value.to_bits() + 1), f64::from_bits(value.to_bits().saturating_sub(1))] {
+                if !(1e-6..1e21).contains(&value) || value.fract() == 0.0 {
+                    continue;
+                }
+                let mut buffer = ryu::Buffer::new();
+                let shortest = buffer.format_finite(value);
+                if !shortest.contains('e') {
+                    assert_eq!(format(value), shortest.strip_suffix(".0").unwrap_or(shortest), "{value:e}");
+                }
+            }
+        }
     }
 }

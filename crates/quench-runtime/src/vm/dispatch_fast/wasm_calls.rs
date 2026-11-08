@@ -33,7 +33,9 @@ macro_rules! enter_wasm_function {
                 .has_compiled_function_or_note_fallback(program, function)
                 || vm.programs.has_wasm_tier_containing(program, function)
             {
-                return exit(ip);
+                if let Some(resumed) = lane_call_compiled::<H>(cx, r, ip, u32::from($function), view.memory) {
+                    resume!(cx, resumed)
+                }
             }
             // `run_compiled_inner` is the one-shot promotion claimant. Count
             // lane-only entries here, but leave the threshold entry for that
@@ -183,4 +185,43 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     // The pushed frame's guard narrows the activations the thread admits.
     vm.lane_stack.refresh_activation_limit();
     lane_enter_frame(cx, caller + 1, 0)
+}
+
+/// A Wasm call of `function`, which native code holds, made from the lane beside its
+/// activations (`lane_in_place`), so the callers stay activations unless guest code the
+/// callee reaches makes them frames. The caller resumes after the call as a returning
+/// activation's does (`lane_resume_after_call`), its memory view read again: the callee may
+/// have grown the memory. `None` when native code declines the call, which then enters as
+/// an activation.
+#[cold]
+#[inline(never)]
+fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, function: u32, memory: MemoryView) -> Option<Resumed> {
+    // SAFETY: called only from the call handler of the record at `ip`, while the lane runs.
+    let i = unsafe { &*ip };
+    // SAFETY: the window is the caller's registers, read into raw words before native code
+    // runs, so before guest code could make the activations frames.
+    let args = unsafe { lane_call_window(r, i) };
+    let vm = unsafe { vm(cx) };
+    let (program, env) = (unsafe { (*cx).program }, vm.frames[unsafe { (*cx).frame }].env);
+    let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
+        return Some(Resumed::Exit(exit(ip)));
+    };
+    let value = called?;
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    let memory = if memory.bytes == resolved.bytes {
+        let fresh = memory_view(vm, binding);
+        unsafe { (*cx).resolved = (binding, fresh) };
+        fresh
+    } else {
+        MemoryView::NONE
+    };
+    // SAFETY: as above; guest code the callee ran may have made the activations frames,
+    // whose registers the context then names.
+    let r = unsafe {
+        (*cx).memory = memory;
+        (*cx).registers
+    };
+    r.set(i.a, value);
+    let view = Carried { memory, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+    Some(Resumed::At(r, following(ip), view))
 }

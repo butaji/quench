@@ -247,7 +247,7 @@ pub(super) struct LoopSite {
     hookable: bool,
     /// Backward jumps taken before the region compiles, up to `TIERS.loops.threshold`.
     taken: std::cell::Cell<u32>,
-    /// Native runs that left at an instruction the general path executes.
+    /// The entries native runs have not paid back (`LoopSite::note_run`).
     exits: std::cell::Cell<u32>,
     /// Entries declined since the last that ran native code.
     declines: std::cell::Cell<u32>,
@@ -271,9 +271,7 @@ impl LoopSite {
 
     fn is_admitted(&self) -> bool {
         !self.promotion_only
-            && self.analysis_failure.is_none_or(|failure| {
-                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-            })
+            && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
     }
 }
 
@@ -456,9 +454,7 @@ impl LaneView {
                 backedge_pc: site.backedge,
                 status: if site.promotion_only {
                     OsrSiteStatus::PromotionOnly
-                } else if site.analysis_failure.is_some_and(|failure| {
-                    failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-                }) {
+                } else if site.analysis_failure.is_some_and(|failure| failure.is_call_boundary()) {
                     OsrSiteStatus::CallBoundary
                 } else if site.analysis_failure.is_some() {
                     OsrSiteStatus::Rejected
@@ -574,12 +570,14 @@ mod getters;
 mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
-mod loop_fields;
-use loop_fields::lane_loop_field_stores;
+mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan;
-use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
+pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
+mod loop_runs;
+mod root_calls; #[cfg(test)] pub(super) use root_calls::call_from_script_root_in_frames;
 mod unary_values;
 use unary_values::lane_unary_value;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
@@ -1668,7 +1666,7 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
                 PLAIN_LEAF
             }
             Op::LoadThis => CONTEXT_LEAF,
-            Op::LoadCapture | Op::StoreCapture => CAPTURE_LEAF,
+            op if op.addresses_capture() => CAPTURE_LEAF,
             // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
             // place (`lane_set_field_in_place`) or on the general path, either of which makes
             // the leaf an activation first.
@@ -2500,11 +2498,16 @@ fn script_below_floor<H: Host>(cx: *mut LaneContext<H>) -> bool {
     stack_pointer() < unsafe { &*(*cx).floor }.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// After a lane allocation, a due collection raises the floor.
+/// After a lane allocation, a due collection raises the floor of the running lane, where
+/// one runs: a linked region's general frame polls the heap's own counters instead.
 #[inline(always)]
 pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
     if vm.heap.should_collect() {
-        lane_floor().store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
+        let floor = LANE_FLOOR.with(std::cell::Cell::get);
+        // SAFETY: as `lane_floor`, while a lane runs; null otherwise.
+        if let Some(floor) = unsafe { floor.as_ref() } {
+            floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
+        }
         vm.lane_stack.activation_limit.set(0);
     }
 }
@@ -2677,13 +2680,13 @@ macro_rules! resume {
 /// Define a handler with the shared signature. `$i` is the record and
 /// `$view` the current memory view.
 macro_rules! lane_handler {
-    ($(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
-        lane_handler!(@define bytes [lane_context::<H>()] $(#[$meta])* fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
+    ($(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+        lane_handler!(@define bytes [lane_context::<H>()] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
     };
-    (@define $bytes:ident [$context:expr] $(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+    (@define $bytes:ident [$context:expr] $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         $(#[$meta])*
         #[allow(unused_variables)]
-        extern "rust-preserve-none" fn $name<H: Host, $(const $param: $ty),*>(
+        $vis extern "rust-preserve-none" fn $name<H: Host, $(const $param: $ty),*>(
             $r: Registers,
             $ip: Ip,
             $bytes: *mut u8,
@@ -6745,7 +6748,7 @@ unsafe fn lane_field_base<H: Host>(
 
 /// A field read the caches answer: the general loop's probe (`cached_field_hit`, own,
 /// megamorphic and holder entries, or an array's `length`), then the data lookup its slower
-/// paths make before any that runs guest code (`Vm::cached_field_polymorphic_hit`).
+/// paths make before any that runs guest code (`Vm::probed_field_miss_value`).
 #[inline(always)]
 fn lane_cached_field<H: Host>(
     cx: *mut LaneContext<H>,
@@ -6814,7 +6817,7 @@ fn lane_cached_field_miss<H: Host>(
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
-            .or_else(|| vm.cached_field_polymorphic_hit(code, object, atom, site)),
+            .or_else(|| vm.probed_field_miss_value(object, atom, site)),
         super::object::FieldCacheProbe::Ineligible => vm
             .array_length_field(object, atom)
             .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
@@ -7957,9 +7960,7 @@ script_handler! {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.analysis_failure.is_some_and(|failure| {
-            failure.reason != super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-        }) {
+        if site.analysis_failure.is_some_and(|failure| !failure.is_call_boundary()) {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
@@ -8363,16 +8364,9 @@ fn lane_loop_run<H: Host>(
             }
             LoopContinuation::Jump
         }
-        // A run that leaves the loop through its own exit did the loop's work natively: the
-        // exits counted against the site are the ones in a row since such a run.
-        LoopOutcome::Resume(pc) => {
-            site.exits.set(0);
-            LoopContinuation::Resume(pc)
-        }
-        LoopOutcome::Exit(pc) => {
-            site.exits.set(site.exits.get() + 1);
-            LoopContinuation::Exit(pc)
-        }
+        // A run pays for its entry with the iterations it completed, wherever it leaves.
+        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
+        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
@@ -8811,181 +8805,10 @@ lane_handler! {
     }
 }
 
-lane_handler! {
-    /// Load an instance binding; loading the function's memory register
-    /// resolves the memory view.
-    fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let env = vm.frames[unsafe { (*cx).frame }].env;
-        let Some(value) = vm.heap.environment_slot(env, i.imm() as usize) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        let view = if MEMORY {
-            let memory = resolve_memory(cx, value);
-            unsafe { (*cx).memory = memory };
-            Carried { memory, ..view }
-        } else {
-            view
-        };
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// A Wasm effective address: the index operand in the memory's index type plus the
-    /// record's constant offset, as an i64. An overflow, which traps, or an operand of another
-    /// representation takes the general path.
-    fn lane_wasm_memory_address<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (Ok(address), Some(offset)) = (
-            vm.wasm_memory_index(r.get(i.c), r.get(i.b)),
-            vm.decode_bits64(i.constant()),
-        ) else {
-            return exit(ip);
-        };
-        let Some(effective) = address.checked_add(offset) else {
-            return exit(ip);
-        };
-        let value = vm.encode_bits64(effective);
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
-    /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
-    /// operand of another representation, takes the general path, which raises it.
-    fn lane_wasm_memory_load<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(operator) = crate::wasm::memory::MemoryLoad::from_tag(i.imm()) else {
-            return exit(ip);
-        };
-        let Ok(address) = vm.wasm_i64_operand(r.get(i.c)) else {
-            return exit(ip);
-        };
-        let loaded = match vm.wasm_memory_bytes(r.get(i.b)) {
-            Ok(bytes) => operator.read(&bytes, address as u64),
-            Err(_) => return exit(ip),
-        };
-        let Ok(value) = loaded else {
-            return exit(ip);
-        };
-        let value = vm.encode_wasm_value(value);
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// A generic Wasm memory store (`crate::wasm::memory::MemoryStore`), in place as
-    /// `lane_wasm_memory_load` reads; a store checks its bounds before writing, so one that
-    /// traps leaves memory as it was for the general path to raise.
-    fn lane_wasm_memory_store<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(operator) = crate::wasm::memory::MemoryStore::from_tag(i.imm()) else {
-            return exit(ip);
-        };
-        let Ok(address) = vm.wasm_i64_operand(r.get(i.c)) else {
-            return exit(ip);
-        };
-        if vm.wasm_memory_store(r.get(i.b), address as u64, operator, r.get(i.a)).is_err() {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
-/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
-#[inline(always)]
-fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
-    match ty {
-        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
-        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
-        _ => vm.decode_wasm_value(value, ty).ok(),
-    }
-}
-
-lane_handler! {
-    /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
-    /// guest code: its operands decoded by their static types and its result encoded, a
-    /// vector in a fresh cell (`Vm::encode_wasm_value`). An operand of another
-    /// representation takes the general path, which raises its validation error.
-    fn lane_wasm_simd<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some((kernel, lane)) = crate::wasm::simd::SimdKernel::of(i.imm()) else {
-            return exit(ip);
-        };
-        let Some(left) = lane_simd_operand(vm, r.get(i.b), kernel.left) else {
-            return exit(ip);
-        };
-        let right = match kernel.right {
-            None => None,
-            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
-                Some(right) => Some(right),
-                None => return exit(ip),
-            },
-        };
-        let value = match (kernel.apply)(left, right, lane) {
-            crate::WasmValue::V128(bits) => vm.heap.alloc_v128(bits.to_le_bytes()),
-            value => vm.encode_wasm_value(value),
-        };
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
 #[path = "vector_region.rs"]
 mod vector_region;
-
-lane_handler! {
-    /// `i8x16.shuffle` of two vectors by the record's constant lane indices, as
-    /// `lane_wasm_simd` runs an operator.
-    fn lane_wasm_simd_shuffle<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(indices) = vm.heap.v128(i.constant()) else {
-            return exit(ip);
-        };
-        let (Some(left), Some(right)) = (vm.heap.v128(r.get(i.b)), vm.heap.v128(r.get(i.c))) else {
-            return exit(ip);
-        };
-        let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
-        let value = vm.encode_wasm_value(crate::WasmValue::V128(crate::wasm::simd::shuffle(left, right, indices)));
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    fn lane_global_get<>(cx, r, ip, i, view) {
-        let Some(Cell::WasmGlobal { value, .. }) = unsafe { vm(cx) }.heap.get(r.get(i.b)) else {
-            return exit(ip);
-        };
-        r.set(i.a, *value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    fn lane_global_set<>(cx, r, ip, i, view) {
-        let Some(Cell::WasmGlobal {
-            value,
-            mutable: true,
-            ..
-        }) = unsafe { vm(cx) }.heap.get_mut(r.get(i.b))
-        else {
-            return exit(ip);
-        };
-        *value = r.get(i.a);
-        next!(cx, r, following(ip), view)
-    }
-}
+mod wasm_instance;
+use wasm_instance::{lane_global_get, lane_global_set, lane_instance_binding, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store, lane_wasm_simd, lane_wasm_simd_shuffle};
 
 /// `if condition { chosen } else { other }` of two loaded values, picked after both load, so
 /// neither load waits on the condition; the compiler would otherwise load once from a picked
@@ -14510,7 +14333,7 @@ fn lane_super_construction<H: Host>(
     if !covered || !Vm::<H>::inline_constructible(body) || !body.only_initializes_this_fields(&code.constants) {
         return None;
     }
-    let (this, added) = lane_initialize_fields(vm, code, callee, parent, parent_function, r, i)?;
+    let (this, added) = lane_initialize_fields(vm, code, callee, parent, parent_function, lane_construct_argument(r, i))?;
     if !added {
         return None;
     }
@@ -14613,7 +14436,7 @@ script_handler! {
             match lane_planned_construction(vm, callee, r, i) {
                 Some(this) => Some((this, true)),
                 // SAFETY: the context's program outlives the lane run.
-                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i),
+                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i)),
             }
         } else {
             vm.inline_construct_receiver(callee).map(|this| (this, false))
@@ -16181,7 +16004,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     let built = if target.initializes {
         // SAFETY: the context's program outlives the lane run.
-        lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i)
+        lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
     } else {
         vm.inline_construct_receiver(callee).map(|this| (this, false))
     };
@@ -16708,10 +16531,8 @@ fn lane_initialize_fields<H: Host>(
     callee: Value,
     constructor: Value,
     function: u32,
-    r: Registers,
-    i: &LaneInstruction,
+    argument: impl Fn(u16) -> Value,
 ) -> Option<(Value, bool)> {
-    let argument = lane_construct_argument(r, i);
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template_by(callee, constructor)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
@@ -16739,131 +16560,6 @@ fn lane_initialize_fields<H: Host>(
         vm.lane_stack.construct_plans[index] = plan.finish();
     }
     Some((this, true))
-}
-
-/// The adds an initializing body (`ScriptCallTarget::initializes`) of `function` makes to
-/// `this`, each the parameter its store names (`argument`) as a cached add that runs no guest
-/// code, passed to `each` in order. `false` at the first add the caches do not answer: the
-/// adds made so far are the body's own first stores of the same values, which an activation
-/// of the body then makes again as stores, leaving the object as the activation alone would.
-#[inline(always)]
-fn lane_add_initializer_fields<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    this: Value,
-    function: u32,
-    argument: impl Fn(u16) -> Value,
-    mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
-) -> bool {
-    let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
-        return false;
-    };
-    for store in stores {
-        let Some(value) = initializer_store_value(vm, store, &argument) else {
-            return false;
-        };
-        if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
-            return false;
-        }
-        each(store, value);
-    }
-    true
-}
-
-/// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
-/// the arguments the plan's parameters name. A plan holds while its callee's layout and
-/// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
-/// the adds it planned free of setters. Apart from the planning, whose frame is larger.
-#[inline(always)]
-fn lane_planned_construction<H: Host>(
-    vm: &mut Vm<H>,
-    callee: Value,
-    r: Registers,
-    i: &LaneInstruction,
-) -> Option<Value> {
-    planned_construction(vm, callee, lane_construct_argument(r, i))
-}
-
-/// `lane_planned_construction` from the parameters' values `argument` gives.
-#[inline(always)]
-fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let index = holding_construct_plan_index(vm, callee)?;
-    // The plan in place: the allocation borrows the heap beside it, not a copy.
-    let plan = &vm.lane_stack.construct_plans[index];
-    if plan.kind != ConstructPlanKind::Passed {
-        return lane_defaulted_construction(vm, index, argument);
-    }
-    Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
-}
-
-/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, by the callee's
-/// construct plan (`planned_construction`): the finished receiver, or `None` (no plan, a
-/// construction the lane makes otherwise, or a collection due, which the lane runs) to
-/// leave the body at the construction, before any effect.
-///
-/// # Safety
-/// `context` is the running lane's context and `arguments` the body's `argc` registers.
-pub(super) unsafe fn lane_body_construction<H: Host>(context: *mut (), callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
-    let cx = context.cast::<LaneContext<H>>();
-    let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() || vm.heap.should_collect() {
-        return None;
-    }
-    // SAFETY: the caller passes the body's argument registers.
-    let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
-    // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
-    let this = planned_construction(vm, callee, argument).or_else(|| lane_forwarded_fields(vm, callee, argument))?;
-    note_allocation(vm);
-    Some(this)
-}
-
-/// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
-/// it computes first; `None` for a forwarding constructor's plan, which holds only with its
-/// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
-/// code.
-#[inline(never)]
-fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let plan = &vm.lane_stack.construct_plans[index];
-    if plan.kind == ConstructPlanKind::Forwarding {
-        return None;
-    }
-    let values = plan.values(vm, argument)?;
-    Some(plan.allocate(&mut vm.heap, |field| values[field]))
-}
-
-/// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
-/// when not passed.
-#[inline(always)]
-fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
-    let argc = ImmediateLayout::argument_count(i.imm());
-    move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
-}
-
-/// The construct plan cache entry `callee` owns, when it names a heap cell.
-fn construct_plan_index(callee: Value) -> Option<usize> {
-    callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
-}
-
-/// `callee`'s construct plan while it holds: the entry names `callee`, the prototype
-/// layout keeps the plan's epoch and `callee`'s own layout still yields the planned
-/// `prototype`, from which the receiver's template is derived.
-#[inline(always)]
-fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
-    holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
-}
-
-/// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
-#[inline(always)]
-fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<usize> {
-    let index = construct_plan_index(callee)?;
-    let plan = &vm.lane_stack.construct_plans[index];
-    (plan.callee == callee
-        && plan.epoch == crate::heap::prototype_layout_epoch()
-        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
-        && (plan.super_parent.is_undefined()
-            || vm.object_data(callee).is_some_and(|class| class.proto() == plan.super_parent)))
-    .then_some(index)
 }
 
 /// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its
@@ -17101,16 +16797,11 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 /// Lane-stack room a frameless call's growth reserves at least: a common window.
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
-/// A Wasm view's handler for `op` where it differs from a JavaScript view's.
+/// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
+/// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
-    match op {
-        // A Wasm reference call enters Wasm functions, never a frameless script call.
-        Op::Call => Some(Some(LaneHandler { handler: reference_call_handler::<H>(), produces: false })),
-        // Its handler reads the context a JavaScript view carries where a Wasm view carries
-        // its memory; Wasm stores a capture only for the rare `data.drop` and `elem.drop`.
-        Op::StoreCapture => Some(None),
-        _ => None,
-    }
+    let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
+    match op { Op::Call => Some(Some(call)), Op::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
@@ -20729,8 +20420,7 @@ fn install_loop_sites<'live, H: Host>(
                 }
                 // A call may run inlined: the site makes its region once it is hot.
                 Err(failure)
-                    if failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-                        && live().is_some() =>
+                    if failure.is_call_boundary() && live().is_some() =>
                 {
                     (
                         std::cell::OnceCell::new(),
@@ -22025,7 +21715,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn lane_runs_call(view: *const LaneView) -> bool {
         // SAFETY: a non-null view lives with its program.
-        Self::lane_runs(view, 0) || !view.is_null() && unsafe { (*view).returns_from_entry }
+        Self::lane_runs(view, 0) || crate::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { (*view).returns_from_entry }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
@@ -22091,7 +21781,7 @@ impl<H: Host> Vm<H> {
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && !self.direct_eval
                 && !self.parameter_eval
-                && *frame + 1 == self.frames.len(),
+                && root_calls::in_lane(*frame + 1 == self.frames.len(), self.frames[*frame].function),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
@@ -22869,29 +22559,7 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
 }
 
 #[cfg(test)]
-mod instruction_set_tests {
-    use super::*;
-
-    #[test]
-    fn instruction_membership_crosses_word_and_inline_boundaries() {
-        for count in [0, 1, INSTRUCTION_WORD_BITS, INSTRUCTION_WORD_BITS + 1,
-            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS,
-            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS + 1]
-        {
-            let mut set = InstructionSet::new(count);
-            assert_eq!(set.0.len(), count.div_ceil(INSTRUCTION_WORD_BITS));
-            assert_eq!(set.0.spilled(), count > INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS);
-            for pc in 0..count {
-                assert!(!set.contains(pc));
-                set.insert(pc);
-                assert!(set.contains(pc));
-                if pc + 1 < count { assert!(!set.contains(pc + 1)); }
-            }
-            for pc in 0..count { assert!(set.contains(pc)); }
-        }
-    }
-}
-
+mod instruction_set_tests;
 #[cfg(test)]
 mod call_site_history_tests;
 mod on_demand_metadata;
