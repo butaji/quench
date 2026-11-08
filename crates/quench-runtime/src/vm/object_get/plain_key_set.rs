@@ -1,5 +1,6 @@
 //! The plain `[[Set]]` of a string key along a chain of ordinary objects: the walk proves
-//! where the write lands, and that proof is the write's only lookup.
+//! where the write lands, and that proof is the write's only lookup. The plain `[[Delete]]`
+//! of a string key on one such object, decided by its shape alone.
 
 use super::super::{Atom, Host, Object, PropertyKey, Value, Vm};
 
@@ -88,5 +89,56 @@ impl<H: Host> Vm<H> {
         }
         // An add a keyed store made before replays from its entry (`keyed_add_hit`).
         self.keyed_add_hit(object, atom, value) || self.set_plain_key_property(object, atom, value, true).is_some()
+    }
+
+    /// `delete object[key]` of a string key on an ordinary object whose access its shape
+    /// describes, as `delete_property_key` decides it: no property, or a configurable data
+    /// property held in the shape, which goes. `None` leaves globals, exotic objects, boxed
+    /// primitives, namespaces, side-table descriptors, accessors (lazy members among them) and
+    /// the keys `plain_named_key` refuses to the general path.
+    pub(in crate::vm) fn plain_string_key_delete(&mut self, object: Value, key: Value) -> Option<Value> {
+        let data = self.heap.ordinary_object(object).filter(|data| self.shape_holds_every_property(object, data))?;
+        if !self.heap.is_string(key) {
+            return None;
+        }
+        // A name no atom spells names no property of any shape.
+        let Some(atom) = self.lookup_string_atom(key) else {
+            return self.heap.string(key)?.host_string().parse::<u32>().is_err().then_some(Value::TRUE);
+        };
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        let key = PropertyKey::string(atom);
+        let Some(slot) = self.property_shape_slot(data.shape(), key).filter(|&slot| self.heap.property_get(data, slot).is_some())
+        else {
+            return Some(Value::TRUE);
+        };
+        let attributes = self.slot_attributes(data, slot)?;
+        if attributes.accessor {
+            return None;
+        }
+        if !attributes.configurable {
+            return Some(Value::FALSE);
+        }
+        self.delete_shape_slot(object, slot, key);
+        Some(Value::TRUE)
+    }
+
+    /// Whether `object`'s shape alone holds and describes all its properties: no global
+    /// declaration state, exotic access, boxed primitive, deferred namespace or side-table
+    /// descriptor beside it.
+    fn shape_holds_every_property(&self, object: Value, data: &Object) -> bool {
+        !(data.has_exotic_access()
+            || data.has_side_descriptors()
+            || data.has_indexed_descriptors()
+            || data.boxed_primitive().is_some()
+            || data.deferred_module().is_some()
+            || self.is_global_object(object))
+    }
+
+    /// Deletes `object`'s property `key`, held at `slot` of its shape.
+    pub(in crate::vm) fn delete_shape_slot(&mut self, object: Value, slot: usize, key: PropertyKey) {
+        self.heap.property_set(object, slot, Value::DELETED);
+        self.delete_shape_property(object, key);
     }
 }

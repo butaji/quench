@@ -153,6 +153,7 @@ mod function;
 mod function_cache;
 mod gc;
 mod generator;
+mod global_facts;
 mod group_by;
 mod host_function;
 mod index;
@@ -2563,19 +2564,12 @@ impl<H: Host> Vm<H> {
             self.bind_global_lexical(atom, value);
         }
     }
-    /// Binds global lexical `atom` to `value` in the active realm, noting a name it declared
-    /// for the first time (`note_global_lexical_names`).
-    pub(super) fn bind_global_lexical(&mut self, atom: Atom, value: Value) {
-        if self.realm.bind_global_lexical(atom, value) {
-            self.note_global_lexical_names();
-        }
-    }
-
     /// A global lexical name was declared: it may shadow a global property that a global name
     /// read's hint names (`dispatch_fast::lane_load_global_name`), so every such hint is
-    /// dropped (`LaneView::clear_name_hints`).
+    /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
     pub(super) fn note_global_lexical_names(&self) {
         self.programs.clear_global_name_hints();
+        self.note_global_shadowing();
     }
 
     /// Whether a global name read of `atom` may keep the global object's own data property as

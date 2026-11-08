@@ -469,7 +469,7 @@ impl<H: Host> Vm<H> {
             self.shapes[child as usize].lookup_index = OnceCell::from(index);
         }
     }
-    fn append_shape(
+    pub(super) fn append_shape(
         &mut self,
         parent: u32,
         transition: ShapeTransition,
@@ -3959,8 +3959,8 @@ impl<H: Host> Vm<H> {
         }
         let data = self.heap.object(object)?;
         let properties = data.properties();
-        // A prototype's stores move what its inheritors read (`Object::note_prototype_value_write`).
-        if properties.is_dictionary() || data.was_used_as_prototype() {
+        // A prototype's or a read global's stores move what code holds (`Object::note_value_write`).
+        if properties.is_dictionary() || data.observes_value_writes() {
             return None;
         }
         let cache = self.field_cache_entry(site);
@@ -4781,6 +4781,9 @@ impl<H: Host> Vm<H> {
         shape: u32,
         transition: ShapeTransition,
     ) -> u32 {
+        if let Some(next) = self.owned_dictionary_edit(shape, transition) {
+            return next;
+        }
         let key = transition.cache_key();
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();
@@ -4814,26 +4817,7 @@ impl<H: Host> Vm<H> {
                 unreachable!("cached shape transitions are adds, deletions, descriptors or metadata")
             }
         };
-        let mut next = self.append_shape(shape, transition, next_storage_len);
-        if matches!(transition, ShapeTransition::Add { .. })
-            && self.shapes[next as usize].dictionary_trigger.is_none()
-            && next_storage_len > FIELD_CACHE_SLOT_CAPACITY
-        {
-            next = self.append_shape(
-                next,
-                ShapeTransition::Dictionary {
-                    trigger: DictionaryTrigger::PropertyCount,
-                },
-                next_storage_len,
-            );
-            self.profile
-                .dictionary_transition(DictionaryTrigger::PropertyCount);
-        }
-        if let Some(key) = key {
-            self.transitions.insert(&self.shapes, shape, key, next);
-            self.shapes[shape as usize].last_child.set(next);
-        }
-        next
+        self.append_transition_shape(shape, key, transition, next_storage_len)
     }
     /// The shape an object of `shape` had before `shape` added `key` at `slot`, its last slot,
     /// when deleting `key` can return the object to it: a plain add from an ordinary shape,
@@ -4881,34 +4865,8 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_key(key);
             return;
         }
-        let next_id = self.append_cached_shape_transition(
-            shape,
-            ShapeTransition::Delete {
-                key,
-                slot: slot as u32,
-            },
-        );
-        // An object keeps a shape, which caches serve, until more of its slots are vacated
-        // than hold properties: its storage is then mostly holes, and add-and-delete churn
-        // (an object used as a map) would otherwise grow its shape chain without bound.
-        let storage_len = self.shapes[next_id as usize].storage_len();
-        let vacated = storage_len - self.shape_entry_count(next_id);
-        let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none()
-            && vacated > storage_len - vacated
-        {
-            let dictionary_shape = self.append_shape(
-                next_id,
-                ShapeTransition::Dictionary {
-                    trigger: DictionaryTrigger::DeletionPattern,
-                },
-                storage_len,
-            );
-            self.profile
-                .dictionary_transition(DictionaryTrigger::DeletionPattern);
-            dictionary_shape
-        } else {
-            next_id
-        };
+        let next_id =
+            self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
         self.heap.set_object_shape(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);

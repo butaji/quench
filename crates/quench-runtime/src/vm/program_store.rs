@@ -940,6 +940,7 @@ pub(crate) struct ProgramStore {
 
 impl Default for ProgramStore {
     fn default() -> Self {
+        crate::jit_coverage::sample_this_thread();
         Self {
             native_call_bindings: Default::default(),
             programs: Vec::new(),
@@ -956,10 +957,8 @@ impl Default for ProgramStore {
             js_general_artifacts: FxHashMap::default(),
             js_general_artifact_key_bytes: 0,
             js_general_artifact_clock: 0,
-            // TOD-191's correctness oracle may force hot candidates past the
-            // payback model so guarded exits can be tested independently of
-            // profitability. This is diagnostic-only and never set by score
-            // harnesses.
+            // TOD-191's correctness oracle may force hot candidates past the payback model so
+            // guarded exits can be tested independently of profitability (diagnostic only).
             wasm_module_compile: if super::compiled::jit_wasm_selective_enabled() {
                 WasmModuleCompile::NEVER
             } else {
