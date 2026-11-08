@@ -804,8 +804,8 @@ enum LaneBody {
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
-        /// Its runs that completed, natively called ones included.
-        completed: std::cell::Cell<u16>,
+        /// Whether a run of it completed, natively called ones included.
+        completed: std::cell::Cell<bool>,
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
@@ -22084,8 +22084,7 @@ impl<H: Host> Vm<H> {
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && !self.direct_eval
                 && !self.parameter_eval
-                && *frame + 1 == self.frames.len()
-                && self.frames[*frame].function != super::ROOT_FUNCTION_ID,
+                && *frame + 1 == self.frames.len(),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
@@ -22832,7 +22831,6 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
         {
             // The record's opcode from its packed instruction: the census needs the mix, and
             // the lane record keeps only the handler.
-            let vm = unsafe { vm(cx) };
             let function = lane_running_function(cx);
             let code = unsafe { &*(*cx).code };
             let pc = unsafe { ip.offset_from((*cx).base) as usize };

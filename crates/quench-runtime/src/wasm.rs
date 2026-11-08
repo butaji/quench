@@ -1637,7 +1637,7 @@ impl Lowering<'_> {
             Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index }
                 if matches!(self.global_registers.get(*global_index as usize), Some(Some(_)))
         ) || (numeric_operator(operator).is_some() && !integer::wide_integer(operator))
-            || simd::reads_aliases(operator)
+            || simd::reads_aliases(operator) || reference::reads_aliases(operator)
             || memory::direct_access(operator).is_some_and(|(_, memarg)| {
                 matches!(
                     self.memory_registers.get(memarg.memory as usize),

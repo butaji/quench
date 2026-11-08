@@ -73,6 +73,8 @@ mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
+#[path = "compiled/wasm_callable.rs"]
+mod wasm_callable;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -5570,6 +5572,9 @@ enum CompiledArgs<'a> {
     },
 }
 
+/// The `CompiledProgram::positions` entry of a function an artifact does not hold.
+const NOT_COMPILED: u32 = u32::MAX;
+
 pub(super) struct CompiledFunction {
     entry: Entry,
     params: Vec<crate::WasmType>,
@@ -5618,7 +5623,7 @@ fn direct_reference_entry<H: Host>(
     context_memory: Value,
     signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
 ) -> Option<DirectReferenceEntry> {
-    let native = compiled.functions.get(function)?.as_ref()?;
+    let native = compiled.function(function)?;
     if signature.is_some_and(|(params, result)| {
         native.params.as_slice() != params || native.result != result
     }) {
@@ -5781,7 +5786,11 @@ fn reference_target_matches<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
-    functions: Vec<Option<CompiledFunction>>,
+    /// The compiled functions in index order: a selective tier holds a few of a module's
+    /// thousands, so only `positions` is as long as the module.
+    functions: Box<[CompiledFunction]>,
+    /// Each module function's place in `functions`; `NOT_COMPILED` where it has none.
+    positions: Box<[u32]>,
     /// The environment slot of the memory compiled code accesses.
     memory_slot: Option<u32>,
     /// Memory accesses rely on the memory's guard reservation instead of
@@ -6074,7 +6083,7 @@ impl CompiledProgram {
     fn note_direct_reference_entry(&self, function: usize) -> bool {
         let native_entry_should_sample = self.note_native_entry(function);
         #[cfg(test)]
-        if let Some(Some(function)) = self.functions.get(function) {
+        if let Some(function) = self.function(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
@@ -6093,7 +6102,7 @@ impl CompiledProgram {
             false
         };
         #[cfg(test)]
-        if let Some(Some(function)) = self.functions.get(function) {
+        if let Some(function) = self.function(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
@@ -6117,9 +6126,13 @@ impl CompiledProgram {
         sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
-    pub(super) fn has_function(&self, function: usize) -> bool { self.functions.get(function).is_some_and(Option::is_some) }
+    /// Module function `index`'s compiled code, if this artifact holds it.
+    fn function(&self, index: usize) -> Option<&CompiledFunction> {
+        self.functions.get(*self.positions.get(index)? as usize)
+    }
+    pub(super) fn has_function(&self, function: usize) -> bool { self.function(function).is_some() }
     /// The functions it holds code for.
-    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.functions.len()).filter(|&function| self.has_function(function)) }
+    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.positions.len()).filter(|&function| self.has_function(function)) }
 
     pub(super) fn mapped_bytes(&self) -> usize {
         self._code.length()
@@ -6200,18 +6213,12 @@ impl CompiledProgram {
 
     #[cfg(test)]
     pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
-        self.functions
-            .get(function)?
-            .as_ref()
-            .map(|function| function.native_entries.get())
+        self.function(function).map(|function| function.native_entries.get())
     }
 
     #[cfg(test)]
     pub(super) fn direct_reference_entries(&self, function: usize) -> Option<u64> {
-        self.functions
-            .get(function)?
-            .as_ref()
-            .map(|function| function.direct_reference_entries.get())
+        self.function(function).map(|function| function.direct_reference_entries.get())
     }
 }
 
@@ -8586,6 +8593,9 @@ struct Analysis<'a, H: Host> {
     root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
+    /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
+    /// plans have read every record and before any body is built.
+    unrolls: bool,
 }
 
 impl<H: Host> Analysis<'_, H> {
@@ -8741,7 +8751,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// The function's plan, assuming every function in `callable` compiles.
-    fn plan(&self, index: usize, callable: &[bool], memory_slot: &mut Option<u32>) -> Option<Plan> {
+    fn plan(&self, index: usize, callable: &crate::bitset::BitSet, memory_slot: &mut Option<u32>) -> Option<Plan> {
         let plan_started = self
             .compile_rejections
             .as_ref()
@@ -8804,10 +8814,7 @@ impl<H: Host> Analysis<'_, H> {
                 .clone()
                 .expect("queued instructions have a state");
             if instruction.op() == Op::CallKnown
-                && !callable
-                    .get(usize::from(instruction.known_function_index()))
-                    .copied()
-                    .unwrap_or(false)
+                && !callable.contains(usize::from(instruction.known_function_index()))
                 && !self.experimental_root_compilation
             {
                 let callee = instruction.known_function_index();
@@ -8900,7 +8907,7 @@ impl<H: Host> Analysis<'_, H> {
         function: &Function,
         instruction: WideInstruction,
         state: &mut AnalysisState,
-        callable: &[bool],
+        callable: &crate::bitset::BitSet,
         memory_register: Option<u16>,
         memory_slot: &mut Option<u32>,
         result: Option<crate::WasmType>,
@@ -9177,14 +9184,14 @@ impl<H: Host> Analysis<'_, H> {
             }
             Op::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
-                if !callable.get(callee as usize).copied().unwrap_or(false)
+                if !callable.contains(callee as usize)
                     && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
                 {
                     return None;
                 }
                 let signature = self.signature(callee)?;
                 if signature.results.len() > 1
-                    && !callable.get(callee as usize).copied().unwrap_or(false)
+                    && !callable.contains(callee as usize)
                 {
                     // The VM callout ABI currently carries at most one result.
                     // Do not admit a residual fallback that would silently
@@ -11969,7 +11976,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
-            unrolled: if program_unrolls(self.code) {
+            unrolled: if self.unrolls {
                 unrollable_loops(&instructions, plan)
             } else {
                 vec![None; instructions.len()]
@@ -12719,9 +12726,9 @@ impl<H: Host> Vm<H> {
     /// Whether a lane-entered frame must hand control to the general frame
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
-        // A lane that completed the instruction it stopped at (`Vm::lane_returned`) leaves
-        // only that completion: entering the tier there would run the instruction again.
-        if self.lane_returned.is_some() { return false; }
+        // A lane that completed (`Vm::lane_returned`) or raised (`Vm::lane_raised`) at the
+        // instruction it stopped at leaves only that outcome: the tier would run it again.
+        if self.lane_returned.is_some() || self.lane_raised.is_some() { return false; }
         match self.programs.js_tier(id, function) {
             Some(super::program_store::JsTierState::GeneralCompileDue) => true,
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
@@ -13517,36 +13524,19 @@ impl<H: Host> Vm<H> {
             experimental_root_compilation: root.is_some(),
             root_only,
             compile_rejections: compile_rejections.as_ref(),
+            unrolls: false,
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
-        let mut callable;
-        // Each callable function's full plan from the pass that settled the set, which its
-        // compilation reads, and the interfaces its callers read.
+        // Each callable function's full plan, which its compilation reads, and the
+        // interfaces its callers read.
         let mut full_plans: Vec<Option<Plan>>;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
         let mut guarded;
         loop {
-            callable = allowed.clone();
-            loop {
-                memory_slot = None;
-                full_plans = (0..count)
-                    .map(|index| {
-                        if callable[index] {
-                            analysis.plan(index, &callable, &mut memory_slot)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
-                let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
-                if next == callable {
-                    break;
-                }
-                callable = next;
-            }
+            (full_plans, memory_slot) = analysis.settle_callable(&crate::bitset::BitSet::from_fn(count, |index| allowed[index]));
+            plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
             // Accesses may rely on the guard when the memory has one and
             // this host resumes guard faults.
             let stable_memory = memory_slot.is_some_and(|slot| {
@@ -13643,6 +13633,7 @@ impl<H: Host> Vm<H> {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
+        analysis.unrolls = program_unrolls(&code);
         let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
         build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
         let build = build_order.into_iter().map(|index| {
@@ -13721,16 +13712,19 @@ impl<H: Host> Vm<H> {
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
             .collect();
-        let functions: Vec<Option<CompiledFunction>> = plans
+        let mut positions = vec![NOT_COMPILED; count].into_boxed_slice();
+        let functions: Box<[CompiledFunction]> = plans
             .into_iter()
             .zip(entries)
-            .map(|(plan, entry)| {
-                let plan = plan?;
-                let entry = entry?;
+            .enumerate()
+            .filter_map(|(index, (plan, entry))| Some((index, plan?, entry?)))
+            .enumerate()
+            .map(|(position, (index, plan, entry))| {
+                positions[index] = position as u32;
                 // SAFETY: the entry was compiled with the `Entry` signature in
                 // the host's default calling convention.
                 let entry = unsafe { std::mem::transmute::<usize, Entry>(base + entry) };
-                Some(CompiledFunction {
+                CompiledFunction {
                     entry,
                     params: plan.params,
                     result: plan.result,
@@ -13738,13 +13732,10 @@ impl<H: Host> Vm<H> {
                     native_entries: std::cell::Cell::new(0),
                     #[cfg(test)]
                     direct_reference_entries: std::cell::Cell::new(0),
-                })
+                }
             })
             .collect();
-        let compiled_functions = functions
-            .iter()
-            .filter(|function| function.is_some())
-            .count();
+        let compiled_functions = functions.len();
         let diagnostics = diagnostics_enabled.then(|| {
             let import_callout_names = self
                 .programs
@@ -13794,6 +13785,7 @@ impl<H: Host> Vm<H> {
             _code: memory,
             table,
             functions,
+            positions,
             memory_slot,
             guarded,
             fixed_base,
@@ -14122,7 +14114,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let result = (|| {
-            let function = compiled.functions.get(id as usize)?.as_ref()?;
+            let function = compiled.function(id as usize)?;
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;

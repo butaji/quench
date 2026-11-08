@@ -257,7 +257,7 @@ vm/dispatch_fast.rs SetFunctionNameKey 1
 vm/dispatch_fast.rs SetIndex 3
 vm/dispatch_fast.rs SetThisField 1
 vm/dispatch_fast.rs SetThisFieldStrict 1
-vm/dispatch_fast.rs StoreCapture 2
+vm/dispatch_fast.rs StoreCapture 3
 vm/dispatch_fast.rs StoreEnvLocal 3
 vm/dispatch_fast.rs StoreLocal 2
 vm/dispatch_fast.rs StoreLocalPlain 2
