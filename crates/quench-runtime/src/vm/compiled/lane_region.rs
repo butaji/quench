@@ -4382,27 +4382,22 @@ impl Lowering<'_, '_> {
             };
             return Some(projection.read(&mut self.builder, field.slot));
         }
-        // A layout family: own fields at one slot in every shape. One membership test and one
-        // read serve them all, bounded by the shortest storage, which still holds the slot.
-        if let [first, ..] = shapes
-            && shapes.iter().all(|field| field.holder.is_none() && field.slot == first.slot && field.storage == first.storage) {
-            let mut member = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(first.shape));
-            for field in &shapes[1..] {
-                let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-                member = self.ins().bor(member, same);
-            }
+        // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
+        // shape of a family take one shape-set test and one read; a prototype-held slot its own.
+        let groups = super::object_slots::field_load_groups(shapes)?;
+        if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
+            let member = super::object_slots::shape_in_set(&mut self.builder, shape, members);
             emit_js_guard(&mut self.builder, member, exit);
-            let shortest = shapes.iter().copied().min_by_key(|field| field.storage_len).expect("a family has a shape");
             let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                shortest, PackedAccess::Reload, exit)?;
-            return Some(projection.read(&mut self.builder, first.slot));
+                *family, PackedAccess::Reload, exit)?;
+            return Some(projection.read(&mut self.builder, family.slot));
         }
         let join = self.builder.create_block();
         let value = self.builder.append_block_param(join, types::I64);
-        for field in shapes {
+        for (field, members) in &groups {
             let matched = self.builder.create_block();
             let next = self.builder.create_block();
-            let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+            let same = super::object_slots::shape_in_set(&mut self.builder, shape, members);
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
             let read = match field.holder {
