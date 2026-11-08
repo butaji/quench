@@ -95,15 +95,19 @@ impl LaneView {
         self.history.set(LaneBodyHistory { lifetimes: history.lifetimes.saturating_add(1), ..history });
     }
 
-    /// A body that went at a lifecycle edge warms again from the start; one no run of which
-    /// `completed` counts as wasted (`LaneBodyHistory`).
-    pub(super) fn drop_body(&self, body: &mut LaneBody, completed: bool) {
+    /// A specialized body that went at a lifecycle edge warms again from the start, keeping
+    /// where it and its predecessors left as its successor's feedback: a call site's behavior
+    /// outlives the shape ids the edge renumbered. One no run of which completed counts as
+    /// wasted (`LaneBodyHistory`).
+    pub(super) fn drop_body(&self, body: &mut LaneBody) {
+        let LaneBody::Specialized { completed, leaves_at, stuck, .. } = body else { return };
+        let (completed, stuck) = (completed.get(), stuck.union(leaves_at.get()));
         let history = self.history.get();
         self.history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
             wasted: history.wasted + u8::from(!completed),
         });
-        *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
+        *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck };
     }
 
     /// The body a just published method makes of this view.
@@ -121,6 +125,17 @@ impl LaneView {
         use std::cell::Cell;
         LaneBody::Specialized { method, tier_prologue, runs: Cell::new(runs), leaves: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
+    }
+
+    /// Whether it may still get a body: its code compiles, or it warms toward a compile its
+    /// history affords.
+    pub(super) fn may_specialize(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Compiling { .. } => true,
+            LaneBody::Unspecialized { .. } => self.affords_compile(),
+            _ => false,
+        }
     }
 
     /// Whether its body's code is compiling (`LaneBody::Compiling`).

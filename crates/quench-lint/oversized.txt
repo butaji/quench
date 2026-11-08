@@ -1466,7 +1466,7 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 524
 file-lines crates/quench-runtime/src/vm/collections.rs 1477
-file-lines crates/quench-runtime/src/vm/compiled.rs 19352
+file-lines crates/quench-runtime/src/vm/compiled.rs 19349
 file-lines crates/quench-runtime/src/vm/compiled/facts.rs 518
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5913
@@ -1478,7 +1478,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1955
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23526
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23516
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1515,7 +1515,7 @@ file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2670
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
 file-lines crates/quench-runtime/src/vm/primitives.rs 728
-file-lines crates/quench-runtime/src/vm/program_store.rs 4031
+file-lines crates/quench-runtime/src/vm/program_store.rs 4030
 file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
@@ -5121,7 +5121,6 @@ magic crates/quench-runtime/src/vm/compiled.rs::successors 1
 magic crates/quench-runtime/src/vm/compiled.rs::unrollable_loops 1
 magic crates/quench-runtime/src/vm/compiled/frame_ssa.rs::FrameFlow::recovery_pc 1
 magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::compile_lane_method 1
-magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::lane_body_work 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::loop_element_write 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::TypedLoad::width 3

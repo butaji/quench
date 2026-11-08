@@ -595,6 +595,7 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod getters;
+pub(in crate::vm) mod global_names;
 mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
@@ -915,13 +916,12 @@ impl LaneView {
     fn settle_retired_body(&self) {
         // SAFETY: as `lane_body`; settling runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized { method, tier_prologue, completed, .. } = body
+        if let LaneBody::Specialized { method, tier_prologue, .. } = body
             && !method.is_published()
         {
             // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
-            let completed = completed.get();
-            self.drop_body(body, completed);
+            self.drop_body(body);
         }
     }
 
@@ -974,12 +974,12 @@ impl LaneView {
     }
 
 
-    /// Retires field hints and native bodies that name shape IDs when compaction
-    /// renumbers them. No lane or OSR region runs during collection.
+    /// Retires field hints and native bodies (and plans) that name shape IDs when compaction renumbers them.
     pub(super) fn invalidate_shape_bindings(&self) {
         // SAFETY: no lane body runs during a collection.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized { method, tier_prologue, completed, .. } = body
+        if let LaneBody::Compiling { pending, .. } = body { pending.retire_named_shapes(); }
+        if let LaneBody::Specialized { method, tier_prologue, .. } = body
             && method.lease().is_some_and(|method| method.names_shapes)
         {
             // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection,
@@ -988,8 +988,7 @@ impl LaneView {
                 (*self.prologue.get()).handler = *tier_prologue;
                 method.retire();
             }
-            let completed = completed.get();
-            self.drop_body(body, completed);
+            self.drop_body(body);
         }
         self.retired.borrow_mut().clear();
         // Its direct callers name shapes too, so they retire with this compaction.
@@ -8342,8 +8341,8 @@ script_handler! {
         let Some((own, method)) = own
             .and_then(|own| own.lane_body().filter(|method| method.loop_header == Some(site.header)).map(|method| (own, method)))
         else {
-            // A body whose code still compiles takes the loop at a later backward jump.
-            if !own.is_some_and(LaneView::compiling) { lane_loop_retire::<H>(cx, ip, site); }
+            // A body still compiling or warming takes the loop at a later backward jump.
+            if !own.is_some_and(LaneView::may_specialize) { lane_loop_retire::<H>(cx, ip, site); }
             next!(cx, r, header, Carried::script(cx))
         };
         if !lane_body_admits(cx, &method) {
@@ -8373,11 +8372,11 @@ script_handler! {
         // Shadow exits carry a callee PC and must materialize before attribution.
         let completed_region = !Vm::<H>::lane_shadow_active()
             && matches!(exit, super::compiled::LaneExit::At(pc) if pc > site.backedge as usize);
-        let resumed = lane_body_left(cx, r, own, &method, exit);
+        let (resumed, feedback) = lane_body_left(cx, r, own, &method, exit);
         drop(method);
         // Counted once nothing reads the body: a reoptimization moves it.
         if lane_leave_counts(cx, exit) {
-            own.note_lane_body_end(exit, completed_region);
+            own.note_lane_body_end(feedback, completed_region);
         }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
@@ -13292,25 +13291,14 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let atom = i.imm();
-        let globals = vm.realm.globals;
-        let value = if vm.realm.global_lexical_declarations.contains(&atom) {
-            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
-            else {
-                return exit(ip);
-            };
-            value
-        } else if vm.global_name_hintable(atom)
-            && let Some(hint) = vm.own_data_field_hint::<false>(globals, atom)
-            && let Some(value) = vm.record_field_entry_hit(hint, globals)
-        {
-            set_field_hint(ip, hint);
-            value
-        } else {
-            let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
-                sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx))
-            };
-            value
+        let value = match vm.global_name_read(code, i.imm(), i.c) {
+            global_names::GlobalNameRead::Uninitialized => return exit(ip),
+            global_names::GlobalNameRead::Hinted(value, hint) => {
+                set_field_hint(ip, hint);
+                value
+            }
+            global_names::GlobalNameRead::Read(value) => value,
+            global_names::GlobalNameRead::Missed => sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script(cx)),
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
@@ -15915,12 +15903,12 @@ script_handler! {
         let exit = vm.run_lane_method(&method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
         let counts = lane_leave_counts(cx, exit);
         let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
-        let resumed = lane_body_left(cx, r, own, &method, exit);
+        let (resumed, feedback) = lane_body_left(cx, r, own, &method, exit);
         drop(method);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
         if counts {
-            own.note_lane_body_end(exit, false);
+            own.note_lane_body_end(feedback, false);
         }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
@@ -16573,10 +16561,10 @@ fn lane_body_activate<H: Host>(
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, receiver, captures, cx.cast());
-    let resumed = lane_body_left(cx, registers, own, &method, exit);
+    let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
     if lane_leave_counts(cx, exit) {
-        own.note_lane_body_end(exit, false);
+        own.note_lane_body_end(feedback, false);
     }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
@@ -16605,7 +16593,7 @@ fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::La
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
 /// registers are `r`: the activations of the native frames it left inside first
 /// (`lane_materialize_frames`), then the record its leave names in the innermost, or the
-/// innermost's completion.
+/// innermost's completion; `lane_body_left` adds the leave as feedback (`LaneMethod::feedback`).
 enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,
@@ -16622,7 +16610,7 @@ fn lane_body_left<H: Host>(
     own: &LaneView,
     method: &super::compiled::LaneMethod,
     exit: super::compiled::LaneExit,
-) -> LaneBodyLeft {
+) -> (LaneBodyLeft, super::compiled::LaneExit) {
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.body_stats.ended(exit, &method.inlined, super::compiled::take_lane_exit_line());
     }
@@ -16630,9 +16618,9 @@ fn lane_body_left<H: Host>(
         // A fault can bypass the native exit's register snapshots. Discard its
         // shadow chain instead of materializing stale homes for guest execution.
         Vm::<H>::take_shadow_frames();
-        return LaneBodyLeft::Terminated;
+        return (LaneBodyLeft::Terminated, exit);
     }
-    let frames = Vm::<H>::take_shadow_frames();
+    let (feedback, frames) = (method.feedback(exit), Vm::<H>::take_shadow_frames());
     let (r, own, method) = match lane_materialize_frames(cx, frames) {
         // SAFETY: the materialization made the innermost frame the running activation.
         Some((own, method)) => (unsafe { (*cx).registers }, own, method),
@@ -16640,7 +16628,7 @@ fn lane_body_left<H: Host>(
     };
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    match exit {
+    (match exit {
         super::compiled::LaneExit::Terminated => unreachable!("termination leaves before recovery"),
         super::compiled::LaneExit::At(pc) => {
             let mut carried = Carried::script(cx);
@@ -16666,7 +16654,7 @@ fn lane_body_left<H: Host>(
         }
         // SAFETY: the record that completes the activation is one of its function's.
         super::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
-    }
+    }, feedback)
 }
 
 /// Whether activating `target` leaves the running program. A target from

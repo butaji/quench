@@ -883,7 +883,7 @@ struct OwnedScript {
 
 pub(crate) struct ProgramStore {
     /// Weak native-call proofs; guest functions are never rooted by compiled code.
-    native_call_bindings: std::cell::RefCell<Vec<Weak<super::compiled::PublishedLaneMethod>>>,
+    native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,

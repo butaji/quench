@@ -7205,15 +7205,12 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 
 impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
-    /// global object's cached data property; none for a binding in its TDZ or a miss.
+    /// does (`Vm::global_name_read`); none for a binding in its TDZ or a miss.
     pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
-        if self.realm.global_lexical_declarations.contains(&atom) {
-            return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted());
-        }
-        match self.cached_field_hit(code, self.realm.globals, site) {
-            super::object::FieldCacheProbe::Hit(value) => Some(value),
-            _ => None,
+        use super::dispatch_fast::global_names::GlobalNameRead;
+        match self.global_name_read(code, atom, site) {
+            GlobalNameRead::Hinted(value, _) | GlobalNameRead::Read(value) => Some(value),
+            GlobalNameRead::Uninitialized | GlobalNameRead::Missed => None,
         }
     }
 

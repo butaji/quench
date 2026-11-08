@@ -28,7 +28,7 @@ use cranelift_codegen::entity::EntityRef;
 #[path = "lane_region/packed_ranges.rs"]
 mod packed_ranges;
 #[path = "lane_region/global_reads.rs"]
-mod global_reads;
+mod global_reads; pub(super) use global_reads::GlobalRead;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -348,7 +348,7 @@ struct Lowering<'a, 'f> {
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
-    global_reads: &'a BTreeMap<usize, Option<Value>>,
+    global_reads: &'a BTreeMap<usize, GlobalRead>,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
@@ -1234,7 +1234,7 @@ pub(super) fn lower_body(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, Option<Value>>,
+    global_reads: &BTreeMap<usize, GlobalRead>,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1261,7 +1261,7 @@ pub(super) fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, Option<Value>>,
+    global_reads: &BTreeMap<usize, GlobalRead>,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
