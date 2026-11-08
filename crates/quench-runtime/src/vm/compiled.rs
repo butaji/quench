@@ -5572,6 +5572,9 @@ enum CompiledArgs<'a> {
     },
 }
 
+/// The `CompiledProgram::positions` entry of a function an artifact does not hold.
+const NOT_COMPILED: u32 = u32::MAX;
+
 pub(super) struct CompiledFunction {
     entry: Entry,
     params: Vec<crate::WasmType>,
@@ -5620,7 +5623,7 @@ fn direct_reference_entry<H: Host>(
     context_memory: Value,
     signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
 ) -> Option<DirectReferenceEntry> {
-    let native = compiled.functions.get(function)?.as_ref()?;
+    let native = compiled.function(function)?;
     if signature.is_some_and(|(params, result)| {
         native.params.as_slice() != params || native.result != result
     }) {
@@ -5783,7 +5786,11 @@ fn reference_target_matches<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
-    functions: Vec<Option<CompiledFunction>>,
+    /// The compiled functions in index order: a selective tier holds a few of a module's
+    /// thousands, so only `positions` is as long as the module.
+    functions: Box<[CompiledFunction]>,
+    /// Each module function's place in `functions`; `NOT_COMPILED` where it has none.
+    positions: Box<[u32]>,
     /// The environment slot of the memory compiled code accesses.
     memory_slot: Option<u32>,
     /// Memory accesses rely on the memory's guard reservation instead of
@@ -6076,7 +6083,7 @@ impl CompiledProgram {
     fn note_direct_reference_entry(&self, function: usize) -> bool {
         let native_entry_should_sample = self.note_native_entry(function);
         #[cfg(test)]
-        if let Some(Some(function)) = self.functions.get(function) {
+        if let Some(function) = self.function(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
@@ -6095,7 +6102,7 @@ impl CompiledProgram {
             false
         };
         #[cfg(test)]
-        if let Some(Some(function)) = self.functions.get(function) {
+        if let Some(function) = self.function(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
@@ -6119,9 +6126,13 @@ impl CompiledProgram {
         sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
-    pub(super) fn has_function(&self, function: usize) -> bool { self.functions.get(function).is_some_and(Option::is_some) }
+    /// Module function `index`'s compiled code, if this artifact holds it.
+    fn function(&self, index: usize) -> Option<&CompiledFunction> {
+        self.functions.get(*self.positions.get(index)? as usize)
+    }
+    pub(super) fn has_function(&self, function: usize) -> bool { self.function(function).is_some() }
     /// The functions it holds code for.
-    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.functions.len()).filter(|&function| self.has_function(function)) }
+    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.positions.len()).filter(|&function| self.has_function(function)) }
 
     pub(super) fn mapped_bytes(&self) -> usize {
         self._code.length()
@@ -6202,18 +6213,12 @@ impl CompiledProgram {
 
     #[cfg(test)]
     pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
-        self.functions
-            .get(function)?
-            .as_ref()
-            .map(|function| function.native_entries.get())
+        self.function(function).map(|function| function.native_entries.get())
     }
 
     #[cfg(test)]
     pub(super) fn direct_reference_entries(&self, function: usize) -> Option<u64> {
-        self.functions
-            .get(function)?
-            .as_ref()
-            .map(|function| function.direct_reference_entries.get())
+        self.function(function).map(|function| function.direct_reference_entries.get())
     }
 }
 
@@ -13707,16 +13712,19 @@ impl<H: Host> Vm<H> {
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
             .collect();
-        let functions: Vec<Option<CompiledFunction>> = plans
+        let mut positions = vec![NOT_COMPILED; count].into_boxed_slice();
+        let functions: Box<[CompiledFunction]> = plans
             .into_iter()
             .zip(entries)
-            .map(|(plan, entry)| {
-                let plan = plan?;
-                let entry = entry?;
+            .enumerate()
+            .filter_map(|(index, (plan, entry))| Some((index, plan?, entry?)))
+            .enumerate()
+            .map(|(position, (index, plan, entry))| {
+                positions[index] = position as u32;
                 // SAFETY: the entry was compiled with the `Entry` signature in
                 // the host's default calling convention.
                 let entry = unsafe { std::mem::transmute::<usize, Entry>(base + entry) };
-                Some(CompiledFunction {
+                CompiledFunction {
                     entry,
                     params: plan.params,
                     result: plan.result,
@@ -13724,13 +13732,10 @@ impl<H: Host> Vm<H> {
                     native_entries: std::cell::Cell::new(0),
                     #[cfg(test)]
                     direct_reference_entries: std::cell::Cell::new(0),
-                })
+                }
             })
             .collect();
-        let compiled_functions = functions
-            .iter()
-            .filter(|function| function.is_some())
-            .count();
+        let compiled_functions = functions.len();
         let diagnostics = diagnostics_enabled.then(|| {
             let import_callout_names = self
                 .programs
@@ -13780,6 +13785,7 @@ impl<H: Host> Vm<H> {
             _code: memory,
             table,
             functions,
+            positions,
             memory_slot,
             guarded,
             fixed_base,
@@ -14108,7 +14114,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let result = (|| {
-            let function = compiled.functions.get(id as usize)?.as_ref()?;
+            let function = compiled.function(id as usize)?;
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;
