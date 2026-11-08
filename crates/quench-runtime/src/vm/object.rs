@@ -1141,7 +1141,7 @@ impl<H: Host> Vm<H> {
 }
 impl FieldCacheSet {
     fn with_pair(first: FieldCache, second: FieldCache) -> Self {
-        let mut entries = [EMPTY_CACHE; FIELD_MEGAMORPHIC_INLINE];
+        let mut entries = [EMPTY_CACHE; super::compiled::tier_policy::POLYMORPHISM];
         entries[0] = first;
         entries[1] = second;
         Self {
@@ -1181,7 +1181,7 @@ impl FieldCacheSet {
             .find(|entry| entry.receiver == cache.receiver && entry.holder == cache.holder)
         {
             *entry = cache;
-        } else if usize::from(self.len) < FIELD_MEGAMORPHIC_INLINE {
+        } else if usize::from(self.len) < super::compiled::tier_policy::POLYMORPHISM {
             self.entries[usize::from(self.len)] = cache;
             self.len += 1;
         } else {
@@ -1581,7 +1581,7 @@ impl<H: Host> Vm<H> {
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
-    /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
+    /// they stay inline (`tier_policy::POLYMORPHISM`); none for a megamorphic site.
     pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
         self.native_field_descriptors(site, false)
     }

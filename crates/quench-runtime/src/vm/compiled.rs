@@ -4783,10 +4783,6 @@ struct FastReferenceCache {
     body: u64,
 }
 
-/// Certificates an artifact keeps per indirect call site (`reference_dispatch_entries`): a site
-/// whose targets vary dispatches through all of them (JetStream richards-wasm sends each task
-/// through one site to one of four functions; a certificate per site held only the last).
-const REFERENCE_DISPATCH_ENTRIES_PER_SITE: usize = 4;
 
 /// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
 /// whose collisions cost only a callout.
@@ -4798,7 +4794,7 @@ fn reference_dispatch_entries(sites: usize) -> usize {
     if sites == 0 {
         return 0;
     }
-    (sites * REFERENCE_DISPATCH_ENTRIES_PER_SITE)
+    (sites * tier_policy::POLYMORPHISM)
         .next_power_of_two()
         .min(MAX_REFERENCE_DISPATCH_ENTRIES)
 }
@@ -17863,7 +17859,7 @@ mod tests {
             }).unwrap();
         // No code size budget is needed by this focused publication check; the
         // production object backend handles relocations instead of live addresses.
-        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok()
+        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
     }

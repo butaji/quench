@@ -1087,7 +1087,6 @@ const NO_OBJECT_SHAPE: u32 = u32::MAX;
 /// every site's entries (Node's library wires prototypes hundreds of times at load, each an
 /// invalidation that had refilled every table).
 const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
-const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
@@ -1095,7 +1094,7 @@ struct FieldCacheSet {
     /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
     /// only prototype holders, so a read probes no own entry.
     holds_own: bool,
-    entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
+    entries: [FieldCache; compiled::tier_policy::POLYMORPHISM],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
 #[derive(Clone, Copy)]
@@ -1114,11 +1113,10 @@ struct MethodGuard {
     slot: u16,
     depth: u16,
 }
-const METHOD_MEGAMORPHIC_LIMIT: usize = 8;
 struct MethodCacheSet {
     site: usize,
     len: u8,
-    entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
+    entries: [MethodCache; compiled::tier_policy::POLYMORPHISM],
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {

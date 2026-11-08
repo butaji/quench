@@ -104,9 +104,6 @@ pub(super) struct LaneInstruction {
     call_link: std::cell::Cell<u16>,
 }
 
-/// The callees a call site's history keeps (`LaneStack::call_sites`): a region inlines a site
-/// of at most this many as a guarded switch, the polymorphic inline cache's width.
-const CALL_SITE_TARGETS: usize = 4;
 /// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
 /// polymorphic), so one keeps an entry at 32 bytes instead of 112.
 const INLINE_SITE_TARGETS: usize = 1;
@@ -1921,7 +1918,7 @@ const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
     /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
-    /// in the order first seen, up to `CALL_SITE_TARGETS` (`note_site_callee`): the targets a region
+    /// in the order first seen, up to `tier_policy::POLYMORPHISM` (`note_site_callee`): the targets a region
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
@@ -2139,7 +2136,7 @@ impl LaneStack {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
         if !site.contains(&target) {
-            if site.len() == CALL_SITE_TARGETS { site.remove(0); }
+            if site.len() == super::compiled::tier_policy::POLYMORPHISM { site.remove(0); }
             site.push(target);
         }
     }
@@ -15801,7 +15798,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
                 callee: super::compiled::CalleeBinding::Identity(latest.callee), function: latest.function };
             std::iter::once(latest)
                 .chain(recorded.into_iter().flatten().rev().copied().filter(|target| *target != latest))
-                .take(CALL_SITE_TARGETS)
+                .take(super::compiled::tier_policy::POLYMORPHISM)
                 .collect()
         }
         // A site that runs only in its function's lane body, or that a read memo answers,
