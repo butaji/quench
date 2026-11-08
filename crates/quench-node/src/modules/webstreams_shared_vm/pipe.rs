@@ -150,18 +150,7 @@ pub(crate) fn pipe(
     put_flag(c, source, readable::field::DISTURBED, true)?;
     let promise = deferred(c)?;
     let current_write = resolved_undefined(c)?;
-    let pipe = record(
-        c,
-        &[
-            (SOURCE, source),
-            (DEST, dest),
-            (READER, reader),
-            (WRITER, writer),
-            (SIGNAL, signal),
-            (PROMISE, promise),
-            (CURRENT_WRITE, current_write),
-        ],
-    )?;
+    let pipe = record(c, &[SOURCE, DEST, READER, WRITER, SIGNAL, PROMISE, CURRENT_WRITE], &[source, dest, reader, writer, signal, promise, current_write])?;
     for (name, value) in [
         (PREVENT_CLOSE, prevent_close),
         (PREVENT_ABORT, prevent_abort),
@@ -176,7 +165,7 @@ pub(crate) fn pipe(
             return Ok(promise);
         }
         let listener = function(c, Member::Abort, "", &[pipe])?;
-        let options = super::literal(c, &[])?;
+        let options = super::literal(c, &[], &[])?;
         let once = c.boolean(true);
         put(c, options, "once", once)?;
         let kind = c.string_rooted("abort");
@@ -356,7 +345,7 @@ pub(crate) fn all(c: &mut Context<'_>, promises: &[RootId]) -> Outcome {
         return Ok(promise);
     }
     let remaining = c.number(promises.len() as f64);
-    let aggregate = record(c, &[(PROMISE, promise), (REMAINING, remaining)])?;
+    let aggregate = record(c, &[PROMISE, REMAINING], &[promise, remaining])?;
     for &each in promises {
         upon(c, each, Some(Member::AllFulfilled), Some(Member::AllRejected), &[aggregate])?;
     }
@@ -408,7 +397,7 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
             let read = deferred(c)?;
             let reader = get(c, pipe, READER)?;
             let writer = get(c, pipe, WRITER)?;
-            let request = new_request(c, ReadSteps::Pipe, &[(PROMISE, read), (request::WRITER, writer), (request::PIPE, pipe)])?;
+            let request = new_request(c, ReadSteps::Pipe, &[PROMISE, request::WRITER, request::PIPE, crate::modules::keys::KIND], &[read, writer, pipe])?;
             readable::default_reader_read(c, reader, request)?;
             c.resolve_promise_rooted(promise, read)?;
         }
