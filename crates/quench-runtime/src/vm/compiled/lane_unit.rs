@@ -20,9 +20,11 @@ use crate::value::Value;
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
 /// bindings are accepted for verified plain bodies with explicit restart or exact-state
-/// recovery.
+/// recovery. A forwarded binding is a closure the site called through a native that
+/// forwards its receiver as the callee (`Function.prototype.call`, `Vm::forwarded_call`):
+/// the call guards the native's identity too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CalleeBinding { Identity(Value), Function }
+pub(crate) enum CalleeBinding { Identity(Value), Function, Forwarded { through: Value, callee: Value } }
 
 /// How a leave inside a function-bound frame recovers: restart the call, which ran no
 /// effect yet, or materialize the callee's exact activation.
@@ -38,7 +40,12 @@ pub(crate) struct CallTarget {
 
 impl CallTarget {
     pub(crate) fn identity(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Identity(value) => Some(value), CalleeBinding::Function => None }
+        match self.callee { CalleeBinding::Identity(value) | CalleeBinding::Forwarded { callee: value, .. } => Some(value), _ => None }
+    }
+
+    /// The forwarding native this site called the target through.
+    pub(crate) fn through(self) -> Option<Value> {
+        match self.callee { CalleeBinding::Forwarded { through, .. } => Some(through), _ => None }
     }
 }
 
@@ -76,11 +83,11 @@ pub(crate) struct Frame {
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub(crate) alternative: Option<usize>,
-    /// For a call through `Function.prototype.call` (`f.call(receiver, ...arguments)`), the
-    /// register holding the `call` native, whose identity the call guards too; the callee
-    /// register then holds `f`, the receiver is the first argument and the window the rest
-    /// (`Planner::through_call`).
-    pub(crate) function_call: Option<Register>,
+    /// For a call through a forwarding native (`CalleeBinding::Forwarded`), the register
+    /// holding the native and its identity, which the call guards too; the callee register
+    /// then holds the function it calls, the receiver is the first argument and the window
+    /// the rest (`Planner::through_call`).
+    pub(crate) function_call: Option<(Register, Value)>,
 }
 
 impl Frame {
@@ -319,9 +326,9 @@ struct Plan {
     /// Whether a call the plan does not inline has run (its site linked a target): an
     /// inlined callee's never-run call is an exit of the unit, one that runs is not.
     blocked: bool,
-    /// Per PC, the register of the `call` native an inlined call through it guards; its
-    /// instruction in `code` is then the call of the function it calls.
-    through_call: Vec<Option<Register>>,
+    /// Per PC, the register and identity of the forwarding native an inlined call through it
+    /// guards; its instruction in `code` is then the call of the function it calls.
+    through_call: Vec<Option<(Register, Value)>>,
 }
 
 struct InlinedPlan {
@@ -356,8 +363,6 @@ struct Planner<'t, 'f> {
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
-    /// The `call` name, where the realm's `Function.prototype.call` is known.
-    call: Option<crate::bytecode::Atom>,
 }
 
 impl Planner<'_, '_> {
@@ -371,14 +376,14 @@ impl Planner<'_, '_> {
             .iter()
             .enumerate()
             .map(|(pc, instruction)| {
-                // A call through `call` inlines as the call of the function it calls.
-                let through = self.through_call(&code, pc, *instruction);
+                // A call through a forwarding native inlines as the call of the function it calls.
+                let through = self.through_call(function, pc as u32, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
                 let (calls, ran) = if instruction.op() == Op::Call && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
-                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth) };
+                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some()) };
                 blocked |= calls.is_empty() && ran;
                 if let Some((call, native)) = through.filter(|_| !calls.is_empty()) {
                     called.push((pc, call));
@@ -393,32 +398,24 @@ impl Planner<'_, '_> {
         Plan { code, calls, blocked, through_call }
     }
 
-    /// `f.call(receiver, ...arguments)` at `pc`, its callee read as `call` off `f` before it:
-    /// the call of `f` with that receiver and those arguments, and the register holding the
-    /// `call` native.
-    fn through_call(&self, code: &[WideInstruction], pc: usize, instruction: WideInstruction) -> Option<(WideInstruction, Register)> {
-        let atom = self.call?;
+    /// The call at `pc` of `function` as the call of the function it forwards to, where its
+    /// site called its targets through a forwarding native (`CalleeBinding::Forwarded`): the
+    /// receiver is the callee and the first argument the receiver. With the native's register
+    /// and identity, which the inlined call guards.
+    fn through_call(&self, function: u32, pc: u32, instruction: WideInstruction) -> Option<(WideInstruction, (Register, Value))> {
         let imm = instruction.imm();
         let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
         (instruction.op() == Op::Call && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
-        let native = instruction.register_b();
-        let read = code[..pc].iter().rev().find(|earlier| {
-            earlier.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister
-                && earlier.result_register() == native
-        })?;
-        (read.op() == Op::GetField
-            && matches!(read.field_lookup(), Some(FieldLookup::Atom { atom: name, base: object, .. })
-                if name == atom && object.register_index() == Some(instruction.register_c())))
-            .then_some(())?;
+        let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
         let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
             ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
-        Some((call, native))
+        Some((call, (instruction.register_b(), through)))
     }
 
     /// The callees the call at `pc` of `function` inlines: each target its site linked that
     /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
-    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> (Vec<InlinedPlan>, bool) {
+    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool) -> (Vec<InlinedPlan>, bool) {
         if instruction.op() != Op::Call {
             return (Vec::new(), false);
         }
@@ -427,7 +424,11 @@ impl Planner<'_, '_> {
         {
             return (Vec::new(), true);
         }
-        let found = (self.targets)(function, pc);
+        // A forwarded call inlines the targets reached through the native; a plain call, the others.
+        let found: Vec<_> = (self.targets)(function, pc).into_iter().filter_map(|target| match target.callee {
+            CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
+            _ => (!forwarded).then_some(target),
+        }).collect();
         let ran = !found.is_empty();
         // A target that does not inline gives back what it reserved (`inline_target`).
         let alternatives = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
@@ -534,7 +535,7 @@ impl Emitter {
                         base: callee_base,
                         registers: call.registers,
                         alternative: next,
-                        function_call: plan.through_call[pc].map(register),
+                        function_call: plan.through_call[pc].map(|(native, through)| (register(native), through)),
                     };
                     self.unit.frames.push(frame_record);
                     // The marker: the call's guards and bindings (`Lowering::inline_call`); a
@@ -606,7 +607,7 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
-    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body, None)
+    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
 }
 
 /// Plan the same unit under a smaller inlining budget after code-size rejection.
@@ -617,10 +618,9 @@ pub(crate) fn with_budget<'f>(
     budget: usize,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
-    call: Option<crate::bytecode::Atom>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget, call };
+    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

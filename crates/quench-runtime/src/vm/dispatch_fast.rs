@@ -607,6 +607,8 @@ mod construct_plan;
 use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
+mod unary_values;
+use unary_values::lane_unary_value;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -5287,55 +5289,6 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
-}
-
-/// A `Unary` record's value where it runs no guest code and throws nothing: logical not and
-/// `typeof` of any value, and every other operator of a Number, String, Boolean, null or
-/// undefined, whose conversions are pure.
-///
-/// # Safety
-/// `cx` is the running lane's context and `r` its registers.
-#[inline(always)]
-unsafe fn lane_unary_value<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    i: &LaneInstruction,
-) -> Option<Value> {
-    let operator = i.imm();
-    let operand = r.get(i.b);
-    let vm = unsafe { vm(cx) };
-    if operator == super::coercion::LOGICAL_NOT {
-        return Some(vm.logical_not(operand));
-    }
-    if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
-        return Some(vm.typeof_test_value(operand, index, negated));
-    }
-    if operator == crate::bytecode::UNARY_TYPEOF_INDEX {
-        return Some(vm.typeof_index_value(operand));
-    }
-    if operator == super::coercion::TYPEOF {
-        let name = vm.typeof_value(operand);
-        // Interning the type's name can allocate.
-        note_allocation(vm);
-        return Some(name);
-    }
-    if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {
-        // SAFETY: the context's program outlives the lane run.
-        return vm.unary(unsafe { &*(*cx).code }, operator, operand).ok();
-    }
-    let pure_primitive = operand.as_bool().is_some()
-        || operand.is_null()
-        || operand.is_undefined()
-        || operand.as_number().is_some()
-        || vm.is_string(operand);
-    if !pure_primitive {
-        return None;
-    }
-    // SAFETY: the context's program outlives the lane run.
-    let value = vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()?;
-    // Converting to a string can allocate.
-    note_allocation(vm);
-    Some(value)
 }
 
 /// The direct write of `value` to the running function's own capture `slot` through its dense
@@ -13413,13 +13366,13 @@ script_handler! {
         let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
         };
-        // The function a call through `call` calls is the site's callee for a body that
-        // inlines it (`lane_unit::Planner::through_call`).
+        // The function a forwarded call calls is the site's callee, through its native, for a
+        // body that inlines it (`lane_unit::Planner::through_call`).
         if through_call
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
-            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function });
+            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(kind @ FunctionKind::Native(_)) = kind {
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {

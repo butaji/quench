@@ -57,17 +57,12 @@ fn specific_literals(tokens: &impl ToTokens) -> usize {
     }).sum()
 }
 
-/// Whether `op` tests equality (`==` or `!=`).
-fn is_equality(op: syn::BinOp) -> bool {
-    matches!(op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_))
-}
-
 /// Whether `expr` compares anything with a program-specific string literal.
 fn compares_literal(expr: &syn::Expr) -> bool {
     struct Finds(bool);
     impl<'ast> Visit<'ast> for Finds {
         fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
-            self.0 |= is_equality(binary.op)
+            self.0 |= crate::is_equality(&binary.op)
                 && specific_literals(&binary.left) + specific_literals(&binary.right) > 0;
             syn::visit::visit_expr_binary(self, binary);
         }
@@ -79,7 +74,7 @@ fn compares_literal(expr: &syn::Expr) -> bool {
 
 impl<'ast> Visit<'ast> for Tests {
     fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
-        if is_equality(binary.op) {
+        if crate::is_equality(&binary.op) {
             let (left, right) = (&*binary.left, &*binary.right);
             let tested = (reads_guest_name(left) && specific_literals(right) > 0)
                 || (reads_guest_name(right) && specific_literals(left) > 0);

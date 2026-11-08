@@ -63,6 +63,8 @@ mod lane_region;
 mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
+#[path = "compiled/lane_allocations.rs"] mod lane_allocations;
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -1986,6 +1988,7 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
@@ -2119,7 +2122,7 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
     Numeric,
-    Process([usize; LaneHelper::COUNT]),
+    Process(&'static [*const (); LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -2208,6 +2211,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
     pub(super) invalidation: usize,
+    /// The program's constants as the VM made and roots them (`Vm::active_constant`).
+    pub(super) constants: &'a [Value],
 }
 
 impl OnlineFacts<'_> {
@@ -2227,9 +2232,6 @@ pub(super) struct VmFacts<'a> {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
-    /// The `call` name and the realm's `Function.prototype.call`, through which a call
-    /// inlines the function it calls (`lane_unit::Frame::function_call`).
-    pub(super) function_call: Option<(Atom, Value)>,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
@@ -2239,14 +2241,13 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
     /// no Stable facts.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, online: None };
+    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, online: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call, online: None }
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
     }
 }
 
@@ -6730,6 +6731,7 @@ pub(super) fn subscribe_lane_dependencies(slots: &[crate::code_dependencies::Slo
     slots.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
         && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
         && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+        && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
 }
 
 fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
@@ -7013,8 +7015,7 @@ unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
     crate::stack::GuestCallGuard::remaining() as u64
 }
 
-/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
-/// for one the lane's own read would not take, which leaves the body at the read.
+/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED` for one the lane's own read would not take.
 unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
@@ -7119,31 +7120,6 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     1
 }
 
-/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
-/// `DELETED` where a collection is due, which the body leaves for. The allocation may move
-/// the property arena, whose base and length the dispatch reads again.
-unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
-    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let object = vm.object();
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    object.to_bits()
-}
-
-/// A lane body's array literal of `length` holes, or of the `elements` its definitions
-/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
-/// `DELETED` where a collection is due, as `lane_new_object`.
-unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
-    // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    array.to_bits()
-}
 
 /// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
 #[repr(C)]
@@ -7196,8 +7172,8 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 
 impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
-    /// global object's cached data property; none for a binding in its TDZ or a miss.
+    /// does (`dispatch_fast::lane_load_global_name_refresh`): its global lexical binding's, else
+    /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
     pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
             super::field_cache::GlobalNameRead::Value(value, _) => Some(value),

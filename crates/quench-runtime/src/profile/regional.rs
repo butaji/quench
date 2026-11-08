@@ -1,5 +1,5 @@
 use super::Profile;
-use crate::bytecode::{ControlFlowLayout, DispatchClass, Instr, Op, ResidualProgram};
+use crate::bytecode::{DispatchClass, Instr, ResidualProgram};
 
 impl Profile {
     #[inline(always)]

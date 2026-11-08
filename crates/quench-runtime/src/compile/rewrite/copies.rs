@@ -24,9 +24,10 @@ pub(super) fn forward_move_sources(
         return false;
     };
     let scope = Scope::of(function);
-    let mut changed = Vec::new();
+    // The changed pcs, and the readers among them (each after its move) not to forward again.
+    let (mut changed, mut rewritten_readers) = (Vec::new(), crate::bitset::BitSet::new(function.code.len()));
     for pc in 0..function.code.len() {
-        if changed.contains(&pc) {
+        if rewritten_readers.contains(pc) {
             continue;
         }
         let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
@@ -34,6 +35,7 @@ pub(super) fn forward_move_sources(
         if let Some((at, rewritten)) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) {
             function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
             function.code[at] = rewritten;
+            rewritten_readers.insert(at);
             changed.extend([pc, at]);
         }
     }
