@@ -3,7 +3,7 @@
 //! only its known callers back to be planned again, not the whole module.
 use super::{Analysis, Host, Plan};
 use crate::bitset::BitSet;
-use crate::bytecode::Op;
+use crate::bytecode::{FieldLayout, InstructionField};
 
 impl<H: Host> Analysis<'_, H> {
     /// Each function's full plan from `allowed`, `None` outside the callable set, and the
@@ -39,7 +39,8 @@ impl<H: Host> Analysis<'_, H> {
             let function = self.code.function(caller);
             for packed in &function.code {
                 let instruction = super::super::dispatch_fast::decoded_instruction(function, *packed);
-                if instruction.op() == Op::CallKnown {
+                // A direct call names its callee in a function-index field.
+                if instruction.op().field_layout(InstructionField::B) == FieldLayout::FunctionIndex {
                     edges.push((u32::from(instruction.known_function_index()), caller as u32));
                 }
             }
