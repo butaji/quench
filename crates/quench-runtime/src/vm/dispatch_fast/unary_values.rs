@@ -19,14 +19,15 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
     if let Some(answer) = lane_value_query(vm, operator, operand) {
         return Some(answer);
     }
-    if operator == crate::bytecode::UNARY_TO_STRING && vm.is_string(operand) {
+    let pure = vm.converts_to_string_purely(operand);
+    if operator == crate::bytecode::UNARY_TO_STRING_PRIMITIVE && pure {
         return Some(operand);
     }
     if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {
         // SAFETY: the context's program outlives the lane run.
         return vm.unary(unsafe { &*(*cx).code }, operator, operand).ok();
     }
-    if !lane_pure_primitive(vm, operand) {
+    if !pure {
         return None;
     }
     // SAFETY: the context's program outlives the lane run.
@@ -34,12 +35,6 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
     // Converting to a string can allocate.
     note_allocation(vm);
     Some(value)
-}
-
-/// Whether converting `value` runs no guest code: a boolean, null, undefined, number or string.
-fn lane_pure_primitive<H: Host>(vm: &Vm<H>, value: Value) -> bool {
-    let primitive = value.as_bool().is_some() || value.is_null() || value.is_undefined();
-    primitive || value.as_number().is_some() || vm.is_string(value)
 }
 
 /// Logical not and the `typeof` operators: they read any value's truthiness or type, so no

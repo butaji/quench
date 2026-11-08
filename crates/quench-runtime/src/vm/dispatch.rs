@@ -1370,14 +1370,12 @@ impl<H: Host> Vm<H> {
                 };
                 self.write(f, i.result_register(), value);
             }
+            Op::StringConcat => {
+                let v = self.frame_string_concat(p, f, i.register_window())?;
+                self.write(f, i.result_register(), v);
+            }
             Op::Unary => {
-                let operator = i.unary_operator();
-                let operand = self.read(f, i.register_b());
-                let v = if operator == super::coercion::LOGICAL_NOT {
-                    self.logical_not(operand)
-                } else {
-                    self.unary(p, operator, operand)?
-                };
+                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }

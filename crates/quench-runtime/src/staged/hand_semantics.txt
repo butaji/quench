@@ -239,7 +239,7 @@ vm/dispatch_fast.rs MakeClosure 5
 vm/dispatch_fast.rs MakeConstArray 1
 vm/dispatch_fast.rs MakeObject 1
 vm/dispatch_fast.rs MakeObject2 4
-vm/dispatch_fast.rs MakeObjectLiteral 5
+vm/dispatch_fast.rs MakeObjectLiteral 4
 vm/dispatch_fast.rs MarkPrivateName 1
 vm/dispatch_fast.rs Move 11
 vm/dispatch_fast.rs Nop 1
@@ -270,7 +270,7 @@ vm/dispatch_fast.rs SuperCallCheck 2
 vm/dispatch_fast.rs SuperConstArrayObject2 4
 vm/dispatch_fast.rs ToNumeric 1
 vm/dispatch_fast.rs ToPropertyKey 3
-vm/dispatch_fast.rs Unary 5
+vm/dispatch_fast.rs Unary 4
 vm/dispatch_fast.rs WasmBranchTable 6
 vm/dispatch_fast.rs WasmF32Binary 2
 vm/dispatch_fast.rs WasmF32Unary 1
@@ -278,7 +278,7 @@ vm/dispatch_fast.rs WasmF64Binary 8
 vm/dispatch_fast.rs WasmF64Load 3
 vm/dispatch_fast.rs WasmF64Store 4
 vm/dispatch_fast.rs WasmF64Unary 3
-vm/dispatch_fast.rs WasmFillRegisters 4
+vm/dispatch_fast.rs WasmFillRegisters 3
 vm/dispatch_fast.rs WasmGlobalGet 1
 vm/dispatch_fast.rs WasmGlobalSet 1
 vm/dispatch_fast.rs WasmI32Add 5
