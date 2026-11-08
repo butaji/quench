@@ -12,7 +12,7 @@ fn compiled_lane_body(source: &str, name: &str) -> (Vm<crate::test_host::TestHos
     let function = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
     let method = vm.compile_lane_method(&program, function as u32,
-        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
+        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     (vm, program, method)
 }
 
@@ -118,7 +118,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let function = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap() as u32;
     let recompile = |vm: &mut Vm<crate::test_host::TestHost>| vm.compile_lane_method(&program, function,
-        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
+        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     assert_eq!(recompile(&mut vm).stable.globals.len(), 1, "written once, the global still folds");
     vm.heap.property_set(globals, slot, value);
     assert!(recompile(&mut vm).stable.globals.is_empty(), "written twice, the global is read at run time");
