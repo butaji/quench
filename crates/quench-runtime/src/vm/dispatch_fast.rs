@@ -2821,7 +2821,7 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
-use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_require_object_coercible, staged_to_numeric};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -4221,11 +4221,9 @@ script_handler! {
     /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
     /// so this handler makes no call and saves no registers.
     fn lane_load_this<>(cx, r, ip, i, view) {
-        let this = unsafe { (*cx).this };
-        if this.is_deleted() {
+        if !staged_load_this(r, view, unsafe { (*cx).this }, i.a) {
             sibling!(lane_load_frame_this::<H>, r, ip, view)
         }
-        r.set(i.a, this);
         next!(cx, r, following(ip), view)
     }
 }

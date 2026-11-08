@@ -2321,14 +2321,8 @@ impl Lowering<'_, '_> {
             }
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
-                let entry = self.entry.as_ref().expect("entry facts");
-                let this = self.builder.use_var(entry.this);
-                let bound = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, bound, exit);
-                self.set_tagged(state, instruction.result_register(), this);
-                state.proofs.headers[usize::from(instruction.result_register())] = state.proofs.headers[state.values.len()];
-                state.proofs.set_readable(usize::from(instruction.result_register()), state.proofs.readable.contains(state.values.len()));
-                state.proofs.receivers.insert(instruction.result_register());
+                self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                    crate::staged::Operation::LoadThis { destination: instruction.result_register() });
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
@@ -2686,7 +2680,7 @@ impl Lowering<'_, '_> {
         -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
-            state, edges, constants: &self.program.constants };
+            state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this) };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step

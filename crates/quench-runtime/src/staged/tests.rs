@@ -3,6 +3,8 @@ use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use crate::Value;
+use crate::value::NarrowLayout;
+use super::object::decode_narrow;
 
 /// The storage forms an exact-shape object can take, by how the interpreter's object API
 /// (independent of `staged`) describes it.
@@ -94,6 +96,13 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
 
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: Self::Fact) {
         self.registers[usize::from(register)] = value;
+    }
+
+    /// The test frame's activation holds no `this`.
+    fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
+
+    fn define_this(&mut self, _stage: &mut Concrete, destination: Register, this: u64) {
+        self.registers[usize::from(destination)] = this;
     }
 
     fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Self::Fact) {
@@ -335,4 +344,12 @@ fn staged_to_numeric_copies_numbers_and_leaves_for_the_rest() {
     for value in [Value::NULL, Value::UNDEFINED, Value::TRUE] {
         assert_eq!(convert(value), None, "{value:?}");
     }
+}
+
+#[test]
+fn staged_load_this_leaves_where_the_activation_holds_no_this() {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![Value::NULL.to_bits()], heap: None };
+    assert!(matches!(step(&mut stage, &mut frame, Operation::LoadThis { destination: 0 }), Step::Unresolved));
+    assert_eq!(frame.registers[0], Value::NULL.to_bits(), "a load that left writes nothing");
 }

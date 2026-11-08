@@ -37,6 +37,12 @@ impl Frame<Concrete> for NumberFrame {
             Domain::Float64 => NumberWord::Float(f64::from_bits(word)),
         };
     }
+    fn this(&mut self, _stage: &mut Concrete) -> u64 { unreachable!("Number operations read no this") }
+
+    fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, _this: u64) {
+        unreachable!("Number operations read no this")
+    }
+
     fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Domain) {
         let value = constant.value;
         match value.as_int() {

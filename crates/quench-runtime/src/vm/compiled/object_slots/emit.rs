@@ -142,7 +142,7 @@ mod tests {
         let [record, base] = builder.block_params(entry).try_into().unwrap();
         let miss = builder.create_block();
         let mut stage = Emit { builder: &mut builder, property_values: Some(base) };
-        let inline = crate::staged::inline_storage(&mut stage, record);
+        let inline = crate::staged::object::inline_storage(&mut stage, record);
         let layout = crate::staged::own_layout(&mut stage, record, inline, form,
             usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
         let value = crate::staged::read_slot(&mut stage, layout, slot);

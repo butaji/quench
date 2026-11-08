@@ -24,6 +24,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) state: &'a mut State,
     pub(super) edges: Edges,
     pub(super) constants: &'a [crate::bytecode::Constant],
+    /// The entry's `this` binding, where the lowering has entry facts.
+    pub(super) this: Option<Variable>,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -53,6 +55,23 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn move_register(&mut self, stage: &mut Emit<'_, '_>, destination: Register, source: Register) -> ir::Value {
         register_copy(stage.builder, self.registers, self.written, self.state, destination, source)
+    }
+
+    #[inline(always)]
+    fn this(&mut self, stage: &mut Emit<'_, '_>) -> ir::Value {
+        stage.builder.use_var(self.this.expect("a this read has entry facts"))
+    }
+
+    /// The entry's `this` and the facts the entry proved of it, kept beside the registers'.
+    #[inline(always)]
+    fn define_this(&mut self, stage: &mut Emit<'_, '_>, destination: Register, this: ir::Value) {
+        register_define(stage.builder, self.registers, self.written, self.state, destination, this,
+            RegisterFact::definition(Type::ANY, Representation::Tagged));
+        let (index, entry) = (usize::from(destination), self.state.values.len());
+        self.state.proofs.headers[index] = self.state.proofs.headers[entry];
+        let readable = self.state.proofs.readable.contains(entry);
+        self.state.proofs.set_readable(index, readable);
+        self.state.proofs.receivers.insert(destination);
     }
 
     #[inline(always)]

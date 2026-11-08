@@ -9,6 +9,17 @@ use crate::staged::{Concrete, Constant, Edge, Frame, NumberOperation, NumericFra
 struct LaneFrame<const ACC: u8> {
     registers: Registers,
     view: Carried,
+    /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
+    /// not hold it.
+    this: Value,
+}
+
+impl<const ACC: u8> LaneFrame<ACC> {
+    /// A frame for an operation that reads no `this`.
+    #[inline(always)]
+    fn new(registers: Registers, view: Carried) -> Self {
+        Self { registers, view, this: Value::DELETED }
+    }
 }
 
 impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
@@ -26,6 +37,16 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: Self::Fact) {
         self.registers.set(register, Value::from_bits(value));
+    }
+
+    #[inline(always)]
+    fn this(&mut self, _stage: &mut Concrete) -> u64 {
+        self.this.to_bits()
+    }
+
+    #[inline(always)]
+    fn define_this(&mut self, _stage: &mut Concrete, destination: Register, this: u64) {
+        self.registers.set(destination, Value::from_bits(this));
     }
 
     #[inline(always)]
@@ -73,7 +94,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 #[inline(always)]
 pub(super) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, register: u16) -> Option<Edge> {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match crate::staged::step(&mut stage, &mut frame, Operation::JumpIf { register, taken: TAKEN }) {
         Step::Control(edge) => Some(edge),
         Step::Unresolved => None,
@@ -86,7 +107,7 @@ pub(super) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, reg
 #[inline(always)]
 pub(super) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match crate::staged::step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
@@ -99,7 +120,7 @@ pub(super) fn staged_require_object_coercible(r: Registers, view: Carried, regis
 #[inline(always)]
 pub(super) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match crate::staged::step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination, source })) {
         Step::Value(_) => true,
         Step::Unresolved => false,
@@ -107,11 +128,24 @@ pub(super) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, s
     }
 }
 
+/// The activation's `this` into `destination` by the staged LoadThis; false, writing
+/// nothing, where the lane does not hold it (`this` is `Value::DELETED`).
+#[inline(always)]
+pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this };
+    match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
+        Step::Value(_) => true,
+        Step::Unresolved => false,
+        Step::Control(_) => unreachable!("a load transfers no control"),
+    }
+}
+
 /// The edge a staged unconditional jump takes.
 #[inline(always)]
 pub(super) fn staged_jump(r: Registers, view: Carried) -> Edge {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
         Step::Control(edge) => edge,
         _ => unreachable!("a jump produces no value"),
@@ -121,7 +155,7 @@ pub(super) fn staged_jump(r: Registers, view: Carried) -> Edge {
 lane_handler! {
     pub(super) fn lane_move<ACC: u8>(cx, r, ip, i, view) {
         let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = LaneFrame::<ACC> { registers: r, view };
+        let mut frame = LaneFrame::<ACC>::new(r, view);
         let Step::Value(value) = crate::staged::step(&mut stage, &mut frame, Operation::Move {
             destination: i.a, source: i.b }) else { unreachable!("a move produces a value") };
         next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
@@ -131,7 +165,7 @@ lane_handler! {
 lane_handler! {
     pub(super) fn lane_load_const<>(cx, r, ip, i, view) {
         let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+        let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
         let Step::Value(value) = crate::staged::step(&mut stage, &mut frame, Operation::LoadConst {
             destination: i.a, constant: Constant::untyped(i.constant()) })
             else { unreachable!("a constant produces a value") };
