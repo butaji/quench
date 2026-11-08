@@ -1919,7 +1919,7 @@ impl ProgramStore {
         {
             return false;
         }
-        entry.jit_tiers.note_wasm_entry(function, true)
+        entry.jit_tiers.note_wasm_entry(function, true) && self.wasm_tier_has_room() // else nothing is attempted
     }
 
     pub(super) fn wasm_tier(
