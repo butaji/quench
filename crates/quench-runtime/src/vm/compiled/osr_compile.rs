@@ -58,12 +58,11 @@ pub(in crate::vm) fn start_osr_region(
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
-    track_backedges: bool,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let verified = osr_loop::verify_region(region, observation).ok()?;
     let (function, widenings) =
-        osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt), track_backedges)?;
+        osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt))?;
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let loads = || observation.native_field_loads.iter().flatten();
     let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
