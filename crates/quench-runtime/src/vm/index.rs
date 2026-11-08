@@ -293,11 +293,10 @@ impl<H: Host> Vm<H> {
     /// `base[key]` for a non-negative integer key that neither an ordinary object or array
     /// `base` nor anything on its prototype chain holds: `undefined`, as [[Get]] finds it. An
     /// object on the chain holds the index as an element of an array, as a property keyed by
-    /// the index's canonical atom (none exists without one, `lookup_array_index_atom`), or
-    /// through exotic behaviour, where this declines.
+    /// the index's canonical atom (`shape_names_index`), or through exotic behaviour, where
+    /// this declines.
     pub(super) fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let atom = self.lookup_array_index_atom(index).map(PropertyKey::string);
         let mut current = base;
         loop {
             let data = self.object_data(current)?;
@@ -307,7 +306,7 @@ impl<H: Host> Vm<H> {
                 || data.is_module_namespace()
                 || data.deferred_module().is_some()
                 || self.heap.sparse_length(current).is_some()
-                || atom.is_some_and(|key| self.property_shape_slot(data.shape(), key).is_some())
+                || self.shape_names_index(data.shape(), index)
             {
                 return None;
             }
