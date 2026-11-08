@@ -13300,7 +13300,7 @@ unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value]
 }
 
 /// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
-/// `receiver` and `args`: the in-place cases every tier shares (`Vm::steady_native_value`),
+/// `receiver` and `args`: the in-place cases every tier shares (`Vm::in_place_native_value`),
 /// the lane's own, else `lane_string_or_native_call`. `None` leaves the call to the general path,
 /// which raises an error the call stashed in `Vm::lane_raised`. Out of line: its calls take
 /// stack temporaries, which a handler inlining them would hold on its common path.
@@ -13332,18 +13332,6 @@ fn lane_native_value<H: Host>(
                 return value;
             }
         }
-        _ if let Some(value) = vm.steady_native_value(native, receiver, args) => return Some(value),
-        Native::MapSet if vm.map_set(receiver, args) => {
-            note_allocation(vm);
-            return Some(receiver);
-        }
-        Native::ObjectCreate if args.get(1).is_none_or(|properties| properties.is_undefined()) => {
-            let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
-            if let Some(object) = vm.object_create(proto) {
-                note_allocation(vm);
-                return Some(object);
-            }
-        }
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
             return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
         }
@@ -13373,6 +13361,7 @@ mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
+mod in_place_natives;
 mod native_calls;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
@@ -13383,7 +13372,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
-    pub(super) fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
             Native::ArrayPush => self.array_push_dense(receiver, args),
@@ -13397,6 +13386,7 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
     }
+
 }
 
 /// Whether liveness proves the result register of the running function's call record `i`
@@ -13885,10 +13875,9 @@ fn lane_string_or_native_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if let Some(value) = vm.pure_string_method_call(code, native, receiver, args) {
-        return Some(value);
-    }
-    if let Some(value) = lane_pure_native(vm, code, native, callee, receiver, args) {
+    if let Some(value) = vm.in_place_native_value(code, native, callee, receiver, args) {
+        // An in-place case may allocate; a due collection runs at the lane's next safepoint.
+        note_allocation(vm);
         return Some(value);
     }
     lane_call_native(cx, ip, native, callee, receiver, args)
@@ -13947,120 +13936,6 @@ fn lane_promise_native<H: Host>(
     }
 }
 
-/// A native call whose common case runs no guest code and observes no frame, answered in
-/// place so the lane's activations need not become frames (`lane_call_native`): a dense
-/// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
-/// allocates its string, `Number`'s predicates, which coerce nothing
-/// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
-/// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
-/// ToBoolean runs no guest code, `String` called with a string or an immediate primitive,
-/// `ArrayBuffer.isView`, an array iterator's step over a plain array
-/// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
-/// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
-/// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
-/// `Object.is`, `Symbol.for`
-/// of a string, and the Map and Set mutators on their own collections
-/// (`Vm::plain_collection_mutation`), a DataView element get or set that raises nothing
-/// (`Vm::plain_data_view_access`), and a Date getter of a Date (`Vm::plain_date_get`). `None` leaves any other call to `lane_call_native`.
-#[inline(never)]
-fn lane_pure_native<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    native: Native,
-    callee: Value,
-    receiver: Value,
-    args: &[Value],
-) -> Option<Value> {
-    let native = &native;
-    let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
-    match native {
-        Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
-        Native::StringFromCharCode => {
-            let text = vm.from_char_code_numbers(args)?;
-            note_allocation(vm);
-            Some(text)
-        }
-        Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
-            vm.plain_own_property_query(code, *native, receiver, *args.first()?)
-        }
-        Native::ArraySplice => {
-            let removed = vm.plain_array_splice(code, callee, receiver, args)?;
-            note_allocation(vm);
-            Some(removed)
-        }
-        native if super::data_view::data_view_element(*native) => {
-            vm.plain_data_view_access(*native, receiver, args)
-        }
-        Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
-        Native::ArrayShift => vm.plain_array_shift(receiver),
-        native if super::date::date_reads(*native) => vm.plain_date_get(*native, receiver),
-        Native::ObjectHasOwn => vm.plain_own_property_query(
-            code,
-            Native::ObjectPrototypeHasOwnProperty,
-            *args.first()?,
-            *args.get(1)?,
-        ),
-        // Pure of any arguments: SameValue.
-        Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
-        // `super` reads (`Reflect.get` and `Reflect.getPrototypeOf` of a home object): an
-        // ordinary target's data property, whose read ignores the receiver, and its prototype.
-        Native::ReflectGet => {
-            let target = *args.first()?;
-            vm.heap.ordinary_object(target)?;
-            vm.plain_keyed_get(target, *args.get(1)?)
-        }
-        Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
-        // The registry lookup of a string key, which ToString leaves as it is.
-        Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) => {
-            let symbol = vm.call_symbol_native(code, Native::SymbolFor, args).ok()?;
-            note_allocation(vm);
-            Some(symbol)
-        }
-        native @ (Native::MapSet
-        | Native::MapDelete
-        | Native::MapClear
-        | Native::SetAdd
-        | Native::SetDelete
-        | Native::SetClear) => vm.plain_collection_mutation(code, *native, receiver, args),
-        Native::ArrayIteratorNext => {
-            let result = vm.plain_array_iterator_next(callee, receiver)?;
-            note_allocation(vm);
-            Some(result)
-        }
-        Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
-        Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
-        // `String(value)` of a string is that string; of a primitive whose ToString reads no
-        // cell, its spelling (`coercion::immediate_to_string`).
-        Native::String if !args.is_empty() => {
-            if vm.heap.string(argument).is_some() {
-                return Some(argument);
-            }
-            let value = vm.heap.alloc_string(super::coercion::immediate_to_string(argument)?);
-            note_allocation(vm);
-            Some(value)
-        }
-        // `Number(value)` of a primitive whose ToNumber reads no cell but a string's text, as
-        // Node's `utf8Write` converts its offset and length; a BigInt, a Symbol and any object
-        // take the general call.
-        Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
-        // `Number.prototype.toString` of a Number primitive in decimal, as a status code's
-        // `toString()` reads; a wrapper object, another radix or a radix to coerce take the
-        // general call.
-        Native::NumberString
-            if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
-        {
-            let number = receiver.as_number()?;
-            let text = vm.heap.alloc_string(super::wtf16::JsString::from_number(number));
-            note_allocation(vm);
-            Some(text)
-        }
-        Native::GlobalIsNaN | Native::GlobalIsFinite => {
-            super::number::global_number_predicate(*native, vm.primitive_to_number(argument)?).map(Value::boolean)
-        }
-        native => super::number::number_predicate(*native, argument).map(Value::boolean),
-    }
-}
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
 /// makes it from the running frame: with the frame's resume PC published and the arguments
