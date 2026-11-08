@@ -730,7 +730,7 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_c
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 66
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 13
+complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 259
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::element_read_body 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::float_arithmetic 23
@@ -909,7 +909,7 @@ complexity crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::proxy_own_
 complexity crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::typed_array_index_key 11
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 71
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_property_with_receiver 12
-complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 16
+complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 13
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 18
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_load 17
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 20
@@ -1448,7 +1448,7 @@ file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 577
 file-lines crates/quench-runtime/src/value.rs 1020
 file-lines crates/quench-runtime/src/value_vec.rs 1479
-file-lines crates/quench-runtime/src/vm.rs 3764
+file-lines crates/quench-runtime/src/vm.rs 3758
 file-lines crates/quench-runtime/src/vm/array.rs 1199
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 668
@@ -1470,7 +1470,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1944
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23027
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23025
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3029
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 655
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1480,7 +1480,7 @@ file-lines crates/quench-runtime/src/vm/error.rs 2691
 file-lines crates/quench-runtime/src/vm/eval.rs 1359
 file-lines crates/quench-runtime/src/vm/gc.rs 1305
 file-lines crates/quench-runtime/src/vm/generator.rs 1803
-file-lines crates/quench-runtime/src/vm/index.rs 918
+file-lines crates/quench-runtime/src/vm/index.rs 917
 file-lines crates/quench-runtime/src/vm/intl_collator.rs 695
 file-lines crates/quench-runtime/src/vm/intl_datetime.rs 1997
 file-lines crates/quench-runtime/src/vm/intl_datetime_parts.rs 610
@@ -1499,7 +1499,7 @@ file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 920
 file-lines crates/quench-runtime/src/vm/object.rs 4953
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
-file-lines crates/quench-runtime/src/vm/object_get.rs 1462
+file-lines crates/quench-runtime/src/vm/object_get.rs 1346
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
 file-lines crates/quench-runtime/src/vm/object_static.rs 906
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
@@ -3023,7 +3023,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferr
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 97
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 243
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 251
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 129
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 128
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 1138
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::direct_callers_subscribe_to_callee_slot_dependencies 58
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::field_pair_census_tests::pair_census_distinguishes_first_and_second_rejection 47
@@ -3361,12 +3361,10 @@ function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::proxy_
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::to_property_descriptor 41
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 257
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_property_with_receiver 60
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 45
+function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 41
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 104
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_load 69
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_get 67
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 114
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::validate_proxy_get 44
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 104
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_get_prototype_of 67
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_extensible 50
