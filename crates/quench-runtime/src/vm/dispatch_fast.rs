@@ -280,30 +280,6 @@ impl LoopSite {
     }
 }
 
-/// A loop site's compilations: the current code, if any, and the values earlier code found
-/// were no `i32`, which the next compilation holds as `f64`s.
-#[derive(Default)]
-struct LoopTier {
-    code: Option<Rc<crate::code_dependencies::PublishedCode<super::compiled::CompiledOsrRegion>>>,
-    widened: std::collections::BTreeSet<super::compiled::Widening>,
-    compilations: u32,
-}
-
-impl LoopTier {
-    fn is_published(&self) -> bool {
-        self.code.as_ref().is_some_and(|code| code.is_published())
-    }
-
-    /// Whether the site has native code or may still compile it. A site whose compilations
-    /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
-    /// the interpreter without reading an entry: reading one at every iteration had cost
-    /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
-        self.is_published()
-            || (self.compilations < TIERS.loops.max_compilations && super::compiled::loop_tier_compiles(policy))
-    }
-}
-
 type Ip = *const LaneInstruction;
 
 /// A function's lane view: one record per instruction, and the one register
@@ -637,6 +613,9 @@ mod lane_body_stats;
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
+#[path = "loop_tier.rs"]
+mod loop_tier;
+use loop_tier::{lane_loop_compile, LoopTier};
 use lane_body_tier::LaneBodyHistory;
 use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
@@ -957,7 +936,7 @@ impl LaneView {
         for site in &self.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
-                && publication.lease().is_some_and(|code| !code.shape_dependencies.is_empty()) {
+                && publication.lease().is_some_and(|code| !code.facts.shape_dependencies.is_empty()) {
                 publication.retire();
             }
         }
@@ -8090,6 +8069,9 @@ fn lane_loop_native<H: Host>(
     // record remains contiguous in this lane view.
     let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
     // The record is filled where it lives, so its words are neither cleared nor copied.
+    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
+        return LoopAttempt::Declined;
+    }
     let mut entry = super::compiled::LoopEntry::new();
     if lane_loop_entry(cx, r, region, &mut entry).is_none() {
         site.declines.set(site.declines.get() + 1);
@@ -8100,7 +8082,7 @@ fn lane_loop_native<H: Host>(
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {
-        LoopContinuation::Jump => LoopAttempt::Declined,
+        LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
         LoopContinuation::Exit(pc) => LoopAttempt::Leave(match region.inlined_exit(pc) {
             Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
@@ -8341,6 +8323,8 @@ enum LoopContinuation {
     Exit(u32),
     /// The backward jump's safepoint ends the execution termination stopped.
     Safepoint,
+    /// The region's code compiles: take the jump, which declines nothing.
+    Compiling,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -8361,84 +8345,9 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        tier.compilations += 1;
-        if site.diagnostics {
-            site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
-        }
-        // SAFETY: the lane's VM is live, and nothing borrows it across the call.
-        unsafe { vm(cx) }.host.before_native_compilation();
-        let captures = entry.captures(region.captures.len());
-        let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
-        let machine = unsafe { vm(cx) };
-        let (properties_base, properties_len) = machine.heap.native_property_values();
-        let native_heap_available =
-            machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
-        let native_field_loads = region
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(index, field)| {
-                if native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index) {
-                    machine.native_field_load_descriptors(field.cache_site)
-                } else {
-                    Default::default()
-                }
-            })
-            .collect::<Vec<_>>();
-        let heap = &machine.heap;
-        // A field's array is the value its entry word holds, not yet the register's.
-        let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
-            Some(super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(region, *index),
-            _ => r.get(register),
-        };
-        let int32_elements = |register| {
-            heap.record_array(array_value(register)).is_some_and(|array| {
-                array.elements().iter().take(TIERS.loops.element_sample).all(|value| value.as_int().is_some())
-            })
-        };
-        let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
-        // An inlined callee's register is no register of the running activation: it holds
-        // nothing at entry.
-        let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
-        let observation = super::compiled::Observation {
-            register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
-            int32_elements: &int32_elements,
-            only_int32: &only_int32,
-            captures: &captures,
-            fields: &fields,
-            native_field_loads: &native_field_loads,
-            widened: &tier.widened,
-        };
-        let track_backedges = unsafe { vm(cx) }
-            .programs
-            .js_jit_general_dispatch_enabled();
-        tier.code =
-            super::compiled::compile_osr_region(
-                region,
-                &observation,
-                &unsafe { vm(cx) }.execution_interrupt,
-                heap.memory_policy(),
-                track_backedges,
-            ).map(crate::code_dependencies::PublishedCode::new).map(Rc::new);
-        // SAFETY: as above; the observation's borrow of the heap has ended.
-        unsafe { vm(cx) }.host.after_native_compilation();
-        if let Some(publication) = &tier.code {
-            let code = publication.lease().expect("new publication");
-            let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-            let heap = &mut unsafe { vm(cx) }.heap;
-            let admitted = code.shape_dependencies.iter().all(|shape| heap.subscribe_shape(*shape, &dependent))
-                && code.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, &dependent));
-            if !admitted {
-                publication.retire();
-            }
-        }
-        if site.diagnostics && tier.is_published() {
-            site.compile_successes
-                .set(site.compile_successes.get().saturating_add(1));
-        }
+        lane_loop_compile(cx, r, site, region, entry, &mut tier);
         if !tier.is_published() {
-            tier.compilations = TIERS.loops.max_compilations;
-            return LoopContinuation::Jump;
+            return LoopContinuation::Compiling;
         }
     }
     let publication = Rc::clone(tier.code.as_ref().expect("compiled above"));
@@ -13366,13 +13275,13 @@ script_handler! {
         let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
         };
-        // The function a call through `call` calls is the site's callee for a body that
-        // inlines it (`lane_unit::Planner::through_call`).
+        // The function a forwarded call calls is the site's callee, through its native, for a
+        // body that inlines it (`lane_unit::Planner::through_call`).
         if through_call
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
-            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function });
+            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(kind @ FunctionKind::Native(_)) = kind {
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
@@ -16037,7 +15946,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
         for site in &view.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
-                && publication.lease().is_some_and(|code| code.shape_dependencies.contains(&shape)) {
+                && publication.lease().is_some_and(|code| code.facts.shape_dependencies.contains(&shape)) {
                 publications.push(publication.clone());
             }
         }
@@ -16128,12 +16037,12 @@ fn lane_materialize_frames<H: Host>(
         let callee = unsafe { &*frame.callee };
         let vm = unsafe { vm(cx) };
         let window = vm.lane_stack.values.len();
-        debug_assert_eq!(vm.lane_stack.values.as_ptr().wrapping_add(window), frame.window.cast_const());
+        let registers = unsafe { vm.lane_stack.values.as_mut_ptr().add(window) };
         unsafe { vm.lane_stack.values.set_len(window + usize::from(callee.registers)) };
-        let call = frame.call as Ip;
+        let call = callee.call as Ip;
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
-        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(frame.window), window, argc, Value::from_bits(frame.this), false);
+        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
         let method = callee.body.as_ref();
         // SAFETY: the active caller's code lease pins this exact callee body through
         // recovery, even if its publication has already been retired.
