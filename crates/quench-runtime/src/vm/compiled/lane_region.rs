@@ -365,6 +365,8 @@ struct Lowering<'a, 'f> {
     generic: &'a [usize],
     /// Whether the entry is proving a lane body's inputs: its guards share `entry_exit`.
     proving_entry: bool,
+    /// Whether a previous body left at the instruction being lowered (`generic`): its reads probe the VM's caches.
+    left_here: bool,
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
@@ -1276,8 +1278,7 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
-        proving_entry: false,
-        entry_exit: None,
+        proving_entry: false, left_here: false, entry_exit: None,
         direct,
         frame_captures,
         context,
@@ -2255,9 +2256,8 @@ impl Lowering<'_, '_> {
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        if self.consumed.contains(pc) {
-            return true;
-        }
+        if self.consumed.contains(pc) { return true; }
+        self.left_here = self.generic.contains(&pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
         }
@@ -4047,7 +4047,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4081,7 +4081,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
-        let probed = NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
