@@ -16,15 +16,10 @@ script_handler! {
     }
 }
 
-/// `base[key]` of a string `key` that names no array index, read by its atom as a named
-/// read is (`Vm::plain_named_get`); `None` for any other key, or a read that path declines.
+/// `base[key]` of a string `key` that names no array index (`Vm::plain_string_keyed_get`).
 #[inline(always)]
 fn named_key_read<H: Host>(vm: &Vm<H>, base: Value, key: Value) -> Option<Value> {
-    let atom = vm.lookup_string_atom(key)?;
-    if vm.atom_class(atom).contains(super::super::object::AtomClass::ARRAY_INDEX) {
-        return None;
-    }
-    vm.plain_named_get(base, atom)
+    vm.plain_string_keyed_get(base, key)
 }
 
 /// `named_key_read` in the generic order (`lane_index_slot_element`): the site then reads
