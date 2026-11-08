@@ -1534,6 +1534,18 @@ struct JsExactFallback {
 }
 
 impl JsExactFallback {
+    /// The block completing the frame with the value in register `destination` (the native
+    /// `Return`), left current where it was.
+    fn register_return(&self, builder: &mut FunctionBuilder<'_>, arguments: ir::Value, destination: i32) -> ir::Block {
+        let (current, block) = (builder.current_block().expect("an instruction lowers in a block"), builder.create_block());
+        builder.switch_to_block(block);
+        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, destination);
+        builder.ins().store(MemFlagsData::trusted(), value, self.result_pointer, 0);
+        emit_js_return_status(builder, self.pc);
+        builder.switch_to_block(current);
+        block
+    }
+
     fn emit(&self, builder: &mut FunctionBuilder<'_>, fallback: ir::Block) {
         builder.switch_to_block(fallback);
         emit_js_step_fallback(
@@ -1591,25 +1603,6 @@ fn emit_js_own_field_get(
     let value = object;
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
-    exact.emit(builder, fallback);
-}
-
-/// Lower a returning data-field read: the value `emit_js_cached_field_slot` finds becomes
-/// the frame's result as the native `Return` makes it, a requested interrupt first taking
-/// the exact-PC callout; any failed proof resumes `Vm::step` at this GetField PC.
-fn emit_js_own_field_return(
-    builder: &mut RegionCore<'_>,
-    arguments: ir::Value,
-    payload: ir::Value,
-    receiver: JsFieldReceiver,
-    site: u16,
-    result_pointer: ir::Value,
-    exact: &JsExactFallback,
-) {
-    let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-    emit_js_guarded_return(builder, value, result_pointer, exact.pc, fallback);
     exact.emit(builder, fallback);
 }
 
@@ -2823,12 +2816,13 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
+        // A read that returns its value (`return object.field`, `Recipe::ReturnResult`) is
+        // the read, then the native `Return` of its register.
+        let field_returns = instruction.returns_from_frame();
         if instruction.op() == Op::GetField
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
-            && !instruction.writes_current_this()
+            && instruction.result_flags() == if field_returns { RETURN_REGISTER } else { 0 }
             && instruction.numeric_local_target().is_none()
-            && let Some(next) = next
+            && (field_returns || next.is_some())
             && let Some((base, sites)) = match instruction.field_lookup() {
                 Some(FieldLookup::Atom { base, atom, cache_site }) => Some((base, smallvec::smallvec![(atom, cache_site)])),
                 Some(FieldLookup::Site(site)) => program.field_sites.get(site).map(|site| (site.base,
@@ -2839,31 +2833,9 @@ pub(super) fn lower_js_general_dispatch(
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
             let exact = JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc };
+            let next = next.filter(|_| !field_returns)
+                .unwrap_or_else(|| exact.register_return(&mut builder, arguments, destination_offset));
             emit_js_own_field_get(&mut builder, arguments, payload, receiver, &sites, destination_offset, next, &exact, narrow_table);
-            general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
-            continue;
-        }
-        // A GetField that returns its value (`return object.field`), as a getter body is: the
-        // read, then the native `Return`'s completion.
-        if instruction.op() == Op::GetField
-            && (instruction.result_flags() == 0
-                || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
-            && instruction.returns_from_frame()
-            && !instruction.writes_current_this()
-            && instruction.numeric_local_target().is_none()
-            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
-            && let Some(receiver) = js_field_receiver(base, &register_offset)
-        {
-            let exact = JsExactFallback {
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            };
-            emit_js_own_field_return(&mut builder, arguments, payload, receiver, cache_site, result_pointer, &exact);
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }

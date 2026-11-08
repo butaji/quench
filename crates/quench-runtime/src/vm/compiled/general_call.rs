@@ -89,7 +89,7 @@ fn emit_returning_continuation(builder: &mut FunctionBuilder<'_>, (arguments, pa
         builder.ins().brif(tail_calls, fallback, &[], call, &[]);
         builder.switch_to_block(call);
     }
-    emit_register_return(builder, (arguments, destination), exact)
+    exact.register_return(builder, arguments, destination)
 }
 
 /// A native's in-place case stores its value in `destination` and continues at `next`; a
@@ -104,19 +104,6 @@ fn emit_builtin_shortcut(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     builder.ins().jump(next, &[]);
     builder.switch_to_block(user);
-}
-
-/// The block completing the frame with the value in `destination` (the native `Return`),
-/// left current where it was.
-fn emit_register_return(builder: &mut FunctionBuilder<'_>, (arguments, destination): (ir::Value, i32),
-    exact: &JsExactFallback) -> ir::Block {
-    let (current, block) = (builder.current_block().expect("a call lowers in a block"), builder.create_block());
-    builder.switch_to_block(block);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, destination);
-    builder.ins().store(MemFlagsData::trusted(), value, exact.result_pointer, 0);
-    super::emit_js_return_status(builder, exact.pc);
-    builder.switch_to_block(current);
-    block
 }
 
 /// Lowers the plain `new` at `pc` frameless, else as an intrinsic array
