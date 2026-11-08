@@ -6,6 +6,8 @@ use crate::code_dependencies::{DependentCode, SlotDependency};
 use std::rc::Rc;
 
 impl ValueArena {
+    /// The slot's observation and its shape's departures together (tests of both tables).
+    #[cfg(test)]
     pub(crate) fn subscribe_slot(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
         let Some(owner) = self.admits_slot_dependency(dependency) else { return false };
         self.subscribe_shape(dependency.shape, code) && self.slot_readers.subscribe(owner, code)

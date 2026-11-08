@@ -25,7 +25,7 @@ impl ProgramStore {
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let method = published.lease().expect("new publication");
-        if !crate::vm::compiled::subscribe_lane_dependencies(&method.slot_dependencies, &method.stable, &code, heap, method_atoms) {
+        if !method.dependencies.subscribe(&method.stable, &code, heap, method_atoms) {
             published.retire();
             return None;
         }

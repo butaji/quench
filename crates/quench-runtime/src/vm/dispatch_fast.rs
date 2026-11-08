@@ -14917,9 +14917,10 @@ script_handler! {
             }
             next!(cx, r, base, Carried::script(cx))
         }
-        // SAFETY: the activation just set the context to its own receiver.
-        let this = unsafe { (*cx).this };
-        let receiver = if i.b != 0 && !this.is_deleted() { this } else { Value::DELETED };
+        // A frame activation keeps its `this` in the frame (`lane_this`); an uninitialized
+        // one stays `DELETED`, at which the body's `LoadThis` leaves for the general path.
+        // SAFETY: the activation just set the context to its own receiver and frame.
+        let receiver = if i.b != 0 { unsafe { lane_this(cx) }.unwrap_or(Value::DELETED) } else { Value::DELETED };
         // SAFETY: the activation just set the context to its own captures.
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
@@ -15201,7 +15202,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert!(!root_target.view.is_null());
     let leaf_method = vm.compile_lane_method(&program, target.function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
-    assert!(!leaf_method.slot_dependencies.is_empty());
+    assert!(!leaf_method.dependencies.slots.is_empty());
     let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
@@ -15221,7 +15222,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let root_method = vm.compile_lane_method(&program, root_target.function,
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
-    assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
+    assert_eq!(root_method.dependencies.slots, leaf_body.dependencies.slots);
     let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);

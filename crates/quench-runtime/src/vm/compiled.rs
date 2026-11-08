@@ -6697,31 +6697,9 @@ struct JsStepDispatch {
     outcome: Option<JsNativeStep>,
 }
 
-/// The slots a lane body's field reads and its direct callees' bodies depend on, once each.
-/// Makes `code` retire when a fact a lane body's code took changes: a slot's type, or one
-/// of its Stable facts; `false` where a reader table is full.
-pub(super) fn subscribe_lane_dependencies(slots: &[crate::code_dependencies::SlotDependency],
-    stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
-    heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-    slots.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
-        && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
-        && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
-        && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
-}
-
-fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
-    -> Vec<crate::code_dependencies::SlotDependency> {
-    let mut slot_dependencies: Vec<_> = fields.values().flatten()
-        .filter_map(|field| field.slot_dependency())
-        .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
-        .collect();
-    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-    slot_dependencies.dedup();
-    slot_dependencies
-}
-
 pub(super) struct LaneMethod {
-    pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// The slot observations and holder shapes its code relies on (`LaneDependencies`).
+    pub(super) dependencies: lane_compile::LaneDependencies,
     /// The Stable facts its code folded, each a dependency its publication takes.
     pub(super) stable: lane_region::StableFacts,
     /// The word its code reads at its invalidation points, set when it retires.
@@ -16041,7 +16019,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
-        assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
+        assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
@@ -16115,7 +16093,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
-            assert!(!method.slot_dependencies.is_empty());
+            assert!(!method.dependencies.slots.is_empty());
             let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");

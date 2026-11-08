@@ -223,9 +223,13 @@ impl<H: Host> Vm<H> {
         let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget);
         self.host.after_native_compilation();
         let (plan, native) = planned?;
+        // A body that cannot amortize a lane entry would serve native callers only
+        // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
+        // than compile code no caller may ever run.
+        if !amortizes_entry(&plan.unit) { return None; }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
-        if !subscribe_lane_dependencies(&plan.slot_dependencies(), &plan.lowered.region.stable,
+        if !plan.dependencies().subscribe(&plan.lowered.region.stable,
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
             return None;
         }
@@ -335,9 +339,9 @@ impl LanePlan {
         reason.exceeds_code_budget() && !self.unit.frames.is_empty() && self.budget > 0
     }
 
-    /// The slot types its code relies on, its direct callees' included.
-    fn slot_dependencies(&self) -> Vec<crate::code_dependencies::SlotDependency> {
-        lane_slot_dependencies(&self.fields, &self.direct)
+    /// The facts its code relies on, its direct callees' included.
+    fn dependencies(&self) -> LaneDependencies {
+        LaneDependencies::of(self.fields.values().flatten().copied(), &self.direct)
     }
 
     /// The method its compiled `code` makes, published to executable memory. The method
@@ -345,12 +349,10 @@ impl LanePlan {
     fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
-        let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-        let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions;
+        let amortizes = amortizes_entry(unit);
         let closed = unit.instructions.iter().enumerate()
             .all(|(pc, instruction)| instruction.op() != Op::Call || self.direct_sites.contains_key(&pc));
-        let (slot_dependencies, recovery_space) = (self.slot_dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
+        let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();
         let memory = CodeMemory::new(code)?;
@@ -364,7 +366,7 @@ impl LanePlan {
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         Some(LaneMethod {
-            slot_dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.fault_poll),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
@@ -399,4 +401,80 @@ fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
     }
     targets.truncate(kept);
     targets
+}
+
+/// Whether a body has work that amortizes an entry, which costs a few hundred instructions
+/// the lane's own run of a short leaf never pays: a loop, an inlined call, or length
+/// (`TIERS.lane_body.min_instructions`).
+fn amortizes_entry(unit: &lane_unit::Unit) -> bool {
+    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
+    loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions
+}
+
+/// What a lane body's code relies on beyond its guards, its direct callees' included, once
+/// each. A receiver's shape is guarded at each field use (and proved again after any call,
+/// `State::call_effect`), so an object leaving it falls out at the guard: only its slots'
+/// observations are dependencies, and a compaction retires code that names shape ids
+/// (`LaneView::invalidate_shape_bindings`). A holder's (prototype's) layout is read
+/// without a guard, so its departures are dependencies too.
+#[derive(Default)]
+pub(in crate::vm) struct LaneDependencies {
+    pub(in crate::vm) slots: Vec<crate::code_dependencies::SlotDependency>,
+    departure_shapes: Vec<u32>,
+}
+
+impl LaneDependencies {
+    fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
+        let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
+            .chain(direct.iter().flat_map(|callee| callee.body.dependencies.slots.iter().copied())).collect();
+        slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
+        slots.dedup();
+        let mut departure_shapes: Vec<_> = loads.filter_map(|load| load.holder)
+            .chain(direct.iter().flat_map(|callee| callee.body.dependencies.departure_shapes.iter().copied())).collect();
+        departure_shapes.sort_unstable();
+        departure_shapes.dedup();
+        Self { slots, departure_shapes }
+    }
+
+    /// Makes `code` retire when a fact it took changes: a slot's observation, a holder
+    /// shape's departure, or one of its Stable facts; `false` where a reader table is full.
+    pub(in crate::vm) fn subscribe(&self, stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
+        heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
+        self.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
+            && self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
+            && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
+            && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+            && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LaneDependencies;
+    use crate::code_dependencies::{CodeReaders, DependentCode, PublishedCode, SlotDependency};
+    use crate::heap::{Heap, Object};
+    use crate::typed_ir::Type;
+    use crate::Value;
+    use std::rc::Rc;
+
+    /// A receiver leaving its shape keeps a lane body's code (its field reads guard the
+    /// shape at each use); a holder leaving its shape retires it (its layout is read unguarded).
+    #[test]
+    fn lane_dependencies_retire_at_holder_departures_only() {
+        for (holder, retires) in [(false, false), (true, true)] {
+            let mut heap = Heap::new();
+            heap.track_slot_representations(&[(0, None), (1, None), (1, None)]);
+            let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], false);
+            let object = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
+            let dependencies = LaneDependencies {
+                slots: vec![SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }],
+                departure_shapes: if holder { vec![1] } else { Vec::new() },
+            };
+            let code: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));
+            assert!(dependencies.subscribe(&Default::default(), &code, &mut heap, &mut CodeReaders::default()));
+            heap.set_object_shape(object, 2);
+            assert_eq!(code.is_published(), !retires, "holder={holder}");
+        }
+    }
 }
