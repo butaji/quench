@@ -1535,7 +1535,6 @@ file-lines crates/quench-runtime/src/vm/typed_array_access.rs 964
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
 file-lines crates/quench-runtime/src/vm/vector_region.rs 950
 file-lines crates/quench-runtime/src/vm/wasm.rs 6502
-file-lines crates/quench-runtime/src/vm/wasm_gc.rs 517
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1418
 file-lines crates/quench-runtime/src/vm/wasm_js.rs 1978
 file-lines crates/quench-runtime/src/vm/wasm_table.rs 1038
@@ -1543,7 +1542,7 @@ file-lines crates/quench-runtime/src/vm/wtf16.rs 1424
 file-lines crates/quench-runtime/src/wasm.rs 2153
 file-lines crates/quench-runtime/src/wasm/constant.rs 980
 file-lines crates/quench-runtime/src/wasm/control.rs 1087
-file-lines crates/quench-runtime/src/wasm/gc.rs 685
+file-lines crates/quench-runtime/src/wasm/gc.rs 676
 file-lines crates/quench-runtime/src/wasm/inline.rs 694
 file-lines crates/quench-runtime/src/wasm/memory.rs 835
 file-lines crates/quench-runtime/src/wasm/scalar.rs 777
@@ -3983,9 +3982,8 @@ function-lines crates/quench-runtime/src/vm/wasm.rs::tests::wasm_entry_views_pre
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::wasm_instance_bindings_are_independent_traced_and_runtime_owned 67
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::wasm_program_signatures_share_module_authority_and_reject_rebinding 49
 function-lines crates/quench-runtime/src/vm/wasm_exception.rs::tests::exception_transport_keeps_identity_classification_and_owned_payload_through_gc 48
-function-lines crates/quench-runtime/src/vm/wasm_gc.rs::Vm<H>::wasm_array_copy 56
+function-lines crates/quench-runtime/src/vm/wasm_gc.rs::Vm<H>::wasm_array_copy 55
 function-lines crates/quench-runtime/src/vm/wasm_gc.rs::Vm<H>::wasm_array_segment_values 56
-function-lines crates/quench-runtime/src/vm/wasm_gc.rs::Vm<H>::wasm_gc_field 63
 function-lines crates/quench-runtime/src/vm/wasm_host.rs::Vm<H>::call_compiled_js_wasm_import 73
 function-lines crates/quench-runtime/src/vm/wasm_host.rs::Vm<H>::call_wasm_host 143
 function-lines crates/quench-runtime/src/vm/wasm_host.rs::Vm<H>::create_owned_wasm_host_function 55
