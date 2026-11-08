@@ -788,7 +788,7 @@ impl Engine {
                 "invalid Wasm import index domain",
             ));
         }
-        let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
+        let mut constants = ConstantPool::with([Constant::Number(0.0), Constant::Undefined]);
         let sources: Vec<_> = bodies
             .into_iter()
             .map(|(locals, operators)| inline::Source { locals, operators })
@@ -978,7 +978,7 @@ impl Engine {
             source_name: name.into(),
             source: None,
             atoms: AtomTable::default(),
-            constants,
+            constants: constants.into_constants(),
             functions: functions
                 .into_iter()
                 .map(crate::bytecode::FunctionSlot::compiled)
@@ -1458,11 +1458,74 @@ struct Lowering<'a> {
     previous: Option<(usize, Register)>,
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
-    constants: Vec<Constant>,
+    constants: ConstantPool,
     depth: Register,
     registers: u16,
     controls: Vec<Control>,
     path: Reachability,
+}
+
+/// A module's constant table: each scalar constant is held once however many operators
+/// load it, as V8's `ConstantArrayBuilder` keeps one entry per Smi and number
+/// (dotnet-aot-wasm: 16 MB of constants, nearly all repeats). A scalar's bits are its
+/// identity, so `-0` and each NaN payload keep their own entries.
+struct ConstantPool {
+    constants: Vec<Constant>,
+    index: rustc_hash::FxHashMap<ScalarConstant, u32>,
+}
+
+/// The exact bits of a scalar constant, by kind.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ScalarConstant {
+    Number(u64),
+    Bits64(u64),
+    V128([u8; V128_BYTES]),
+    Boolean(bool),
+    Null,
+    Undefined,
+}
+
+impl ScalarConstant {
+    fn of(constant: &Constant) -> Option<Self> {
+        Some(match *constant {
+            Constant::Number(value) => Self::Number(value.to_bits()),
+            Constant::WasmBits64(bits) => Self::Bits64(bits),
+            Constant::WasmV128(bytes) => Self::V128(bytes),
+            Constant::Boolean(value) => Self::Boolean(value),
+            Constant::Null => Self::Null,
+            Constant::Undefined => Self::Undefined,
+            Constant::String(_) | Constant::StringUnits(_) | Constant::BigInt(_) => return None,
+        })
+    }
+}
+
+impl ConstantPool {
+    fn with(initial: impl IntoIterator<Item = Constant>) -> Self {
+        let mut pool = Self { constants: Vec::new(), index: Default::default() };
+        for constant in initial {
+            pool.intern(constant);
+        }
+        pool
+    }
+
+    /// The index of `constant`, appended unless an equal scalar is held; `None` once the
+    /// table outgrows a constant index.
+    fn intern(&mut self, constant: Constant) -> Option<u32> {
+        let key = ScalarConstant::of(&constant);
+        if let Some(index) = key.and_then(|key| self.index.get(&key)) {
+            return Some(*index);
+        }
+        let index = u32::try_from(self.constants.len()).ok()?;
+        self.constants.push(constant);
+        if let Some(key) = key {
+            self.index.insert(key, index);
+        }
+        Some(index)
+    }
+
+    fn into_constants(self) -> Vec<Constant> {
+        self.constants
+    }
 }
 
 /// An operand-stack value not yet copied into its position's register.
@@ -1797,19 +1860,7 @@ impl Lowering<'_> {
                 .and_then(|value| value.constant())
                 .ok_or_else(|| Diagnostic::unsupported(self.name, "non-defaultable Wasm local"))?,
         };
-        let existing = self
-            .constants
-            .iter()
-            .position(|known| match (known, &constant) {
-                (Constant::Null, Constant::Null) => true,
-                (Constant::WasmBits64(known), Constant::WasmBits64(value)) => known == value,
-                (Constant::WasmV128(known), Constant::WasmV128(value)) => known == value,
-                _ => false,
-            });
-        Ok(match existing {
-            Some(index) => index as u32,
-            None => self.append_constant(constant)?,
-        })
+        self.append_constant(constant)
     }
 
     /// Give register locals their defaults with one fill per run of locals that
@@ -1859,10 +1910,7 @@ impl Lowering<'_> {
     }
 
     fn append_constant(&mut self, value: Constant) -> Result<u32, Diagnostic> {
-        let constant = u32::try_from(self.constants.len())
-            .map_err(|_| Diagnostic::unsupported(self.name, "too many Wasm constants"))?;
-        self.constants.push(value);
-        Ok(constant)
+        self.constants.intern(value).ok_or_else(|| Diagnostic::unsupported(self.name, "too many Wasm constants"))
     }
 
     fn scalar_constant(&mut self, value: WasmValue) -> Result<u32, Diagnostic> {

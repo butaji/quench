@@ -64,7 +64,7 @@ enum Export {
 // to the last successful module. Named aliases share the same instance state.
 enum Instance {
     Ready {
-        module: Rc<Module>,
+        module: Rc<Module<'static>>,
         exports: HashMap<String, Export>,
         lowered: Option<WasmInstance>,
     },
@@ -74,7 +74,7 @@ type InstanceRef = Rc<RefCell<Instance>>;
 
 struct Definition {
     name: Option<String>,
-    module: Result<Rc<Module>, String>,
+    module: Result<Rc<Module<'static>>, String>,
 }
 
 pub(crate) struct Store {
@@ -154,7 +154,7 @@ impl Store {
         store
     }
 
-    fn prepare(&mut self, module: Rc<Module>) -> Result<Instance, LinkError> {
+    fn prepare(&mut self, module: Rc<Module<'static>>) -> Result<Instance, LinkError> {
         let mut has_instance_state = false;
         let mut declaration_types = quench_runtime::WasmTypes::default();
         let mut exports = HashMap::new();
@@ -390,7 +390,7 @@ impl Store {
     fn install(
         &mut self,
         name: Option<&str>,
-        module: Result<Rc<Module>, String>,
+        module: Result<Rc<Module<'static>>, String>,
     ) -> Result<(), String> {
         let prepared = module.and_then(|module| {
             self.prepare(module).map_err(|error| match error {

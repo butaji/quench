@@ -11765,7 +11765,7 @@ impl<H: Host> Vm<H> {
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
             let current = &self.lane_stack.script_targets.entries[index];
-            self.lane_stack.note_site_callee(link, super::compiled::CallTarget {
+            self.note_site_callee(link, super::compiled::CallTarget {
                 callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
@@ -13372,7 +13372,7 @@ script_handler! {
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
-            vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
+            vm.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(kind @ FunctionKind::Native(_)) = kind {
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
@@ -15950,6 +15950,16 @@ fn lane_callee_captures<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> (usi
 }
 
 impl<H: Host> Vm<H> {
+    /// `LaneStack::note_site_callee` while a lane body may read the history: only the
+    /// JavaScript tiers inline a site's callees (`lane_site_targets`), so interpreted
+    /// execution keeps no history, as V8's jitless mode allocates no feedback for an
+    /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
+    fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
+        if self.js_tier_runs() {
+            self.lane_stack.note_site_callee(link, target);
+        }
+    }
+
     /// The dense capture slots of `callee`'s environment (`EnvironmentSlots::native_dense_view`),
     /// as values and count, or none: what an inlined frame of it reads its captures from.
     pub(super) fn lane_callee_captures(&self, callee: Value) -> (usize, usize) {
@@ -18405,7 +18415,7 @@ fn lane_memoize_read<H: Host>(
     // The memo answers the site from now on, so no call of it links its record: its record
     // names the callee for the bodies that inline it (`lane_site_targets`).
     // SAFETY: `site` is a record of the running view.
-    vm.lane_stack.note_site_callee(unsafe { &(*site).call_link }, super::compiled::CallTarget {
+    vm.note_site_callee(unsafe { &(*site).call_link }, super::compiled::CallTarget {
         callee: super::compiled::CalleeBinding::Identity(target.callee), function: target.function });
     if target.this_binding == ThisBinding::Lexical {
         return;
@@ -19195,6 +19205,13 @@ fn lane_return_script_frame<H: Host>(
             }
             return lane_frame_return(vm, exit_ip, value);
         }
+        // A caller the general path runs without a view (`ProgramStore::entry_lane_view`
+        // deferred it) resumes there: the return runs again on the general path, which keeps
+        // the caller's own cursor, rather than deriving a view of every instruction of a
+        // function that may run once (mandreel's `global_init`: 614K records, 14 MB).
+        if !retired && caller_runs_general(cx, pending.last().expect("the pending call returns here")) {
+            return exit(exit_ip);
+        }
         let mut call = pending.pop().expect("a pending call names the returning frame");
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
         match call.completion.take_generator() {
@@ -19238,6 +19255,17 @@ fn lane_return_script_frame<H: Host>(
 /// so the activation return saves no registers.
 #[cold]
 #[inline(never)]
+/// Whether `call`'s caller is a function of the running program whose view is not derived,
+/// so the general path runs it.
+fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's table holds the running program's views for the lane run.
+    call.caller_program.is_none()
+        && unsafe { &*(*cx).views }
+            .get(vm.frames[call.caller].function as usize)
+            .is_some_and(|view| super::program_store::derived_lane_view(view).is_none())
+}
+
 fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Resumed {
     let cx = lane_context::<H>();
     // SAFETY: called only while a lane runs, from its return handler.
