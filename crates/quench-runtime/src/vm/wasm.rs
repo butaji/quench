@@ -272,7 +272,7 @@ impl<H: Host> Vm<H> {
                 let value = self
                     .root_value(imports[name.index as usize])
                     .ok_or_else(|| JsError::wasm_link("invalid Wasm tag import root"))?;
-                let Some(Cell::WasmTag { declarations, ty }) = self.heap.get(value) else {
+                let Some(Cell::WasmTag { declarations, ty, .. }) = self.heap.get(value) else {
                     return Err(JsError::wasm_link("incompatible import type"));
                 };
                 if !declarations.equivalent(
@@ -332,10 +332,8 @@ impl<H: Host> Vm<H> {
         values.extend(std::iter::repeat_n(Value::UNDEFINED, module.elements.len()));
         for (tag, imported) in module.tags.iter().zip(tags) {
             values.push(imported.unwrap_or_else(|| {
-                self.heap.alloc(Cell::WasmTag {
-                    declarations: Box::new(module.signatures.declarations.clone()),
-                    ty: tag.ty,
-                })
+                let object = Box::new(Self::empty_object(self.wasm_js.tag));
+                self.heap.alloc(Cell::WasmTag { object, declarations: module.signatures.declarations.clone(), ty: tag.ty })
             }));
         }
         // Imported function slots end the resource layout; ref.func derives their base.
@@ -394,8 +392,7 @@ impl<H: Host> Vm<H> {
         // never copies. Compiled code relies on the guard in place of
         // bounds checks, which covers exactly the bytes past the memory's
         // length only when every length is a whole number of host pages.
-        let guarded = (!ty.shared
-            && !ty.memory64
+        let guarded = (!ty.memory64
             && (ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
         .then(|| crate::wasm::memory::LinearBytes::reserved(length))
         .flatten();
@@ -444,7 +441,7 @@ impl<H: Host> Vm<H> {
                 maximum: ty.maximum,
             }),
             element_type: ty.element_type,
-            declarations: Box::new(declarations),
+            declarations,
         }))
     }
 
@@ -711,12 +708,9 @@ impl<H: Host> Vm<H> {
                             None => None,
                         };
                         let descriptor = descriptor.map(|value| self.encode_wasm_value(value));
-                        self.wasm_struct_new(
-                            &module.signatures.declarations,
-                            index,
-                            fields,
-                            descriptor,
-                        )
+                        let field = |_: &Self, index: usize| fields.as_ref().map_or(Value::UNDEFINED, |fields| fields[index]);
+                        let values = fields.as_ref().map(|fields| (fields.len(), &field as &dyn Fn(&Self, usize) -> Value));
+                        self.wasm_struct_new(&module.signatures.declarations, index, values, descriptor)
                         .map(crate::WasmValue::GcRef)
                         .map_err(|error| {
                             let diagnostic =

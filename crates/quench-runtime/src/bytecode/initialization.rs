@@ -6,7 +6,7 @@
 use crate::bitset::BitSet;
 
 use super::{
-    ControlEdge, FieldLayout, Function, ImmediateRole, InstructionField, Op, Operand,
+    ControlEdge, Function, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Superinstruction, WideInstruction,
 };
 
@@ -34,17 +34,7 @@ pub(crate) fn initialized_before_reads(
     uninitialized_at_entry: &BitSet,
 ) -> BitSet {
     let mut proven = candidates.clone();
-    let dense: Vec<Option<usize>> = {
-        let mut next = 0;
-        (0..candidates.len())
-            .map(|slot| {
-                candidates.contains(slot).then(|| {
-                    next += 1;
-                    next - 1
-                })
-            })
-            .collect()
-    };
+    let dense = dense_indices(candidates);
     let count = dense.iter().flatten().count();
     if count == 0 {
         return proven;
@@ -56,12 +46,9 @@ pub(crate) fn initialized_before_reads(
     // code length times candidates (lucide-react's 1.2 MB bundle: tens of MiB, TOD-140).
     let mut maybe_uninitialized = crate::bitset::BitRows::new(blocks.count, count);
     let mut entry = vec![0; words];
-    for (slot, index) in dense.iter().enumerate() {
-        if let Some(index) = index
-            && uninitialized_at_entry.contains(slot)
-        {
-            entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
-        }
+    let entering = dense.iter().enumerate().filter(|(slot, _)| uninitialized_at_entry.contains(*slot));
+    for index in entering.filter_map(|(_, index)| *index) {
+        entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
     }
     maybe_uninitialized.join(0, &entry);
     let mut state = vec![0; words];
@@ -73,7 +60,7 @@ pub(crate) fn initialized_before_reads(
             state.copy_from_slice(maybe_uninitialized.row(block));
             let mut pc = start;
             while let Some(&instruction) = decoded.get(pc) {
-                abrupt.copy_from_slice(&state);
+                if blocks.interruptible(pc) { abrupt.copy_from_slice(&state); }
                 let mut apply = |slot: usize, access: Access, state: &mut [u64], abrupt: &mut [u64]| {
                     let Some(Some(index)) = dense.get(slot).copied() else {
                         return;
@@ -118,9 +105,8 @@ pub(crate) fn initialized_before_reads(
                         ControlEdge::Normal => &state,
                         ControlEdge::Handler => &abrupt,
                     };
-                    if let Some(block) = blocks.at(successor) {
-                        changed |= maybe_uninitialized.join(block, incoming);
-                    }
+                    // A later block takes its gain in this sweep; only a loop asks for another.
+                    if let Some(target) = blocks.at(successor) { changed |= maybe_uninitialized.join(target, incoming) & (target <= block); }
                 });
                 if !falls_through {
                     break;
@@ -130,6 +116,19 @@ pub(crate) fn initialized_before_reads(
         }
     }
     proven
+}
+
+/// Each candidate slot's index among the candidates.
+fn dense_indices(candidates: &BitSet) -> Vec<Option<usize>> {
+    let mut next = 0;
+    (0..candidates.len())
+        .map(|slot| {
+            candidates.contains(slot).then(|| {
+                next += 1;
+                next - 1
+            })
+        })
+        .collect()
 }
 
 /// The basic blocks of a function's decoded code. A block starts at the entry, at every
@@ -183,6 +182,12 @@ impl BasicBlocks {
         self.block_at.get(pc).copied().flatten().map(|block| block as usize)
     }
 
+    /// Whether a handler can interrupt the instruction at `pc`: only then are the states it
+    /// passes through (`abrupt`) read, so only then are they gathered.
+    fn interruptible(&self, pc: usize) -> bool {
+        self.successors.at(pc).any(|(_, edge)| edge == ControlEdge::Handler)
+    }
+
     /// Whether control from `pc` to `successor` stays inside `pc`'s block.
     fn continues(&self, pc: usize, successor: usize, edge: ControlEdge) -> bool {
         successor == pc + 1 && edge == ControlEdge::Normal && self.at(successor).is_none()
@@ -192,10 +197,7 @@ impl BasicBlocks {
 /// The local slots `instruction` touches, in execution order.
 fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut access: impl FnMut(usize, Access)) {
     for &field in InstructionField::ALL {
-        if matches!(
-            instruction.op().field_layout(field),
-            FieldLayout::Operand | FieldLayout::NumericIndexOperand
-        ) {
+        if instruction.op().field_layout(field).holds_operand() {
             let operand = Operand(instruction.field_value(field));
             if operand.kind() == Some(OperandKind::Local) {
                 access(usize::from(operand.payload()), Access::Read);

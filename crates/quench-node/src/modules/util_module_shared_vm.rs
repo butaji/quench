@@ -441,7 +441,7 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
             c.truthy_rooted(result)?
         }
         LegacyTest::Null => kind == ValueType::Null,
-        LegacyTest::NullOrUndefined => matches!(kind, ValueType::Null | ValueType::Undefined),
+        LegacyTest::NullOrUndefined => kind.is_nullish(),
         LegacyTest::Number => kind == ValueType::Number,
         LegacyTest::String => kind == ValueType::String,
         LegacyTest::Symbol => kind == ValueType::Symbol,
@@ -506,7 +506,7 @@ pub(crate) fn inherits(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
     let constructor = argument(c, args, 0);
     let parent = argument(c, args, 1);
     for (value, name) in [(constructor, "ctor"), (parent, "superCtor")] {
-        if matches!(type_of(c, value), ValueType::Undefined | ValueType::Null) {
+        if type_of(c, value).is_nullish() {
             return Err(super::util_shared_vm::argument_type_error(c, value, name, "function")?);
         }
     }

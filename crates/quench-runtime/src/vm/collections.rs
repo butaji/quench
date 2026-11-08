@@ -814,11 +814,10 @@ impl<H: Host> Vm<H> {
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
-                        let key_hash = self.same_value_zero_hash(key);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
-                        if let Some(compaction) = entries.remove(index, key_hash) {
+                        if let Some(compaction) = entries.remove(index) {
                             self.heap
                                 .move_collection_iterators(this, |slot| compaction.new_slot(slot));
                         }
@@ -947,14 +946,13 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
-                let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
                         "Set.prototype.delete called on incompatible receiver".into(),
                     ));
                 };
-                if let Some(compaction) = entries.remove(index, value_hash) {
+                if let Some(compaction) = entries.remove(index) {
                     self.heap
                         .move_collection_iterators(this, |slot| compaction.new_slot(slot));
                 }
@@ -1397,7 +1395,6 @@ impl<H: Host> Vm<H> {
         entries.position(
             key,
             key_hash,
-            |candidate| self.same_value_zero_hash(candidate),
             |candidate| self.same_value_zero(candidate, key),
         )
     }
@@ -1409,17 +1406,10 @@ impl<H: Host> Vm<H> {
     /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
     /// and every NaN as one, strings and BigInts by content, everything else by identity.
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
-        use std::hash::{Hash, Hasher};
-        if let Some(number) = key.as_number() {
-            return crate::heap::number_key_hash(number);
+        match key.as_number() {
+            Some(number) => crate::heap::number_key_hash(number),
+            None => self.heap.non_number_key_hash(key),
         }
-        let mut hasher = rustc_hash::FxHasher::default();
-        match self.heap.get(key) {
-            _ if let Some(text) = self.heap.string(key) => text.hash(&mut hasher),
-            Some(Cell::BigInt(value)) => value.hash(&mut hasher),
-            _ => key.hash(&mut hasher),
-        }
-        hasher.finish()
     }
     fn validate_weak_map_receiver(
         &mut self,

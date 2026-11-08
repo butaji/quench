@@ -1,6 +1,36 @@
 use super::*;
 
+/// What a global name read finds (`Vm::global_name_read`): a value, with the hint naming the
+/// global object's own data field that held it, an uninitialized lexical binding, or nothing
+/// the lane's read takes.
+pub(super) enum GlobalNameRead {
+    Value(Value, Option<FieldCache>),
+    Uninitialized,
+    Miss,
+}
+
 impl<H: Host> Vm<H> {
+    /// A global name read as the lane takes it (`dispatch_fast::lane_load_global_name_refresh`):
+    /// an initialized global lexical binding of the name, else the global object's own data
+    /// field with the hint that names it, else the site's cached field.
+    pub(super) fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
+        let globals = self.realm.globals;
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
+                .map_or(GlobalNameRead::Uninitialized, |value| GlobalNameRead::Value(value, None));
+        }
+        if self.global_name_hintable(atom)
+            && let Some(hint) = self.own_data_field_hint::<false>(globals, atom)
+            && let Some(value) = self.record_field_entry_hit(hint, globals)
+        {
+            return GlobalNameRead::Value(value, Some(hint));
+        }
+        match self.cached_field_hit(code, globals, site) {
+            object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value, None),
+            _ => GlobalNameRead::Miss,
+        }
+    }
+
     #[inline(always)]
     pub(super) fn field_cache_atom_eligible(&self, atom: Atom) -> bool {
         !self
@@ -55,6 +85,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.shape_answers(&function.object, atom, ReceiverKind::Ordinary)
+    }
+
+    /// Whether `atom` names an element of `object` as a typed array's numeric key, which no
+    /// shape stores: the generic [[Set]] converts and writes it.
+    pub(super) fn is_typed_array_element(&self, object: Value, atom: Atom) -> bool {
+        matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) && self.atom_class(atom).contains(AtomClass::TYPED_ARRAY_INDEX)
     }
 
     pub(super) fn shape_property_lookup_cell<'a>(
@@ -116,12 +152,3 @@ pub(super) enum FieldCacheProbe {
     Ineligible,
 }
 
-impl FieldCacheProbe {
-    /// The value a hit found.
-    pub(super) fn hit(self) -> Option<Value> {
-        match self {
-            Self::Hit(value) => Some(value),
-            Self::OrdinaryMiss | Self::Ineligible => None,
-        }
-    }
-}

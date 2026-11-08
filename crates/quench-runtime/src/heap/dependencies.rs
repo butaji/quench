@@ -103,10 +103,13 @@ struct Table {
     inherited: Vec<InheritedFieldCache>,
     /// Subjects a dead prototype released, for reuse.
     free: Vec<u32>,
+    /// The intrinsic-builtin fuses, which watched prototypes hold.
+    fuses: crate::code_dependencies::Fuses,
 }
 
 impl Table {
     fn retire(&mut self, subject: u32) {
+        self.fuses.note_layout_change(subject);
         if let Some(entries) = self.inherited_readers.get_mut(subject as usize) {
             for entry in std::mem::take(entries) {
                 if let Some(cache) = self.inherited.get_mut(entry as usize) {
@@ -201,6 +204,7 @@ impl Dependencies {
     pub(crate) fn release(&mut self, subject: u32) {
         let table = self.table_mut();
         table.retire(subject);
+        table.fuses.forget(subject);
         table.free.push(subject);
     }
 
@@ -213,6 +217,17 @@ impl Dependencies {
         table.readers.iter_mut().for_each(|readers| *readers = 0);
         table.inherited_readers.iter_mut().for_each(Vec::clear);
         table.inherited.iter_mut().for_each(|cache| cache.proved = false);
+        table.fuses.forget_all();
+    }
+
+    /// The intrinsic-builtin fuses (`code_dependencies::Fuses`).
+    #[inline(always)]
+    pub(crate) fn fuses(&self) -> &crate::code_dependencies::Fuses {
+        &self.table().fuses
+    }
+
+    pub(crate) fn fuses_mut(&mut self) -> &mut crate::code_dependencies::Fuses {
+        &mut self.table_mut().fuses
     }
 
     /// Inherited field cache entry `entry`.
@@ -307,6 +322,15 @@ impl Watch {
             // SAFETY: the table outlives every object of its heap, which owns it, and no
             // reference to it is live while an object's layout changes (`Dependencies`).
             unsafe { (*table.as_ref().get()).retire(subject) };
+        }
+    }
+
+    /// Pops the fuses this subject holds at `slot`: a write stores another value there.
+    #[inline(always)]
+    pub(crate) fn note_slot_write(&self, slot: usize) {
+        if let Some((table, subject)) = self.0 {
+            // SAFETY: as `retire`.
+            unsafe { (*table.as_ref().get()).fuses.note_slot_write(subject, slot) };
         }
     }
 }

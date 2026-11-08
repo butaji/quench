@@ -6,6 +6,11 @@ use std::ops::Range;
 use std::rc::Rc;
 
 mod append_buffer;
+mod short_ascii;
+mod concat_all;
+pub(super) use concat_all::JsStringBuilder;
+mod text_hash;
+pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
 
 /// Bytes of text made on demand since the collector last took them. A string is charged its
@@ -154,13 +159,6 @@ pub(crate) struct ShortAscii {
 pub(crate) const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<FlatUnits>() == 3 * size_of::<usize>());
-
-impl ShortAscii {
-    pub(crate) fn as_str(&self) -> &str {
-        // SAFETY: only `FlatUnits::ascii` fills the bytes, from ASCII text.
-        unsafe { std::str::from_utf8_unchecked(&self.bytes[..usize::from(self.length)]) }
-    }
-}
 
 impl FlatUnits {
     /// ASCII `text` in its canonical storage.
@@ -725,111 +723,6 @@ fn checked_string_length(current: usize, additional: usize) -> Result<usize, Str
         .ok_or(StringBuildError::InvalidLength)
 }
 
-/// Parts a builder holds before it allocates: a replacement's prefix, substitution and
-/// rest, or a short join, need no allocation beside the result.
-const BUILDER_INLINE_PARTS: usize = 4;
-
-struct StringPart {
-    units: FlatUnits,
-    range: Range<usize>,
-}
-
-/// A transient concatenation plan, not a guest rope. Slices retain only the
-/// canonical storage. Overflow stops storage growth, but callers still
-/// perform all replacement effects before finish reports the error.
-pub(super) struct JsStringBuilder {
-    parts: smallvec::SmallVec<[StringPart; BUILDER_INLINE_PARTS]>,
-    length: Result<usize, StringBuildError>,
-}
-
-impl Default for JsStringBuilder {
-    fn default() -> Self {
-        Self {
-            parts: smallvec::SmallVec::new(),
-            length: Ok(0),
-        }
-    }
-}
-
-impl JsStringBuilder {
-    pub(super) fn append(&mut self, string: &JsString) {
-        let units = string.flat();
-        let length = units.view().len();
-        self.append_units(units.clone(), 0..length);
-    }
-
-    pub(super) fn append_slice(&mut self, string: &JsString, range: Range<usize>) {
-        self.append_units(string.flat().clone(), range);
-    }
-
-    fn append_units(&mut self, units: FlatUnits, range: Range<usize>) {
-        if range.is_empty() {
-            return;
-        }
-        let Ok(current) = self.length else {
-            return;
-        };
-        self.length = checked_string_length(current, range.len());
-        if self.length.is_err() {
-            self.parts.clear();
-            return;
-        }
-        if let Some(previous) = self.parts.last_mut()
-            && previous.units.same_storage(&units) && previous.range.end == range.start {
-                previous.range.end = range.end;
-                return;
-            }
-        if self.parts.try_reserve(1).is_err() {
-            self.length = Err(StringBuildError::Allocation);
-            self.parts.clear();
-            return;
-        }
-        self.parts.push(StringPart { units, range });
-    }
-
-    pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
-        let length = self.length?;
-        if self.parts.iter().all(|part| part.units.is_ascii()) {
-            return Ok(JsString::from_flat(FlatUnits::ascii_with(length, |output| {
-                let mut written = 0;
-                for part in &self.parts {
-                    if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
-                        written += bytes.len();
-                    }
-                }
-                assert_eq!(written, output.len(), "the parts fill the string's length");
-            })));
-        }
-        let mut storage = Rc::<[u16]>::new_uninit_slice(length);
-        let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
-        let mut written = 0;
-        for part in &self.parts {
-            let units = part.units.view().slice(part.range.clone());
-            let target = &mut output[written..written + units.len()];
-            match units {
-                Units::Ascii(bytes) => {
-                    for (unit, byte) in target.iter_mut().zip(bytes) {
-                        unit.write(u16::from(*byte));
-                    }
-                }
-                Units::Wide(units) => {
-                    target.write_copy_of_slice(units);
-                }
-            }
-            written += units.len();
-        }
-        assert_eq!(written, length, "the parts fill the string's length");
-        // SAFETY: the parts wrote every unit.
-        let storage = unsafe { storage.assume_init() };
-        // Wide parts can contribute only ASCII units; such text is stored narrow.
-        if storage.iter().all(|unit| is_ascii_unit(*unit)) {
-            return Ok(JsString::from_units(&storage));
-        }
-        Ok(JsString::from_flat(FlatUnits::Wide(storage)))
-    }
-}
-
 impl JsString {
     /// Non-materializing shape for aggregate diagnostics: inline flat, shared flat, or rope.
     #[cfg(feature = "profile-aggregate")]
@@ -1290,6 +1183,11 @@ impl JsString {
     /// template literal's pieces, a key built from parts, a rope's last leaf and the text
     /// appended to it).
     fn joined(left: &Self, right: &Self) -> Self {
+        if let (Repr::Flat(FlatUnits::Short(head)), Repr::Flat(FlatUnits::Short(tail))) = (&left.repr, &right.repr)
+            && let Some(joined) = head.joined(tail)
+        {
+            return Self { repr: Repr::Flat(FlatUnits::Short(joined)) };
+        }
         if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
             (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
         {
@@ -1396,11 +1294,7 @@ impl Eq for JsString {}
 
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hashed by units, so a slice and a copy of the same text agree.
-        match self.units() {
-            Units::Ascii(bytes) => bytes.hash(state),
-            Units::Wide(units) => units.hash(state),
-        }
+        state.write_u32(self.units().text_hash());
     }
 }
 
@@ -1461,21 +1355,6 @@ mod tests {
         assert_eq!(
             checked_string_length(usize::MAX, 1),
             Err(StringBuildError::InvalidLength)
-        );
-    }
-
-    #[test]
-    fn concatenation_plan_preserves_units_and_merges_adjacent_slices() {
-        let source = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
-        let mut plan = super::JsStringBuilder::default();
-        plan.append_slice(&source, 0..1);
-        plan.append_slice(&source, 1..3);
-        assert_eq!(plan.parts.len(), 1);
-        plan.append(&source);
-        drop(source);
-        assert_eq!(
-            plan.finish().unwrap().units(),
-            &[0xD800, b'a' as u16, 0xDC00, 0xD800, b'a' as u16, 0xDC00]
         );
     }
 

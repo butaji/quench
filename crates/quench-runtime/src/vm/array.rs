@@ -703,8 +703,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
-    /// index stores plainly (`array_indices_store_plainly`).
+    /// index stores plainly (`array_indices_store_plainly`); one value first as `array_push_one`.
     pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
+        if let [value] = *args && let Some(length) = self.array_push_one(this, value) { return Some(length); }
         let length = self.dense_array_length(this)?;
         let final_length = length.checked_add(args.len())?;
         if final_length > MAX_ARRAY_LENGTH {
@@ -821,16 +822,13 @@ impl<H: Host> Vm<H> {
 
     /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
     /// is present: the generic steps read that own data element, delete it and shorten
-    /// `length` by one.
+    /// `length` by one; a receiver `array_pop_one` admits takes its steps.
     pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
+        if self.heap.record_array(this).is_some_and(|object| object.holds_ordinary_elements()) { return self.array_pop_one(this); }
         let length = self.dense_array_length(this)?;
-        let Some(last) = length.checked_sub(1) else {
-            return Some(Value::UNDEFINED);
-        };
+        let Some(last) = length.checked_sub(1) else { return Some(Value::UNDEFINED) };
         let object = self.heap.array_mut(this)?;
-        if object.elements()[last].is_deleted() {
-            return None;
-        }
+        if object.elements()[last].is_deleted() { return None; }
         super::index::mutable_array_elements(object.elements_mut()).pop()
     }
 

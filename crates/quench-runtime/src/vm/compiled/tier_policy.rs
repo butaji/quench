@@ -60,6 +60,11 @@ pub(in crate::vm) struct LaneBody {
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
+    /// The entries between looks for a compiling body's code. A look costs a channel poll
+    /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
+    /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
+    /// most this many entries once ready.
+    pub(in crate::vm) compile_poll_interval: u16,
 }
 
 /// The per-function JavaScript tiers: the numeric optimizing tier and the general
@@ -118,6 +123,11 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
 
+/// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
+/// the generic case: the width of every polymorphic cache and of each guarded switch a tier
+/// specializes a site into. One bound for every lattice of site feedback.
+pub(in crate::vm) const POLYMORPHISM: usize = 4;
+
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
 pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
@@ -130,7 +140,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, trial_runs: 2, reoptimize_exits: 2, min_instructions: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, trial_runs: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
 };
@@ -145,6 +155,7 @@ const MEASURED: Tiers = Tiers {
         max_wasted: 2,
         max_lifetimes: 8,
         min_instructions: 24,
+        compile_poll_interval: 64,
     },
     js_function: JsFunction {
         promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],

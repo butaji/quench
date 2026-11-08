@@ -48,7 +48,7 @@ pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
 pub const GLOBAL_SCRIPT_GOAL: &str = "global-script";
 pub const GLOBAL_SCRIPT_SOURCE_NAME: &str = "<global-script>";
 mod binding_time;
-mod data_literal;
+pub(crate) mod data_literal;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
@@ -65,7 +65,7 @@ pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
-mod first_call;
+pub(crate) mod first_call;
 mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
@@ -1114,7 +1114,7 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let (allocator, chunk) = lazy_bodies::sized_arena(parsed_text);
-        let mut facts = lazy_bodies::BodyFacts::default();
+        let mut facts = lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)));
         #[cfg(feature = "aot")]
         { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
         let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
@@ -1368,7 +1368,7 @@ impl Engine {
         // tree changed after parsing, that their text alone does not give back. A released
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
-        compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, std::mem::take(&mut facts.free_names));
+        compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -1868,7 +1868,7 @@ struct Compiler<'a> {
     module_goal: bool,
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
-    eval_annex_b_collisions: FxHashSet<u32>,
+    eval_annex_b_collisions: early::AnnexBCollisions,
     atoms: CompilerAtoms<'a>,
     /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
     /// source atom (`capture_marker`).
@@ -2384,10 +2384,8 @@ impl<'a> Compiler<'a> {
         bindings
     }
 
-    fn annex_b_collisions(&self, body: &[Statement<'_>]) -> FxHashSet<u32> {
-        let mut collisions = early::annex_b_lexical_collisions(body);
-        collisions.extend(self.eval_annex_b_collisions.iter().copied());
-        collisions
+    fn annex_b_collisions(&self, body: &[Statement<'_>]) -> early::AnnexBCollisions {
+        early::annex_b_lexical_collisions(body, &self.eval_annex_b_collisions)
     }
 
     fn new(
@@ -2432,7 +2430,7 @@ impl<'a> Compiler<'a> {
             module_goal: false,
             capture_script_completion: false,
             eval_context: None,
-            eval_annex_b_collisions: FxHashSet::default(),
+            eval_annex_b_collisions: early::AnnexBCollisions::default(),
             atoms,
             capture_markers: FxHashMap::default(),
             private_name_references: 0,
@@ -3188,7 +3186,7 @@ impl<'a> Compiler<'a> {
                 .collect();
             global_annex_b_var_names = early::annex_b_function_names(&program.body)
                 .into_iter()
-                .filter(|(span, _)| !direct_functions.contains(span) && !collisions.contains(span))
+                .filter(|(span, _)| !direct_functions.contains(span) && !collisions.contains(*span))
                 .map(|(_, name)| name)
                 .collect();
             global_var_names.extend(global_annex_b_var_names.iter().cloned());
@@ -3517,7 +3515,6 @@ impl<'a> Compiler<'a> {
                         NameSharedSites::Replay(sites) => (*sites).clone(),
                     },
                     functions: replays,
-                    first_calls: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
                     #[cfg(feature = "verify-replay")]
                     released: released
                         .iter()
@@ -3526,6 +3523,7 @@ impl<'a> Compiler<'a> {
                     views: replay::ReplayViews::default(),
                 })
             }),
+            first_call_scopes: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
@@ -3942,8 +3940,9 @@ impl<'a> Compiler<'a> {
         }
         let parameter_local_count = locals.len();
         let root_strict = self.root_strict || options.strict;
+        let annex_b_collisions = self.annex_b_collisions(body);
         let mut function_scope =
-            self.collect_locals(body, &mut locals, root_strict, parent.is_some());
+            self.collect_locals(body, &mut locals, root_strict, parent.is_some(), &annex_b_collisions);
         // Only a function-scope binding (a parameter, `var`, top-level declaration) shadows
         // the expression's own name; a block's or a catch clause's binding does not.
         let name_binding = options.name_binding.and_then(|source_name| {
@@ -3986,7 +3985,6 @@ impl<'a> Compiler<'a> {
             function_scope.retain(|atom| lexical_atoms.contains(atom));
         }
         let module_source = self.source;
-        let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
         } else if parent.is_none() || options.class_initializer {
@@ -4229,7 +4227,7 @@ impl<'a> Compiler<'a> {
             name_bindings,
             binding_sites: function.binding_sites.into(),
             source_positions: function.source_positions,
-            environment_clones: environment_clones.into(),
+            environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

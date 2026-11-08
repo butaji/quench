@@ -7,8 +7,10 @@
 //!   names a value (a literal or a path) are two columns of one table split across functions;
 //!   make the table one row per case and derive both views from it.
 //!
-//! Each group is recorded by its first site with the number of copies; it joins the
-//! shrink-only measures in `oversized.txt`.
+//! - `decision-classification`: two guard-free `matches!` over the same set of at least
+//!   [`MIN_CLASS_CASES`] cases name one class twice; name it once and ask it.
+//!
+//! Every repeated decision fails the lint; there is no ratchet.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,21 +24,23 @@ const MIN_ARMS: usize = 3;
 enum Rule {
     Twin,
     Column,
+    Classification,
 }
+
+/// Each rule's name and remedy, one row per rule in declaration order.
+const RULES: [(&str, &str); 3] = [
+    ("decision-twin", "decide once in a named function and call it"),
+    ("decision-column", "make one table with a row per case and derive each view from it"),
+    ("decision-classification", "name the class once (a predicate on the type, or a table column) and ask it"),
+];
 
 impl Rule {
     fn name(self) -> &'static str {
-        match self {
-            Rule::Twin => "decision-twin",
-            Rule::Column => "decision-column",
-        }
+        RULES[self as usize].0
     }
 
     fn remedy(self) -> &'static str {
-        match self {
-            Rule::Twin => "decide once in a named function and call it",
-            Rule::Column => "make one table with a row per case and derive each view from it",
-        }
+        RULES[self as usize].1
     }
 }
 
@@ -76,7 +80,7 @@ impl DecisionTrees {
 /// (identical tables are one twin, reported as such).
 fn copies(rule: Rule, sites: &[Site]) -> usize {
     match rule {
-        Rule::Twin => sites.len(),
+        Rule::Twin | Rule::Classification => sites.len(),
         Rule::Column => sites.iter().map(|site| &site.arms).collect::<BTreeSet<_>>().len(),
     }
 }
@@ -132,8 +136,44 @@ impl<'ast> Visit<'ast> for Matches<'_> {
         syn::visit::visit_expr_match(self, decision);
     }
 
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if mac.path.is_ident("matches")
+            && let Ok(class) = mac.parse_body_with(Classification::parse)
+            && class.0.len() >= MIN_CLASS_CASES
+            && class.0.iter().all(names_a_case)
+        {
+            let mut cases: Vec<String> = class.0.iter().map(tokens).collect();
+            cases.sort();
+            let cases = cases.join(" | ");
+            let line = mac.path.segments[0].ident.span().start().line;
+            self.record(Rule::Classification, cases.clone(), &cases, line);
+        }
+    }
+
     /// A nested function is its own subject.
     fn visit_item(&mut self, _: &'ast syn::Item) {}
+}
+
+/// A single case is an equality test; two or more named together are a class.
+const MIN_CLASS_CASES: usize = 2;
+
+/// The alternatives of a guard-free `matches!(value, A | B | C)`.
+struct Classification(Vec<syn::Pat>);
+
+impl Classification {
+    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+        input.parse::<syn::Expr>()?;
+        input.parse::<syn::Token![,]>()?;
+        let pattern = syn::Pat::parse_multi_with_leading_vert(input)?;
+        input.parse::<Option<syn::Token![,]>>()?;
+        if !input.is_empty() {
+            return Err(input.error("a guarded classification"));
+        }
+        Ok(Self(match pattern {
+            syn::Pat::Or(or) => or.cases.into_iter().collect(),
+            single => vec![single],
+        }))
+    }
 }
 
 impl Matches<'_> {

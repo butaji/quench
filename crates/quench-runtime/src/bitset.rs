@@ -156,10 +156,6 @@ impl BitSet {
         &self.words
     }
 
-    pub(crate) fn words_mut(&mut self) -> &mut [u64] {
-        &mut self.words
-    }
-
     /// Whether the words spilled to the heap.
     #[cfg(test)]
     pub(crate) fn spilled(&self) -> bool {

@@ -1,6 +1,9 @@
 use super::*;
 use crate::heap::PrivateBrand;
 
+mod increment;
+pub(super) use increment::{integer_increment, number_increment};
+
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
     ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
@@ -57,7 +60,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !matches!(i.op(), Op::Call | Op::CallArray)
+        if !i.op().is_ordinary_call()
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
@@ -182,11 +185,29 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         f: usize,
         pc: usize,
+        target: (ProgramId, u32, Value),
+        callee: Value,
+        this: Value,
+        arguments: &[Value],
+        destination: crate::bytecode::Register,
+    ) -> Option<Result<StepResult, JsError>> {
+        self.push_in_loop_activation(p, f, pc, target, callee, this, arguments, destination, CallCompletion::Value)
+    }
+
+    /// `push_in_loop_call` completing as `completion`: a construction's (`Constructor`) is
+    /// pushed with its target bound (`construct_target`), as [[Construct]] enters its body.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_in_loop_activation(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
         (program, id, env): (ProgramId, u32, Value),
         callee: Value,
         this: Value,
         arguments: &[Value],
         destination: crate::bytecode::Register,
+        completion: CallCompletion,
     ) -> Option<Result<StepResult, JsError>> {
         let caller_program = self.active_program;
         let callee_residual = if program == caller_program {
@@ -199,22 +220,15 @@ impl<H: Host> Vm<H> {
         if callee_residual.is_some() {
             self.set_active_program(program);
         }
-        let call_guard = self.push_general_user_frame(
-            callee_residual.as_deref().unwrap_or(p),
-            id,
-            env,
-            this,
-            arguments,
-            CallContext::user_function(id, callee),
-        );
+        let constructs = matches!(completion, CallCompletion::Constructor(_));
+        if constructs { self.construct_target = Some(ConstructionTarget { callee, new_target: callee }); }
+        let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
+            CallContext::user_function(id, callee));
+        if constructs { self.construct_target = None; }
         if call_guard.is_err() {
             self.set_active_program(caller_program);
         }
-        Some(call_guard.map(|call_guard| StepResult::PushFrame {
-            destination,
-            call_guard,
-            completion: CallCompletion::Value,
-        }))
+        Some(call_guard.map(|call_guard| StepResult::PushFrame { destination, call_guard, completion }))
     }
 
     /// The program, function and environment of `callee` when it is a user function of a
@@ -521,9 +535,9 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                let plan = &p.function(self.frames[f].function as usize).environment_clones
-                    [i.environment_clone_index()];
-                self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
+                let clones = &p.function(self.frames[f].function as usize).environment_clones;
+                let plan = &clones[i.environment_clone_index()];
+                self.clone_frame_environment(f, &plan.fresh, clones.resets(plan))?;
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
@@ -1356,14 +1370,12 @@ impl<H: Host> Vm<H> {
                 };
                 self.write(f, i.result_register(), value);
             }
+            Op::StringConcat => {
+                let v = self.frame_string_concat(p, f, i.register_window())?;
+                self.write(f, i.result_register(), v);
+            }
             Op::Unary => {
-                let operator = i.unary_operator();
-                let operand = self.read(f, i.register_b());
-                let v = if operator == super::coercion::LOGICAL_NOT {
-                    self.logical_not(operand)
-                } else {
-                    self.unary(p, operator, operand)?
-                };
+                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
@@ -1721,39 +1733,11 @@ impl<H: Host> Vm<H> {
                     let callee = self.read(f, i.register_b());
                     if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
-                        self.frames[f].pc = *pc;
-                        self.frames[f].pc_is_resume = true;
-                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
-                        // A constructor of another program is pushed in its own, as
-                        // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
-                        // restores the caller's.
-                        let caller_program = self.active_program;
-                        let callee_residual = if program == caller_program {
-                            None
-                        } else {
-                            self.programs.get(program)
-                        };
-                        if callee_residual.is_some() {
-                            self.set_active_program(program);
-                        }
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                        let pushed = self.push_general_user_frame(
-                            callee_residual.as_deref().unwrap_or(p),
-                            id,
-                            env,
-                            this,
-                            unsafe { &*arguments },
-                            CallContext::user_function(id, callee),
-                        );
-                        self.construct_target = None;
-                        if pushed.is_err() && callee_residual.is_some() {
-                            self.set_active_program(caller_program);
+                        if let Some(step) = self.push_in_loop_activation(p, f, *pc, (program, id, env), callee, this,
+                            unsafe { &*arguments }, i.result_register(), CallCompletion::Constructor(this)) {
+                            return step;
                         }
-                        return Ok(StepResult::PushFrame {
-                            destination: i.result_register(),
-                            call_guard: pushed?,
-                            completion: CallCompletion::Constructor(this),
-                        });
                     }
                 }
                 let args = match i.construct_arguments() {
@@ -1864,37 +1848,25 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The `++`/`--` step: one, negated for a decrement.
-fn increment_delta(is_decrement: bool) -> f64 {
-    if is_decrement { -1.0 } else { 1.0 }
-}
-
-/// `++`/`--` of a Number operand, staying an integer while the result fits; `None` for any
-/// other operand, whose conversion may run guest code or allocate.
-#[inline(always)]
-pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
-    if let Some(integer) = input.as_int() {
-        let next = if is_decrement {
-            integer.checked_sub(1)
-        } else {
-            integer.checked_add(1)
-        };
-        return Some(next.map_or_else(
-            || Value::overflowed_integer(f64::from(integer) + increment_delta(is_decrement)),
-            Value::integer,
-        ));
+impl<H: Host> Vm<H> {
+    /// The frame call-like instruction `i` of frame `caller` pushes, as its step pushes it:
+    /// callee, argument window, receiver and completion. `getter` and `this` are what the step
+    /// found running: a getter read's function, and a construction's or getter's receiver.
+    /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
+    pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
+        -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
+        match i.op() {
+            Op::Construct => {
+                let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
+                    unreachable!("a pushed construction passes registers")
+                };
+                (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
+            }
+            // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
+            Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
+            _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
+        }
     }
-    input
-        .as_number()
-        .map(|number| Value::number(number + increment_delta(is_decrement)))
-}
-
-/// `number_increment` of an integer whose update stays one; `None` for any other value or
-/// an overflow, which `number_increment` answers.
-#[inline(always)]
-pub(super) fn integer_increment(input: Value, is_decrement: bool) -> Option<Value> {
-    let integer = input.as_int()?;
-    if is_decrement { integer.checked_sub(1) } else { integer.checked_add(1) }.map(Value::integer)
 }
 
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional

@@ -217,10 +217,7 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::IteratorCleanupPush, iterator, done, 0, 0);
         let using_iteration = match left {
             ForStatementLeft::VariableDeclaration(declaration)
-                if matches!(
-                    declaration.kind,
-                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
-                ) =>
+                if super::disposal::disposes(declaration.kind) =>
             {
                 Some(declaration.kind)
             }

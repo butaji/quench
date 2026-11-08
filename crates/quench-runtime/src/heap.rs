@@ -654,6 +654,9 @@ pub(crate) struct Heap {
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
     peak_live: usize,
+    /// The last collection's emptied mark stack, the next one's root buffer: a fresh one was
+    /// mapped and faulted in by every collection (dotnet-aot-wasm: 2 MB each, 95K faults).
+    mark_stack: Vec<Value>,
     peak_survivors: usize,
     max_threshold: usize,
     collection_state: CollectionState,
@@ -1787,33 +1790,33 @@ impl Heap {
     /// each shape's length and parent (a parent precedes its children), its slot owners, and
     /// their representations joined anew from the values live objects hold.
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], layouts: &[(usize, Option<(u32, usize)>)]) {
-        self.properties.retire_shape_readers();
+        self.dependencies_mut().retire_all(); // renumbered ids; shape readers reset below
         self.object_records.for_each_live_mut(|_, object| {
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape], &mut self.properties);
+            object.renumber_shape(mapping[old_shape]);
         });
         self.array_records.for_each_live_mut(|_, array| {
             let old_shape = array.shape() as usize;
-            array.set_shape(mapping[old_shape], &mut self.properties);
+            array.renumber_shape(mapping[old_shape]);
         });
         self.function_records.for_each_live_mut(|_, function| {
             let old_shape = function.object.shape() as usize;
-            function.object.set_shape(mapping[old_shape], &mut self.properties);
+            function.object.renumber_shape(mapping[old_shape]);
         });
         self.promise_records.for_each_live_mut(|_, promise| {
             let old_shape = promise.object.shape() as usize;
-            promise.object.set_shape(mapping[old_shape], &mut self.properties);
+            promise.object.renumber_shape(mapping[old_shape]);
         });
         self.iterator_records.for_each_live_mut(|_, iterator| {
             let old_shape = iterator.object.shape() as usize;
-            iterator.object.set_shape(mapping[old_shape], &mut self.properties);
+            iterator.object.renumber_shape(mapping[old_shape]);
         });
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
                 continue;
             };
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape], &mut self.properties);
+            object.renumber_shape(mapping[old_shape]);
         }
         self.register_shape_layouts(layouts);
     }
@@ -2188,6 +2191,9 @@ impl Heap {
         full
     }
 
+    /// The emptied buffer a collection's roots go into, kept from the last collection.
+    pub(crate) fn take_mark_stack(&mut self) -> Vec<Value> { std::mem::take(&mut self.mark_stack) }
+
     pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
@@ -2210,11 +2216,7 @@ impl Heap {
         // The sweep may free an array whose record a later array reuses.
         retire_array_storage_proofs();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
-        self.collection_state = if full {
-            CollectionState::FullMarking
-        } else {
-            CollectionState::MinorMarking
-        };
+        self.collection_state = if full { CollectionState::FullMarking } else { CollectionState::MinorMarking };
         // Live slots grow only by allocation and shrink only by sweeping, so the peak is
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
@@ -2382,16 +2384,13 @@ impl Heap {
             }
         }
         self.clear_unread_environment_slots(environments);
+        self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             let mark_nanos = mark_started.elapsed().as_nanos() as u64;
             self.gc_profile.mark_nanos += mark_nanos;
-            if full {
-                self.gc_profile.full_mark_nanos += mark_nanos;
-            } else {
-                self.gc_profile.minor_mark_nanos += mark_nanos;
-            }
+            *if full { &mut self.gc_profile.full_mark_nanos } else { &mut self.gc_profile.minor_mark_nanos } += mark_nanos;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
@@ -3721,7 +3720,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3751,7 +3750,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3799,8 +3798,7 @@ impl Heap {
         store_exact_slot(data, &mut self.properties, slot, value, target, layout)
     }
 
-    /// Whether the arena keeps slot representations, which observe every store
-    /// (`ValueArena::tracks`).
+    /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
     pub(crate) fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
     }
@@ -3836,6 +3834,7 @@ impl Heap {
             // caller.
             ExactStorage::Extended { .. } if data.was_used_as_prototype() => false,
             ExactStorage::Extended { inline } => {
+                data.note_value_write(slot);
                 // SAFETY: as `store_exact_slot`.
                 unsafe { store_extended_slot(data, &mut self.properties, slot, value, inline) };
                 true
@@ -4201,10 +4200,7 @@ impl Heap {
                 object(value);
                 work.extend(elements.iter().copied());
             }
-            Cell::WasmGc { fields, .. } => {
-                work.extend(fields.values.iter().copied());
-                work.extend(fields.descriptor);
-            }
+            Cell::WasmGc { fields, .. } => work.extend(fields.edges().iter().copied()),
             Cell::WasmExtern(value) => work.push(*value),
             Cell::AccessorPair { getter, setter } => {
                 work.push(*getter);
@@ -4226,11 +4222,11 @@ impl Heap {
             | Cell::TemporalPlainMonthDay { object: value, .. }
             | Cell::TemporalPlainYearMonth { object: value, .. }
             | Cell::TemporalZonedDateTime { object: value, .. }
-            | Cell::TemporalInstant { object: value, .. } => object(value),
+            | Cell::TemporalInstant { object: value, .. }
+            | Cell::WasmTag { object: value, .. } => object(value),
             Cell::BigInt(_)
             | Cell::Symbol(_)
             | Cell::Error(_)
-            | Cell::WasmTag { .. }
             | Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Host(_),
                 ..
@@ -4487,7 +4483,7 @@ impl Heap {
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
                 Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
-                Cell::WasmGc { fields, .. } => fields.capacity() * size_of::<Value>(),
+                Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }
@@ -4659,7 +4655,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
             }
         }
         ExactStorage::Extended { inline } => {
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             // SAFETY: as above.
             unsafe { store_extended_slot(data, properties, slot, value, inline) };
         }

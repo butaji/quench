@@ -240,6 +240,7 @@ impl CodeHeap {
         }
         let count = chunks.max(REGION_CHUNKS);
         let views = Views::reserve(count * CHUNK_BYTES)?;
+        crate::jit_coverage::note_code_region(views.exec as usize, count * CHUNK_BYTES);
         self.regions.push(Region {
             views,
             chunks: vec![Chunk::Free; count].into_boxed_slice(),

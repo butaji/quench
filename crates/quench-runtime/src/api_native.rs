@@ -186,6 +186,13 @@ pub enum ValueType {
     Function,
 }
 
+impl ValueType {
+    /// Whether the type is `undefined` or `null`.
+    pub fn is_nullish(self) -> bool {
+        matches!(self, ValueType::Undefined | ValueType::Null)
+    }
+}
+
 /// The bytes an ArrayBuffer or view names. `kind` is the view's specific brand
 /// (`ArrayBuffer`, `SharedArrayBuffer`, `DataView` or a typed-array constructor brand).
 #[derive(Clone, Copy, Debug)]
@@ -209,11 +216,6 @@ pub enum IntactBuiltin {
     StringIncludes,
     RegExpTest,
     RegExpExec,
-}
-
-impl IntactBuiltin {
-    /// Every builtin a proof covers (`Vm::embedding_builtins_intact`).
-    pub(crate) const ALL: [Self; 4] = [Self::StringCharCodeAt, Self::StringIncludes, Self::RegExpTest, Self::RegExpExec];
 }
 
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
@@ -683,10 +685,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<Option<(RootId, RootId)>, RootedError> {
         let result = self.vm.embedding_proxy_details(root);
         let details = result.map_err(|error| self.error(error))?;
-        Ok(
-            details
-                .map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))),
-        )
+        Ok(details.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
     }
 
     /// The immutable display name of an ordinary function, without public getters.
@@ -2046,12 +2045,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn plain_enumerable_entries_rooted(&mut self, object: RootId) -> Option<Vec<(String, RootId)>> {
         let object = self.vm.root_value(object)?;
         let entries = self.vm.plain_enumerable_entries(object)?;
-        Some(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key, self.scoped_value(value)))
-                .collect(),
-        )
+        Some(entries.into_iter().map(|(key, value)| (key, self.scoped_value(value))).collect())
     }
 
     /// Capture an object template (`Vm::capture_object_template`) of `template`'s graph,
