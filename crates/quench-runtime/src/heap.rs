@@ -909,7 +909,7 @@ impl Heap {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
-        self.memory_policy.pacing()
+        self.memory_policy.pacing().sized(&self.pacing_state)
     }
     /// The minor collections a young cell or record survives before it is old: the policy's
     /// (`GenerationalPacing::promotion_age`). It may change between collections: every minor
@@ -2191,6 +2191,16 @@ impl Heap {
         full
     }
 
+    /// `collection_is_full`, noting a full collection's start for the old-generation sizing
+    /// (`GenerationalPacing::old_sizing`).
+    fn start_collection(&mut self, full: bool) -> bool {
+        let full = self.collection_is_full(full);
+        if full {
+            self.pacing_state.old_generation.start_full();
+        }
+        full
+    }
+
     /// The emptied buffer a collection's roots go into, kept from the last collection.
     pub(crate) fn take_mark_stack(&mut self) -> Vec<Value> { std::mem::take(&mut self.mark_stack) }
 
@@ -2202,7 +2212,7 @@ impl Heap {
         closure_reads: Option<&dyn ClosureReadSource>,
         full: bool,
     ) -> Vec<(Value, Value)> {
-        let full = self.collection_is_full(full);
+        let full = self.start_collection(full);
         let age = self.promotion_age();
         // A minor collection that leaves survivors young carries the old owners that may
         // point at them to the next one (`carried_owners`): those the barriers logged, then
@@ -4673,29 +4683,4 @@ unsafe fn store_extended_slot(data: &mut Object, properties: &mut ValueArena, sl
 }
 
 #[cfg(test)]
-mod offset_order_tests {
-    #[test]
-    fn radix_offset_order_matches_comparison_sort() {
-        let mut state = 0x2545_f491_u64;
-        let mut offsets: Vec<usize> = (0..5000)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                (state >> 33) as usize
-            })
-            .collect();
-        offsets.sort_unstable();
-        offsets.dedup();
-        let mut keys: Vec<u64> = offsets
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
-            .collect();
-        let mut expected = keys.clone();
-        expected.sort_unstable();
-        super::sort_by_unique_offset(&mut keys);
-        assert_eq!(keys, expected);
-    }
-}
+mod offset_order_tests;

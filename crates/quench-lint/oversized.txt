@@ -567,7 +567,7 @@ complexity crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::write_snapshot
 complexity crates/quench-runtime/src/heap/environment_trace.rs::Heap::trace_environment_edge 35
 complexity crates/quench-runtime/src/heap/memory_profile.rs::cell_bytes 23
 complexity crates/quench-runtime/src/heap/memory_stats.rs::Heap::memory_composition 44
-complexity crates/quench-runtime/src/heap/pacing.rs::GenerationalPacing::plan 14
+complexity crates/quench-runtime/src/heap/pacing.rs::GenerationalPacing::plan 13
 complexity crates/quench-runtime/src/heap/parallel_mark.rs::ParallelMarkView<'heap>::mark_value 25
 complexity crates/quench-runtime/src/heap/tests.rs::named_property_publication_retires_readers_for_every_record_family 12
 complexity crates/quench-runtime/src/native_link/link.rs::NativeSupport::from_cargo_report 25
@@ -1427,14 +1427,14 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
-file-lines crates/quench-runtime/src/heap.rs 4701
+file-lines crates/quench-runtime/src/heap.rs 4686
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 3992
 file-lines crates/quench-runtime/src/heap/cell/snapshot.rs 1143
 file-lines crates/quench-runtime/src/heap/environment_trace.rs 543
 file-lines crates/quench-runtime/src/heap/memory_profile.rs 742
-file-lines crates/quench-runtime/src/heap/pacing.rs 977
+file-lines crates/quench-runtime/src/heap/pacing.rs 756
 file-lines crates/quench-runtime/src/heap/records.rs 1203
 file-lines crates/quench-runtime/src/heap/slots.rs 508
 file-lines crates/quench-runtime/src/heap/tests.rs 1877
@@ -1446,7 +1446,7 @@ file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 577
 file-lines crates/quench-runtime/src/value.rs 1020
 file-lines crates/quench-runtime/src/value_vec.rs 1479
-file-lines crates/quench-runtime/src/vm.rs 3758
+file-lines crates/quench-runtime/src/vm.rs 3756
 file-lines crates/quench-runtime/src/vm/array.rs 1199
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 646
@@ -2689,7 +2689,6 @@ function-lines crates/quench-runtime/src/heap/memory_profile.rs::MemoryProfile::
 function-lines crates/quench-runtime/src/heap/memory_profile.rs::cell_bytes 64
 function-lines crates/quench-runtime/src/heap/memory_stats.rs::Heap::memory_composition 266
 function-lines crates/quench-runtime/src/heap/pacing.rs::GenerationalPacing::plan 65
-function-lines crates/quench-runtime/src/heap/pacing.rs::tests::promotions_dying_old_turn_aging_on_until_aged_survivors_outlive_their_second_minor 42
 function-lines crates/quench-runtime/src/heap/parallel_mark.rs::ParallelMarkView<'heap>::mark_value 143
 function-lines crates/quench-runtime/src/heap/records.rs::RecordSpace<T,CAPACITY>::sweep_aging_word 45
 function-lines crates/quench-runtime/src/heap/records.rs::RecordSpace<T,CAPACITY>::sweep_disposing 62
