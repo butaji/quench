@@ -11,6 +11,7 @@ use super::{WeakMapEntries, WeakSetEntries};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod global_values;
 mod modes;
 mod prototype_values;
 mod shape_id;
@@ -21,6 +22,7 @@ pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
+pub(crate) use global_values::{GlobalCell, GlobalFact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_value};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -1798,6 +1800,8 @@ struct ObjectExtras {
     /// A prototype's subject in its heap's dependency table, which its layout and element
     /// changes retire (`Object::note_prototype_layout_change`).
     watch: super::dependencies::Watch,
+    /// A global object's table of the values code read from it by name (`global_values`).
+    global_values: Option<Box<global_values::GlobalValues>>,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -2517,14 +2521,6 @@ impl Object {
             }
             Some(StackData::Formatted(value)) => visit(*value),
             None => {}
-        }
-    }
-
-    /// A write to one of this object's slots: what it offers its inheritors may change.
-    #[inline(always)]
-    pub(crate) fn note_prototype_value_write(&self) {
-        if self.was_used_as_prototype() {
-            prototype_values::retire(self.exact_shape());
         }
     }
 
