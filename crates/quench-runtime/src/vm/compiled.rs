@@ -73,6 +73,8 @@ mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
+#[path = "compiled/wasm_callable.rs"]
+mod wasm_callable;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -8586,6 +8588,9 @@ struct Analysis<'a, H: Host> {
     root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
+    /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
+    /// plans have read every record and before any body is built.
+    unrolls: bool,
 }
 
 impl<H: Host> Analysis<'_, H> {
@@ -8741,7 +8746,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// The function's plan, assuming every function in `callable` compiles.
-    fn plan(&self, index: usize, callable: &[bool], memory_slot: &mut Option<u32>) -> Option<Plan> {
+    fn plan(&self, index: usize, callable: &crate::bitset::BitSet, memory_slot: &mut Option<u32>) -> Option<Plan> {
         let plan_started = self
             .compile_rejections
             .as_ref()
@@ -8804,10 +8809,7 @@ impl<H: Host> Analysis<'_, H> {
                 .clone()
                 .expect("queued instructions have a state");
             if instruction.op() == Op::CallKnown
-                && !callable
-                    .get(usize::from(instruction.known_function_index()))
-                    .copied()
-                    .unwrap_or(false)
+                && !callable.contains(usize::from(instruction.known_function_index()))
                 && !self.experimental_root_compilation
             {
                 let callee = instruction.known_function_index();
@@ -8900,7 +8902,7 @@ impl<H: Host> Analysis<'_, H> {
         function: &Function,
         instruction: WideInstruction,
         state: &mut AnalysisState,
-        callable: &[bool],
+        callable: &crate::bitset::BitSet,
         memory_register: Option<u16>,
         memory_slot: &mut Option<u32>,
         result: Option<crate::WasmType>,
@@ -9177,14 +9179,14 @@ impl<H: Host> Analysis<'_, H> {
             }
             Op::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
-                if !callable.get(callee as usize).copied().unwrap_or(false)
+                if !callable.contains(callee as usize)
                     && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
                 {
                     return None;
                 }
                 let signature = self.signature(callee)?;
                 if signature.results.len() > 1
-                    && !callable.get(callee as usize).copied().unwrap_or(false)
+                    && !callable.contains(callee as usize)
                 {
                     // The VM callout ABI currently carries at most one result.
                     // Do not admit a residual fallback that would silently
@@ -11969,7 +11971,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
-            unrolled: if program_unrolls(self.code) {
+            unrolled: if self.unrolls {
                 unrollable_loops(&instructions, plan)
             } else {
                 vec![None; instructions.len()]
@@ -13517,36 +13519,19 @@ impl<H: Host> Vm<H> {
             experimental_root_compilation: root.is_some(),
             root_only,
             compile_rejections: compile_rejections.as_ref(),
+            unrolls: false,
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
-        let mut callable;
-        // Each callable function's full plan from the pass that settled the set, which its
-        // compilation reads, and the interfaces its callers read.
+        // Each callable function's full plan, which its compilation reads, and the
+        // interfaces its callers read.
         let mut full_plans: Vec<Option<Plan>>;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
         let mut guarded;
         loop {
-            callable = allowed.clone();
-            loop {
-                memory_slot = None;
-                full_plans = (0..count)
-                    .map(|index| {
-                        if callable[index] {
-                            analysis.plan(index, &callable, &mut memory_slot)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
-                let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
-                if next == callable {
-                    break;
-                }
-                callable = next;
-            }
+            (full_plans, memory_slot) = analysis.settle_callable(&crate::bitset::BitSet::from_fn(count, |index| allowed[index]));
+            plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
             // Accesses may rely on the guard when the memory has one and
             // this host resumes guard faults.
             let stable_memory = memory_slot.is_some_and(|slot| {
@@ -13643,6 +13628,7 @@ impl<H: Host> Vm<H> {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
+        analysis.unrolls = program_unrolls(&code);
         let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
         build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
         let build = build_order.into_iter().map(|index| {
