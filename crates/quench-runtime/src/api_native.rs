@@ -218,11 +218,6 @@ pub enum IntactBuiltin {
     RegExpExec,
 }
 
-impl IntactBuiltin {
-    /// Every builtin a proof covers (`Vm::embedding_builtins_intact`).
-    pub(crate) const ALL: [Self; 4] = [Self::StringCharCodeAt, Self::StringIncludes, Self::RegExpTest, Self::RegExpExec];
-}
-
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
@@ -1838,9 +1833,9 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// The ordinary object `{ [names[0]]: values[0], ... }`, made at its final shape
-    /// (`Vm::create_embedding_record`): what an object literal of those names makes.
-    pub fn record_rooted(&mut self, names: &'static [&'static str], values: &[RootId]) -> Result<RootId, RootedError> {
-        let result = self.vm.create_embedding_record(names, values);
+    /// (`Vm::create_embedding_record`), as an object literal makes it, or with a null prototype.
+    pub fn record_rooted(&mut self, null_prototype: bool, names: &'static [&'static str], values: &[RootId]) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_record(null_prototype, names, values);
         self.completion(result)
     }
 

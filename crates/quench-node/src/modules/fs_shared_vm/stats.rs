@@ -97,7 +97,7 @@ fn milliseconds(time: i128) -> f64 {
 /// The object of `class` whose own fields are `names` holding `values`, made at its final
 /// shape.
 fn record(c: &mut Context<'_>, class: Root, names: &'static [&'static str], values: &[RootId]) -> Outcome {
-    let object = c.record_rooted(names, values)?;
+    let object = c.record_rooted(false, names, values)?;
     let prototype = classes::prototype(c, class)?;
     c.set_prototype_rooted(object, prototype)?;
     Ok(object)

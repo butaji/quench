@@ -14,12 +14,14 @@ impl<H: Host> Vm<H> {
         for operand in [left, right] {
             match self.heap.string(operand) {
                 Some(text) => match text.existing_flat()?.view() {
-                    super::wtf16::Units::Ascii(text) if text.len() <= wtf16::SHORT_ASCII_CAPACITY => {
-                        bytes.extend_from_slice(text);
-                    }
-                    _ => return None,
+                    super::wtf16::Units::Ascii(text) => bytes.try_extend(text)?,
+                    super::wtf16::Units::Wide(_) => return None,
                 },
-                None => crate::number_to_string::write(operand.as_number()?, &mut bytes),
+                None => {
+                    let mut number = crate::number_to_string::Short::new();
+                    crate::number_to_string::write(operand.as_number()?, &mut number);
+                    bytes.try_extend(&number)?;
+                }
             }
         }
         if bytes.len() > wtf16::SHORT_ASCII_CAPACITY {
@@ -27,7 +29,15 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: every byte came from ASCII text or a Number's ASCII digits.
         let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
-        Some(self.heap.alloc_string(JsString::from_str(text)))
+        // Such a key usually spells an atom whose string lives: it is the result, made and
+        // matched to its atom once rather than per concatenation and per keyed access.
+        let atom = self.find_atom(Self::atom_hash_str(text), |atom| self.atom_units_equal_str(atom, text));
+        if let Some(string) = atom.and_then(|atom| self.heap.atom_string(atom, false)) {
+            return Some(string);
+        }
+        let string = self.heap.alloc_string(JsString::from_str(text));
+        atom.inspect(|atom| self.heap.record_string_atom(string, *atom));
+        Some(string)
     }
 
     /// The cache slot for an operand pair.

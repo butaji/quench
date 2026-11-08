@@ -87,9 +87,8 @@ vm/compiled/general_capture.rs StoreCapture 1
 vm/compiled/general_names.rs LoadNameCall 2
 vm/compiled/lane_compile.rs Call 2
 vm/compiled/lane_region.rs Binary 2
-vm/compiled/lane_region.rs Call 5
-vm/compiled/lane_region.rs CallArray 1
-vm/compiled/lane_region.rs Construct 2
+vm/compiled/lane_region.rs Call 4
+vm/compiled/lane_region.rs Construct 1
 vm/compiled/lane_region.rs GetField 14
 vm/compiled/lane_region.rs GetIndex 3
 vm/compiled/lane_region.rs IncDec 3
@@ -151,7 +150,7 @@ vm/compiled/lane_unit/static_hints.rs LoadConst 1
 vm/compiled/lane_unit/static_hints.rs MakeClosure 2
 vm/compiled/lane_unit/static_hints.rs Move 2
 vm/compiled/osr_loop.rs Binary 18
-vm/compiled/osr_loop.rs Call 3
+vm/compiled/osr_loop.rs Call 4
 vm/compiled/osr_loop.rs CallArray 1
 vm/compiled/osr_loop.rs GetField 33
 vm/compiled/osr_loop.rs GetIndex 23
@@ -189,7 +188,7 @@ vm/dispatch_fast.rs ArgumentGet 2
 vm/dispatch_fast.rs ArgumentsLength 3
 vm/dispatch_fast.rs Await 2
 vm/dispatch_fast.rs Binary 4
-vm/dispatch_fast.rs Call 16
+vm/dispatch_fast.rs Call 12
 vm/dispatch_fast.rs CallArray 4
 vm/dispatch_fast.rs CallForwardingArguments 6
 vm/dispatch_fast.rs CallKnown 3
@@ -224,7 +223,7 @@ vm/dispatch_fast.rs JumpBinaryFalse 2
 vm/dispatch_fast.rs JumpFalse 3
 vm/dispatch_fast.rs JumpTrue 4
 vm/dispatch_fast.rs LoadCallee 1
-vm/dispatch_fast.rs LoadCapture 4
+vm/dispatch_fast.rs LoadCapture 3
 vm/dispatch_fast.rs LoadConst 5
 vm/dispatch_fast.rs LoadEnvLocal 4
 vm/dispatch_fast.rs LoadLocal 5
@@ -258,7 +257,7 @@ vm/dispatch_fast.rs SetFunctionNameKey 1
 vm/dispatch_fast.rs SetIndex 3
 vm/dispatch_fast.rs SetThisField 1
 vm/dispatch_fast.rs SetThisFieldStrict 1
-vm/dispatch_fast.rs StoreCapture 3
+vm/dispatch_fast.rs StoreCapture 2
 vm/dispatch_fast.rs StoreEnvLocal 3
 vm/dispatch_fast.rs StoreLocal 2
 vm/dispatch_fast.rs StoreLocalPlain 2

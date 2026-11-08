@@ -41,7 +41,7 @@ pub(crate) fn queue_next_tick(
     args: &[RootId],
 ) -> Result<(), RootedError> {
     let values = if args.is_empty() { context.undefined() } else { context.array_rooted(args)? };
-    let resource = context.record_rooted(&TICK_OBJECT_FIELDS, &[callback, values])?;
+    let resource = context.record_rooted(false, &TICK_OBJECT_FIELDS, &[callback, values])?;
     let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
     let execution = Some(CallbackExecution {

@@ -108,7 +108,7 @@ fn emit_user_call(builder: &mut FunctionBuilder<'_>, (pc, next, fallback): (usiz
 }
 
 /// The registers of a call with at most one argument, which may be a native's in-place case
-/// (`Vm::steady_native_value`, which tests the callee itself): callee, receiver and the
+/// (`Vm::in_place_native_value`, which tests the callee itself): callee, receiver and the
 /// argument, if any.
 struct BuiltinCall {
     callee: i32,
@@ -140,9 +140,9 @@ fn emit_builtin_call(builder: &mut FunctionBuilder<'_>, (arguments, payload): (i
     emit_lane_helper_call(builder, payload, helper, &[payload, callee, receiver, argument, count])
 }
 
-/// A native's in-place case (`Vm::steady_native_value`): its value, else `Value::DELETED`
+/// A native's in-place case (`Vm::in_place_native_value`): its value, else `Value::DELETED`
 /// before any effect.
-pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, receiver: u64,
+pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, receiver: u64,
     argument: u64, count: u64) -> u64 {
     // SAFETY: as `lane_field_add`.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
@@ -152,7 +152,10 @@ pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, _residual:
     };
     let argument = [Value::from_bits(argument)];
     let Some(args) = argument.get(..usize::try_from(count).unwrap_or(usize::MAX)) else { return Value::DELETED.to_bits() };
-    let Some(value) = vm.steady_native_value(native, Value::from_bits(receiver), args) else { return Value::DELETED.to_bits() };
+    // SAFETY: the running entry's program, live for the call.
+    let code = unsafe { &*(residual as *const ResidualProgram) };
+    let Some(value) = vm.in_place_native_value(code, native, Value::from_bits(callee), Value::from_bits(receiver), args)
+        else { return Value::DELETED.to_bits() };
     // As `lane_store_miss`: a due collection waits for the next back edge's safepoint.
     dispatch.refresh_object_bases(vm);
     value.to_bits()

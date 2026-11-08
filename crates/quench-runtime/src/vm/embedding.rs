@@ -742,59 +742,6 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.string(value).map(|text| text.units().utf8_len()))
     }
 
-    /// Whether each of `builtins` is this realm's own method, an own data property of the
-    /// realm's prototype that holds it: a host step computing what guest code calling them
-    /// would compute then calls nothing a script could observe. A proof under the current
-    /// `prototype_layout_epoch` (`IntactBuiltinsProof`) names the slot and method of each; the
-    /// epoch retires the slots with any change of their holders' shapes, and a method written
-    /// over in its slot fails the comparison, which proves again.
-    pub(crate) fn embedding_builtins_intact(&mut self, builtins: &[crate::IntactBuiltin]) -> bool {
-        if self.intact_builtins.is_some_and(|proof| self.holds_intact_builtins(proof, builtins)) {
-            return true;
-        }
-        self.prove_intact_builtins();
-        self.intact_builtins.is_some_and(|proof| self.holds_intact_builtins(proof, builtins))
-    }
-
-    /// Whether `proof` holds under the current epoch and still finds each of `builtins` in
-    /// its slot.
-    fn holds_intact_builtins(&self, proof: IntactBuiltinsProof, builtins: &[crate::IntactBuiltin]) -> bool {
-        proof.epoch == crate::heap::prototype_layout_epoch()
-            && builtins.iter().all(|builtin| {
-                proof.methods[*builtin as usize].is_some_and(|(holder, slot, method)| {
-                    self.heap.ordinary_object(holder).and_then(|data| self.heap.property_get(data, slot as usize))
-                        == Some(method)
-                })
-            })
-    }
-
-    /// Records where each `IntactBuiltin` is its realm's own method, marking the prototypes
-    /// that hold them so a change of their shapes advances the epoch.
-    #[cold]
-    #[inline(never)]
-    fn prove_intact_builtins(&mut self) {
-        use crate::IntactBuiltin;
-        for holder in [self.string_proto, self.regexp_proto] {
-            self.heap.mark_prototype(holder);
-        }
-        let mut methods = [None; IntactBuiltin::ALL.len()];
-        for builtin in IntactBuiltin::ALL {
-            let (holder, name, native) = match builtin {
-                IntactBuiltin::StringCharCodeAt => (self.string_proto, "charCodeAt", Native::StringCharCodeAt),
-                IntactBuiltin::StringIncludes => (self.string_proto, "includes", Native::StringIncludes),
-                IntactBuiltin::RegExpTest => (self.regexp_proto, "test", Native::RegExpTest),
-                IntactBuiltin::RegExpExec => (self.regexp_proto, "exec", Native::RegExpExec),
-            };
-            methods[builtin as usize] = self.lookup_atom(name).and_then(|atom| {
-                let method = self.own_property(holder, atom).filter(|method| self.is_current_realm_native(*method, native))?;
-                let data = self.heap.ordinary_object(holder)?;
-                let slot = self.property_shape_slot(data.shape(), PropertyKey::string(atom))?;
-                Some((holder, u32::try_from(slot).ok()?, method))
-            });
-        }
-        self.intact_builtins = Some(IntactBuiltinsProof { epoch: crate::heap::prototype_layout_epoch(), methods });
-    }
-
     /// Whether `accept(index, unit, length)` holds for every code unit of the string at `root`;
     /// `None` denotes a non-string.
     pub(crate) fn embedding_string_units_all(
@@ -1370,25 +1317,24 @@ impl<H: Host> Vm<H> {
             )))
     }
 
-    /// The ordinary object `{ [names[0]]: values[0], ... }` of the realm's
-    /// `Object.prototype`, whose own data properties are writable, enumerable and
-    /// configurable in `names` order, as a literal makes it: allocated at its final shape,
+    /// The ordinary object `{ [names[0]]: values[0], ... }` of the realm's `Object.prototype`
+    /// (or of none, under `null_prototype`), with writable, enumerable, configurable own data
+    /// properties in `names` order, as a literal makes it: allocated at its final shape,
     /// which the VM derives once per `names` list (`embedding_record_shapes`). `names` hold
     /// neither an index name nor a duplicate.
     pub(crate) fn create_embedding_record(
         &mut self,
+        null_prototype: bool,
         names: &'static [&'static str],
         values: &[RootId],
     ) -> Result<Value, JsError> {
         debug_assert_eq!(names.len(), values.len());
         let shape = self.embedding_record_shape(names);
-        let values = values
-            .iter()
-            .map(|root| self.embedding_value(*root))
+        let values = values.iter().map(|root| self.embedding_value(*root))
             .collect::<Result<smallvec::SmallVec<[Value; crate::value_vec::INLINE_PROPERTY_COUNT]>, _>>()?;
         let (storage, inline) = self.heap.initial_object_storage(shape, &values, true);
-        let object = crate::heap::Object::with_property_storage(self.object_proto, storage, inline);
-        Ok(self.heap.alloc_object(object))
+        let prototype = if null_prototype { Value::NULL } else { self.object_proto };
+        Ok(self.heap.alloc_object(crate::heap::Object::with_property_storage(prototype, storage, inline)))
     }
 
     /// The shape adding `names` in order to an empty ordinary object reaches, memoized by

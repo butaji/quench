@@ -47,7 +47,8 @@ struct JsonMember {
 #[derive(Default)]
 pub(crate) struct JsonPlainCache {
     epochs: (u64, u64),
-    write: Option<JsonPlainWrite>,
+    /// Boxed so a call moves the state out and back as one pointer.
+    write: Option<Box<JsonPlainWrite>>,
 }
 
 /// Bytes of quoted keys past which the plans are dropped rather than kept: a payload of many
@@ -79,14 +80,13 @@ impl<H: Host> Vm<H> {
     /// value; `None` when the value needs the general steps, having observed nothing.
     pub(super) fn json_stringify_plain(&mut self, value: Value) -> Option<Value> {
         let epochs = (self.heap.collection_epoch(), crate::heap::prototype_layout_epoch());
-        let cache = std::mem::take(&mut self.json_plain);
-        let mut plain = match cache.write {
-            Some(plain) if cache.epochs == epochs => plain,
+        let mut plain = match self.json_plain.write.take() {
+            Some(plain) if self.json_plain.epochs == epochs => plain,
             Some(mut plain) => {
                 plain.forget_plans();
                 plain
             }
-            None => JsonPlainWrite::new(self.intern_atom("toJSON")),
+            None => Box::new(JsonPlainWrite::new(self.intern_atom("toJSON"))),
         };
         let written = self.json_write_plain(value, &mut plain);
         let text = written

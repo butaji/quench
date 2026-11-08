@@ -174,6 +174,7 @@ mod local_time;
 mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
+mod intact_fuses;
 mod iterators;
 mod json;
 mod method_cache;
@@ -1666,6 +1667,9 @@ impl ShapeFacts {
     /// property is, rather than a getter alone: its functions in `Vm::shape_accessors`
     /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
     const ACCESSOR_PAIRS: u8 = 1 << 3;
+    /// Some property of the chain was deleted, or left a vacant slot when it was rebuilt: a
+    /// second deletion makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
+    const DELETIONS: u8 = 1 << 4;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1680,25 +1684,16 @@ impl ShapeFacts {
                 | introduced(
                     descriptor(|attributes| attributes.table_accessors() || attributes.slot_accessor_pair()),
                     Self::ACCESSOR_PAIRS,
-                ),
+                )
+                | introduced(matches!(transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant), Self::DELETIONS),
         )
     }
 
-    fn accessor_pairs(self) -> bool {
-        self.0 & Self::ACCESSOR_PAIRS != 0
-    }
-
-    fn accessors(self) -> bool {
-        self.0 & Self::ACCESSORS != 0
-    }
-
-    fn may_have_gc_roots(self) -> bool {
-        self.0 & Self::MAY_HAVE_GC_ROOTS != 0
-    }
-
-    fn slot_getters(self) -> bool {
-        self.0 & Self::SLOT_GETTERS != 0
-    }
+    fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
+    fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
+    fn deletions(self) -> bool { self.0 & Self::DELETIONS != 0 }
+    fn may_have_gc_roots(self) -> bool { self.0 & Self::MAY_HAVE_GC_ROOTS != 0 }
+    fn slot_getters(self) -> bool { self.0 & Self::SLOT_GETTERS != 0 }
 }
 /// Each shape's storage length and its parent's id and length, in table order (a parent
 /// precedes its children): the table as the heap registers slot owners from it.
@@ -2078,7 +2073,8 @@ pub(crate) struct Vm<H> {
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
-    array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
+    array_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
@@ -2221,8 +2217,6 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
-    /// Where each `IntactBuiltin` was its realm's own method (`embedding_builtins_intact`).
-    intact_builtins: Option<IntactBuiltinsProof>,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
@@ -3103,7 +3097,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
-        self.array_iteration_proof = None;
+        self.array_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
@@ -3762,11 +3756,3 @@ enum StringConstantKey<'a> {
 
 #[cfg(feature = "native-execution")]
 pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
-
-/// A proof of `Vm::embedding_builtins_intact`: per `IntactBuiltin`, the prototype holding it,
-/// its slot there and the realm's own method in it, under `epoch`.
-#[derive(Clone, Copy)]
-pub(crate) struct IntactBuiltinsProof {
-    epoch: u64,
-    methods: [Option<(Value, u32, Value)>; crate::IntactBuiltin::ALL.len()],
-}

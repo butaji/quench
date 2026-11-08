@@ -210,3 +210,157 @@ pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::byteco
         crate::bytecode::InitializerValue::Numeric { parameter, operator, constant } => numeric_initializer(argument(parameter), operator, constant),
     }
 }
+
+/// The adds an initializing body (`ScriptCallTarget::initializes`) of `function` makes to
+/// `this`, each the parameter its store names (`argument`) as a cached add that runs no guest
+/// code, passed to `each` in order. `false` at the first add the caches do not answer: the
+/// adds made so far are the body's own first stores of the same values, which an activation
+/// of the body then makes again as stores, leaving the object as the activation alone would.
+#[inline(always)]
+pub(super) fn lane_add_initializer_fields<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    this: Value,
+    function: u32,
+    argument: impl Fn(u16) -> Value,
+    mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
+) -> bool {
+    let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
+        return false;
+    };
+    for store in stores {
+        let Some(value) = initializer_store_value(vm, store, &argument) else {
+            return false;
+        };
+        if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
+            return false;
+        }
+        each(store, value);
+    }
+    true
+}
+
+/// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
+/// the arguments the plan's parameters name. A plan holds while its callee's layout and
+/// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
+/// the adds it planned free of setters. Apart from the planning, whose frame is larger.
+#[inline(always)]
+pub(super) fn lane_planned_construction<H: Host>(
+    vm: &mut Vm<H>,
+    callee: Value,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    planned_construction(vm, callee, lane_construct_argument(r, i))
+}
+
+/// `lane_planned_construction` from the parameters' values `argument` gives.
+#[inline(always)]
+fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee)?;
+    // The plan in place: the allocation borrows the heap beside it, not a copy.
+    let plan = &vm.lane_stack.construct_plans[index];
+    if plan.kind != ConstructPlanKind::Passed {
+        return lane_defaulted_construction(vm, index, argument);
+    }
+    Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
+}
+
+/// Whether the running lane's frame constructs in place (`LaneContext::script_constructs`),
+/// which a body's constructions inherit (`lane_body_construction`).
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -> bool {
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return false; }
+    let cx = context.cast::<LaneContext<H>>();
+    unsafe { (*cx).script_calls && (*cx).script_constructs }
+}
+
+/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, in `code`, the
+/// running residual: the callee's construct plan (`planned_construction`), else the receiver
+/// its initializing body's cached adds finish (`initializer_construction`), which leaves the
+/// plan; `None` (a construction the lane makes otherwise, or a collection due, which the lane
+/// runs) to leave the body at the construction, before any effect.
+///
+/// # Safety
+/// `arguments` are the body's `argc` registers.
+pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+    if vm.construct_target.is_some() || vm.heap.should_collect() {
+        return None;
+    }
+    // SAFETY: the caller passes the body's argument registers.
+    let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
+    // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
+    let this = planned_construction(vm, callee, argument)
+        .or_else(|| lane_forwarded_fields(vm, callee, argument))
+        .or_else(|| initializer_construction(vm, code, callee, argument))?;
+    note_allocation(vm);
+    Some(this)
+}
+
+/// The receiver `callee`'s cached adds finish where its body only stores its parameters and
+/// primitive constants into `this` (`Function::initializer_stores`) and an in-place
+/// construction admits it (`Vm::inline_constructible`): the static facts of
+/// `ScriptCallTarget::initializes`, so a region with no lane run constructs as the lane does,
+/// and the plan it leaves serves later constructions. Such a body runs no guest code, binds no
+/// environment and reads no `arguments`. A miss leaves the unreachable receiver to the
+/// collector. Out of line, so planned constructions keep their code.
+#[inline(never)]
+fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let (program, function, _) = vm.same_realm_user_target(callee)?;
+    if program != vm.active_program || function == super::ROOT_FUNCTION_ID
+        || !Vm::<H>::inline_constructible(code.function_get(function as usize)?) {
+        return None;
+    }
+    let (this, added) = lane_initialize_fields(vm, code, callee, callee, function, argument)?;
+    added.then_some(this)
+}
+
+/// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
+/// it computes first; `None` for a forwarding constructor's plan, which holds only with its
+/// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
+/// code.
+#[inline(never)]
+fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let plan = &vm.lane_stack.construct_plans[index];
+    if plan.kind == ConstructPlanKind::Forwarding {
+        return None;
+    }
+    let values = plan.values(vm, argument)?;
+    Some(plan.allocate(&mut vm.heap, |field| values[field]))
+}
+
+/// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
+/// when not passed.
+#[inline(always)]
+pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
+    let argc = ImmediateLayout::argument_count(i.imm());
+    move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
+}
+
+/// The construct plan cache entry `callee` owns, when it names a heap cell.
+pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
+    callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
+}
+
+/// `callee`'s construct plan while it holds: the entry names `callee`, the prototype
+/// layout keeps the plan's epoch and `callee`'s own layout still yields the planned
+/// `prototype`, from which the receiver's template is derived.
+#[inline(always)]
+pub(super) fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
+    holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
+}
+
+/// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
+#[inline(always)]
+pub(super) fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<usize> {
+    let index = construct_plan_index(callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
+    (plan.callee == callee
+        && plan.epoch == crate::heap::prototype_layout_epoch()
+        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
+        && (plan.super_parent.is_undefined()
+            || vm.object_data(callee).is_some_and(|class| class.proto() == plan.super_parent)))
+    .then_some(index)
+}

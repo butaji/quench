@@ -15,7 +15,6 @@ pub(super) struct LanePlan {
     fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
     direct: Box<[DirectCallee]>,
     direct_sites: BTreeMap<usize, *const DirectCallee>,
-    loop_header: Option<u32>,
     function: u32,
     /// The word its publication sets when one of its Stable facts changes.
     invalidation: crate::code_dependencies::Invalidation,
@@ -160,20 +159,18 @@ impl<H: Host> Vm<H> {
     /// natively.
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        captures: &dyn Fn(Value) -> (usize, usize), direct: &[Option<DirectCallee>], loop_header: Option<u32>,
+        captures: &dyn Fn(Value) -> (usize, usize), direct: &[Option<DirectCallee>],
         generic: &[LaneExit], budget: usize) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
-        let loop_entry = match loop_header {
-            Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
-            None => None,
-        };
         let left_at = unit_leaves(&unit, generic);
-        let fields = self.lane_unit_fields(program, &unit, &left_at);
+        let mut fields = self.lane_unit_fields(program, &unit, &left_at);
+        // Admitting the stores' writes once, here, widens what they widen; the fields then
+        // read the widened slots, and the body's entries admit nothing again.
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| fields.get(&site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-        let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
         let helpers = LaneHelper::addresses::<H>();
         crate::jit_coverage::note_native_helpers(helpers);
         let helpers = LaneHelpers::Process(helpers);
@@ -187,10 +184,10 @@ impl<H: Host> Vm<H> {
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &left_at, &direct_sites, &frame_captures, loop_entry, allow_first_entry)?;
+            &left_at, &direct_sites, &frame_captures)?;
         if lowered.region.native == 0 { return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-        Some((LanePlan { unit, lowered, fields, direct, direct_sites, loop_header, function, invalidation, budget }, native))
+        Some((LanePlan { unit, lowered, fields, direct, direct_sites, function, invalidation, budget }, native))
     }
 
     /// Specialize `function` for lane activations, admitting a body only where its first
@@ -200,11 +197,11 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: Vec<Option<DirectCallee>>, loop_header: Option<u32>, generic: &[LaneExit]) -> Option<LaneMethod> {
+        direct: Vec<Option<DirectCallee>>, generic: &[LaneExit]) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, loop_header, generic, budget)
+            let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget)
             else { break None };
             match lane_code(native) {
                 Ok(code) => break plan.finish(&code),
@@ -221,9 +218,9 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[Option<DirectCallee>], loop_header: Option<u32>, generic: &[LaneExit], budget: usize) -> Option<PendingLaneMethod> {
+        direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize) -> Option<PendingLaneMethod> {
         self.host.before_native_compilation();
-        let planned = self.plan_lane_method(program, function, targets, captures, direct, loop_header, generic, budget);
+        let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget);
         self.host.after_native_compilation();
         let (plan, native) = planned?;
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
@@ -242,7 +239,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, loop_header: Option<u32>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
+        direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks),
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
@@ -256,7 +253,7 @@ impl<H: Host> Vm<H> {
         loop {
             let (generic, budget) = pending;
             let direct = direct(self);
-            let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, loop_header, &generic, budget)
+            let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, &generic, budget)
             else { return LaneBodyOutcome::Declined };
             match self.lane_body_poll(Box::new(started)) {
                 Ok(outcome) => return outcome,
@@ -286,6 +283,15 @@ impl<H: Host> Vm<H> {
 fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
         lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
+}
+
+impl<H: Host> Vm<H> {
+    /// Registers the writes a unit's raw stores may make (`lane_region::store_domains`) with
+    /// the slots' observations; whether every slot already admitted them. A body's slot
+    /// dependencies hold its slots at the admitted types, so its runs need not admit again.
+    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, crate::typed_ir::Type)>) -> bool {
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain)| self.heap.admit_slot_writes(shape, usize::from(slot), domain) && admitted)
+    }
 }
 
 impl PendingLaneMethod {
@@ -358,12 +364,12 @@ impl LanePlan {
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         Some(LaneMethod {
-            slot_dependencies, stable, invalidation: self.invalidation, _code: memory, entry, first_entry: self.lowered.first_entry, recovery_space,
+            slot_dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.fault_poll),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
-            loop_header: self.loop_header, amortizes, direct: self.direct, closed,
+            amortizes, direct: self.direct, closed,
         })
     }
 }

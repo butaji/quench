@@ -54,7 +54,7 @@ fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId], brand: Brand) -
         return Err(throw(c, WebError::MissingOption("init.highWaterMark")));
     }
     let high_water_mark = c.to_number(high_water_mark)?;
-    let state = record(c, &[])?;
+    let state = record(c, &[], &[])?;
     put_num(c, state, HIGH_WATER_MARK, high_water_mark)?;
     attach(c, this, brand, state)?;
     Ok(c.undefined())
@@ -97,7 +97,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         Member::ByteLengthInspect | Member::CountInspect => {
             let (brand, state) = strategy(c, this)?;
             let high_water_mark = get(c, state, HIGH_WATER_MARK)?;
-            let data = literal(c, &[("highWaterMark", high_water_mark)])?;
+            let data = literal(c, &["highWaterMark"], &[high_water_mark])?;
             custom_inspect(c, this, brand.name(), data, args)
         }
         Member::ByteSize => {

@@ -22,6 +22,15 @@ impl TargetShape {
     }
 }
 
+impl super::ValueArena {
+    /// Whether `slot` of `shape` already holds pointees of any shape, so a store's target
+    /// joins nothing (`TargetShape::ANY` is the top).
+    #[inline(always)]
+    pub(crate) fn slot_target_settled(&self, shape: u32, slot: usize) -> bool {
+        self.tracking && slot < self.shape_length(shape) && self.targets.get(self.slot_owner(shape, slot)) == TargetShape::ANY
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

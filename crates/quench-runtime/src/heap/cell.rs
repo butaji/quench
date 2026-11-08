@@ -779,8 +779,8 @@ impl Native {
 
     /// `String.prototype` methods that, for a string primitive receiver and arguments that
     /// are not objects, run no guest code and have no effect beyond allocating their result.
-    /// The methods that look up a `Symbol.split`-like method on an argument (`split`,
-    /// `replace`, `match` and their kin) are not among them.
+    /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
+    /// them; `match` and `search`, which make a RegExp of a string, are not.
     pub(crate) fn is_pure_string_method(self) -> bool {
         matches!(
             self,
@@ -805,6 +805,7 @@ impl Native {
                 | Self::StringRepeat
                 | Self::StringPadStart
                 | Self::StringPadEnd
+                | Self::StringSplit
         )
     }
 
@@ -866,7 +867,6 @@ impl Native {
                     | Self::StringMatch
                     | Self::StringMatchAll
                     | Self::StringSearch
-                    | Self::StringSplit
             )
     }
 

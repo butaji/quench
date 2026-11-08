@@ -267,10 +267,10 @@ fn hand_on(
 /// only the handler roots `add_suspended_exception_roots` adds after a call move, to the
 /// instruction that now follows it.
 fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
-    let (mut transfers, mut live) = match liveness.take() {
-        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live)),
-        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None),
-        None => (None, None),
+    let (mut transfers, mut live, successors) = match liveness.take() {
+        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live), Some(analysis.successors)),
+        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None, None),
+        None => (None, None, None),
     };
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
@@ -307,11 +307,9 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         (Some(mut transfers), Some(mut live)) => {
             transfers.truncate(function.code.len());
             liveness::add_suspended_exception_roots(function, &mut live);
-            debug_assert!(
-                liveness::analyze_transfers(function, &transfers) == live,
-                "liveness handed past dropped Nops matches the code"
-            );
-            Some(CodeFacts::Live(CodeLiveness { successors: crate::bytecode::Successors::of_code(function), transfers, live }))
+            let successors = successors.expect("live facts carry their successors").relocated(&map);
+            debug_assert!(liveness::analyze_transfers(function, &transfers) == live && successors == crate::bytecode::Successors::of_code(function), "facts handed past dropped Nops match the code");
+            Some(CodeFacts::Live(CodeLiveness { successors, transfers, live }))
         }
         (Some(mut transfers), None) => {
             transfers.truncate(function.code.len());

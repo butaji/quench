@@ -3697,8 +3697,11 @@ impl Heap {
     fn observed_slot_target(&self, value: Value) -> TargetShape {
         // Only a tracking arena joins targets (`ValueArena::note_slot_target`); any other
         // store discards it, so it classifies nothing.
-        if self.properties.tracks() { observed_target(&self.object_records, value) }
-        else { TargetShape::NONE }
+        if self.properties.tracks() { observed_target(&self.object_records, value) } else { TargetShape::NONE }
+    }
+    /// A store's to `slot` of `shape`: a slot already holding any shape takes nothing new.
+    #[inline(always)] fn settled_or_observed(&self, shape: u32, slot: usize, value: Value) -> TargetShape {
+        if self.properties.slot_target_settled(shape, slot) { TargetShape::ANY } else { self.observed_slot_target(value) }
     }
 
     /// Observes the value before writing the named object's slot.
@@ -3786,7 +3789,7 @@ impl Heap {
         if !LOGS && self.object_records.store_logs(record_id, value) {
             return false;
         }
-        let target = self.observed_slot_target(value);
+        let target = self.settled_or_observed(self.object_record_by_id(record_id).shape(), slot, value);
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe {
             if LOGS {
@@ -3850,7 +3853,7 @@ impl Heap {
     /// `shape` is a shape outside dictionary storage holding a property at `slot`.
     #[inline(always)]
     pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
-        let target = self.observed_slot_target(value);
+        let target = self.settled_or_observed(shape, slot, value);
         let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
             return false;
         };
@@ -3910,11 +3913,7 @@ impl Heap {
             return self.property_add(object, value, shape);
         };
         let target = self.observed_slot_target(value);
-        let Self {
-            object_records,
-            properties,
-            ..
-        } = &mut *self;
+        let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
         debug_assert_eq!(slot, properties.len(data.properties()));
@@ -3940,11 +3939,7 @@ impl Heap {
             return false;
         }
         let target = self.observed_slot_target(value);
-        let Self {
-            object_records,
-            properties,
-            ..
-        } = &mut *self;
+        let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
         // exclusive, and the barrier logs nothing for this store.
         let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
