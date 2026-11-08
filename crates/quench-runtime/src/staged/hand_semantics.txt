@@ -150,7 +150,7 @@ vm/compiled/lane_unit/static_hints.rs LoadConst 1
 vm/compiled/lane_unit/static_hints.rs MakeClosure 2
 vm/compiled/lane_unit/static_hints.rs Move 2
 vm/compiled/osr_loop.rs Binary 18
-vm/compiled/osr_loop.rs Call 3
+vm/compiled/osr_loop.rs Call 4
 vm/compiled/osr_loop.rs CallArray 1
 vm/compiled/osr_loop.rs GetField 33
 vm/compiled/osr_loop.rs GetIndex 23
@@ -188,7 +188,7 @@ vm/dispatch_fast.rs ArgumentGet 2
 vm/dispatch_fast.rs ArgumentsLength 3
 vm/dispatch_fast.rs Await 2
 vm/dispatch_fast.rs Binary 4
-vm/dispatch_fast.rs Call 15
+vm/dispatch_fast.rs Call 12
 vm/dispatch_fast.rs CallArray 4
 vm/dispatch_fast.rs CallForwardingArguments 6
 vm/dispatch_fast.rs CallKnown 3
@@ -223,7 +223,7 @@ vm/dispatch_fast.rs JumpBinaryFalse 2
 vm/dispatch_fast.rs JumpFalse 3
 vm/dispatch_fast.rs JumpTrue 4
 vm/dispatch_fast.rs LoadCallee 1
-vm/dispatch_fast.rs LoadCapture 4
+vm/dispatch_fast.rs LoadCapture 3
 vm/dispatch_fast.rs LoadConst 5
 vm/dispatch_fast.rs LoadEnvLocal 4
 vm/dispatch_fast.rs LoadLocal 5
@@ -311,8 +311,6 @@ vm/dispatch_fast.rs WasmSelect 2
 vm/dispatch_fast.rs WasmSimd 2
 vm/dispatch_fast.rs WasmSimdShuffle 2
 vm/dispatch_fast.rs Yield 1
-vm/dispatch_fast/wasm_calls.rs Call 1
-vm/dispatch_fast/wasm_calls.rs StoreCapture 1
 vm/dispatch_frame.rs Await 2
 vm/dispatch_frame.rs Binary 5
 vm/dispatch_frame.rs Call 2
