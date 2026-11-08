@@ -8508,12 +8508,11 @@ fn lane_region_field<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if vm.is_private_name(field.atom) {
-        return None;
-    }
+    if vm.is_private_name(field.atom) { return None; }
     let receiver = match field.receiver {
         super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
         super::compiled::FieldReceiver::Register(register) => r.get(register),
+        super::compiled::FieldReceiver::Capture(slot) => lane_capture_value(cx, 0, slot)?,
         super::compiled::FieldReceiver::Field(index) => earlier(index),
     };
     // The site's primary entry first, as the lane's own reads take it (`lane_get_field_own`).

@@ -130,3 +130,28 @@ fn a_loop_inlines_a_method_of_a_receiver_held_outside_it() {
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
 }
+
+#[test]
+fn a_loop_inlines_an_inherited_method_of_a_captured_receiver() {
+    let source = r#"
+      class L0 { constructor() { this.k = 1; } m() { return this.k + 1; } } class L1 extends L0 {} class L2 extends L1 {} class L3 extends L2 {}
+      const chained = new L3();
+      function run(s) { let t = s; for (let i = 0; i < 50000; i++) t += chained.m(); return t; }
+      let answer = 0;
+      for (let call = 0; call < 2; call++) answer += run(call);
+      print(answer);
+    "#;
+    let program = Engine::specialize(source, "osr-captured-receiver.js").unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["200001"]);
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
+    assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
+}
