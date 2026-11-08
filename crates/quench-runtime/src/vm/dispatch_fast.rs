@@ -808,8 +808,8 @@ enum LaneBody {
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
-        /// Its runs that completed, natively called ones included.
-        completed: std::cell::Cell<u16>,
+        /// Whether a run of it completed, natively called ones included.
+        completed: std::cell::Cell<bool>,
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
