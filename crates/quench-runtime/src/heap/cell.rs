@@ -1282,7 +1282,7 @@ impl IteratorKind {
 #[derive(Clone, Debug)]
 pub(crate) enum IteratorHelper {
     RegExpStringMatchAll {
-        input: JsString,
+        input: Value, // The string matched, the value each step passes to `exec`.
         global: bool,
         unicode: bool,
     },

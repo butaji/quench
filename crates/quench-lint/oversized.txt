@@ -863,7 +863,7 @@ complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::get_iterator 12
 complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_helper_next 13
 complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_helper_zip 22
 complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_lazy_method 14
-complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_next_with_args 34
+complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_next_with_args 31
 complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_zip_keyed_inputs 12
 complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_zip_options 13
 complexity crates/quench-runtime/src/vm/iterators.rs::Vm<H>::plain_array_iterator_next 11
@@ -1430,7 +1430,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1682
-file-lines crates/quench-runtime/src/heap.rs 4707
+file-lines crates/quench-runtime/src/heap.rs 4706
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 3992
@@ -1490,7 +1490,7 @@ file-lines crates/quench-runtime/src/vm/intl_namespace.rs 1159
 file-lines crates/quench-runtime/src/vm/intl_number.rs 2296
 file-lines crates/quench-runtime/src/vm/intl_plural_rules.rs 690
 file-lines crates/quench-runtime/src/vm/intl_relative.rs 611
-file-lines crates/quench-runtime/src/vm/iterators.rs 3576
+file-lines crates/quench-runtime/src/vm/iterators.rs 3555
 file-lines crates/quench-runtime/src/vm/jit_backend/select.rs 679
 file-lines crates/quench-runtime/src/vm/json.rs 2166
 file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
@@ -1512,7 +1512,7 @@ file-lines crates/quench-runtime/src/vm/program_store.rs 4026
 file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
-file-lines crates/quench-runtime/src/vm/regexp.rs 3430
+file-lines crates/quench-runtime/src/vm/regexp.rs 3425
 file-lines crates/quench-runtime/src/vm/relational.rs 655
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
 file-lines crates/quench-runtime/src/vm/snapshot.rs 983
@@ -1527,7 +1527,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 512
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3352
-file-lines crates/quench-runtime/src/vm/tests.rs 25478
+file-lines crates/quench-runtime/src/vm/tests.rs 25475
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 960
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
@@ -2666,7 +2666,7 @@ function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_root
 function-lines crates/quench-runtime/src/heap.rs::Heap::compact_property_arena 69
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_full 41
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_minor 73
-function-lines crates/quench-runtime/src/heap.rs::Heap::iterator_edges 60
+function-lines crates/quench-runtime/src/heap.rs::Heap::iterator_edges 59
 function-lines crates/quench-runtime/src/heap.rs::Heap::mark_value 224
 function-lines crates/quench-runtime/src/heap.rs::Heap::profile_allocation 58
 function-lines crates/quench-runtime/src/heap.rs::Heap::reset 54
@@ -3277,7 +3277,7 @@ function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_helper
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_helper_return 47
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_helper_zip 259
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_lazy_method 67
-function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_next_with_args 220
+function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_next_with_args 199
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_static_method 45
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_step_with_method 57
 function-lines crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_zip 73
@@ -3514,7 +3514,7 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_wit
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_split_builtin 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_subject 69
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match 77
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match_all 55
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match_all 50
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace 174
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace_fast 94
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_search 48
@@ -3802,7 +3802,7 @@ function-lines crates/quench-runtime/src/vm/tests.rs::reduction_roots_release_on
 function-lines crates/quench-runtime/src/vm/tests.rs::reflect_definition_roots_release_after_callback_completion 87
 function-lines crates/quench-runtime/src/vm/tests.rs::regexp_construction_roots_protocol_inputs_and_initialization_projections 133
 function-lines crates/quench-runtime/src/vm/tests.rs::regexp_entrypoints_root_receivers_and_arguments_through_callbacks 140
-function-lines crates/quench-runtime/src/vm/tests.rs::regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes 118
+function-lines crates/quench-runtime/src/vm/tests.rs::regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes 115
 function-lines crates/quench-runtime/src/vm/tests.rs::regexp_match_all_creation_roots_fresh_species_matcher_and_inputs 70
 function-lines crates/quench-runtime/src/vm/tests.rs::regexp_match_roots_input_and_accumulated_strings_across_callbacks 91
 function-lines crates/quench-runtime/src/vm/tests.rs::regexp_replace_roots_inputs_results_and_converted_captures 110
@@ -5204,7 +5204,6 @@ magic crates/quench-runtime/src/vm/intl_relative.rs::relative_number 2
 magic crates/quench-runtime/src/vm/intl_relative.rs::relative_time_auto_phrase 2
 magic crates/quench-runtime/src/vm/intl_segmenter.rs::segmenter_locale_supported 1
 magic crates/quench-runtime/src/vm/iterators.rs::Vm<H>::async_from_sync_value_rejected 1
-magic crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_next_with_args 1
 magic crates/quench-runtime/src/vm/iterators.rs::Vm<H>::iterator_zip_keyed_inputs 3
 magic crates/quench-runtime/src/vm/jit_backend/select.rs::arm 2
 magic crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::accumulate_digits 1
