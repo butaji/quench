@@ -317,6 +317,8 @@ pub struct LazyBody<'p, 'a> {
     pub program: &'p Program<'a>,
     /// The body's parse built a call assignment target.
     pub call_assignment_targets: bool,
+    /// The function lies in another function's body.
+    pub in_function: bool,
 }
 
 impl LazyBodyCheck {

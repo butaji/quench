@@ -6608,7 +6608,7 @@ fn closure_identity_cache_rejects_reused_function_slots() {
             .next()
             .is_none()
     );
-    vm.prune_function_values();
+    vm.prune_function_values(true);
     assert!(!vm.function_values.contains_key(&key));
 }
 
@@ -24676,7 +24676,7 @@ var result = out.join(",");
             "object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500,object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500"
         );
     };
-    std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
+    crate::test_host::on_worker_stack(run);
 }
 
 /// Runs `source` and returns what it printed, with the collections its run made.
@@ -25347,7 +25347,7 @@ var result = out.join("|");
             r#"4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|1|1|true|true|3|false|[1,2,"s",{"k":1},[1,[1]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|2|2|true|true|3|false|[2,3,"s",{"k":2},[2,[2]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|3|3|true|true|3|false|[3,4,"s",{"k":3},[3,[3]],null,null]"#
         );
     };
-    std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(run).unwrap().join().unwrap();
+    crate::test_host::on_worker_stack(run);
 }
 
 #[test]

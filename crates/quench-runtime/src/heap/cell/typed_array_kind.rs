@@ -59,6 +59,17 @@ impl TypedArrayKind {
         matches!(self, Self::BigInt64 | Self::BigUint64)
     }
 
+    /// For a kind of 8-, 16- or 32-bit integers, whether they are signed: a Number such a
+    /// kind stores is reduced modulo its width (except Uint8Clamped's, which clamps), so an
+    /// integer of another such kind converts to its low bytes. `None` for the others.
+    pub(crate) const fn integer_signed(self) -> Option<bool> {
+        match self {
+            Self::Uint8 | Self::Uint8Clamped | Self::Uint16 | Self::Uint32 => Some(false),
+            Self::Int8 | Self::Int16 | Self::Int32 => Some(true),
+            Self::BigInt64 | Self::BigUint64 | Self::Float16 | Self::Float32 | Self::Float64 => None,
+        }
+    }
+
     /// Whether `Atomics.wait` and `Atomics.notify` accept the kind.
     pub(crate) const fn is_waitable(self) -> bool {
         matches!(self, Self::Int32 | Self::BigInt64)

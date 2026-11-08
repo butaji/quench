@@ -2,8 +2,11 @@
 use oxc_ast::ast::{AssignmentTarget, BindingPattern, Expression, Program, Statement};
 use oxc_ast_visit::{Visit, walk};
 
-#[derive(Default)]
+/// A walk entering one transition per level, as the recursive passes after it do, against
+/// the budget left where it starts (`StackBudget`).
 struct Validator {
+    budget: crate::stack::StackBudget,
+    depth: usize,
     exhausted: bool,
 }
 
@@ -12,11 +15,13 @@ impl Validator {
         if self.exhausted {
             return;
         }
-        let Ok(_guard) = crate::stack::StackGuard::enter() else {
+        if !self.budget.admits(self.depth) {
             self.exhausted = true;
             return;
-        };
+        }
+        self.depth += 1;
         visit(self);
+        self.depth -= 1;
     }
 }
 
@@ -46,7 +51,7 @@ pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(
 }
 
 pub(super) fn validate(program: &Program<'_>) -> Result<(), crate::stack::StackExhausted> {
-    let mut validator = Validator::default();
+    let mut validator = Validator { budget: crate::stack::StackBudget::here(), depth: 0, exhausted: false };
     validator.visit_program(program);
     if validator.exhausted { Err(crate::stack::StackExhausted) } else { Ok(()) }
 }

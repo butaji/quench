@@ -383,7 +383,7 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmI64UnaryOperator => {
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm()).is_some()
         }
-        super::ImmediateRole::WasmStructFieldIndex => true, // The live struct owns field bounds.
+        super::ImmediateRole::WasmGcField => crate::wasm::gc::GcField::from_tag(instruction.imm()).is_some(),
         super::ImmediateRole::WasmGcTypeIndex | super::ImmediateRole::WasmExceptionFieldIndex => {
             true
         } // The attached graph owns this index domain.
@@ -404,7 +404,7 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::UnaryOperator => {
             instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
-                || instruction.unary_operator() == super::UNARY_TO_STRING
+                || instruction.unary_operator() == super::UNARY_TO_STRING_PRIMITIVE
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
         }
@@ -1349,7 +1349,7 @@ mod tests {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
-            replay: None,
+            replay: None, first_call_scopes: Default::default(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),

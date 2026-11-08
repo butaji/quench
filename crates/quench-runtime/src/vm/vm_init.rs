@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
             invalidated_methods: FxHashMap::default(),
             object_shapes: Default::default(),
             descriptors: FxHashMap::default(),
-            function_values: FxHashMap::default(),
+            function_values: Default::default(),
             wasm_exported_functions: FxHashMap::default(),
             private_homes: FxHashMap::default(),
             default_collation: None,

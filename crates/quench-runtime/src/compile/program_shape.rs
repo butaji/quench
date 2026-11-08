@@ -33,4 +33,10 @@ impl ParsedProgramShape<'_> {
         matches!(self, Self::Any) || matches!(self, Self::Eval(context, None) if context == EvalContext::default()
             && private_names.is_empty() && annex_b_forbidden.is_empty())
     }
+
+    /// Whether functions of a source of this shape, `replayable` or not, may compile on first
+    /// call (`first_call`): an eval's.
+    pub(super) fn stubs_functions(self, replayable: bool) -> bool {
+        replayable && matches!(self, Self::Eval(..))
+    }
 }

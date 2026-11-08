@@ -9,6 +9,8 @@ use crate::{Diagnostic, Engine};
 use std::rc::Rc;
 use wasmparser::{BinaryReaderError, Operator};
 
+mod constant_pool;
+use constant_pool::ConstantPool;
 mod constant;
 pub(crate) mod extern_kind;
 pub(crate) mod gc;
@@ -788,7 +790,7 @@ impl Engine {
                 "invalid Wasm import index domain",
             ));
         }
-        let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
+        let mut constants = ConstantPool::with([Constant::Number(0.0), Constant::Undefined]);
         let sources: Vec<_> = bodies
             .into_iter()
             .map(|(locals, operators)| inline::Source { locals, operators })
@@ -978,7 +980,7 @@ impl Engine {
             source_name: name.into(),
             source: None,
             atoms: AtomTable::default(),
-            constants,
+            constants: constants.into_constants(),
             functions: functions
                 .into_iter()
                 .map(crate::bytecode::FunctionSlot::compiled)
@@ -991,7 +993,7 @@ impl Engine {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
-            replay: None,
+            replay: None, first_call_scopes: Default::default(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
@@ -1458,7 +1460,7 @@ struct Lowering<'a> {
     previous: Option<(usize, Register)>,
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
-    constants: Vec<Constant>,
+    constants: ConstantPool,
     depth: Register,
     registers: u16,
     controls: Vec<Control>,
@@ -1797,19 +1799,7 @@ impl Lowering<'_> {
                 .and_then(|value| value.constant())
                 .ok_or_else(|| Diagnostic::unsupported(self.name, "non-defaultable Wasm local"))?,
         };
-        let existing = self
-            .constants
-            .iter()
-            .position(|known| match (known, &constant) {
-                (Constant::Null, Constant::Null) => true,
-                (Constant::WasmBits64(known), Constant::WasmBits64(value)) => known == value,
-                (Constant::WasmV128(known), Constant::WasmV128(value)) => known == value,
-                _ => false,
-            });
-        Ok(match existing {
-            Some(index) => index as u32,
-            None => self.append_constant(constant)?,
-        })
+        self.append_constant(constant)
     }
 
     /// Give register locals their defaults with one fill per run of locals that
@@ -1859,10 +1849,7 @@ impl Lowering<'_> {
     }
 
     fn append_constant(&mut self, value: Constant) -> Result<u32, Diagnostic> {
-        let constant = u32::try_from(self.constants.len())
-            .map_err(|_| Diagnostic::unsupported(self.name, "too many Wasm constants"))?;
-        self.constants.push(value);
-        Ok(constant)
+        self.constants.intern(value).ok_or_else(|| Diagnostic::unsupported(self.name, "too many Wasm constants"))
     }
 
     fn scalar_constant(&mut self, value: WasmValue) -> Result<u32, Diagnostic> {

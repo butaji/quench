@@ -1,6 +1,8 @@
 //! Each declaration's canonical index (the first declaration of its table equivalent to it)
-//! and its supertype, found once when the table is made: equivalence and subtyping within
-//! one table then compare indices instead of declarations.
+//! and its supertype display, found once when the table is made: equivalence and subtyping
+//! within one table then compare indices instead of declarations. A display lists a
+//! declaration's ancestors by depth, so "is `index` a subtype of `target`" is one load at
+//! `target`'s depth, as V8, JSC and Wasmtime check casts.
 
 use super::{Edge, WasmTypes};
 use wasmparser::UnpackedIndex;
@@ -15,7 +17,7 @@ impl WasmTypes {
     /// declarations of one fingerprint (`WasmTypes::fingerprint`) are compared.
     pub(super) fn with_ancestry(mut self) -> Self {
         let declarations = self.0.members.len();
-        let parents = (0..declarations).map(|index| self.declared_parent(index)).collect();
+        let parents: Vec<u32> = (0..declarations).map(|index| self.declared_parent(index)).collect();
         let mut classes: FxHashMap<Option<u64>, Vec<u32>> = FxHashMap::default();
         let mut canonical = Vec::with_capacity(declarations);
         for index in 0..declarations {
@@ -26,10 +28,33 @@ impl WasmTypes {
                 index as u32
             }));
         }
+        let (displays, ancestors) = Self::displays(&parents, &canonical);
         let table = Rc::get_mut(&mut self.0).expect("a table being made has one holder");
         table.canonical = canonical.into();
-        table.parents = parents;
+        table.displays = displays;
+        table.ancestors = ancestors;
         self
+    }
+
+    /// Each declaration's display, from its parent's: validation puts a supertype before
+    /// its subtypes, and a parent that does not is a malformed table whose declaration
+    /// keeps only itself.
+    fn displays(parents: &[u32], canonical: &[u32]) -> (Box<[(u32, u32)]>, Box<[u32]>) {
+        let mut displays: Vec<(u32, u32)> = Vec::with_capacity(parents.len());
+        let mut ancestors = Vec::with_capacity(parents.len());
+        for (index, &parent) in parents.iter().enumerate() {
+            let start = ancestors.len();
+            let depth = match displays.get(parent as usize) {
+                Some(&(from, depth)) if (parent as usize) < index => {
+                    ancestors.extend_from_within(from as usize..=(from + depth) as usize);
+                    depth + 1
+                }
+                _ => 0,
+            };
+            ancestors.push(canonical[index]);
+            displays.push((start as u32, depth));
+        }
+        (displays.into(), ancestors.into())
     }
 
     fn declared_parent(&self, index: usize) -> u32 {
@@ -52,21 +77,11 @@ impl WasmTypes {
 
     /// Whether declaration `index` is `target` or has it as an ancestor, up to equivalence,
     /// once the table's ancestry is found.
-    pub(super) fn ancestry_subtype(&self, mut index: usize, target: usize) -> Option<bool> {
-        let (canonical, parents) = (&self.0.canonical, &self.0.parents);
-        let class = *canonical.get(target)?;
-        canonical.get(index)?;
-        // Validated ancestry is acyclic; the declaration count bounds malformed embedding input.
-        for _ in 0..parents.len() {
-            if canonical[index] == class {
-                return Some(true);
-            }
-            match parents[index] {
-                NO_PARENT => return Some(false),
-                parent => index = parent as usize,
-            }
-        }
-        Some(false)
+    #[inline]
+    pub(super) fn ancestry_subtype(&self, index: usize, target: usize) -> Option<bool> {
+        let table = &*self.0;
+        let (&(start, depth), &(_, target_depth)) = (table.displays.get(index)?, table.displays.get(target)?);
+        Some(target_depth <= depth && table.ancestors[(start + target_depth) as usize] == table.canonical[target])
     }
 
     /// Where an edge of the group at `origin` leads.

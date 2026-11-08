@@ -119,7 +119,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     temporary_floor: Register,
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
-    annex_b_collisions: FxHashSet<u32>,
+    annex_b_collisions: super::early::AnnexBCollisions,
     pub(super) scopes: super::capture_scope::ScopeChain,
     pub(super) function_id: u32,
     /// `Compiler::private_name_references` when this function began, so a later count
@@ -177,7 +177,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         owner: &'a mut Compiler<'b>,
         locals: Vec<Atom>,
         function_scope: FxHashSet<Atom>,
-        annex_b_collisions: FxHashSet<u32>,
+        annex_b_collisions: super::early::AnnexBCollisions,
         scopes: super::capture_scope::ScopeChain,
         function_id: u32,
         super_flags: (bool, bool),

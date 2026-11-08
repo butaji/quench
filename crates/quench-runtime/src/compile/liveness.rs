@@ -8,7 +8,7 @@ use crate::bytecode::{
 pub(crate) type RegisterSet = u128;
 
 mod solve;
-pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers};
+pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_successors, analyze_transfers};
 use solve::LiveMask;
 
 /// A function's live registers before each instruction (`analyze`), held at the width they
@@ -216,21 +216,9 @@ pub(crate) fn transfer(
     )
 }
 
-/// Live registers before each instruction. A reverse pass settles every instruction whose
-/// successors all follow it, so only code with a backward successor iterates to a fixed point.
-/// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
-/// + 1]]`, which every pass then reads.
-pub(super) fn live_out(
-    function: &Function,
-    live: &[RegisterSet],
-    pc: usize,
-    instruction: WideInstruction,
-) -> RegisterSet {
-    let mut output = 0;
-    function.for_each_successor(pc, instruction, |successor, _| {
-        output |= live.get(successor).copied().unwrap_or(0);
-    });
-    output
+/// The registers live after the instruction at `pc`: those live before any of its successors.
+pub(super) fn live_out(successors: &crate::bytecode::Successors, live: &[RegisterSet], pc: usize) -> RegisterSet {
+    successors.at(pc).fold(0, |output, (successor, _)| output | live.get(successor).copied().unwrap_or(0))
 }
 
 /// The transfer of an op whose field layout alone decides it: each of A, B and C a register

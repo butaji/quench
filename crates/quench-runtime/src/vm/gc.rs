@@ -51,19 +51,17 @@ pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
+    shape_lookup::owned_slots(shapes, shape).unwrap_or_else(|| chain_shape_attributes(shapes, shape))
+}
+
+fn chain_shape_attributes(
+    shapes: &[Shape],
+    shape: u32,
+) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
     // Both vectors are sized exactly: collections call this for every rooted shape.
-    let mut depth = 0;
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        depth += 1;
-        current = shapes[id as usize].parent();
-    }
-    let mut chain = Vec::with_capacity(depth);
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        chain.push(id);
-        current = shapes[id as usize].parent();
-    }
+    let ancestors = || std::iter::successors(Some(shape), |&id| shapes[id as usize].parent());
+    let mut chain = Vec::with_capacity(ancestors().count());
+    chain.extend(ancestors());
     chain.reverse();
 
     let mut entries = Vec::with_capacity(shapes[shape as usize].storage_len());
@@ -176,8 +174,8 @@ struct ParallelShapeTrace<'a> {
 }
 
 // SAFETY: the shape vector is immutable for the duration of collection, and
-// `append_shape_roots` reads only `parent` and `transition`, never the
-// interior-mutable caches. All shared bitmap updates are atomic; owned roots
+// `append_shape_roots` reads only `parent`, `transition` and an owned dictionary's
+// already-initialized lookup index, never initializing or mutating a cache. All shared bitmap updates are atomic; owned roots
 // are read-only. The trace object cannot outlive the joined worker scope.
 unsafe impl Send for ParallelShapeTrace<'_> {}
 // SAFETY: same immutable-metadata contract as the Send implementation.
@@ -282,19 +280,11 @@ fn rebuild_shape(
     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
-    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
-    for transition in [
-        function_name.map(|name| ShapeTransition::FunctionName { name }),
-        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
-        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
-        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
-    ].into_iter().flatten() {
+    for transition in provenance::metadata_transitions(old_shapes, old_shape) {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
     }
-    for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
-        .into_iter()
-        .enumerate()
-    {
+    if let Some(shape) = shape_lookup::rebuild_owned_dictionary(old_shapes, old_accessors, old_shape, shapes, accessors, parent) { return shape; }
+    for (slot, entry) in active_shape_attributes(old_shapes, old_shape).into_iter().enumerate() {
         let slot = u32::try_from(slot).expect("object property index exceeds u32");
         let storage_len = slot as usize + 1;
         // Data attributes ride on the add; an accessor's take a descriptor after it.
@@ -705,7 +695,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.heap.kept_atom_strings().map(|(_, string)| string));
+        roots.extend(self.heap.kept_atom_roots(full));
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -865,7 +855,7 @@ impl<H: Host> Vm<H> {
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
-        self.prune_function_values();
+        self.prune_function_values(full);
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.

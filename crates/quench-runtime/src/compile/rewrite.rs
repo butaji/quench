@@ -232,7 +232,7 @@ fn remove_dead_moves(
         }
         let destination = register_bit(mov.result_register());
         if destination & parameter_storage != 0
-            || liveness::live_out(function, &analysis.live, pc, mov.as_wide()) & destination != 0
+            || liveness::live_out(&analysis.successors, &analysis.live, pc) & destination != 0
         {
             continue;
         }
@@ -311,7 +311,7 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
                 liveness::analyze_transfers(function, &transfers) == live,
                 "liveness handed past dropped Nops matches the code"
             );
-            Some(CodeFacts::Live(CodeLiveness { transfers, live }))
+            Some(CodeFacts::Live(CodeLiveness { successors: crate::bytecode::Successors::of_code(function), transfers, live }))
         }
         (Some(mut transfers), None) => {
             transfers.truncate(function.code.len());
@@ -326,6 +326,8 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
 struct CodeLiveness {
     transfers: Vec<(RegisterSet, RegisterSet)>,
     live: Vec<RegisterSet>,
+    /// The code's successor table, which in-place `Move` and producer rewrites leave intact.
+    successors: crate::bytecode::Successors,
 }
 
 /// What a pass hands the next about the code as it stands. A pass that leaves the code
@@ -358,8 +360,9 @@ impl CodeLiveness {
             }
             None => liveness::transfers(function, methods, field_sites, superinstructions)?,
         };
-        let live = liveness::analyze_transfers(function, &transfers);
-        Some(Self { transfers, live })
+        let successors = crate::bytecode::Successors::of_code(function);
+        let live = liveness::analyze_successors(function, &transfers, &successors);
+        Some(Self { transfers, live, successors })
     }
 
     /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
@@ -541,7 +544,7 @@ fn coalesce_distant_producer_moves(
         if !live_exact
             || pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(function, &analysis.live, target, mov.as_wide()) & register_bit(source)
+            || liveness::live_out(&analysis.successors, &analysis.live, target) & register_bit(source)
                 != 0
         {
             continue;
@@ -551,10 +554,7 @@ fn coalesce_distant_producer_moves(
         };
         let instruction = function.code[producer];
         if instruction.is_wide()
-            || !function
-                .handlers
-                .iter()
-                .all(|handler| handler.end as usize <= producer || handler.start as usize > target)
+            || !function.handlers.iter().all(|handler| handler.end as usize <= producer || handler.start as usize > target)
             || !fuses(instruction.op(), Op::Move, |recipe| {
                 matches!(recipe, Recipe::ProducerMove)
             })
@@ -913,7 +913,7 @@ fn rewrite_once(
     let analysis = has_pair
         .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
         .flatten();
-    let (mut transfers, live) = analysis.map_or((None, None), |CodeLiveness { transfers, live }| (Some(transfers), Some(live)));
+    let (mut transfers, live) = analysis.map_or((None, None), |CodeLiveness { transfers, live, successors }| (Some(transfers), Some((live, successors))));
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
@@ -950,11 +950,11 @@ fn rewrite_once(
                 rules.peek()?;
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
-                let live = live.as_ref()?;
+                let (live, successors) = live.as_ref()?;
                 let original_definitions =
                     liveness::definitions(first.as_wide(), superinstructions)
                         | liveness::definitions(second.as_wide(), superinstructions);
-                let live_out = liveness::live_out(function, live, index + 1, second.as_wide());
+                let live_out = liveness::live_out(successors, live, index + 1);
                 rules.find_map(|rule| {
                     let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                     let removed_definitions = original_definitions
@@ -977,8 +977,8 @@ fn rewrite_once(
     map[old.len()] = code.len();
     if !changed {
         function.code = old;
-        if let (Some(transfers), Some(live)) = (transfers, live) {
-            *current = Some(CodeFacts::Live(CodeLiveness { transfers, live }));
+        if let (Some(transfers), Some((live, successors))) = (transfers, live) {
+            *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
         }
         return false;
     }

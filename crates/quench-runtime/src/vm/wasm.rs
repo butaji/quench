@@ -392,8 +392,7 @@ impl<H: Host> Vm<H> {
         // never copies. Compiled code relies on the guard in place of
         // bounds checks, which covers exactly the bytes past the memory's
         // length only when every length is a whole number of host pages.
-        let guarded = (!ty.shared
-            && !ty.memory64
+        let guarded = (!ty.memory64
             && (ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
         .then(|| crate::wasm::memory::LinearBytes::reserved(length))
         .flatten();

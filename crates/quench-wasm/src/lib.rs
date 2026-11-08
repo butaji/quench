@@ -5,6 +5,7 @@
 //! compile the harness host's copy of the VM.
 
 use std::fmt;
+use std::borrow::Cow;
 
 mod decode;
 mod interface;
@@ -46,17 +47,19 @@ impl Engine {
     }
 
     /// Parse and validate binary Wasm with core features. Does not instantiate.
-    pub fn compile(&self, bytes: &[u8]) -> Result<Module, Error> {
+    /// The module borrows `bytes`: lowering reads them in place, so a compile holds no second
+    /// copy of the wire bytes beside its caller's (dotnet-aot-wasm: 7.8 MB).
+    pub fn compile<'b>(&self, bytes: &'b [u8]) -> Result<Module<'b>, Error> {
         match inspect_binary(bytes) {
             ModuleStatus::Valid => Ok(Module {
-                bytes: bytes.to_vec(),
+                bytes: Cow::Borrowed(bytes),
             }),
             ModuleStatus::ParseError(message) => Err(Error::Parse(message)),
             ModuleStatus::ValidateError(message) => Err(Error::Validate(message)),
         }
     }
 
-    pub fn compile_wat(&self, source: &str) -> Result<Module, Error> {
+    pub fn compile_wat(&self, source: &str) -> Result<Module<'static>, Error> {
         self.compile_wat_with_features(source, core_features())
     }
 
@@ -64,32 +67,41 @@ impl Engine {
         &self,
         source: &str,
         features: wasmparser::WasmFeatures,
-    ) -> Result<Module, Error> {
+    ) -> Result<Module<'static>, Error> {
         let buf =
             wast::parser::ParseBuffer::new(source).map_err(|e| Error::Parse(e.to_string()))?;
         let mut wat: wast::Wat<'_> =
             wast::parser::parse(&buf).map_err(|e| Error::Parse(e.to_string()))?;
         let bytes = wat.encode().map_err(|e| Error::Parse(e.to_string()))?;
         match inspect_binary_with(&bytes, features) {
-            ModuleStatus::Valid => Ok(Module { bytes }),
+            ModuleStatus::Valid => Ok(Module { bytes: Cow::Owned(bytes) }),
             ModuleStatus::ParseError(message) => Err(Error::Parse(message)),
             ModuleStatus::ValidateError(message) => Err(Error::Validate(message)),
         }
     }
 }
 
-/// A parsed and validated module. Instantiation is not implemented in this phase.
+/// A parsed and validated module, over its wire bytes, borrowed or owned. Instantiation is
+/// not implemented in this phase.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Module {
-    bytes: Vec<u8>,
+pub struct Module<'b> {
+    bytes: Cow<'b, [u8]>,
 }
 
-impl Module {
+impl Module<'static> {
     /// A module of `bytes` its caller already parsed and validated under the features it
     /// runs with (the WAST harness validates each directive's module itself).
     pub fn from_validated(bytes: Vec<u8>) -> Self {
-        Self { bytes }
+        Self { bytes: Cow::Owned(bytes) }
     }
+}
+
+impl Module<'_> {
+    /// The module over its own copy of the bytes, for a caller that drops them first.
+    pub fn into_owned(self) -> Module<'static> {
+        Module { bytes: Cow::Owned(self.bytes.into_owned()) }
+    }
+
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes

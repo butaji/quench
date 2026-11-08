@@ -153,6 +153,7 @@ mod function;
 mod function_cache;
 mod gc;
 mod generator;
+mod global_facts;
 mod group_by;
 mod host_function;
 mod index;
@@ -1086,7 +1087,6 @@ const NO_OBJECT_SHAPE: u32 = u32::MAX;
 /// every site's entries (Node's library wires prototypes hundreds of times at load, each an
 /// invalidation that had refilled every table).
 const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
-const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
@@ -1094,7 +1094,7 @@ struct FieldCacheSet {
     /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
     /// only prototype holders, so a read probes no own entry.
     holds_own: bool,
-    entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
+    entries: [FieldCache; compiled::tier_policy::POLYMORPHISM],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
 #[derive(Clone, Copy)]
@@ -1113,11 +1113,10 @@ struct MethodGuard {
     slot: u16,
     depth: u16,
 }
-const METHOD_MEGAMORPHIC_LIMIT: usize = 8;
 struct MethodCacheSet {
     site: usize,
     len: u8,
-    entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
+    entries: [MethodCache; compiled::tier_policy::POLYMORPHISM],
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {
@@ -2236,7 +2235,7 @@ pub(crate) struct Vm<H> {
     object_shapes: site_table::SiteTable<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
-    function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
+    function_values: function_cache::FunctionValues,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
@@ -2561,19 +2560,12 @@ impl<H: Host> Vm<H> {
             self.bind_global_lexical(atom, value);
         }
     }
-    /// Binds global lexical `atom` to `value` in the active realm, noting a name it declared
-    /// for the first time (`note_global_lexical_names`).
-    pub(super) fn bind_global_lexical(&mut self, atom: Atom, value: Value) {
-        if self.realm.bind_global_lexical(atom, value) {
-            self.note_global_lexical_names();
-        }
-    }
-
     /// A global lexical name was declared: it may shadow a global property that a global name
     /// read's hint names (`dispatch_fast::lane_load_global_name`), so every such hint is
-    /// dropped (`LaneView::clear_name_hints`).
+    /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
     pub(super) fn note_global_lexical_names(&self) {
         self.programs.clear_global_name_hints();
+        self.note_global_shadowing();
     }
 
     /// Whether a global name read of `atom` may keep the global object's own data property as

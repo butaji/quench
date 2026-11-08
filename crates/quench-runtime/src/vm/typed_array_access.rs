@@ -864,13 +864,7 @@ impl<H: Host> Vm<H> {
         };
         let mut target = bytes.make_mut();
         let target = &mut target[target_offset..target_end];
-        for (from, to) in source.chunks_exact(source_width).zip(target.chunks_exact_mut(target_width)) {
-            let mut element = [0; size_of::<u64>()];
-            element[..source_width].copy_from_slice(from);
-            let number = Self::typed_array_number_of(source_kind, &element);
-            let encoded = Self::typed_array_element_bytes(target_kind, &TypedArrayElement::Number(number));
-            to.copy_from_slice(&encoded[..target_width]);
-        }
+        Self::typed_array_convert_elements(&source, source_kind, target, target_kind);
         true
     }
 
@@ -888,6 +882,8 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+mod element_conversion;
 
 #[cfg(test)]
 mod backing_address_tests {
