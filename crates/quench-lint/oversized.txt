@@ -3365,9 +3365,7 @@ function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_pro
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 45
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 104
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_load 69
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_get 67
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 114
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::validate_proxy_get 44
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 104
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_get_prototype_of 67
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_extensible 50
