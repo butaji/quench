@@ -40,6 +40,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
+#[path = "lane_region/bindings.rs"] mod bindings;
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -1455,11 +1456,9 @@ pub(super) fn lower(
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
     let loops = local_loops(unit, &program.constants, entry_pc);
-    // An entry query earns its extra helper call only when it replaces a
-    // repeated binding admission. Straight-line calls keep combined admission.
-    if !lowering.native_calls && !numeric && unit.frames.iter().zip(&unit.markers)
-        .any(|(frame, marker)| frame.target.callee == CalleeBinding::Function
-            && loops.iter().any(|&(header, back)| (header..=back).contains(marker))) {
+    // One entry query of the call depth replaces each binding's helper with its cached
+    // target probe (`cached_call_target`). A completed call leaves the depth it found.
+    if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
         let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::CallBudget);
         lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
     }
@@ -3117,23 +3116,6 @@ impl Lowering<'_, '_> {
                 self.ins().bor(object, nullish)
             }
         }
-    }
-
-    fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {
-        let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
-            std::mem::offset_of!(JsStepDispatch, program_id) as i32);
-        let program = self.ins().uextend(types::I64, program);
-        let function = self.ins().iconst(types::I64, i64::from(function));
-        let admitted = if self.call_budget.is_some() {
-            let helper = self.helpers.address(self.builder.ins(), LaneHelper::AdmittedFunctionBinding);
-            emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function])
-        } else {
-            let depth = self.unit.recovery_depth().max(1) as i64;
-            let depth = self.ins().iconst(types::I64, depth);
-            let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionBinding);
-            emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function, depth])
-        };
-        self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)
     }
 
     /// A call (or a construction, by `helper`) the body does not inline, by `helper`'s
