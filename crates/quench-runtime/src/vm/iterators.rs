@@ -39,14 +39,14 @@ pub(super) enum IterationStep {
 }
 
 impl<H: Host> Vm<H> {
-    /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
-    /// literal `array`.
+    /// ArrayAccumulation of a spread: each value `source` iterates is appended to literal `array`.
     pub(super) fn spread_into_array(
         &mut self,
         p: &ResidualProgram,
         array: Value,
         source: Value,
     ) -> Result<(), JsError> {
+        if self.share_spread_elements(array, source) { return Ok(()); }
         if let Some(values) = self.intact_iteration_values(source) {
             if self.append_literal_elements(array, &values) {
                 return Ok(());

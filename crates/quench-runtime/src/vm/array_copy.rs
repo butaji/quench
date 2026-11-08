@@ -175,3 +175,24 @@ impl<H: Host> Vm<H> {
         outcome
     }
 }
+
+impl<H: Host> Vm<H> {
+    /// `[...source]` appended to the empty literal `array`: an intact array without holes
+    /// (`array_iteration_intact`, `present_dense_elements`) yields exactly its elements, so
+    /// the literal shares their backing, copied on either's first write. `false` changes
+    /// nothing.
+    pub(super) fn share_spread_elements(&mut self, array: Value, source: Value) -> bool {
+        if self.dense_array_length(array) != Some(0) || !self.array_iteration_intact(source) {
+            return false;
+        }
+        let Some(length) = self.heap.array(source).map(|object| object.elements().len()) else {
+            return false;
+        };
+        if self.present_dense_elements(source, 0..length).is_none() {
+            return false;
+        }
+        let elements = self.heap.array(source).expect("matched an array above").elements().clone();
+        *self.heap.array_mut(array).expect("matched an array above").elements_mut() = elements;
+        true
+    }
+}
