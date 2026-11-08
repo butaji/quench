@@ -35,18 +35,48 @@ impl Output for Vec<u8> {
 
 /// Every Number::toString(10) text fits: at most 21 integer digits or 17 significant ones,
 /// with a sign, a point and an exponent or leading zeros.
-pub(crate) type Short = smallvec::SmallVec<[u8; 32]>;
+const SHORT_TEXT_CAPACITY: usize = 32;
 
-impl Output for Short {
-    fn push(&mut self, byte: u8) {
-        smallvec::SmallVec::push(self, byte);
+/// Short ASCII text written on the stack: a Number's text, or a key joined from short parts.
+#[derive(Clone, Copy)]
+pub(crate) struct Short {
+    bytes: [u8; SHORT_TEXT_CAPACITY],
+    len: usize,
+}
+
+impl Short {
+    pub(crate) const fn new() -> Self {
+        Self { bytes: [0; SHORT_TEXT_CAPACITY], len: 0 }
     }
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        smallvec::SmallVec::extend_from_slice(self, bytes);
+    /// Appends `bytes` when they fit; `None` leaves the text as it was.
+    pub(crate) fn try_extend(&mut self, bytes: &[u8]) -> Option<()> {
+        let end = self.len.checked_add(bytes.len()).filter(|end| *end <= SHORT_TEXT_CAPACITY)?;
+        self.bytes[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Some(())
+    }
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
     }
 }
 
-/// Appends Number::toString(10) of `value` to `out`.
+impl std::ops::Deref for Short {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl Output for Short {
+    fn push(&mut self, byte: u8) {
+        self.bytes[self.len] = byte;
+        self.len += 1;
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.try_extend(bytes).expect("a Number's text fits `SHORT_TEXT_CAPACITY`");
+    }
+}
+
 pub(crate) fn write(value: f64, out: &mut impl Output) {
     if value.is_nan() {
         out.extend_from_slice(b"NaN");
