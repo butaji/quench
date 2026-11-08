@@ -6539,10 +6539,9 @@ script_handler! {
     fn lane_get_field_getter<>(cx, r, ip, i, view) {
         match lane_getter_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-            Err(_) => {
-                let r = unsafe { (*cx).registers };
-                sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
-            }
+            // A native getter that raised is not called again: the general path raises it.
+            Err(next) if (unsafe { vm(cx) }).lane_raised.is_some() => next,
+            Err(_) => sibling!(lane_get_field::<H>, unsafe { (*cx).registers }, ip, Carried::script(cx)),
         }
     }
 }
