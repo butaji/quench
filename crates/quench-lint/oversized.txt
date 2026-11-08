@@ -2565,7 +2565,7 @@ function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::verify_predic
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::with_layout 67
 function-lines crates/quench-runtime/src/compile.rs::Engine::module_link_plan 44
 function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_eval_with_context 64
-function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 320
+function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 319
 function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_with_mode_and_private_names 45
 function-lines crates/quench-runtime/src/compile.rs::Engine::static_module_exports 74
 function-lines crates/quench-runtime/src/compile.rs::Engine::static_module_throw 51
