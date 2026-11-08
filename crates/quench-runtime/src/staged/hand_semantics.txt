@@ -183,7 +183,7 @@ vm/compiled/static_loops.rs JumpBinaryFalse 1
 vm/compiled/static_loops.rs LoadConst 2
 vm/compiled/static_loops.rs Move 2
 vm/compiled/static_loops.rs Nop 2
-vm/dispatch_fast.rs AppendArray 1
+vm/dispatch_fast.rs AppendArray 2
 vm/dispatch_fast.rs ArgumentGet 2
 vm/dispatch_fast.rs ArgumentsLength 3
 vm/dispatch_fast.rs Await 2
@@ -208,16 +208,16 @@ vm/dispatch_fast.rs DefinePropertyRecord 1
 vm/dispatch_fast.rs Delete 1
 vm/dispatch_fast.rs DeleteName 1
 vm/dispatch_fast.rs ForInNext 1
-vm/dispatch_fast.rs ForInStart 1
+vm/dispatch_fast.rs ForInStart 2
 vm/dispatch_fast.rs GetField 13
 vm/dispatch_fast.rs GetIndex 2
-vm/dispatch_fast.rs GetIterator 1
+vm/dispatch_fast.rs GetIterator 2
 vm/dispatch_fast.rs IncDec 2
 vm/dispatch_fast.rs InitializeTdz 4
 vm/dispatch_fast.rs InitializeThis 1
 vm/dispatch_fast.rs IteratorCleanupPop 2
 vm/dispatch_fast.rs IteratorCleanupPush 2
-vm/dispatch_fast.rs IteratorClose 1
+vm/dispatch_fast.rs IteratorClose 2
 vm/dispatch_fast.rs Jump 10
 vm/dispatch_fast.rs JumpBinaryFalse 2
 vm/dispatch_fast.rs JumpFalse 3
@@ -268,7 +268,7 @@ vm/dispatch_fast.rs StringCaseIndex 2
 vm/dispatch_fast.rs SuperCallCheck 2
 vm/dispatch_fast.rs SuperConstArrayObject2 4
 vm/dispatch_fast.rs ToNumeric 1
-vm/dispatch_fast.rs ToPropertyKey 2
+vm/dispatch_fast.rs ToPropertyKey 3
 vm/dispatch_fast.rs Unary 4
 vm/dispatch_fast.rs WasmBranchTable 6
 vm/dispatch_fast.rs WasmF32Binary 2

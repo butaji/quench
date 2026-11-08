@@ -996,6 +996,32 @@ impl<H: Host> Vm<H> {
                     if result { Value::TRUE } else { Value::FALSE },
                 );
             }
+            Op::MarkPrivateName => {
+                let object = self.read(f, i.register_b());
+                let home = self.read(f, i.register_c());
+                let atom = i.atom_index();
+                let brand = PrivateBrand { home, name: atom };
+                if object != home {
+                    if !self.object_data(object).is_some_and(|object| self.private_element_addable(object)) {
+                        return Err(self.type_error(
+                            p,
+                            "Cannot add private method to a non-extensible object".into(),
+                        ));
+                    }
+                    let already_branded = self
+                        .object_data(object)
+                        .is_some_and(|object| object.has_private_name(brand));
+                    if already_branded {
+                        return Err(self.type_error(
+                            p,
+                            "Cannot add private method to an object that already has it".into(),
+                        ));
+                    }
+                }
+                if let Some(object) = self.object_data_mut(object) {
+                    object.add_private_name(brand);
+                }
+            }
             Op::ResolveName => {
                 let strict = i
                     .boolean_field(crate::bytecode::InstructionField::B)
@@ -1046,7 +1072,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            value_step_ops!() => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
                 let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
@@ -1843,27 +1869,19 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The instructions `Vm::value_step` makes, reading and writing only registers and the heap: the
-/// general step's arm, and a frameless activation's (`lane_step_beside_activations`) as it runs.
-macro_rules! value_step_ops {
-    () => { Op::ToPropertyKey | Op::GetIterator | Op::ForInStart | Op::IteratorClose | Op::AppendArray | Op::MarkPrivateName };
-}
-pub(super) use value_step_ops;
-
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional
-/// element, `MarkPrivateName`'s object and home, or the one operand of the others.
+/// element, or the one operand of `ToPropertyKey` and `GetIterator`.
 pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode::Register>; 2] {
     match i.op() {
         Op::AppendArray => [Some(i.register_a()), i.optional_register_b()],
-        Op::MarkPrivateName => [Some(i.register_b()), Some(i.register_c())],
         _ => [None, Some(i.register_b())],
     }
 }
 
 impl<H: Host> Vm<H> {
-    /// A `value_step_ops` instruction of its operand values (`value_step_operands`): the
-    /// value it writes to its result register, if any. The general step and a frameless
-    /// activation's (`lane_step_beside_activations`) share it.
+    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
+    /// (`value_step_operands`): the value it writes to its result register, if any. The
+    /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
         &mut self,
         p: &ResidualProgram,
@@ -1892,26 +1910,8 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(None)
             }
-            Op::MarkPrivateName => self.mark_private_name(p, a.unwrap_or(Value::UNDEFINED), PrivateBrand { home: operand, name: i.atom_index() }).map(|()| None),
             op => unreachable!("{op:?} is no value step"),
         }
-    }
-
-    /// `MarkPrivateName`: brand `object` with a class's private method `brand`, which a
-    /// non-extensible object or one already branded refuses, unless it is the home itself.
-    fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, brand: PrivateBrand) -> Result<(), JsError> {
-        if object != brand.home {
-            if !self.object_data(object).is_some_and(|object| self.private_element_addable(object)) {
-                return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
-            }
-            if self.object_data(object).is_some_and(|object| object.has_private_name(brand)) {
-                return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
-            }
-        }
-        if let Some(object) = self.object_data_mut(object) {
-            object.add_private_name(brand);
-        }
-        Ok(())
     }
 }
 

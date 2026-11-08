@@ -1430,7 +1430,7 @@ file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
 file-lines crates/quench-runtime/src/heap.rs 4686
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
-file-lines crates/quench-runtime/src/heap/cell.rs 3993
+file-lines crates/quench-runtime/src/heap/cell.rs 3992
 file-lines crates/quench-runtime/src/heap/cell/snapshot.rs 1143
 file-lines crates/quench-runtime/src/heap/environment_trace.rs 543
 file-lines crates/quench-runtime/src/heap/memory_profile.rs 742
@@ -2681,7 +2681,7 @@ function-lines crates/quench-runtime/src/heap/array_elements/tests.rs::native_la
 function-lines crates/quench-runtime/src/heap/cell.rs::Cell::profile_variant_name 50
 function-lines crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::iteration_copy 86
 function-lines crates/quench-runtime/src/heap/cell.rs::Native::is_math_function 43
-function-lines crates/quench-runtime/src/heap/cell.rs::Native::runs_beside_activations 76
+function-lines crates/quench-runtime/src/heap/cell.rs::Native::runs_beside_activations 75
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::read_snapshot 128
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::write_snapshot 207
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::IteratorHelper::snap 52
