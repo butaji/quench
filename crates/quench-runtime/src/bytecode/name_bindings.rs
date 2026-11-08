@@ -5,7 +5,9 @@
 //! scopes are shared by every function closing over them, so a function costs its own
 //! declarations rather than a copy of every outer name.
 
-use super::{Atom, EvalBinding, EvalBindingLocation, Function, Op, WideInstruction};
+use super::{Atom, EvalBinding, EvalBindingLocation};
+#[cfg(feature = "aot")]
+use super::{Function, Op, WideInstruction};
 use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
@@ -135,6 +137,7 @@ impl CapturedNames {
     }
 }
 
+#[cfg(feature = "aot")]
 impl Function {
     /// The local slot a store of this function writes: a local store's own, or the slot named
     /// as a by-name store's atom, which a script root keeps for the global var its functions
