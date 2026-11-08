@@ -1090,14 +1090,7 @@ pub(super) fn inline_region<'a>(
         // reads until the call, nor after it. The region gives that read a register of its
         // own, holding the field's value (`held_registers`), and the setup resumes at it.
         let mut resume_offset = read_offset;
-        // A receiver read through a name the loop stores changes in the loop: the callee's
-        // read stays, and native code checks the callee after it (`InlineGuard::AtRead`).
-        let checked = defines(receiver)
-            && read_offset.checked_sub(1).is_some_and(|own| {
-                caller[own].defined_register() == Some(receiver)
-                    && field_path(caller[own], sites, &std::collections::BTreeMap::new())
-                        .is_some_and(|path| path.steps.iter().any(|(atom, _)| caller_stored.contains(atom)))
-            });
+        let checked = defines(receiver) && receivers::stored(caller, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom));
         if checked {
             checked_reads.insert(pc, read);
             // The callee resolves now through the receiver's own path; native code checks
@@ -1108,6 +1101,9 @@ pub(super) fn inline_region<'a>(
             (callee_path.root == FieldReceiver::Register(receiver)).then_some(())?;
             callee_path.root = receiver_path.root;
             callee_path.steps.splice(0..0, receiver_path.steps);
+        } else if let Some(source) = receivers::copied(caller, read_offset, receiver, &defines, callee_path.as_ref()) {
+            callee_path.as_mut()?.root = FieldReceiver::Register(source);
+            receiver = source;
         } else if defines(receiver) {
             let callee_path = callee_path.as_mut()?;
             let own = read_offset.checked_sub(1)?;
@@ -7052,6 +7048,8 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
+#[path = "osr_loop/receivers.rs"]
+mod receivers;
 #[cfg(test)]
 #[path = "osr_loop/coverage_tests.rs"]
 mod coverage_tests;
