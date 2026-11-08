@@ -6748,7 +6748,7 @@ unsafe fn lane_field_base<H: Host>(
 
 /// A field read the caches answer: the general loop's probe (`cached_field_hit`, own,
 /// megamorphic and holder entries, or an array's `length`), then the data lookup its slower
-/// paths make before any that runs guest code (`Vm::cached_field_polymorphic_hit`).
+/// paths make before any that runs guest code (`Vm::probed_field_miss_value`).
 #[inline(always)]
 fn lane_cached_field<H: Host>(
     cx: *mut LaneContext<H>,
@@ -6817,7 +6817,7 @@ fn lane_cached_field_miss<H: Host>(
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
-            .or_else(|| vm.cached_field_polymorphic_hit(code, object, atom, site)),
+            .or_else(|| vm.probed_field_miss_value(object, atom, site)),
         super::object::FieldCacheProbe::Ineligible => vm
             .array_length_field(object, atom)
             .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
