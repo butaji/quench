@@ -9,6 +9,7 @@ mod append_buffer;
 mod short_ascii;
 mod concat_all;
 pub(super) use concat_all::JsStringBuilder;
+mod split;
 mod text_hash;
 pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
@@ -1248,33 +1249,6 @@ impl JsString {
     pub(crate) fn find_units(&self, search: Units<'_>, start: usize) -> Option<usize> {
         self.units().find(search, start)
     }
-
-    pub(crate) fn split_units(&self, separator: Units<'_>) -> Vec<Self> {
-        let units = self.units();
-        if separator.is_empty() {
-            return (0..units.len())
-                .map(|index| Self::from_unit_run(units.slice(index..index + 1)))
-                .collect();
-        }
-        let mut parts = Vec::new();
-        let mut cursor = 0;
-        if let (Units::Ascii(haystack), Units::Ascii(needle)) = (units, separator) {
-            // One searcher serves every match; occurrences come back non-overlapping, as split
-            // consumes them.
-            for offset in memchr::memmem::find_iter(haystack, needle) {
-                parts.push(Self::from_unit_run(units.slice(cursor..offset)));
-                cursor = offset + needle.len();
-            }
-            parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
-            return parts;
-        }
-        while let Some(offset) = units.find(separator, cursor) {
-            parts.push(Self::from_unit_run(units.slice(cursor..offset)));
-            cursor = offset + separator.len();
-        }
-        parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
-        parts
-    }
 }
 
 impl PartialEq for JsString {
@@ -1400,7 +1374,8 @@ mod tests {
             value.find_units(super::Units::Wide(&[b'|' as u16]), 0),
             Some(1)
         );
-        let parts = value.split_units(super::Units::Wide(&[b'|' as u16]));
+        let mut parts = Vec::new();
+        value.split_runs(super::Units::Wide(&[b'|' as u16]), usize::MAX, |run| parts.push(JsString::from_unit_run(run)));
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
         assert_eq!(parts[1].units(), &[0xDC00]);
