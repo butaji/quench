@@ -1,12 +1,15 @@
 [build]
 # Enforce clippy rules from .clippy.toml — never allow warnings.
 # 64-byte function alignment measured +3.4% on Linux CoreMark (Linear TOD-19).
-rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
+# Every function keeps its own address: LLVM's MergeFunctions folds generic instances with
+# identical bodies, and a lane record's handler address names its form until each record
+# carries an explicit kind (quench-lint `fn-identity`, shrink-only).
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "merge-functions=disabled"]
 
 # Use LLVM's target alignment on Apple ARM; the forced alignment above is a
 # Linux measurement. Host-specific qualification and code residency: Linear TOD-8.
 [target.aarch64-apple-darwin]
-rustflags = ["-D", "warnings"]
+rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled"]
 
 # x86-64 Linux links OpenSSL statically: the shared libssl/libcrypto pair costs
 # about 1 MiB of resident set in every process at load (relocations and

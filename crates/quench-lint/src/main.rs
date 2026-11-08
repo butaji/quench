@@ -3,13 +3,15 @@
 //! laws (`shape`), when a hot path hashes, scans or allocates (`hot_path`), when the engine
 //! tests a guest program's own names (`guest_names`) or recognizes a function by its bytecode
 //! shape (`fingerprints`), when a body spells an unnamed number
-//! (`magic`), or when data is laid out against data-oriented design (`data_layout`).
+//! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
+//! code tests a function's address for identity (`fn_identity`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
 
 mod data_layout;
 mod decision_trees;
 mod duplicates;
+mod fn_identity;
 mod fingerprints;
 mod guest_names;
 mod hot_path;

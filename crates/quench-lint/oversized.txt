@@ -1557,6 +1557,10 @@ file-lines quench-bench/src/bin/task61-fixed-work-guard.rs 1236
 file-lines quench-bench/src/bin/web.rs 583
 file-lines quench-bench/src/contention.rs 680
 file-lines quench-bench/src/main.rs 3645
+fn-identity crates/quench-runtime/src/vm/dispatch_fast.rs 94
+fn-identity crates/quench-runtime/src/vm/dispatch_fast/capture_update_calls.rs 2
+fn-identity crates/quench-runtime/src/vm/dispatch_fast/getters.rs 1
+fn-identity crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs 2
 function-lines crates/quench-alloc/src/lib.rs::Heap::release_empty 59
 function-lines crates/quench-alloc/src/lib.rs::tests::released_empty_pages_return_zeroed_before_fresh_ones 63
 function-lines crates/quench-intl/src/calendar.rs::calendar_date_add 57
