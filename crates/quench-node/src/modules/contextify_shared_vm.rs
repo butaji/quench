@@ -387,10 +387,6 @@ pub(crate) fn is_context(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Res
 pub(crate) fn make_context(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let sandbox = argument(c, args, 0);
     let global = c.create_realm_rooted()?;
-    for name in INTRINSIC_ONLY {
-        let key = c.string_rooted(name);
-        c.delete_property_rooted(global, key)?;
-    }
     install_console(c, global)?;
     let allow_strings = argument(c, args, 3);
     if !c.truthy_rooted(allow_strings)? {
@@ -419,9 +415,6 @@ pub(crate) fn make_context(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
     c.define_data_property_rooted(sandbox, key, record, false, false, false)?;
     Ok(sandbox)
 }
-
-/// Intrinsics a new realm binds on its global that V8 keeps unnamed.
-const INTRINSIC_ONLY: [&str; 4] = ["TypedArray", "AsyncFunction", "GeneratorFunction", "AsyncGeneratorFunction"];
 
 /// V8's console methods, in its order. A context's console reports to the inspector, which
 /// Quench has none of, so each does nothing.
