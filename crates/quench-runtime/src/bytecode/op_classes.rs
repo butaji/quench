@@ -39,6 +39,12 @@ impl Op {
         self.loads_frame_local() || self.addresses_env_local()
     }
 
+    /// A store to a binding by name.
+    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
+    pub(crate) const fn stores_name(self) -> bool {
+        matches!(self, Op::StoreName)
+    }
+
     /// A load of a binding by name.
     pub(crate) const fn loads_name(self) -> bool {
         self.is_throwing_name_load() || matches!(self, Op::LoadNameTypeof)

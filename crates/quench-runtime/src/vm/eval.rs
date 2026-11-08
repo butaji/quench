@@ -3,6 +3,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 use crate::compile::eval_context_source;
+mod eval_source;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
 /// useful fast path for eval's common comment-only inputs: parsing an empty
@@ -249,7 +250,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let source_name = format!("<Eval:{}>", self.programs.len());
-        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false)
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, eval_source::shared_text(&source_text, text))
     }
 
     pub(super) fn eval_global_script(
@@ -269,7 +270,7 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, strict, source_name, None, false)
+        self.eval_global_script_with_cache(p, source, strict, source_name, None, false, None)
     }
 
     /// A host's script, which is sloppy global code no guest frame calls: its compilation goes
@@ -280,7 +281,7 @@ impl<H: Host> Vm<H> {
         source: &str,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, false, source_name, None, true)
+        self.eval_global_script_with_cache(p, source, false, source_name, None, true, None)
     }
 
     fn eval_global_script_with_cache(
@@ -291,6 +292,7 @@ impl<H: Host> Vm<H> {
         source_name: &str,
         cache_source: Option<JsString>,
         host_script: bool,
+        shared_text: Option<std::rc::Rc<str>>,
     ) -> Result<Value, JsError> {
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();
@@ -319,20 +321,7 @@ impl<H: Host> Vm<H> {
             Vec::new()
         };
         let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
-        let annex_b_forbidden_names = if self.direct_eval {
-            (0..crate::compile::AtomPrefix::len(self) as Atom)
-                .filter(|atom| {
-                    (caller_has_global_variables
-                        && self.realm.global_lexical_declarations.contains(atom))
-                        || self
-                            .direct_eval_binding(*atom)
-                            .is_some_and(|binding| binding.conflicts_with_var())
-                })
-                .map(|atom| self.atom_name(atom).to_owned())
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let annex_b_forbidden_names = self.annex_b_forbidden_names(caller_has_global_variables);
         // A host script compiles from its text alone: it is no direct eval, so it has no
         // caller context, private names or Annex B restrictions.
         let kept = host_script
@@ -344,7 +333,7 @@ impl<H: Host> Vm<H> {
                 self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
             });
         let compiled = kept.is_none();
-        let residual = match kept {
+        let mut residual = match kept {
             Some(residual) => Ok(residual),
             None => crate::Engine::specialize_eval_with_context(
             source,
@@ -369,6 +358,7 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
+        eval_source::keep_shared_text(&mut residual, shared_text);
         let cache_source = cache_source.filter(|_| {
             residual.functions.first().is_some_and(|root| !root.strict)
                 && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0)
@@ -1160,7 +1150,7 @@ impl<H: Host> Vm<H> {
         let mut first_home = None;
         for binding in bindings {
             let identity = self.atom_name(binding.atom).to_owned();
-            let Some(label) = private_identity_label(&identity) else { continue; };
+            let Some(label) = private_identity_label(&identity).map(str::to_owned) else { continue; };
             if names.iter().any(|(name, _)| name == &label) { continue; }
             if let Ok(home) = self.load_name_binding(p, frame, binding) {
                 first_home.get_or_insert(home);
@@ -1171,7 +1161,7 @@ impl<H: Host> Vm<H> {
         let home = self.eval_home_binding(p)?;
         let names = self.object_data(home).into_iter().flat_map(|object| object.private_names()).filter_map(|brand| {
             let identity = self.atom_name(brand.name).to_owned();
-            private_identity_label(&identity).map(|label| (label, identity))
+            private_identity_label(&identity).map(str::to_owned).map(|label| (label, identity))
         }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });
         (!names.is_empty()).then_some((home, names))
     }

@@ -274,8 +274,14 @@ pub(super) struct BodyFacts {
     /// the program's (`private_name_ids`).
     pub(super) private_name_ids: rustc_hash::FxHashMap<(u32, u32), u32>,
     pub(super) private_name_labels: rustc_hash::FxHashMap<(u32, u32), String>,
-    /// Function expressions whose `prototype` no program text observes (`call_only`).
+    /// Function expressions whose `prototype` no program text observes (`call_only`), unless
+    /// `call_only_deferred`.
     pub(super) prototype_unobservable: FxHashSet<u32>,
+    /// The functions may compile on first call: their call-only facts wait for the
+    /// compilation that reads them (`call_only::deferred`), unless their load compiles them.
+    pub(super) call_only_deferred: bool,
+    /// The functions whose call-only facts are found, by source range.
+    pub(super) call_only_found: Vec<(u32, u32)>,
     next_private_id: u32,
     /// Some body failed an early check alone.
     pub(super) failed: bool,
@@ -286,19 +292,25 @@ pub(super) struct BodyFacts {
 }
 
 impl BodyFacts {
+    /// No facts yet, the call-only ones `deferred` or not.
+    pub(super) fn deferring(call_only_deferred: bool) -> Self {
+        Self { call_only_deferred, ..Self::default() }
+    }
+
     /// Checks one function the parser hands over before releasing its body
     /// (`ParseOptions::lazy_body_check`), alone with the strictness it inherits and the
     /// bodies inside it whole, and adds its facts. The facts are gathered before code
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
-    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
+    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
         if self.failed {
             return;
         }
-        let strict = program.source_type.is_module() || has_use_strict(&program.directives);
+        // Its early errors are OXC's alone: the program carries the strictness the body
+        // inherits as a directive, which `early::program_early_errors` exists to supply where
+        // OXC cannot see it (a whole program in inherited strict code).
         if super::stack::validate(program).is_err()
             || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
-            || !super::early::program_early_errors(program, strict).1.is_empty()
         {
             self.failed = true;
             return;
@@ -312,14 +324,24 @@ impl BodyFacts {
         if let Some((specialized, requests)) = &mut self.native_source_requests {
             requests.extend(super::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
+        self.add_facts(&built.semantic, program, in_function);
+    }
+
+    /// Adds the facts of a checked body: its private names, its free names, and its
+    /// call-only facts unless they wait for a compilation that may never come.
+    fn add_facts(&mut self, semantic: &oxc_semantic::Semantic<'_>, program: &oxc_ast::ast::Program<'_>, in_function: bool) {
         let first_id = self.next_private_id;
-        for (span, id) in super::private_name_ids(&built.semantic) {
+        for (span, id) in super::private_name_ids(semantic) {
             self.private_name_ids.insert(span, first_id + id);
             self.next_private_id = self.next_private_id.max(first_id + id + 1);
         }
-        self.private_name_labels.extend(super::private_name_labels(&built.semantic));
-        self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(&built.semantic, program));
-        self.free_names.extend(super::first_call::free_names(program, built.semantic.scoping()));
+        self.private_name_labels.extend(super::private_name_labels(semantic));
+        let free_names = super::first_call::free_names(program, semantic.scoping());
+        if !self.call_only_deferred || super::call_only::compiles_at_load(program, in_function && free_names.is_none(), self.next_private_id != first_id) {
+            self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(semantic, program));
+            self.call_only_found.push((program.span.start, program.span.end));
+        }
+        self.free_names.extend(free_names);
     }
 }
 
@@ -463,66 +485,4 @@ impl<'a> oxc_ast_visit::Visit<'a> for LazyFunctions {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{syntax_valid, syntax_valid_whole as valid_whole};
-    use oxc_span::SourceType;
-
-    #[test]
-    fn lazy_syntax_check_agrees_with_the_whole_program() {
-        let sources = [
-            "function f() { return 1 }",
-            "function f() { let a; let a; }",
-            "function f() { var x = 010; }",
-            "'use strict'; function f() { var x = 010; }",
-            "function f() { 'use strict'; with (a) {} }",
-            "class C { m() { function g() { with (a) {} } } }",
-            "var g = function () { return arguments }; function h(a, a) {}",
-            "'use strict'; function h(a, a) {}",
-            "function f() { function g() { break; } }",
-            "function f() { yield: 1 } function* g() { function h() { var yield; } }",
-            "(function () { function f() { return } })()",
-            "function f() { import.meta }",
-            "function f() { return \"\\u0061\" } let s = '\\u0062'",
-            "function f() { await: 1 }",
-            "class C { #p = 1; m() { return function () { return this.#p } } }",
-            "class C { m() { return function () { return this.#q } } }",
-        ];
-        for source in sources {
-            for source_type in [SourceType::cjs(), SourceType::mjs(), SourceType::script()] {
-                assert_eq!(
-                    syntax_valid(source, source_type),
-                    valid_whole(source, source_type),
-                    "{source_type:?}: {source}"
-                );
-            }
-        }
-    }
-
-    /// Compares the two checks on every `.js`, `.cjs` and `.mjs` file under
-    /// `QUENCH_SYNTAX_CORPUS`, as scripts, CommonJS and modules.
-    #[test]
-    #[ignore = "reads a corpus named by QUENCH_SYNTAX_CORPUS"]
-    fn lazy_syntax_check_agrees_on_a_corpus() {
-        let root = std::env::var_os("QUENCH_SYNTAX_CORPUS").expect("QUENCH_SYNTAX_CORPUS");
-        let mut pending = vec![std::path::PathBuf::from(root)];
-        let (mut files, mut differ) = (0usize, Vec::new());
-        while let Some(path) = pending.pop() {
-            if path.is_dir() {
-                pending.extend(std::fs::read_dir(&path).into_iter().flatten().flatten().map(|entry| entry.path()));
-                continue;
-            }
-            if !path.extension().is_some_and(|extension| matches!(extension.to_str(), Some("js" | "cjs" | "mjs"))) {
-                continue;
-            }
-            let Ok(source) = std::fs::read_to_string(&path) else { continue };
-            files += 1;
-            for source_type in [SourceType::cjs(), SourceType::mjs()] {
-                if syntax_valid(&source, source_type) != valid_whole(&source, source_type) {
-                    differ.push(format!("{source_type:?} {}", path.display()));
-                }
-            }
-        }
-        eprintln!("files={files} differ={}", differ.len());
-        assert!(differ.is_empty(), "{differ:#?}");
-    }
-}
+mod tests;

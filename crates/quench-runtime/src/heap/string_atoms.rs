@@ -6,9 +6,11 @@
 //! entries hold until the record is swept (`StringAtoms::forget`) or the VM reassigns its
 //! atoms (`Heap::clear_string_atoms`). An atom's string is weak unless kept: a kept one
 //! (`KEPT` in its entry's high bit) is a collection root, as a program atom's or a compiled
-//! function's name is.
+//! function's name is. Each record's text hash is kept beside its atom (`hashes`).
 
 use std::cell::RefCell;
+
+mod hashes;
 
 use super::{Heap, HeapReference, Value};
 
@@ -23,23 +25,30 @@ pub(super) struct StringAtoms {
     atoms: RefCell<Vec<u32>>,
     /// Indexed by atom: the record id spelling it, with `KEPT` in the high bit.
     records: RefCell<Vec<u32>>,
+    /// The atoms whose kept string may still be young: a minor collection roots only these,
+    /// as an old string outlives it anyway.
+    young_kept: RefCell<Vec<u32>>,
+    /// Indexed by string record id: the record's text hash, once made.
+    hashes: hashes::StringHashes,
 }
 
-fn set(table: &mut Vec<u32>, index: u32, entry: u32) {
+/// Writes `entry` at `index` of a table indexed by record id, filling new rows with `vacant`.
+pub(super) fn set(table: &mut Vec<u32>, index: u32, entry: u32, vacant: u32) {
     let index = index as usize;
     if index >= table.len() {
-        table.resize(index + 1, UNKNOWN);
+        table.resize(index + 1, vacant);
     }
     table[index] = entry;
 }
 
 impl StringAtoms {
-    pub(super) fn forget(&self, record_id: u32) {
-        let Some(atom) = self.atoms.borrow_mut().get_mut(record_id as usize).map(|atom| std::mem::replace(atom, UNKNOWN))
+    pub(super) fn forget(&mut self, record_id: u32) {
+        self.hashes.forget(record_id);
+        let Some(atom) = self.atoms.get_mut().get_mut(record_id as usize).map(|atom| std::mem::replace(atom, UNKNOWN))
         else {
             return;
         };
-        if let Some(record) = self.records.borrow_mut().get_mut(atom as usize)
+        if let Some(record) = self.records.get_mut().get_mut(atom as usize)
             && *record & !KEPT == record_id
         {
             *record = UNKNOWN;
@@ -63,8 +72,9 @@ impl Heap {
     pub(crate) fn atom_string(&self, atom: u32, keep: bool) -> Option<Value> {
         let mut records = self.string_atoms.records.borrow_mut();
         let record = records.get_mut(atom as usize).filter(|record| **record != UNKNOWN)?;
-        if keep {
+        if keep && *record & KEPT == 0 {
             *record |= KEPT;
+            self.string_atoms.young_kept.borrow_mut().push(atom);
         }
         Some(Value::direct_string(*record & !KEPT))
     }
@@ -82,11 +92,14 @@ impl Heap {
             return;
         };
         debug_assert!(record_id & KEPT == 0, "string record ids leave the kept bit free");
-        set(&mut self.string_atoms.atoms.borrow_mut(), record_id, atom);
+        set(&mut self.string_atoms.atoms.borrow_mut(), record_id, atom, UNKNOWN);
         let mut records = self.string_atoms.records.borrow_mut();
         let current = records.get(atom as usize).copied().unwrap_or(UNKNOWN);
         if current == UNKNOWN || (kept && current & KEPT == 0) {
-            set(&mut records, atom, record_id | if kept { KEPT } else { 0 });
+            set(&mut records, atom, record_id | if kept { KEPT } else { 0 }, UNKNOWN);
+            if kept {
+                self.string_atoms.young_kept.borrow_mut().push(atom);
+            }
         }
     }
 
@@ -99,9 +112,28 @@ impl Heap {
         })
     }
 
+    /// The kept strings a collection roots: all of them for a full one; for a minor one, only
+    /// those not yet old, whose atoms `young_kept` lists.
+    pub(crate) fn kept_atom_roots(&self, full: bool) -> Vec<Value> {
+        let mut young = self.string_atoms.young_kept.borrow_mut();
+        if full {
+            young.clear();
+            return self.kept_atom_strings().map(|(_, string)| string).collect();
+        }
+        let records = self.string_atoms.records.borrow();
+        let kept = |atom: &u32| {
+            let record = records.get(*atom as usize).copied().unwrap_or(UNKNOWN);
+            (record != UNKNOWN && record & KEPT != 0).then(|| Value::direct_string(record & !KEPT))
+        };
+        young.retain(|atom| kept(atom).is_some_and(|string| !self.is_old(string)));
+        young.iter().filter_map(kept).collect()
+    }
+
     /// Forgets every recorded atom, as when the VM reassigns its atoms.
     pub(crate) fn clear_string_atoms(&self) {
         self.string_atoms.atoms.borrow_mut().clear();
         self.string_atoms.records.borrow_mut().clear();
+        self.string_atoms.young_kept.borrow_mut().clear();
+        self.string_atoms.hashes.clear();
     }
 }

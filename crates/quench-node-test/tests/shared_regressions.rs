@@ -460,3 +460,28 @@ console.log(show(() => mix({ valueOf() { throw new RangeError('boom'); } })));
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+/// `TypedArray.prototype.set` between integer kinds of other types converts on the bytes:
+/// each integer keeps its low bytes, extended by its sign, and Uint8Clamped still clamps.
+#[test]
+fn integer_typed_array_set_across_kinds_matches_node() {
+    let source = r#"
+const kinds = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array];
+const values = [0, 1, -1, 127, -128, 255, 256, -32768, 65535, 2147483647, -2147483648];
+const lines = [];
+for (const From of kinds) {
+  const source = From.from(values);
+  for (const To of kinds) {
+    const target = new To(values.length + 1);
+    target.set(source, 1);
+    lines.push(`${From.name}>${To.name}:${Array.from(target).join(",")}`);
+  }
+}
+console.log(lines.join("\n"));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}

@@ -1,6 +1,8 @@
 //! GC operations use the common heap and activation registers.
-use crate::Value;
 use wasmparser::{FieldType, StorageType};
+
+mod field;
+pub(crate) use field::GcField;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GcFieldAccess {
@@ -50,19 +52,8 @@ impl GcFieldAccess {
             }
         }
     }
-
-    pub(crate) fn read(self, storage: StorageType, value: Value) -> Option<Value> {
-        Some(match (self, storage) {
-            (Self::Read, StorageType::Val(_)) => value,
-            (Self::ReadSigned, StorageType::I8) => Value::integer(i32::from(value.as_int()? as i8)),
-            (Self::ReadSigned, StorageType::I16) => {
-                Value::integer(i32::from(value.as_int()? as i16))
-            }
-            (Self::ReadUnsigned, StorageType::I8 | StorageType::I16) => value,
-            _ => return None,
-        })
-    }
 }
+
 pub(crate) fn storage_subtype(
     source: StorageType,
     source_owner: &super::WasmTypes,
@@ -303,7 +294,7 @@ impl Lowering<'_> {
                     Some(value) => (reference, element, value),
                     None => (self.push()?, reference, element),
                 };
-                self.emit(access.array_op(), a, b, c, 0)?;
+                self.emit(access.array_op(), a, b, c, GcField::new(0, field.element_type).expect("index 0 fits").tag())?;
             }
             return Ok(true);
         }
@@ -676,9 +667,9 @@ impl Lowering<'_> {
                 Some(value) => (reference, value),
                 None => (self.push()?, reference),
             };
-            // Validation resolves the static type. The live object owns field layout;
-            // subtype prefixes preserve packed types and mutable-field invariance.
-            self.emit(access.op(), a, b, 0, field)?;
+            // Subtype prefixes keep packed types, so the storage holds for every live object.
+            let field = GcField::new(field, declaration.element_type).ok_or_else(|| Diagnostic::unsupported(self.name, "invalid Wasm struct field"))?;
+            self.emit(access.op(), a, b, 0, field.tag())?;
         }
         Ok(())
     }

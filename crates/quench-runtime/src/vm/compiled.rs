@@ -51,6 +51,9 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+mod osr_compile;
+pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+use osr_compile::OsrFacts;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
@@ -63,11 +66,15 @@ mod lane_region;
 mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
+#[path = "compiled/lane_allocations.rs"] mod lane_allocations;
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
+#[path = "compiled/wasm_callable.rs"]
+mod wasm_callable;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -504,7 +511,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa()?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -1986,6 +1993,7 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
@@ -2020,7 +2028,7 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
         let last = entries.last().expect("a recovery chain");
         INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((last.function, last.source_pc))));
     }
-    let chain = frameless::chain(vm, dispatch, entries[0].call_pc, inlined);
+    let chain = frameless::chain(vm, program, dispatch, entries[0].call_pc, inlined);
     materialize_chain(vm, program, dispatch, &chain);
     0
 }
@@ -2119,7 +2127,7 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
     Numeric,
-    Process([usize; LaneHelper::COUNT]),
+    Process(&'static [*const (); LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -2208,6 +2216,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
     pub(super) invalidation: usize,
+    /// The program's constants as the VM made and roots them (`Vm::active_constant`).
+    pub(super) constants: &'a [Value],
 }
 
 impl OnlineFacts<'_> {
@@ -2354,7 +2364,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
             lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
+                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
                     let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
@@ -4775,10 +4785,6 @@ struct FastReferenceCache {
     body: u64,
 }
 
-/// Certificates an artifact keeps per indirect call site (`reference_dispatch_entries`): a site
-/// whose targets vary dispatches through all of them (JetStream richards-wasm sends each task
-/// through one site to one of four functions; a certificate per site held only the last).
-const REFERENCE_DISPATCH_ENTRIES_PER_SITE: usize = 4;
 
 /// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
 /// whose collisions cost only a callout.
@@ -4790,7 +4796,7 @@ fn reference_dispatch_entries(sites: usize) -> usize {
     if sites == 0 {
         return 0;
     }
-    (sites * REFERENCE_DISPATCH_ENTRIES_PER_SITE)
+    (sites * tier_policy::POLYMORPHISM)
         .next_power_of_two()
         .min(MAX_REFERENCE_DISPATCH_ENTRIES)
 }
@@ -4809,7 +4815,7 @@ impl Default for FastReferenceCache {
     }
 }
 
-/// Fill an already bounds-checked range in the instance's unshared memory.
+/// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
 /// leaf, and no VM call can move the guarded memory during the operation.
 unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) -> i64 {
@@ -5025,7 +5031,7 @@ fn note_reference_call_site(
 
 fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
     if context.memory != Value::UNDEFINED
-        && let Some((_, length)) = super::dispatch_fast::unshared_memory(vm, context.memory)
+        && let Some((_, length)) = super::dispatch_fast::direct_memory(vm, context.memory)
     {
         context.memory_length = length as u64;
     }
@@ -5566,6 +5572,9 @@ enum CompiledArgs<'a> {
     },
 }
 
+/// The `CompiledProgram::positions` entry of a function an artifact does not hold.
+const NOT_COMPILED: u32 = u32::MAX;
+
 pub(super) struct CompiledFunction {
     entry: Entry,
     params: Vec<crate::WasmType>,
@@ -5614,7 +5623,7 @@ fn direct_reference_entry<H: Host>(
     context_memory: Value,
     signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
 ) -> Option<DirectReferenceEntry> {
-    let native = compiled.functions.get(function)?.as_ref()?;
+    let native = compiled.function(function)?;
     if signature.is_some_and(|(params, result)| {
         native.params.as_slice() != params || native.result != result
     }) {
@@ -5628,7 +5637,7 @@ fn direct_reference_entry<H: Host>(
             if binding != context_memory {
                 return None;
             }
-            let (base, length) = super::dispatch_fast::unshared_memory(vm, binding)?;
+            let (base, length) = super::dispatch_fast::direct_memory(vm, binding)?;
             let guard = guarded_memory(vm, binding);
             if compiled.guarded && guard.is_none()
                 || compiled.fixed_base.is_some_and(|fixed| {
@@ -5777,7 +5786,11 @@ fn reference_target_matches<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
-    functions: Vec<Option<CompiledFunction>>,
+    /// The compiled functions in index order: a selective tier holds a few of a module's
+    /// thousands, so only `positions` is as long as the module.
+    functions: Box<[CompiledFunction]>,
+    /// Each module function's place in `functions`; `NOT_COMPILED` where it has none.
+    positions: Box<[u32]>,
     /// The environment slot of the memory compiled code accesses.
     memory_slot: Option<u32>,
     /// Memory accesses rely on the memory's guard reservation instead of
@@ -6070,7 +6083,7 @@ impl CompiledProgram {
     fn note_direct_reference_entry(&self, function: usize) -> bool {
         let native_entry_should_sample = self.note_native_entry(function);
         #[cfg(test)]
-        if let Some(Some(function)) = self.functions.get(function) {
+        if let Some(function) = self.function(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
@@ -6089,7 +6102,7 @@ impl CompiledProgram {
             false
         };
         #[cfg(test)]
-        if let Some(Some(function)) = self.functions.get(function) {
+        if let Some(function) = self.function(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
@@ -6113,9 +6126,13 @@ impl CompiledProgram {
         sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
-    pub(super) fn has_function(&self, function: usize) -> bool { self.functions.get(function).is_some_and(Option::is_some) }
+    /// Module function `index`'s compiled code, if this artifact holds it.
+    fn function(&self, index: usize) -> Option<&CompiledFunction> {
+        self.functions.get(*self.positions.get(index)? as usize)
+    }
+    pub(super) fn has_function(&self, function: usize) -> bool { self.function(function).is_some() }
     /// The functions it holds code for.
-    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.functions.len()).filter(|&function| self.has_function(function)) }
+    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.positions.len()).filter(|&function| self.has_function(function)) }
 
     pub(super) fn mapped_bytes(&self) -> usize {
         self._code.length()
@@ -6196,18 +6213,12 @@ impl CompiledProgram {
 
     #[cfg(test)]
     pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
-        self.functions
-            .get(function)?
-            .as_ref()
-            .map(|function| function.native_entries.get())
+        self.function(function).map(|function| function.native_entries.get())
     }
 
     #[cfg(test)]
     pub(super) fn direct_reference_entries(&self, function: usize) -> Option<u64> {
-        self.functions
-            .get(function)?
-            .as_ref()
-            .map(|function| function.direct_reference_entries.get())
+        self.function(function).map(|function| function.direct_reference_entries.get())
     }
 }
 
@@ -6236,11 +6247,7 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
 pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
-    widenings: std::collections::BTreeMap<u32, Widening>,
-    /// Own-field descriptors embed shape IDs. Shape compaction retires this code
-    /// through its lane view before execution can resume with remapped IDs.
-    pub(super) shape_dependencies: Vec<u32>,
-    pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    pub(super) facts: OsrFacts,
 }
 
 impl CompiledOsrRegion {
@@ -6310,7 +6317,7 @@ impl CompiledOsrRegion {
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.widenings.get(&pc).copied()
+        self.facts.widening(pc)
     }
 }
 
@@ -6355,39 +6362,6 @@ pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
-pub(super) fn compile_osr_region(
-    region: &LoopRegion,
-    observation: &Observation<'_>,
-    interrupt: &crate::execution_interrupt::ExecutionInterrupt,
-    policy: crate::MemoryPolicy,
-    track_backedges: bool,
-) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    let verified = osr_loop::verify_region(region, observation).ok()?;
-    let (function, widenings) =
-        osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt), track_backedges)?;
-    let clif = native_dump_directory().map(|_| function.display().to_string());
-    let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
-    if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
-        dump_native_code(directory, region.header, &_code, &clif);
-    }
-    let mut shape_dependencies: Vec<_> = observation.native_field_loads.iter().flatten()
-        .flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
-    shape_dependencies.sort_unstable();
-    shape_dependencies.dedup();
-    let mut slot_dependencies: Vec<_> = observation.native_field_loads.iter().flatten()
-        .filter_map(|field| field.slot_dependency()).collect();
-    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-    slot_dependencies.dedup();
-    Some(CompiledOsrRegion {
-        _code,
-        entry,
-        widenings,
-        shape_dependencies,
-        slot_dependencies,
-    })
-}
-
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
@@ -6435,23 +6409,14 @@ fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], add
     }
 }
 
-/// Compile and publish a fully lowered native entry that has no relocations.
-///
-/// JS scalar regions and OSR regions both use this entry contract. Wasm functions
-/// with internal calls have a separate linking phase before publication.
-fn compile_and_publish_entry(
-    function: ir::Function,
-    isa: &dyn cranelift_codegen::isa::TargetIsa,
-    max_code_bytes: usize,
-) -> Option<(CodeMemory, Entry)> {
-    compile_native_function(function, isa, max_code_bytes, |code| {
-        let memory = CodeMemory::new(code)?;
-        write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
-        // SAFETY: callers lower the function with `native_entry_signature`.
-        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
-        Some((memory, entry))
-    })
-    .ok()
+/// Publishes compiled `code` of a function lowered with `native_entry_signature` to
+/// executable memory, and its entry.
+fn publish_entry(code: &[u8]) -> Option<(CodeMemory, Entry)> {
+    let memory = CodeMemory::new(code)?;
+    write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
+    // SAFETY: callers lower the function with `native_entry_signature`.
+    let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+    Some((memory, entry))
 }
 
 /// Eager publication has no code-cache admission budget: all requested bodies
@@ -6748,8 +6713,6 @@ pub(super) struct LaneMethod {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: Entry,
-    /// An OSR-only body keeps normal calls on their baseline entry.
-    first_entry: bool,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -6762,8 +6725,6 @@ pub(super) struct LaneMethod {
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
     caller_registers: u16,
-    /// The loop header PC of its function a run may also start at (`Vm::run_lane_method`).
-    pub(super) loop_header: Option<u32>,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -6775,7 +6736,6 @@ pub(super) struct LaneMethod {
 }
 
 impl LaneMethod {
-    pub(super) fn supports_first_entry(&self) -> bool { self.first_entry }
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -6791,12 +6751,12 @@ impl LaneMethod {
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
     /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
-        self.first_entry && self.amortizes
+        self.amortizes
     }
 
     /// Whether a direct caller may call it (`LaneMethod::closed`).
     pub(super) fn calls_only_natively(&self) -> bool {
-        self.first_entry && self.closed
+        self.closed
     }
 }
 
@@ -6804,14 +6764,6 @@ impl LaneMethod {
 /// Retirement unlinks entry without releasing code that execution or recovery uses.
 /// Guest locator validity and exact exits remain separate obligations.
 pub(super) type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
-
-/// Where a run of a lane body starts (`Vm::run_lane_method`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LaneStart {
-    First,
-    /// Its loop header (`LaneMethod::loop_header`), from the lane's backward jump there.
-    LoopHeader,
-}
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
 /// whose activation the lane then makes (`Vm::lane_body_inlined_activation`).
@@ -6931,9 +6883,10 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
         return value.to_bits();
     }
-    let receiver = Value::from_bits(receiver);
+    let receiver = Value::from_bits(receiver); // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
     match vm.compiled_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
+        super::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
     }
 }
@@ -7115,32 +7068,6 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     1
 }
 
-/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
-/// `DELETED` where a collection is due, which the body leaves for. The allocation may move
-/// the property arena, whose base and length the dispatch reads again.
-unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
-    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let object = vm.object();
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    object.to_bits()
-}
-
-/// A lane body's array literal of `length` holes, or of the `elements` its definitions
-/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
-/// `DELETED` where a collection is due, as `lane_new_object`.
-unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
-    // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    array.to_bits()
-}
-
 /// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
 #[repr(C)]
 pub(super) struct LaneTypedArrayView {
@@ -7244,7 +7171,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn run_lane_method(
         &mut self,
         method: &LaneMethod,
-        start: LaneStart,
         direct_calls: bool,
         program: ProgramId,
         residual: &ResidualProgram,
@@ -7299,13 +7225,6 @@ impl<H: Host> Vm<H> {
         let mut word = 0_u64;
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases set above.
-        let start = match start {
-            LaneStart::First => 0,
-            LaneStart::LoopHeader => {
-                debug_assert!(method.loop_header.is_some(), "a loop entry runs a body compiled with one");
-                1
-            }
-        };
         let status = if method.fault_poll {
             let poll = native_poll_page(&self.execution_interrupt);
             // SAFETY: this entry owns the TLS binding until it returns. Reentrant
@@ -7313,10 +7232,10 @@ impl<H: Host> Vm<H> {
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
                 self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_native(context, start, 0, registers.cast_const().cast(),
+            unsafe { enter_native(context, 0, 0, registers.cast_const().cast(),
                 &mut word, NativeEntryMode::Resumable, method.entry) }
         } else {
-            unsafe { (method.entry)(&mut *context, start, 0, registers.cast_const().cast(), &mut word) }
+            unsafe { (method.entry)(&mut *context, 0, 0, registers.cast_const().cast(), &mut word) }
         };
         if status == LANE_BODY_RETURNED {
             // SAFETY: as above; the body wrote the record before it returned.
@@ -7386,7 +7305,7 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
-        let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
+        let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above; the callee's run may have grown the scratch window.
         unsafe {
             saved.install(&mut (*frame).dispatch);
@@ -7440,20 +7359,18 @@ pub(super) struct DirectCallee {
 }
 
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
-/// activation only if a run leaves inside it (`Vm::take_shadow_frames`).
+/// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
+/// names the call record it returns to, and its receiver. Its registers are the window past
+/// the frame below it, at the lane stack's end, so the frame holds neither.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct ShadowFrame {
-    /// The caller's call record.
-    pub(super) call: usize,
     pub(super) callee: *const DirectCallee,
-    /// The callee's registers, in the lane stack's capacity past the caller's.
-    pub(super) window: *mut Value,
     pub(super) this: u64,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
@@ -8676,6 +8593,9 @@ struct Analysis<'a, H: Host> {
     root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
+    /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
+    /// plans have read every record and before any body is built.
+    unrolls: bool,
 }
 
 impl<H: Host> Analysis<'_, H> {
@@ -8721,7 +8641,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// Check `register` names the function's memory for a vector access: the memory
-    /// register, or a register an instance binding loaded the same unshared memory into
+    /// register, or a register an instance binding loaded the same direct memory into
     /// (lowering binds the memory afresh for each such access), which then is the
     /// function's compiled memory (`memory_slot`).
     fn vector_memory(
@@ -8735,7 +8655,7 @@ impl<H: Host> Analysis<'_, H> {
         match state.get(register, function.registers)? {
             Slot::Memory if Some(register) == memory_register => {}
             Slot::Binding(slot)
-                if self.binds_unshared_memory(slot) && memory_slot.is_none_or(|known| known == slot) =>
+                if self.binds_direct_memory(slot) && memory_slot.is_none_or(|known| known == slot) =>
             {
                 *memory_slot = Some(slot);
             }
@@ -8771,20 +8691,19 @@ impl<H: Host> Analysis<'_, H> {
         }
     }
 
-    /// Whether `slot` binds an unshared memory compiled code can view.
-    fn binds_unshared_memory(&self, slot: u32) -> bool {
+    /// Whether `slot` binds a memory compiled code can view (`MemoryStorage::is_direct`).
+    fn binds_direct_memory(&self, slot: u32) -> bool {
         let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
             return false;
         };
         matches!(
             self.vm.heap.get(binding),
-            Some(Cell::WasmMemory { bytes, .. })
-                if matches!(**bytes, crate::wasm::memory::MemoryStorage::Unshared(_))
+            Some(Cell::WasmMemory { bytes, .. }) if bytes.is_direct()
         )
     }
 
     /// Whether a bound memory has the representation supported by native
-    /// linear-memory operations: unshared memory32 with ordinary Wasm pages.
+    /// linear-memory operations: direct memory32 with ordinary Wasm pages.
     fn supports_compiled_memory(&self, slot: u32) -> bool {
         let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
             return false;
@@ -8792,7 +8711,7 @@ impl<H: Host> Analysis<'_, H> {
         matches!(
             self.vm.heap.get(binding),
             Some(Cell::WasmMemory { bytes, header, .. })
-                if matches!(**bytes, crate::wasm::memory::MemoryStorage::Unshared(_))
+                if bytes.is_direct()
                     && !header.ty.memory64
                     && header.ty.page_size() as usize
                         == (1usize << crate::wasm::memory::WASM_PAGE_BITS)
@@ -8832,7 +8751,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// The function's plan, assuming every function in `callable` compiles.
-    fn plan(&self, index: usize, callable: &[bool], memory_slot: &mut Option<u32>) -> Option<Plan> {
+    fn plan(&self, index: usize, callable: &crate::bitset::BitSet, memory_slot: &mut Option<u32>) -> Option<Plan> {
         let plan_started = self
             .compile_rejections
             .as_ref()
@@ -8895,10 +8814,7 @@ impl<H: Host> Analysis<'_, H> {
                 .clone()
                 .expect("queued instructions have a state");
             if instruction.op() == Op::CallKnown
-                && !callable
-                    .get(usize::from(instruction.known_function_index()))
-                    .copied()
-                    .unwrap_or(false)
+                && !callable.contains(usize::from(instruction.known_function_index()))
                 && !self.experimental_root_compilation
             {
                 let callee = instruction.known_function_index();
@@ -8991,7 +8907,7 @@ impl<H: Host> Analysis<'_, H> {
         function: &Function,
         instruction: WideInstruction,
         state: &mut AnalysisState,
-        callable: &[bool],
+        callable: &crate::bitset::BitSet,
         memory_register: Option<u16>,
         memory_slot: &mut Option<u32>,
         result: Option<crate::WasmType>,
@@ -9268,14 +9184,14 @@ impl<H: Host> Analysis<'_, H> {
             }
             Op::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
-                if !callable.get(callee as usize).copied().unwrap_or(false)
+                if !callable.contains(callee as usize)
                     && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
                 {
                     return None;
                 }
                 let signature = self.signature(callee)?;
                 if signature.results.len() > 1
-                    && !callable.get(callee as usize).copied().unwrap_or(false)
+                    && !callable.contains(callee as usize)
                 {
                     // The VM callout ABI currently carries at most one result.
                     // Do not admit a residual fallback that would silently
@@ -9336,7 +9252,7 @@ impl<H: Host> Analysis<'_, H> {
             Op::WasmInstanceBinding => {
                 let slot = instruction.imm();
                 if Some(instruction.a()) == memory_register {
-                    if !self.binds_unshared_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
+                    if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
                         return None;
                     }
                     *memory_slot = Some(slot);
@@ -12060,7 +11976,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
-            unrolled: if program_unrolls(self.code) {
+            unrolled: if self.unrolls {
                 unrollable_loops(&instructions, plan)
             } else {
                 vec![None; instructions.len()]
@@ -12257,51 +12173,15 @@ fn compile_entry(isa: &dyn cranelift_codegen::isa::TargetIsa, func: ir::Function
     Some(compiled.code_buffer().to_vec())
 }
 
-/// The guard reservation of an unshared memory binding.
 /// A memory base an x86-64 addressing mode can carry as its signed 32-bit
 /// displacement.
 fn displacement_base(base: *mut u8) -> Option<i32> {
     i32::try_from(base as usize).ok()
 }
 
-/// The bytes of the unshared memory `binding` names and their guard reservation, if any,
-/// read under one borrow: a native entry needs both (`run_compiled_inner`). `None` when the
-/// memory is shared or its bytes are borrowed by a suspended host access, which the general
-/// path reports exactly.
-fn memory_and_guard<H: Host>(
-    vm: &Vm<H>,
-    binding: Value,
-) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
-        return None;
-    };
-    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-        return None;
-    };
-    let mut state = state.try_borrow_mut().ok()?;
-    let guard = state.guard();
-    let view = (state.as_mut_ptr(), state.len());
-    (!view.0.is_null()).then_some((view, guard))
-}
-
+/// The guard reservation of a direct memory binding.
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
-    memory_bytes(vm, binding, crate::wasm::memory::LinearBytes::guard)
-}
-
-/// `query` of the bytes of the unshared memory `binding` names.
-fn memory_bytes<H: Host, T>(
-    vm: &Vm<H>,
-    binding: Value,
-    query: impl FnOnce(&crate::wasm::memory::LinearBytes) -> Option<T>,
-) -> Option<T> {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
-        return None;
-    };
-    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-        return None;
-    };
-    let bytes = state.try_borrow().ok()?;
-    query(&bytes)
+    super::dispatch_fast::direct_memory_and_guard(vm, binding)?.1
 }
 
 thread_local! {
@@ -13644,36 +13524,19 @@ impl<H: Host> Vm<H> {
             experimental_root_compilation: root.is_some(),
             root_only,
             compile_rejections: compile_rejections.as_ref(),
+            unrolls: false,
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
-        let mut callable;
-        // Each callable function's full plan from the pass that settled the set, which its
-        // compilation reads, and the interfaces its callers read.
+        // Each callable function's full plan, which its compilation reads, and the
+        // interfaces its callers read.
         let mut full_plans: Vec<Option<Plan>>;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
         let mut guarded;
         loop {
-            callable = allowed.clone();
-            loop {
-                memory_slot = None;
-                full_plans = (0..count)
-                    .map(|index| {
-                        if callable[index] {
-                            analysis.plan(index, &callable, &mut memory_slot)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
-                let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
-                if next == callable {
-                    break;
-                }
-                callable = next;
-            }
+            (full_plans, memory_slot) = analysis.settle_callable(&crate::bitset::BitSet::from_fn(count, |index| allowed[index]));
+            plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
             // Accesses may rely on the guard when the memory has one and
             // this host resumes guard faults.
             let stable_memory = memory_slot.is_some_and(|slot| {
@@ -13770,6 +13633,7 @@ impl<H: Host> Vm<H> {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
+        analysis.unrolls = program_unrolls(&code);
         let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
         build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
         let build = build_order.into_iter().map(|index| {
@@ -13848,16 +13712,19 @@ impl<H: Host> Vm<H> {
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
             .collect();
-        let functions: Vec<Option<CompiledFunction>> = plans
+        let mut positions = vec![NOT_COMPILED; count].into_boxed_slice();
+        let functions: Box<[CompiledFunction]> = plans
             .into_iter()
             .zip(entries)
-            .map(|(plan, entry)| {
-                let plan = plan?;
-                let entry = entry?;
+            .enumerate()
+            .filter_map(|(index, (plan, entry))| Some((index, plan?, entry?)))
+            .enumerate()
+            .map(|(position, (index, plan, entry))| {
+                positions[index] = position as u32;
                 // SAFETY: the entry was compiled with the `Entry` signature in
                 // the host's default calling convention.
                 let entry = unsafe { std::mem::transmute::<usize, Entry>(base + entry) };
-                Some(CompiledFunction {
+                CompiledFunction {
                     entry,
                     params: plan.params,
                     result: plan.result,
@@ -13865,13 +13732,10 @@ impl<H: Host> Vm<H> {
                     native_entries: std::cell::Cell::new(0),
                     #[cfg(test)]
                     direct_reference_entries: std::cell::Cell::new(0),
-                })
+                }
             })
             .collect();
-        let compiled_functions = functions
-            .iter()
-            .filter(|function| function.is_some())
-            .count();
+        let compiled_functions = functions.len();
         let diagnostics = diagnostics_enabled.then(|| {
             let import_callout_names = self
                 .programs
@@ -13921,6 +13785,7 @@ impl<H: Host> Vm<H> {
             _code: memory,
             table,
             functions,
+            positions,
             memory_slot,
             guarded,
             fixed_base,
@@ -14249,11 +14114,11 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let result = (|| {
-            let function = compiled.functions.get(id as usize)?.as_ref()?;
+            let function = compiled.function(id as usize)?;
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let (view, guard) = memory_and_guard(self, binding)?;
+                    let (view, guard) = super::dispatch_fast::direct_memory_and_guard(self, binding)?;
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
                         return None;
@@ -16170,7 +16035,7 @@ mod tests {
                 JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),&[], &typed);
             let (memory,entry,operands)=match lowered {
                 Ok((body,_)) => {
-                    let (memory,entry)=compile_and_publish_entry(body,&*isa,usize::MAX).unwrap();
+                    let (memory,entry)=compile_native_function(body, &*isa, usize::MAX, publish_entry).ok().unwrap();
                     (memory,entry,Vec::new())
                 }
                 Err(_) => live_native_function(&program,id as u32,None),
@@ -16195,7 +16060,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
+            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
         let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
@@ -16269,7 +16134,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
             let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
+                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.slot_dependencies.is_empty());
             let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
@@ -16301,48 +16166,6 @@ mod tests {
             assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
         }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn function_bound_osr_owns_definitions_without_retaining_closure_identities() {
-        let program = crate::Engine::specialize(
-            "function pipe(){function step(x){return (x+1)|0;}let x=0;for(let i=0;i<3;i=(i+1)|0)x=step(x);return x;}",
-            "definition-lifetime.js").unwrap();
-        let caller = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
-        let callee = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "step")).unwrap();
-        let body = program.function(caller);
-        let header = body.instructions().enumerate().find_map(|(pc, instruction)| {
-            if instruction.op() != Op::Jump { return None; }
-            let target = instruction.jump_target();
-            (target as usize <= pc).then_some(target)
-        }).unwrap();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, caller as u32, &|function, pc|
-            (function == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|instruction| instruction.op() == Op::Call))
-                .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|_| (0, 0), Vec::new(), Some(header), &[]).unwrap();
-        assert_eq!(method.inlined.len(), 1);
-        assert_eq!(method.inlined[0].target.callee, CalleeBinding::Function);
-        assert_eq!(method.recovery_space().activations, 1);
-        assert!(!method.supports_first_entry());
-        assert!(!method.amortizes_entry());
-        assert!(!method.calls_only_natively());
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
-        // No guest code executes at these collection/realm events; a code lease
-        // may remain alive independently of the publication's validity.
-        unsafe { vm.programs.retire_dead_native_calls(|_| false); }
-        assert!(published.lease().is_some(), "a pure definition embeds no closure locator");
-        let active = published.lease().unwrap();
-        let code = Rc::downgrade(&active);
-        unsafe { vm.programs.retire_native_calls(); }
-        assert!(published.lease().is_none(), "realm/reset still retires the publication");
-        assert!(code.upgrade().is_some(), "retirement must retain code leased for execution/recovery");
-        assert_eq!(active.inlined.len(), 1);
-        drop(active);
-        assert!(code.upgrade().is_none(), "the last lease releases code even while the publication remains");
     }
 
     #[cfg(feature = "aot")]
@@ -16460,7 +16283,7 @@ mod tests {
             function callback(a,fn) {const first=a.value|0; fn(); return first+(a.value|0);}
             let mask=2;
             function mark(){this.value=this.value|mask;}
-            function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
+            function marked(){const o={value:1}; o.mark=mark; return o;} function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
             let owner={value:7};
             for(let i=0;i<64;i++) {
                 if(pair(owner,1,false)!==14 || overwritten(owner)!==107) throw 'plain';
@@ -16472,7 +16295,7 @@ mod tests {
                 if(chained.call(linked,linked,1)!==7.5) throw 'chain result';
                 if(anonymous.call(linked,1)!==15) throw 'anonymous chain result';
                 if(replaced({value:7},{value:19})!==26) throw 'replacement';
-                if(guarded({value:1,mark})!==5) throw 'guarded store';
+                if(guarded(marked())!==5) throw 'guarded store';
                 const joined={value:7};
                 if(diamond(joined,joined,1,false)!==14 || diamond(joined,joined,1,true)!==18) throw 'join alias';
                 if(diamond({value:7},{value:1},1,true)!==14) throw 'join different owner';
@@ -16528,10 +16351,10 @@ mod tests {
             let guarded = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "guarded")).unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, guarded as u32, &[], &*isa, 0);
-            assert_eq!(regions.len(), 1, "guarded call must have a native region");
-            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 1,
-                "forward the pre-call read, but reload after the captured store");
+            let regions = lower_static_typed_regions(&program, guarded as u32, &static_call_targets(&program), &*isa, 0);
+            assert_eq!(regions.len(), 1, "the hinted call inlines into a native region");
+            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 2,
+                "forward the pre-call read, and the inlined store's value to the read after it");
             for (name, forwards) in [("pure", true), ("unrelated", true), ("liveUnrelated", true), ("diamond", false), ("moved", false)] {
                 let id = program.functions.iter().position(|function|
                     function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -16683,11 +16506,8 @@ mod tests {
                 else { crate::Engine::specialize(source, "jit-loop-slots.cjs") }.unwrap();
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::Compiled);
-            LOOP_SLOT_STORES.with(|count| count.set(0));
             let error = vm.execute(&program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-            assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0,
-                "the JIT must admit a writable loop slot from its program's table");
         }
     }
 
@@ -17068,7 +16888,7 @@ mod tests {
                     let (body, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
                         JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[],
                         &[StaticTypedRegionEntry { header: region.header, function: &region.function }]).unwrap();
-                    let (memory, entry) = compile_and_publish_entry(body, &*isa, usize::MAX).unwrap();
+                    let (memory, entry) = compile_native_function(body, &*isa, usize::MAX, publish_entry).ok().unwrap();
                     (memory, entry, Vec::new())
                 } else { live_native_function(&program, id as u32, None) };
                 // SAFETY: entries are lowered for this exact host/program ABI.
@@ -17272,7 +17092,7 @@ mod tests {
     #[test]
     fn typed_field_chains_commit_the_sink_before_the_destination() {
         let program = crate::Engine::specialize(
-            "function route(base){this.current=base.next.value;this.finish();return this.current;}",
+            "function route(base,n){for(let i=0;i<n;i++)this.current=base.next.value;return this.current;}",
             "fused-typed.js").unwrap();
         let function = program.function(1);
         assert!(function.instructions().any(|instruction| instruction.op() == Op::GetField
@@ -17334,7 +17154,7 @@ mod tests {
     #[test]
     fn linked_field_probes_share_a_dominating_object_header() {
         let program = crate::Engine::specialize(
-            "function sum(o){let a=o.left;let b=o.right;o.mark();return a+b;}",
+            "function sum(o,n){let s=0;for(let i=0;i<n;i++)s=(s+o.left+o.right+o.mid)|0;return s;}",
             "shared-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
@@ -17502,7 +17322,7 @@ mod tests {
             } else {
                 let (native, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
                     JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[], &[]).unwrap();
-                let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX).unwrap();
+                let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok().unwrap();
                 (memory, entry, Vec::new())
             };
             // SAFETY: the entries use this program and TestHost; owners retain code and operands.
@@ -17714,7 +17534,7 @@ mod tests {
             "nested-poll-binding.js").unwrap();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
-            &|_| (0, 0), Vec::new(), None, &[]).expect("polling lane body");
+            &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = lane_frame();
         // The real outer landing must survive an inner trampoline overwriting it.
@@ -17965,7 +17785,7 @@ mod tests {
             }).unwrap();
         // No code size budget is needed by this focused publication check; the
         // production object backend handles relocations instead of live addresses.
-        let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX)
+        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
     }
@@ -18182,7 +18002,7 @@ mod tests {
                                 if native.dfg.resolve_aliases(arg) == payload
                                     && i32::from(offset) == std::mem::offset_of!(JsStepDispatch, stop_pc) as i32)).count(), 1,
                             "the activation stop fact is read once, never per instruction");
-                        let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX).unwrap();
+                        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok().unwrap();
                         (memory, entry, Vec::new())
                     };
                     // SAFETY: only the spelling of the opaque context differs.

@@ -1544,6 +1544,10 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// Whether the general loop enters `view` at `pc`: where a lane run pays, or at the first instruction of
+    /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
+    fn lane_enters(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::lane_runs(view, pc) || after_lane_exit && pc == 0 && Self::lane_runs_call(view) }
+
     /// Whether a frame entry may run the lane: execution-only support never
     /// interprets, and instruction profiling must observe every PC.
     const FRAME_ENTRY_LANE_RUNS: bool = crate::DYNAMIC_EXECUTION_ENABLED
@@ -1640,7 +1644,7 @@ impl<H: Host> Vm<H> {
             return Some(FrameOutcome::Complete(value));
         }
         if asynchronous {
-            return self.lane_stop_awaits(p, frame, instruction, pc);
+            return self.lane_stop_awaits(p, frame, Some(instruction), pc);
         }
         if instruction.op() != Op::Yield {
             return None;
@@ -1665,12 +1669,10 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        instruction: WideInstruction,
+        instruction: Option<WideInstruction>,
         pc: usize,
     ) -> Option<FrameOutcome> {
-        if instruction.op() != Op::Await {
-            return None;
-        }
+        let instruction = instruction.filter(|instruction| instruction.op() == Op::Await)?;
         let awaited = self.read(frame, instruction.register_b());
         let value = if self.is_object_like(awaited) {
             self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
@@ -1798,6 +1800,8 @@ impl<H: Host> Vm<H> {
         // A lane exit resumes at its record, which the general path executes, or raises there
         // the error of the call the lane made, as after the loop's own lane run.
         let mut resumes_lane_exit = false;
+        // The last step followed a lane run a due collection stopped, or a lane exit (`Vm::lane_enters`).
+        let mut after_lane_exit = false;
         match raised {
             Some(Some(error)) => {
                 let throwing_pc = pc;
@@ -1826,6 +1830,7 @@ impl<H: Host> Vm<H> {
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
             let mut native_step = None;
+            let entering_after_lane_exit = std::mem::replace(&mut after_lane_exit, resumes_lane_exit);
             let resumed = std::mem::take(&mut resumes_lane_exit);
             #[cfg(feature = "native-execution")]
             if let Some(step) = entered.take().or_else(|| self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls)) {
@@ -1893,18 +1898,10 @@ impl<H: Host> Vm<H> {
                     }
                 }
             }
-            if !resumed && native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
+            if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
-                pc = self.run_fast_lane(
-                    p,
-                    cursor.program,
-                    cursor.lane,
-                    &mut frame,
-                    pc,
-                    pending_calls,
-                    &mut executing,
-                    allow_inline_calls,
-                );
+                pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
+                after_lane_exit = self.heap.should_collect();
                 let (resumed_program_id, resumed_function) = {
                     let resumed = &self.frames[frame];
                     (resumed.program, resumed.function)
@@ -2146,10 +2143,10 @@ impl<H: Host> Vm<H> {
                 }
                 // A run that stopped at the `await` of the loop's own frame, whose `Op::Await`
                 // step would end the loop with it, suspends it here where the awaited value's
-                // conversion observes nothing (`lane_stop_awaits`).
+                // conversion observes nothing (`lane_stop_awaits`); not past a native step, whose next PC may end the function.
                 if pending_calls.is_empty()
                     && let Some(outcome) =
-                        self.lane_stop_awaits(unsafe { &*executing_residual }, frame, cursor.instruction(pc), pc)
+                        self.lane_stop_awaits(unsafe { &*executing_residual }, frame, native_step.is_none().then(|| cursor.instruction(pc)), pc)
                 {
                     return Ok(outcome);
                 }

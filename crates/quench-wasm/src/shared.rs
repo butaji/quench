@@ -8,7 +8,7 @@ use quench_runtime::{
 };
 use wasmparser::{Encoding, ExternalKind, Parser, Payload, ValType};
 
-impl Module {
+impl Module<'_> {
     /// Lower i32 module functions with one selected exported entry into the
     /// JavaScript VM's residual bytecode. Stateful modules and start functions
     /// require instantiation; unsupported operators fail explicitly.
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn recursive_type_equivalence_and_ancestry_match_validator_identity() {
-        let declarations = |module: &Module| {
+        let declarations = |module: &Module<'_>| {
             let mut groups = Vec::new();
             for payload in Parser::new(0).parse_all(module.bytes()) {
                 if let Payload::TypeSection(reader) = payload.unwrap() {

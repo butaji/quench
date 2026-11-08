@@ -491,11 +491,8 @@ impl<H: Host> Vm<H> {
             .is_none_or(|parent| parent == super::ROOT_FUNCTION_ID)
         {
             let program = self.active_program;
-            self.function_values.entry((program, id)).or_default().push(
-                self.heap
-                    .weak_handle(function)
-                    .expect("new closure is live"),
-            );
+            let handle = self.heap.weak_handle(function).expect("new closure is live");
+            self.function_values.record((program, id), [handle]);
         }
         if let Some(shapes) = recorded_shapes {
             let constructor = match (prototype, shapes.prototype) {

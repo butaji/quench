@@ -1114,7 +1114,7 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let (allocator, chunk) = lazy_bodies::sized_arena(parsed_text);
-        let mut facts = lazy_bodies::BodyFacts::default();
+        let mut facts = lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)));
         #[cfg(feature = "aot")]
         { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
         let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
@@ -1368,7 +1368,7 @@ impl Engine {
         // tree changed after parsing, that their text alone does not give back. A released
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
-        compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, std::mem::take(&mut facts.free_names));
+        compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
