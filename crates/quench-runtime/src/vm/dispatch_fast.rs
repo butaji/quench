@@ -576,6 +576,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields;
 mod loop_runs;
+mod script_calls;
 use loop_fields::lane_loop_field_stores;
 mod construct_plan;
 use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
@@ -8365,14 +8366,8 @@ fn lane_loop_run<H: Host>(
             LoopContinuation::Jump
         }
         // A run pays for its entry with the iterations it completed, wherever it leaves.
-        LoopOutcome::Resume(pc) => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Resume(pc)
-        }
-        LoopOutcome::Exit(pc) => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Exit(pc)
-        }
+        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
+        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
@@ -22087,11 +22082,7 @@ impl<H: Host> Vm<H> {
                 && code.kind == crate::bytecode::ProgramKind::Wasm,
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),
-            script_calls: inline_calls
-                && code.kind != crate::bytecode::ProgramKind::Wasm
-                && !self.direct_eval
-                && !self.parameter_eval
-                && *frame + 1 == self.frames.len(),
+            script_calls: inline_calls && self.lane_calls_scripts(code, *frame),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
