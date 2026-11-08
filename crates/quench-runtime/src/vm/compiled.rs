@@ -6730,6 +6730,7 @@ pub(super) fn subscribe_lane_dependencies(slots: &[crate::code_dependencies::Slo
     slots.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
         && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
         && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+        && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
 }
 
 fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
@@ -7013,8 +7014,7 @@ unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
     crate::stack::GuestCallGuard::remaining() as u64
 }
 
-/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
-/// for one the lane's own read would not take, which leaves the body at the read.
+/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED` for one the lane's own read would not take.
 unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
@@ -7196,8 +7196,8 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 
 impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
-    /// global object's cached data property; none for a binding in its TDZ or a miss.
+    /// does (`dispatch_fast::lane_load_global_name_refresh`): its global lexical binding's, else
+    /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
     pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
             super::field_cache::GlobalNameRead::Value(value, _) => Some(value),
