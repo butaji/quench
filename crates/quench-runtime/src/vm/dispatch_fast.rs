@@ -269,16 +269,11 @@ impl LoopSite {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
     }
 
-    /// Weighs a native run that took `backedges` backward jumps: a run that took none paid its
-    /// entry for no iteration and counts toward `TIERS.loops.max_exits`, and each iteration
-    /// a run took pays one such entry back.
+    /// Weighs a native run of `backedges` backward jumps: one of none paid its entry for no
+    /// iteration (toward `TIERS.loops.max_exits`); each iteration pays one such entry back.
     fn note_run(&self, backedges: u64) {
         let exits = self.exits.get();
-        self.exits.set(match u32::try_from(backedges) {
-            Ok(0) => exits.saturating_add(1),
-            Ok(paid) => exits.saturating_sub(paid),
-            Err(_) => 0,
-        });
+        self.exits.set(u32::try_from(backedges).map_or(0, |paid| if paid == 0 { exits.saturating_add(1) } else { exits.saturating_sub(paid) }));
     }
 
     fn is_admitted(&self) -> bool {
@@ -8376,14 +8371,8 @@ fn lane_loop_run<H: Host>(
             LoopContinuation::Jump
         }
         // A run pays for its entry with the iterations it completed, wherever it leaves.
-        LoopOutcome::Resume(pc) => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Resume(pc)
-        }
-        LoopOutcome::Exit(pc) => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Exit(pc)
-        }
+        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
+        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
