@@ -122,11 +122,7 @@ pub(super) use osr_loop::{
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
-#[derive(Clone, Copy)]
-pub(super) enum NumberRelationDomain {
-    Int32,
-    Float64,
-}
+pub(super) use crate::staged::Domain as NumberRelationDomain;
 
 /// The shared word written by a compiled region when it hands execution back to the lane.
 /// Region-specific metadata stays in the owning tier; this layout carries only the handoff
@@ -234,11 +230,11 @@ impl RegionExitBlocks {
 /// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
     builder: &mut FunctionBuilder<'_>,
-    operator: u32,
+    relation: super::operations::NumberRelation,
     left: ir::Value,
     right: ir::Value,
     domain: NumberRelationDomain,
-) -> Option<ir::Value> {
+) -> ir::Value {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
         domain: NumberRelationDomain,
@@ -310,13 +306,14 @@ pub(super) fn emit_number_relation(
         }
     }
 
-    Some(
-        crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut Emit { builder, domain },
-            left,
-            right,
-        ),
-    )
+    relation.apply(&mut Emit { builder, domain }, left, right)
+}
+
+/// A Number relation named by its operator, through the shared operator table.
+pub(super) fn emit_number_relation_operator(builder: &mut FunctionBuilder<'_>, operator: u32,
+    left: ir::Value, right: ir::Value, domain: NumberRelationDomain) -> Option<ir::Value> {
+    let relation = crate::vm::operations::NumberRelation::from_operator(operator)?;
+    Some(emit_number_relation(builder, relation, left, right, domain))
 }
 
 /// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
@@ -377,6 +374,13 @@ pub(super) fn emit_number_arithmetic_operation(
     right: ir::Value,
 ) -> ir::Value {
     operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
+}
+
+/// `operation` of two int32 values: its wrapping result and its overflow flag.
+pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
+    operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value,
+) -> (ir::Value, ir::Value) {
+    operation.apply(&mut EmitArithmetic::<true> { builder }, left, right)
 }
 
 /// The shared Number remainder denotation, after the caller's Number guards.
@@ -3265,7 +3269,7 @@ pub(super) fn lower_js_general_dispatch(
                     )
                     .expect("prevalidated JS relation operand");
                     let right = emit_js_tagged_number(&mut builder, right, fallback);
-                    let holds = emit_number_relation(
+                    let holds = emit_number_relation_operator(
                         &mut builder,
                         operator,
                         left,
@@ -3626,7 +3630,7 @@ pub(super) fn lower_js_general_dispatch(
             )
             .expect("prevalidated JS relation right operand");
             let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
-            let holds = emit_number_relation(
+            let holds = emit_number_relation_operator(
                 &mut builder,
                 instruction.binary_operator(),
                 left,

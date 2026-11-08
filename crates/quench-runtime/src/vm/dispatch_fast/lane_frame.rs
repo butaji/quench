@@ -1,8 +1,8 @@
 //! The interpreter's register frame: `staged` moves and constants over the live file.
 
 use super::*;
-use crate::bytecode::Register;
-use crate::staged::{Concrete, Constant, Edge, Frame, Operation, Step};
+use crate::bytecode::{Operand, Register};
+use crate::staged::{Concrete, Constant, Edge, Frame, NumericFrame, Operation, Step};
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
@@ -47,6 +47,22 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn jump(&mut self, _stage: &mut Concrete) -> Edge {
         Edge::Target
     }
+}
+
+impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+        let register = operand.register_index().expect("a staged numeric operand is a register");
+        u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int operand") as u32)
+    }
+
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+        let register = operand.register_index().expect("a staged numeric operand is a register");
+        Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number operand").to_bits()
+    }
+
+    fn miss(&self) {}
+    fn int_fact(&self) {}
+    fn number_fact(&self) {}
 }
 
 /// The edge a staged jump test takes, or `None` where the value's heap cell decides it.

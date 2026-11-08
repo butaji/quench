@@ -579,61 +579,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// Prove an exact int32 view once; a Number already in a float register
     /// needs no canonical encoding or tag test to establish that projection.
     fn int(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-        let index = usize::from(register);
-        let fact = state.values[index];
-        let int = match fact.value.representation {
-            Representation::Int32 => {
-                let variable = self.int_var(index);
-                return self.builder.use_var(variable);
-            }
-            Representation::Float64 if !fact.tagged.current() => {
-                let variable = self.float_var(index);
-                let number = self.builder.use_var(variable);
-                let (int, exact) = emit_js_exact_int32(&mut self.builder, number);
-                if !fact.value.ty.is_subtype(Type::INT32) {
-                    emit_js_guard(&mut self.builder, exact, otherwise);
-                }
-                int
-            }
-            Representation::Tagged | Representation::Float64 => {
-                let bits = self.tagged(state, register);
-                if !fact.value.ty.is_subtype(Type::INT32) {
-                    let integer = is_int_tagged(&mut self.builder, bits);
-                    emit_js_guard(&mut self.builder, integer, otherwise);
-                }
-                self.ins().ireduce(types::I32, bits)
-            }
-        };
-        let variable = self.int_var(index);
-        self.builder.def_var(variable, int);
-        state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-            ..RegisterFact::definition(Type::INT32, Representation::Int32) };
-        int
+        frame::register_int_value(&mut self.builder, &mut self.registers, state, register, otherwise)
     }
 
     /// Prove Number only for a new untrusted value; later uses read its unboxed view.
     fn number(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-        let index = usize::from(register);
-        let fact = state.values[index].value;
-        match fact.representation {
-            Representation::Float64 => { let variable = self.float_var(index); self.builder.use_var(variable) },
-            Representation::Int32 => {
-                let int = { let variable = self.int_var(index); self.builder.use_var(variable) };
-                self.ins().fcvt_from_sint(types::F64, int)
-            }
-            Representation::Tagged => {
-                let bits = self.tagged(state, register);
-                let number = if fact.ty.is_subtype(Type::NUMBER) {
-                    emit_known_number(&mut self.builder, bits)
-                } else {
-                    emit_js_tagged_number(&mut self.builder, bits, otherwise)
-                };
-                { let variable = self.float_var(index); self.builder.def_var(variable, number); }
-                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                    ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
-                number
-            }
-        }
+        frame::register_number_value(&mut self.builder, &mut self.registers, state, register, otherwise)
     }
 
     fn canonicalize(&mut self, state: &mut State, pc: usize) {
@@ -823,35 +774,14 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn operand_number(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
-        match operand.kind()? {
-            OperandKind::Register => Some(self.number(state, operand.register_index()?, otherwise)),
-            OperandKind::Constant => {
-                let value = self.program.constants.get(usize::from(operand.payload()))
-                    .and_then(super::facts::immediate)?.as_number()?;
-                Some(self.ins().f64const(value))
-            }
-            OperandKind::Field | OperandKind::Local => None,
-        }
+        frame::operand_number(&mut self.builder, &mut self.registers, state, &self.program.constants,
+            operand, otherwise)
     }
 
     /// An operand's int32 value, statically where it is a constant int32.
     fn operand_int(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
-        match operand.kind()? {
-            OperandKind::Register => Some(self.int(state, operand.register_index()?, otherwise)),
-            OperandKind::Constant => {
-                let constant = self.program.constants.get(usize::from(operand.payload()))?;
-                let value = super::facts::immediate(constant)?;
-                if super::facts::is_int32(value) {
-                    Some(self.ins().iconst(types::I32, i64::from(value.wasm_bits32() as i32)))
-                } else {
-                    self.ins().jump(otherwise, &[]);
-                    let dead = self.builder.create_block();
-                    self.builder.switch_to_block(dead);
-                    Some(self.ins().iconst(types::I32, 0))
-                }
-            }
-            OperandKind::Field | OperandKind::Local => None,
-        }
+        frame::operand_int(&mut self.builder, &mut self.registers, state, &self.program.constants,
+            operand, otherwise)
     }
 
     /// An operand's tagged bits: its register's, or its immediate constant's.
@@ -2761,11 +2691,14 @@ impl Lowering<'_, '_> {
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
-    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation) {
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation)
+        -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
-        let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written, state, edges };
+        let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
+            state, edges, constants: &self.program.constants };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
+        step
     }
 
     fn truthiness(&mut self, state: &mut State, register: Register, exit: ir::Block) -> ir::Value {
@@ -2906,8 +2839,8 @@ impl Lowering<'_, '_> {
 
     fn number_relation(&mut self, state: &mut State, pc: u32, operator: u32,
         left: Operand, right: Operand) -> Option<ir::Value> {
-        if super::operations::NumberRelation::from_operator(operator).is_none()
-            || !self.operand_supported(left)
+        let relation = super::operations::NumberRelation::from_operator(operator)?;
+        if !self.operand_supported(left)
             || !self.operand_supported(right)
             || [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
                 && !super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
@@ -2919,16 +2852,14 @@ impl Lowering<'_, '_> {
             &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
             .is_subtype(Type::INT32));
         if integer {
-            let (left, right) = (self.operand_int(state, left, exit)?, self.operand_int(state, right, exit)?);
-            return emit_number_relation(&mut self.builder, operator, left, right, NumberRelationDomain::Int32);
+            return Some(self.number_relation_step(state, exit, relation, left, right, crate::staged::Domain::Int32));
         }
         // Operands only their tags type compare as int32 where both tags say so, else as
         // Numbers; neither path proves a fact the other does not.
         let tagged = |operand: &Operand| operand.register_index()
             .is_none_or(|register| state.values[usize::from(register)].value.representation == Representation::Tagged);
         if !(tagged(&left) && tagged(&right)) {
-            let (left, right) = (self.operand_number(state, left, exit)?, self.operand_number(state, right, exit)?);
-            return emit_number_relation(&mut self.builder, operator, left, right, NumberRelationDomain::Float64);
+            return Some(self.number_relation_step(state, exit, relation, left, right, crate::staged::Domain::Float64));
         }
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
         let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
@@ -2938,14 +2869,25 @@ impl Lowering<'_, '_> {
         self.ins().brif(ints, int_block, &[], number_block, &[]);
         self.builder.switch_to_block(int_block);
         let (left_bits, right_bits) = (self.ins().ireduce(types::I32, left), self.ins().ireduce(types::I32, right));
-        let int_holds = emit_number_relation(&mut self.builder, operator, left_bits, right_bits, NumberRelationDomain::Int32)?;
+        let int_holds = emit_number_relation_operator(&mut self.builder, operator, left_bits, right_bits, NumberRelationDomain::Int32)?;
         self.ins().jump(join, &[ir::BlockArg::Value(int_holds)]);
         self.builder.switch_to_block(number_block);
         let (left, right) = (emit_js_tagged_number(&mut self.builder, left, exit), emit_js_tagged_number(&mut self.builder, right, exit));
-        let number_holds = emit_number_relation(&mut self.builder, operator, left, right, NumberRelationDomain::Float64)?;
+        let number_holds = emit_number_relation_operator(&mut self.builder, operator, left, right, NumberRelationDomain::Float64)?;
         self.ins().jump(join, &[ir::BlockArg::Value(number_holds)]);
         self.builder.switch_to_block(join);
         Some(holds)
+    }
+
+    /// A Number relation of `domain`, whose operands its staged step proves.
+    fn number_relation_step(&mut self, state: &mut State, miss: ir::Block,
+        relation: super::operations::NumberRelation, left: Operand, right: Operand,
+        domain: crate::staged::Domain) -> ir::Value {
+        let operation = crate::staged::Operation::NumberRelation { left, right, relation, domain };
+        match self.step(state, frame::Edges::ValueGuarded { miss }, operation) {
+            crate::staged::Step::Value(value) => value,
+            _ => unreachable!("a relation produces a predicate"),
+        }
     }
 
     /// `source`'s value into `destination`, with every fact proved of it.
@@ -4839,28 +4781,21 @@ impl Lowering<'_, '_> {
                     _ => false,
                 });
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
-                    let left = self.operand_number(state, left, exit)?;
-                    let right = self.operand_number(state, right, exit)?;
-                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left, right);
-                    self.set_number(state, destination, number);
+                    let operation = crate::staged::Operation::NumberArithmetic { destination, left, right,
+                        operation: arithmetic, domain: crate::staged::Domain::Float64,
+                        overflow: crate::staged::Overflow::Exit };
+                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if proved_int {
-                    let left_int = self.operand_int(state, left, exit).expect("supported operand");
-                    let right_int = self.operand_int(state, right, exit).expect("supported operand");
-                    let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
                     // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
                     // result, which needs no overflow exit.
-                    if !(arithmetic.int32_projection_is_wrapping()
-                        && self.truncated(pc, destination)) {
-                        emit_js_guard_not(&mut self.builder, overflow, exit);
-                    }
-                    if arithmetic == super::operations::NumberArithmetic::Multiply {
-                        let zero = self.ins().icmp_imm_u(IntCC::Equal, result, 0);
-                        let signs = self.ins().bor(left_int, right_int);
-                        let negative = self.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
-                        let negative_zero = self.ins().band(zero, negative);
-                        emit_js_guard_not(&mut self.builder, negative_zero, exit);
-                    }
-                    self.set_int(state, destination, result);
+                    let overflow = if arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination) {
+                        crate::staged::Overflow::Wrap
+                    } else {
+                        crate::staged::Overflow::Exit
+                    };
+                    let operation = crate::staged::Operation::NumberArithmetic { destination, left, right,
+                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow };
+                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if arithmetic.int32_projection_is_wrapping()
                     && self.truncated(pc, destination) {
                     // Only its ToInt32 is read: int32 operands wrap, any other numbers take

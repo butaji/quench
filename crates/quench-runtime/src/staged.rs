@@ -14,10 +14,14 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::Register;
+use crate::bytecode::{Operand, Register};
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
 use crate::typed_ir::Type;
 use crate::value::{NarrowLayout, ValueLayout};
+use crate::vm::operations::{NumberArithmetic, NumberRelation};
+
+pub(crate) mod numeric;
+pub(crate) use numeric::{Domain, NumericFrame, NumericStage, Overflow};
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
@@ -138,6 +142,11 @@ pub(crate) enum Operation {
     /// Continue at the jump target when register `register` is truthy, or when it is falsy
     /// where `taken` is false; otherwise continue after this instruction.
     JumpIf { register: Register, taken: bool },
+    /// Number x Number arithmetic with both operands in `domain`.
+    NumberArithmetic { destination: Register, left: Operand, right: Operand,
+        operation: NumberArithmetic, domain: Domain, overflow: Overflow },
+    /// Number x Number relation, producing its predicate word.
+    NumberRelation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -162,7 +171,7 @@ pub(crate) enum Step<W, C> {
 
 /// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
-pub(crate) fn step<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> Step<S::Word, F::Control> {
+pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Move { destination, source } => Step::Value(frame.move_register(stage, destination, source)),
         Operation::LoadConst { destination, constant } => {
@@ -178,6 +187,10 @@ pub(crate) fn step<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, operatio
             }
             None => Step::Unresolved,
         },
+        Operation::NumberArithmetic { destination, left, right, operation, domain, overflow } =>
+            numeric::arithmetic(stage, frame, destination, left, right, operation, domain, overflow),
+        Operation::NumberRelation { left, right, relation, domain } =>
+            numeric::relation(stage, frame, left, right, relation, domain),
     }
 }
 

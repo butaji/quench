@@ -7,6 +7,8 @@ use super::*;
 pub(super) enum Edges {
     /// A value operation: no control transfer.
     Value,
+    /// A value operation whose operand proofs and guards leave at `miss`.
+    ValueGuarded { miss: ir::Block },
     /// The jump target and the following instruction; a value's cell truthiness leaves at
     /// `miss`.
     Branch { target: ir::Block, following: ir::Block, miss: ir::Block },
@@ -21,6 +23,7 @@ pub(super) struct EmitFrame<'a> {
     pub(super) written: &'a mut CompoundBitSet,
     pub(super) state: &'a mut State,
     pub(super) edges: Edges,
+    pub(super) constants: &'a [crate::bytecode::Constant],
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -217,4 +220,138 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     if receiver { state.proofs.receivers.insert(destination); }
     state.proofs.fields.extend(fields);
     value
+}
+
+impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
+        miss: ir::Block) -> ir::Value {
+        operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate")
+    }
+
+    fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
+        miss: ir::Block) -> ir::Value {
+        operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate")
+    }
+
+    fn miss(&self) -> ir::Block {
+        match self.edges {
+            Edges::ValueGuarded { miss } => miss,
+            _ => unreachable!("a numeric operation has a miss edge"),
+        }
+    }
+
+    fn int_fact(&self) -> RegisterFact {
+        RegisterFact::definition(Type::INT32, Representation::Int32)
+    }
+
+    fn number_fact(&self) -> RegisterFact {
+        RegisterFact::definition(Type::NUMBER, Representation::Float64)
+    }
+}
+
+/// `register`'s int32 value, proving it where the fact does not.
+pub(super) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
+    let index = usize::from(register);
+    let fact = state.values[index];
+    let int = match fact.value.representation {
+        Representation::Int32 => {
+            let variable = register_int(builder, registers, index);
+            return builder.use_var(variable);
+        }
+        Representation::Float64 if !fact.tagged.current() => {
+            let variable = register_float(builder, registers, index);
+            let number = builder.use_var(variable);
+            let (int, exact) = emit_js_exact_int32(builder, number);
+            if !fact.value.ty.is_subtype(Type::INT32) {
+                emit_js_guard(builder, exact, otherwise);
+            }
+            int
+        }
+        Representation::Tagged | Representation::Float64 => {
+            let bits = register_tagged(builder, registers, state, register);
+            if !fact.value.ty.is_subtype(Type::INT32) {
+                let integer = is_int_tagged(builder, bits);
+                emit_js_guard(builder, integer, otherwise);
+            }
+            builder.ins().ireduce(types::I32, bits)
+        }
+    };
+    let variable = register_int(builder, registers, index);
+    builder.def_var(variable, int);
+    state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+        ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+    int
+}
+
+/// `register`'s binary64 value, proving Number where the fact does not.
+pub(super) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
+    let index = usize::from(register);
+    let fact = state.values[index].value;
+    match fact.representation {
+        Representation::Float64 => {
+            let variable = register_float(builder, registers, index);
+            builder.use_var(variable)
+        }
+        Representation::Int32 => {
+            let variable = register_int(builder, registers, index);
+            let int = builder.use_var(variable);
+            builder.ins().fcvt_from_sint(types::F64, int)
+        }
+        Representation::Tagged => {
+            let bits = register_tagged(builder, registers, state, register);
+            let number = if fact.ty.is_subtype(Type::NUMBER) {
+                emit_known_number(builder, bits)
+            } else {
+                emit_js_tagged_number(builder, bits, otherwise)
+            };
+            let variable = register_float(builder, registers, index);
+            builder.def_var(variable, number);
+            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
+            number
+        }
+    }
+}
+
+/// An operand's int32 value, statically where it is a constant int32.
+pub(super) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand,
+    otherwise: ir::Block) -> Option<ir::Value> {
+    match operand.kind()? {
+        crate::bytecode::OperandKind::Register =>
+            Some(register_int_value(builder, registers, state, operand.register_index()?, otherwise)),
+        crate::bytecode::OperandKind::Constant => {
+            let constant = constants.get(usize::from(operand.payload()))?;
+            let value = super::super::facts::immediate(constant)?;
+            if super::super::facts::is_int32(value) {
+                Some(builder.ins().iconst(types::I32, i64::from(value.wasm_bits32() as i32)))
+            } else {
+                builder.ins().jump(otherwise, &[]);
+                let dead = builder.create_block();
+                builder.switch_to_block(dead);
+                Some(builder.ins().iconst(types::I32, 0))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// An operand's binary64 value, statically where it is a constant Number.
+pub(super) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand,
+    otherwise: ir::Block) -> Option<ir::Value> {
+    match operand.kind()? {
+        crate::bytecode::OperandKind::Register =>
+            Some(register_number_value(builder, registers, state, operand.register_index()?, otherwise)),
+        crate::bytecode::OperandKind::Constant => {
+            let value = constants.get(usize::from(operand.payload()))
+                .and_then(super::super::facts::immediate)?.as_number()?;
+            Some(builder.ins().f64const(value))
+        }
+        _ => None,
+    }
 }

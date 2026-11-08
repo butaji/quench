@@ -1,7 +1,8 @@
 //! The specializer's Cranelift stage: `crate::staged` operations emitted as IR.
 
 use super::*;
-use crate::staged::{Stage, Table};
+use crate::staged::{Domain, NumericStage, Stage, Table};
+use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
 /// The specializer's stage (`crate::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.
@@ -67,6 +68,33 @@ impl Stage for Emit<'_, '_> {
     fn known(&self, _cond: ir::Value) -> Option<bool> { None }
     fn table(&mut self, table: Table) -> ir::Value {
         match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
+    }
+}
+
+impl NumericStage for Emit<'_, '_> {
+    fn relation(&mut self, relation: NumberRelation, domain: Domain,
+        left: ir::Value, right: ir::Value) -> ir::Value {
+        emit_number_relation(self.builder, relation, left, right, domain)
+    }
+    fn float_arithmetic(&mut self, operation: NumberArithmetic,
+        left: ir::Value, right: ir::Value) -> ir::Value {
+        emit_number_arithmetic_operation(self.builder, operation, left, right)
+    }
+    fn int_arithmetic(&mut self, operation: NumberArithmetic,
+        left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
+        emit_checked_int32_arithmetic(self.builder, operation, left, right)
+    }
+    fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
+    fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
+    fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
+    fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }
+    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
+    fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        let passed = self.builder.create_block();
+        self.builder.ins().brif(cond, miss, &[], passed, &[]);
+        self.builder.switch_to_block(passed);
+        Some(())
     }
 }
 
