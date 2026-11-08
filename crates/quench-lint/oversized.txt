@@ -1430,7 +1430,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1682
-file-lines crates/quench-runtime/src/heap.rs 4708
+file-lines crates/quench-runtime/src/heap.rs 4707
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 3992
@@ -1449,7 +1449,7 @@ file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 577
 file-lines crates/quench-runtime/src/value.rs 1031
 file-lines crates/quench-runtime/src/value_vec.rs 1479
-file-lines crates/quench-runtime/src/vm.rs 3774
+file-lines crates/quench-runtime/src/vm.rs 3772
 file-lines crates/quench-runtime/src/vm/array.rs 1201
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 668
@@ -1479,7 +1479,7 @@ file-lines crates/quench-runtime/src/vm/embedding.rs 1962
 file-lines crates/quench-runtime/src/vm/environment.rs 2729
 file-lines crates/quench-runtime/src/vm/error.rs 2691
 file-lines crates/quench-runtime/src/vm/eval.rs 1359
-file-lines crates/quench-runtime/src/vm/gc.rs 1306
+file-lines crates/quench-runtime/src/vm/gc.rs 1305
 file-lines crates/quench-runtime/src/vm/generator.rs 1803
 file-lines crates/quench-runtime/src/vm/index.rs 918
 file-lines crates/quench-runtime/src/vm/intl_collator.rs 695
@@ -1515,7 +1515,7 @@ file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
 file-lines crates/quench-runtime/src/vm/regexp.rs 3430
 file-lines crates/quench-runtime/src/vm/relational.rs 655
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
-file-lines crates/quench-runtime/src/vm/snapshot.rs 984
+file-lines crates/quench-runtime/src/vm/snapshot.rs 983
 file-lines crates/quench-runtime/src/vm/string.rs 919
 file-lines crates/quench-runtime/src/vm/temporal.rs 2085
 file-lines crates/quench-runtime/src/vm/temporal_date.rs 1114
@@ -2662,7 +2662,7 @@ function-lines crates/quench-runtime/src/heap.rs::Heap::alloc_cell 76
 function-lines crates/quench-runtime/src/heap.rs::Heap::cell_kind 48
 function-lines crates/quench-runtime/src/heap.rs::Heap::cell_payload_bytes 72
 function-lines crates/quench-runtime/src/heap.rs::Heap::children 197
-function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 550
+function-lines crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 543
 function-lines crates/quench-runtime/src/heap.rs::Heap::compact_property_arena 69
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_full 41
 function-lines crates/quench-runtime/src/heap.rs::Heap::debug_verify_minor 73
@@ -3168,7 +3168,7 @@ function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::bound_function_p
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::function_arguments 41
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::function_caller 43
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::initialize_bound_function_metadata 81
-function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 559
+function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 558
 function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::compact_live_shapes 60
 function-lines crates/quench-runtime/src/vm/gc.rs::rebuild_shape 53
 function-lines crates/quench-runtime/src/vm/gc.rs::tests::shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions 79
@@ -3536,7 +3536,7 @@ function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::shadow_realm
 function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::wrap_shadow_callable 77
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::read_atoms 45
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::restore_snapshot_state 79
-function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 294
+function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 293
 function-lines crates/quench-runtime/src/vm/sort.rs::try_stable_sort_by 42
 function-lines crates/quench-runtime/src/vm/startup_intrinsics.rs::Vm<H>::leave_startup_intrinsics 43
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::install_string_prototype 72
@@ -3924,7 +3924,7 @@ function-lines crates/quench-runtime/src/vm/vector_region.rs::admit 50
 function-lines crates/quench-runtime/src/vm/vector_region.rs::tests::fixture 41
 function-lines crates/quench-runtime/src/vm/vector_region.rs::tests::lane_body 45
 function-lines crates/quench-runtime/src/vm/vector_region.rs::vector_regions 54
-function-lines crates/quench-runtime/src/vm/vm_init.rs::Vm<H>::new_with_execution_interrupt 201
+function-lines crates/quench-runtime/src/vm/vm_init.rs::Vm<H>::new_with_execution_interrupt 200
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::decode_wasm_value_in 64
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::evaluate_wasm_initializer 146
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::execute_wasm_in_environment 69

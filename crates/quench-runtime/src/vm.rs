@@ -1976,8 +1976,6 @@ pub(crate) struct Vm<H> {
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
-    /// The roots the last collection gathered, which sizes the next one's root vector.
-    gc_root_count: usize,
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
     // Boxed: pooled frames are reused as the `Box<Frame>` the stack and generators hold.

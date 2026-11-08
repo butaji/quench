@@ -294,7 +294,6 @@ impl<H: Host> Vm<H> {
             frames,
             native_stack_frames,
             native_root_lists: _,
-            gc_root_count: _,
             gc_owned_root_count: _,
             frame_pool: _,
             pending_call_stacks: _,

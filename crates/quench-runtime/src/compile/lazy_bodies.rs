@@ -306,10 +306,11 @@ impl BodyFacts {
         if self.failed {
             return;
         }
-        let strict = program.source_type.is_module() || has_use_strict(&program.directives);
+        // Its early errors are OXC's alone: the program carries the strictness the body
+        // inherits as a directive, which `early::program_early_errors` exists to supply where
+        // OXC cannot see it (a whole program in inherited strict code).
         if super::stack::validate(program).is_err()
             || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
-            || !super::early::program_early_errors(program, strict).1.is_empty()
         {
             self.failed = true;
             return;
