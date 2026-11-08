@@ -13651,7 +13651,7 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
-use wasm_calls::{known_call_handler, wasm_lane_handler};
+use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod native_calls;
@@ -17204,6 +17204,18 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 
 /// Lane-stack room a frameless call's growth reserves at least: a common window.
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
+
+/// A Wasm view's handler for `op` where it differs from a JavaScript view's.
+fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
+    match op {
+        // A Wasm reference call enters Wasm functions, never a frameless script call.
+        Op::Call => Some(Some(LaneHandler { handler: reference_call_handler::<H>(), produces: false })),
+        // Its handler reads the context a JavaScript view carries where a Wasm view carries
+        // its memory; Wasm stores a capture only for the rare `data.drop` and `elem.drop`.
+        Op::StoreCapture => Some(None),
+        _ => None,
+    }
+}
 
 /// A lane call without room for an activation, or to a function whose lane
 /// view is not yet derived: the activations

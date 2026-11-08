@@ -6,6 +6,11 @@ pub(super) const fn known_call_handler<H: Host>() -> Handler {
     lane_call_known::<H>
 }
 
+/// The reference call's handler, for Wasm views.
+pub(super) const fn reference_call_handler<H: Host>() -> Handler {
+    lane_call_wasm_reference::<H>
+}
+
 /// Enters `$function` of the running program and instance as a Wasm call: out of the lane when
 /// native code may run it, else as an activation pushed as the general loop's inline call would
 /// be; `$no_room` takes the call when the lane has no room. Shared by the known and reference calls.
@@ -113,18 +118,6 @@ lane_handler! {
     /// loop's inline call would be.
     fn lane_call_known<>(cx, r, ip, i, view) {
         enter_wasm_function!(cx, r, ip, i, view, i.b, resume!(cx, lane_call_frame::<H>(ip)))
-    }
-}
-
-/// A Wasm view's handler for `op` where it differs from a JavaScript view's.
-pub(super) fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
-    match op {
-        // A Wasm reference call enters Wasm functions, never a frameless script call.
-        Op::Call => Some(Some(LaneHandler { handler: lane_call_wasm_reference::<H> as Handler, produces: false })),
-        // Its handler reads the context a JavaScript view carries where a Wasm view carries
-        // its memory; Wasm stores a capture only for the rare `data.drop` and `elem.drop`.
-        Op::StoreCapture => Some(None),
-        _ => None,
     }
 }
 
