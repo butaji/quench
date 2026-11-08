@@ -6,9 +6,9 @@ use super::*;
 /// Per block leader, its forward edges (`forward_edges`), and the leaders lowering may seal
 /// on arrival: those only forward edges enter, but a loop body its rotated header test
 /// enters from the latch (`rotated_bodies`).
-pub(super) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize)
+pub(super) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, starts: &[usize])
     -> (Vec<Option<usize>>, CompoundBitSet) {
-    let forward = forward_edges(instructions, leaders, start);
+    let forward = forward_edges(instructions, leaders, starts);
     let rotated = rotated_bodies(instructions);
     let mut sealable = CompoundBitSet::with_capacity(instructions.len());
     for pc in (0..instructions.len()).filter(|pc| forward[*pc].is_some() && !rotated.contains(*pc)) {
@@ -19,9 +19,9 @@ pub(super) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundB
 
 /// Per block leader, the edges into it, all from before it; `None` for one the entry
 /// (`start`) or a later PC enters, whose proofs no earlier edge can give.
-fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize) -> Vec<Option<usize>> {
+fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, starts: &[usize]) -> Vec<Option<usize>> {
     let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
-    if let Some(slot) = edges.get_mut(start) { *slot = None; }
+    for start in starts { if let Some(slot) = edges.get_mut(*start) { *slot = None; } }
     for (pc, instruction) in instructions.iter().enumerate() {
         for target in successors(pc, *instruction).into_iter().flatten() {
             let Some(slot) = edges.get_mut(target) else { continue };
