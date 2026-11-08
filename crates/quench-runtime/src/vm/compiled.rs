@@ -7420,20 +7420,18 @@ pub(super) struct DirectCallee {
 }
 
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
-/// activation only if a run leaves inside it (`Vm::take_shadow_frames`).
+/// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
+/// names the call record it returns to, and its receiver. Its registers are the window past
+/// the frame below it, at the lane stack's end, so the frame holds neither.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct ShadowFrame {
-    /// The caller's call record.
-    pub(super) call: usize,
     pub(super) callee: *const DirectCallee,
-    /// The callee's registers, in the lane stack's capacity past the caller's.
-    pub(super) window: *mut Value,
     pub(super) this: u64,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The

@@ -16128,12 +16128,12 @@ fn lane_materialize_frames<H: Host>(
         let callee = unsafe { &*frame.callee };
         let vm = unsafe { vm(cx) };
         let window = vm.lane_stack.values.len();
-        debug_assert_eq!(vm.lane_stack.values.as_ptr().wrapping_add(window), frame.window.cast_const());
+        let registers = unsafe { vm.lane_stack.values.as_mut_ptr().add(window) };
         unsafe { vm.lane_stack.values.set_len(window + usize::from(callee.registers)) };
-        let call = frame.call as Ip;
+        let call = callee.call as Ip;
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
-        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(frame.window), window, argc, Value::from_bits(frame.this), false);
+        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
         let method = callee.body.as_ref();
         // SAFETY: the active caller's code lease pins this exact callee body through
         // recovery, even if its publication has already been retired.

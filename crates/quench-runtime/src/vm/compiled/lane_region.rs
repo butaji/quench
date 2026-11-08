@@ -3354,14 +3354,8 @@ impl Lowering<'_, '_> {
             } else { undefined };
             self.ins().store(MemFlagsData::trusted(), value, top, register_offset(register));
         }
-        let call = self.ins().iconst(types::I64, callee.call as i64);
         let descriptor = self.ins().iconst(types::I64, callee as *const DirectCallee as i64);
-        for (field, value) in [
-            (std::mem::offset_of!(ShadowFrame, call), call),
-            (std::mem::offset_of!(ShadowFrame, callee), descriptor),
-            (std::mem::offset_of!(ShadowFrame, window), top),
-            (std::mem::offset_of!(ShadowFrame, this), this),
-        ] {
+        for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this)] {
             self.ins().store(MemFlagsData::trusted(), value, shadow, offset(field));
         }
         let pushed = self.ins().iadd_imm_u(shadow, frame_size);
