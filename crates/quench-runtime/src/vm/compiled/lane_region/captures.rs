@@ -17,9 +17,9 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let callee = admitted_callee.or_else(|| frame.map(|frame| self.tagged(state, self.unit.frames[frame].callee_register)));
-        let dense = self.dense_captures(frame);
         let (slow, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(slow);
+        let dense = self.dense_captures(frame, callee, slow);
         let value = self.builder.append_block_param(join, types::I64);
         match dense {
             Some((values, len)) => {
@@ -43,8 +43,10 @@ impl Lowering<'_, '_> {
     }
 
     /// The dense slots (values, length) of the activation that runs `frame`: the running
-    /// one's, or a published callee's its call's guarded identity fixes; none for any other.
-    fn dense_captures(&mut self, frame: Option<usize>) -> Option<(ir::Value, ir::Value)> {
+    /// one's, a published callee's its call's guarded identity fixes, or else those of the
+    /// bound `callee`'s frameless admission, as its frameless activation would read them
+    /// (`frameless::emit_admitted_captures`, `slow` where it has none).
+    fn dense_captures(&mut self, frame: Option<usize>, callee: Option<ir::Value>, slow: ir::Block) -> Option<(ir::Value, ir::Value)> {
         match frame {
             None => {
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -54,7 +56,7 @@ impl Lowering<'_, '_> {
                 let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
                 Some((self.ins().iconst(types::I64, values as i64), self.ins().iconst(types::I64, len as i64)))
             }
-            Some(_) => None,
+            Some(_) => callee.map(|callee| super::super::frameless::emit_admitted_captures(&mut self.builder, self.payload, callee, slow)),
         }
     }
 

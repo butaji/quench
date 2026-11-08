@@ -103,7 +103,7 @@ fn create(c: &mut Context<'_>, prototype: RootId, bounds: (i64, i64, i64), recor
     let map = c.construct_rooted(map, map, &[])?;
     let recordable = c.boolean(recordable);
     let undefined = c.undefined();
-    let record = c.record_rooted(&HISTOGRAM_FIELDS, &[state, map, recordable, undefined, undefined, undefined])?;
+    let record = c.record_rooted(false, &HISTOGRAM_FIELDS, &[state, map, recordable, undefined, undefined, undefined])?;
     let histogram = c.object_rooted()?;
     c.set_prototype_rooted(histogram, prototype)?;
     attach_slot(c, histogram, api::HISTOGRAM_SLOT, record)?;

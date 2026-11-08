@@ -9676,12 +9676,12 @@ fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
                     let owner = vm.heap.root(iterator);
                     vm.collect_now(&program);
                     assert_eq!(vm.heap.weak_value(matcher_handle), Some(matcher));
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                    // The iterator keeps the string it matches, not the receiver.
+                    assert!(vm.heap.weak_value(handles[0]).is_none() && vm.heap.weak_value(handles[1]) == Some(input));
                     vm.heap.release_root(owner);
                     vm.collect_now(&program);
                     assert!(vm.heap.weak_value(matcher_handle).is_none());
+                    assert!(vm.heap.weak_value(handles[1]).is_none());
                 }
                 Err(error) => {
                     let atom = vm.intern_atom("kind");
@@ -9738,6 +9738,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                 let matcher = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
+                let input = vm.heap.alloc_string(JsString::from_units(if full { &[0xd800, 97] } else { &[97] }));
                 let iterator = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
                     object: Vm::<TestHost>::empty_object(
                         vm.regexp_string_iterator_proto,
@@ -9749,11 +9750,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     ext: crate::heap::IteratorExt {
                         helper: Some(Box::new(
                             crate::heap::IteratorHelper::RegExpStringMatchAll {
-                                input: JsString::from_units(if full {
-                                    &[0xd800, 97]
-                                } else {
-                                    &[97]
-                                }),
+                                input,
                                 global: true,
                                 unicode: true,
                             },

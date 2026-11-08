@@ -113,15 +113,12 @@ pub(crate) fn fetch(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome 
     let redirect = get(c, request, rq::REDIRECT)?;
     let headers_state = get(c, request, rq::HEADERS_STATE)?;
     let body = get(c, request, rq::BODY)?;
-    let state = record(
-        c,
-        &[(PROMISE, promise), (URLS, urls), (METHOD, method), (REDIRECT, redirect), (HEADERS, headers_state), (BODY, body), (SIGNAL, signal)],
-    )?;
+    let state = record(c, &[PROMISE, URLS, METHOD, REDIRECT, HEADERS, BODY, SIGNAL], &[promise, urls, method, redirect, headers_state, body, signal])?;
     put_flag(c, state, RESPONDED, false)?;
     put_flag(c, state, DONE, false)?;
     let listener = function(c, Member::OnAbort, "abort", &[state])?;
     put(c, state, LISTENER, listener)?;
-    let options = literal(c, &[])?;
+    let options = literal(c, &[], &[])?;
     let once = c.boolean(true);
     put(c, options, "once", once)?;
     let kind = c.string_rooted("abort");
@@ -283,7 +280,7 @@ fn http_fetch(c: &mut Context<'_>, state: RootId, url: &url::Url) -> Result<(), 
         put(c, header_object, &name, value)?;
     }
     let method = get(c, state, METHOD)?;
-    let options = literal(c, &[("method", method), ("headers", header_object)])?;
+    let options = literal(c, &["method", "headers"], &[method, header_object])?;
     let href = c.string_rooted(url.as_str());
     let on_response = function(c, Member::OnResponse, "", &[state])?;
     let client = call(c, module, "request", &[href, options, on_response])?;
