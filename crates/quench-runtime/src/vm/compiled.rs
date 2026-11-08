@@ -509,7 +509,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa()?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -2362,7 +2362,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
             lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol, u32::try_from(program.function_count()).ok()?),
-                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], None, isa,
+                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
                     let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
@@ -6710,8 +6710,6 @@ pub(super) struct LaneMethod {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: Entry,
-    /// An OSR-only body keeps normal calls on their baseline entry.
-    first_entry: bool,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -6724,8 +6722,6 @@ pub(super) struct LaneMethod {
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
     caller_registers: u16,
-    /// The loop header PC of its function a run may also start at (`Vm::run_lane_method`).
-    pub(super) loop_header: Option<u32>,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -6737,7 +6733,6 @@ pub(super) struct LaneMethod {
 }
 
 impl LaneMethod {
-    pub(super) fn supports_first_entry(&self) -> bool { self.first_entry }
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -6753,12 +6748,12 @@ impl LaneMethod {
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
     /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
-        self.first_entry && self.amortizes
+        self.amortizes
     }
 
     /// Whether a direct caller may call it (`LaneMethod::closed`).
     pub(super) fn calls_only_natively(&self) -> bool {
-        self.first_entry && self.closed
+        self.closed
     }
 }
 
@@ -6766,14 +6761,6 @@ impl LaneMethod {
 /// Retirement unlinks entry without releasing code that execution or recovery uses.
 /// Guest locator validity and exact exits remain separate obligations.
 pub(super) type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
-
-/// Where a run of a lane body starts (`Vm::run_lane_method`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LaneStart {
-    First,
-    /// Its loop header (`LaneMethod::loop_header`), from the lane's backward jump there.
-    LoopHeader,
-}
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
 /// whose activation the lane then makes (`Vm::lane_body_inlined_activation`).
@@ -7181,7 +7168,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn run_lane_method(
         &mut self,
         method: &LaneMethod,
-        start: LaneStart,
         direct_calls: bool,
         program: ProgramId,
         residual: &ResidualProgram,
@@ -7236,13 +7222,6 @@ impl<H: Host> Vm<H> {
         let mut word = 0_u64;
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases set above.
-        let start = match start {
-            LaneStart::First => 0,
-            LaneStart::LoopHeader => {
-                debug_assert!(method.loop_header.is_some(), "a loop entry runs a body compiled with one");
-                1
-            }
-        };
         let status = if method.fault_poll {
             let poll = native_poll_page(&self.execution_interrupt);
             // SAFETY: this entry owns the TLS binding until it returns. Reentrant
@@ -7250,10 +7229,10 @@ impl<H: Host> Vm<H> {
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
                 self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_native(context, start, 0, registers.cast_const().cast(),
+            unsafe { enter_native(context, 0, 0, registers.cast_const().cast(),
                 &mut word, NativeEntryMode::Resumable, method.entry) }
         } else {
-            unsafe { (method.entry)(&mut *context, start, 0, registers.cast_const().cast(), &mut word) }
+            unsafe { (method.entry)(&mut *context, 0, 0, registers.cast_const().cast(), &mut word) }
         };
         if status == LANE_BODY_RETURNED {
             // SAFETY: as above; the body wrote the record before it returned.
@@ -7323,7 +7302,7 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
-        let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
+        let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above; the callee's run may have grown the scratch window.
         unsafe {
             saved.install(&mut (*frame).dispatch);
@@ -16130,7 +16109,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
+            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
         let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
@@ -16204,7 +16183,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
             let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), None, &[]).unwrap();
+                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.slot_dependencies.is_empty());
             let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
@@ -16236,48 +16215,6 @@ mod tests {
             assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
         }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn function_bound_osr_owns_definitions_without_retaining_closure_identities() {
-        let program = crate::Engine::specialize(
-            "function pipe(){function step(x){return (x+1)|0;}let x=0;for(let i=0;i<3;i=(i+1)|0)x=step(x);return x;}",
-            "definition-lifetime.js").unwrap();
-        let caller = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
-        let callee = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "step")).unwrap();
-        let body = program.function(caller);
-        let header = body.instructions().enumerate().find_map(|(pc, instruction)| {
-            if instruction.op() != Op::Jump { return None; }
-            let target = instruction.jump_target();
-            (target as usize <= pc).then_some(target)
-        }).unwrap();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, caller as u32, &|function, pc|
-            (function == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|instruction| instruction.op() == Op::Call))
-                .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|_| (0, 0), Vec::new(), Some(header), &[]).unwrap();
-        assert_eq!(method.inlined.len(), 1);
-        assert_eq!(method.inlined[0].target.callee, CalleeBinding::Function);
-        assert_eq!(method.recovery_space().activations, 1);
-        assert!(!method.supports_first_entry());
-        assert!(!method.amortizes_entry());
-        assert!(!method.calls_only_natively());
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
-        // No guest code executes at these collection/realm events; a code lease
-        // may remain alive independently of the publication's validity.
-        unsafe { vm.programs.retire_dead_native_calls(|_| false); }
-        assert!(published.lease().is_some(), "a pure definition embeds no closure locator");
-        let active = published.lease().unwrap();
-        let code = Rc::downgrade(&active);
-        unsafe { vm.programs.retire_native_calls(); }
-        assert!(published.lease().is_none(), "realm/reset still retires the publication");
-        assert!(code.upgrade().is_some(), "retirement must retain code leased for execution/recovery");
-        assert_eq!(active.inlined.len(), 1);
-        drop(active);
-        assert!(code.upgrade().is_none(), "the last lease releases code even while the publication remains");
     }
 
     #[cfg(feature = "aot")]
@@ -16611,13 +16548,14 @@ mod tests {
 
     #[test]
     fn jit_loop_slots_preserve_widening_and_reentry() {
-        let source = concat!("run({count:4096,value:0},1);\n",
-            include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
+        let source = concat!("(function(){for(let i=0;i<512;i++)run({count:8,value:0},1);\n",
+            include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;})();");
         for typescript in [false, true] {
             let program = if typescript { crate::Engine::specialize_typescript(source, "jit-loop-slots.cts") }
                 else { crate::Engine::specialize(source, "jit-loop-slots.cjs") }.unwrap();
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::Compiled);
+            vm.programs.enable_js_lane_methods();
             LOOP_SLOT_STORES.with(|count| count.set(0));
             let error = vm.execute(&program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
@@ -17649,7 +17587,7 @@ mod tests {
             "nested-poll-binding.js").unwrap();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
-            &|_| (0, 0), Vec::new(), None, &[]).expect("polling lane body");
+            &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = lane_frame();
         // The real outer landing must survive an inner trampoline overwriting it.
@@ -17900,7 +17838,7 @@ mod tests {
             }).unwrap();
         // No code size budget is needed by this focused publication check; the
         // production object backend handles relocations instead of live addresses.
-        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok()
+        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
     }

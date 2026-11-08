@@ -31,8 +31,8 @@ pub(super) struct StableUses {
     /// bodies change no Stable fact's subject (`keeps_stable_facts`): their blocks hold every
     /// Stable fact, which a change made elsewhere retires before the loop is entered again.
     stable_loops: Vec<(usize, usize)>,
-    /// The PCs a run of the body starts at.
-    pub(super) starts: Vec<usize>,
+    /// The PC a run of the body starts at.
+    pub(super) start: usize,
 }
 
 impl StableUses {
@@ -132,7 +132,7 @@ impl Lowering<'_, '_> {
             instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable
                 || (!inside.contains(&pc) && successors(pc, *instruction).into_iter().flatten()
                     .any(|target| (target > header && target <= end) || (target == header && pc > end))));
-        !entered_within && !self.stable.starts.iter().any(|start| *start > header && *start <= end)
+        !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 
     /// Whether `instruction` at `pc` changes no Stable fact's subject and runs no guest code: it
