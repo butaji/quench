@@ -163,6 +163,9 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let left_at = unit_leaves(&unit, generic);
+        // An entry that leaves at once is pure cost: a body whose first instruction its
+        // predecessors left at declines.
+        if left_at.contains(&0) { return None; }
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
         // Admitting the stores' writes once, here, widens what they widen; the fields then
         // read the widened slots, and the body's entries admit nothing again.
