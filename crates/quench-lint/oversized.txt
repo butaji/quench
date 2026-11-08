@@ -634,7 +634,7 @@ complexity crates/quench-runtime/src/vm/compiled.rs::cached_direct_reference 13
 complexity crates/quench-runtime/src/vm/compiled.rs::compile_built_functions 14
 complexity crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 12
 complexity crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 71
-complexity crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 226
+complexity crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 227
 complexity crates/quench-runtime/src/vm/compiled.rs::lower_static_typed_regions 24
 complexity crates/quench-runtime/src/vm/compiled.rs::native_operation_fallback_kind 43
 complexity crates/quench-runtime/src/vm/compiled.rs::osr_probe 15
