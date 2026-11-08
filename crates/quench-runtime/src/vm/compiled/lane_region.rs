@@ -5291,7 +5291,7 @@ mod tests {
                     let target = function.dfg.resolve_aliases(function.dfg.inst_args(inst)[0]);
                     let ir::ValueDef::Result(target, _) = function.dfg.value_def(target) else { return false };
                     matches!(function.dfg.insts[target], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
-                        if imm.bits() as usize == addresses[LaneHelper::FunctionCapture as usize])
+                        if imm.bits() as usize == addresses[LaneHelper::FunctionCapture as usize] as usize)
                 }).collect();
             assert_eq!(calls.len(), captures.len(), "one shared capture projection per entry read");
             for (block, _) in calls {

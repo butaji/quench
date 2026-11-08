@@ -684,7 +684,6 @@ complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 18
 complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::Planner<'_,'_>::inline_target 16
 complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::Unit::register_masks 15
 complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::inlinable 16
-complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::static_call_targets 26
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::enter 20
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::instruction 84
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::int32_arithmetic_guarded 15
@@ -1467,7 +1466,7 @@ file-lines crates/quench-runtime/src/vm/collections.rs 1477
 file-lines crates/quench-runtime/src/vm/compiled.rs 19316
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5907
-file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 975
+file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 862
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7598
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
 file-lines crates/quench-runtime/src/vm/construction.rs 1487
@@ -2959,7 +2958,6 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::rela
 function-lines crates/quench-runtime/src/vm/compiled/lane_region/packed_ranges.rs::analyze 44
 function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 121
 function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::Unit::register_masks 75
-function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::static_call_targets 101
 function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::tests::method_hints_follow_definition_records_and_bound_conflicting_bodies 57
 function-lines crates/quench-runtime/src/vm/compiled/object_slots.rs::tests::checked_table_admits_once_without_admitting_receiver_handles 49
 function-lines crates/quench-runtime/src/vm/compiled/object_slots.rs::tests::direct_family_admission_tests_the_family_alone 55
