@@ -34,13 +34,6 @@ pub(in crate::vm) struct PendingLaneMethod {
     epoch: u64,
 }
 
-/// What a pending body's compile came to.
-enum LaneCompile {
-    /// Its code needed more memory than a body may take: plan again inlining half as much.
-    Replan,
-    Done(Option<LaneMethod>),
-}
-
 /// What a function's lane body asks of the VM at an entry past its warm-up.
 pub(in crate::vm) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code.
@@ -167,13 +160,16 @@ impl<H: Host> Vm<H> {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
+        let helpers = LaneHelpers::Process(LaneHelper::addresses::<H>());
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
         let method_cache_atoms = self.method_cache_atoms.bits().clone();
+        let active = self.active_program;
+        let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
+            .map_or(&[][..], |_| self.programs.constants(active));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address() }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &left_at, &direct_sites, &frame_captures, loop_entry, allow_first_entry)?;
         if lowered.region.native == 0 { return None; }
@@ -250,17 +246,19 @@ impl<H: Host> Vm<H> {
 
     /// What a pending body's compile came to; `Stale` also asks for a plan again at half its
     /// budget when its code was too large.
-    /// A poll moves nothing while the code compiles: loop entries poll at each backward jump.
     fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> LaneBodyOutcome {
         if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
             return LaneBodyOutcome::Stale;
         }
-        match pending.poll() {
-            Err(pending) => LaneBodyOutcome::Compiling(pending),
-            Ok(LaneCompile::Replan) => LaneBodyOutcome::Stale,
-            Ok(LaneCompile::Done(method)) => method
+        // A body still compiling stays where it is held: polling moves nothing (loop entries
+        // poll at each backward jump).
+        match pending.code.poll() {
+            std::task::Poll::Pending => LaneBodyOutcome::Compiling(pending),
+            std::task::Poll::Ready(Some(Err(reason))) if pending.plan.replans(reason) => LaneBodyOutcome::Stale,
+            std::task::Poll::Ready(Some(Ok(code))) => pending.plan.finish(&code)
                 .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
+            std::task::Poll::Ready(_) => LaneBodyOutcome::Declined,
         }
     }
 }
@@ -270,19 +268,6 @@ impl<H: Host> Vm<H> {
 fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
         lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
-}
-
-impl PendingLaneMethod {
-    /// What its compile came to, or itself while its code compiles.
-    fn poll(self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
-        Ok(match self.code.poll() {
-            std::task::Poll::Pending => return Err(self),
-            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
-            std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) => LaneCompile::Replan,
-            std::task::Poll::Ready(_) => LaneCompile::Done(None),
-        })
-    }
-
 }
 
 impl LanePlan {

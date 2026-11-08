@@ -87,6 +87,12 @@ impl<H: Host> Vm<H> {
         self.shape_answers(&function.object, atom, ReceiverKind::Ordinary)
     }
 
+    /// Whether `atom` names an element of `object` as a typed array's numeric key, which no
+    /// shape stores: the generic [[Set]] converts and writes it.
+    pub(super) fn is_typed_array_element(&self, object: Value, atom: Atom) -> bool {
+        matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) && self.atom_class(atom).contains(AtomClass::TYPED_ARRAY_INDEX)
+    }
+
     pub(super) fn shape_property_lookup_cell<'a>(
         &self,
         cell: &'a Cell,

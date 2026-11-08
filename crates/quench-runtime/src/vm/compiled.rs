@@ -51,6 +51,9 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+mod osr_compile;
+pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+use osr_compile::OsrFacts;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
@@ -63,6 +66,8 @@ mod lane_region;
 mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
+#[path = "compiled/lane_allocations.rs"] mod lane_allocations;
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -1986,6 +1991,7 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
@@ -2020,7 +2026,7 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
         let last = entries.last().expect("a recovery chain");
         INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((last.function, last.source_pc))));
     }
-    let chain = frameless::chain(vm, dispatch, entries[0].call_pc, inlined);
+    let chain = frameless::chain(vm, program, dispatch, entries[0].call_pc, inlined);
     materialize_chain(vm, program, dispatch, &chain);
     0
 }
@@ -2119,7 +2125,7 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
     Numeric,
-    Process([usize; LaneHelper::COUNT]),
+    Process(&'static [*const (); LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -2208,6 +2214,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) method_cache_atoms: &'a super::method_cache::AtomBits,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
     pub(super) invalidation: usize,
+    /// The program's constants as the VM made and roots them (`Vm::active_constant`).
+    pub(super) constants: &'a [Value],
 }
 
 impl OnlineFacts<'_> {
@@ -6232,11 +6240,7 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
 pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
-    widenings: std::collections::BTreeMap<u32, Widening>,
-    /// Own-field descriptors embed shape IDs. Shape compaction retires this code
-    /// through its lane view before execution can resume with remapped IDs.
-    pub(super) shape_dependencies: Vec<u32>,
-    pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    pub(super) facts: OsrFacts,
 }
 
 impl CompiledOsrRegion {
@@ -6306,7 +6310,7 @@ impl CompiledOsrRegion {
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.widenings.get(&pc).copied()
+        self.facts.widening(pc)
     }
 }
 
@@ -6351,39 +6355,6 @@ pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
-pub(super) fn compile_osr_region(
-    region: &LoopRegion,
-    observation: &Observation<'_>,
-    interrupt: &crate::execution_interrupt::ExecutionInterrupt,
-    policy: crate::MemoryPolicy,
-    track_backedges: bool,
-) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    let verified = osr_loop::verify_region(region, observation).ok()?;
-    let (function, widenings) =
-        osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt), track_backedges)?;
-    let clif = native_dump_directory().map(|_| function.display().to_string());
-    let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
-    if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
-        dump_native_code(directory, region.header, &_code, &clif);
-    }
-    let mut shape_dependencies: Vec<_> = observation.native_field_loads.iter().flatten()
-        .flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
-    shape_dependencies.sort_unstable();
-    shape_dependencies.dedup();
-    let mut slot_dependencies: Vec<_> = observation.native_field_loads.iter().flatten()
-        .filter_map(|field| field.slot_dependency()).collect();
-    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-    slot_dependencies.dedup();
-    Some(CompiledOsrRegion {
-        _code,
-        entry,
-        widenings,
-        shape_dependencies,
-        slot_dependencies,
-    })
-}
-
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
@@ -6431,23 +6402,14 @@ fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], add
     }
 }
 
-/// Compile and publish a fully lowered native entry that has no relocations.
-///
-/// JS scalar regions and OSR regions both use this entry contract. Wasm functions
-/// with internal calls have a separate linking phase before publication.
-fn compile_and_publish_entry(
-    function: ir::Function,
-    isa: &dyn cranelift_codegen::isa::TargetIsa,
-    max_code_bytes: usize,
-) -> Option<(CodeMemory, Entry)> {
-    compile_native_function(function, isa, max_code_bytes, |code| {
-        let memory = CodeMemory::new(code)?;
-        write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
-        // SAFETY: callers lower the function with `native_entry_signature`.
-        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
-        Some((memory, entry))
-    })
-    .ok()
+/// Publishes compiled `code` of a function lowered with `native_entry_signature` to
+/// executable memory, and its entry.
+fn publish_entry(code: &[u8]) -> Option<(CodeMemory, Entry)> {
+    let memory = CodeMemory::new(code)?;
+    write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
+    // SAFETY: callers lower the function with `native_entry_signature`.
+    let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+    Some((memory, entry))
 }
 
 /// Eager publication has no code-cache admission budget: all requested bodies
@@ -7111,31 +7073,6 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     1
 }
 
-/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
-/// `DELETED` where a collection is due, which the body leaves for. The allocation may move
-/// the property arena, whose base and length the dispatch reads again.
-unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
-    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let object = vm.object();
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    object.to_bits()
-}
-
-/// A lane body's array literal of `length` holes, or of the `elements` its definitions
-/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
-/// `DELETED` where a collection is due, as `lane_new_object`.
-unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
-    // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    array.to_bits()
-}
 
 /// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
 #[repr(C)]
@@ -7436,20 +7373,18 @@ pub(super) struct DirectCallee {
 }
 
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
-/// activation only if a run leaves inside it (`Vm::take_shadow_frames`).
+/// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
+/// names the call record it returns to, and its receiver. Its registers are the window past
+/// the frame below it, at the lane stack's end, so the frame holds neither.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct ShadowFrame {
-    /// The caller's call record.
-    pub(super) call: usize,
     pub(super) callee: *const DirectCallee,
-    /// The callee's registers, in the lane stack's capacity past the caller's.
-    pub(super) window: *mut Value,
     pub(super) this: u64,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
@@ -16166,7 +16101,7 @@ mod tests {
                 JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),&[], &typed);
             let (memory,entry,operands)=match lowered {
                 Ok((body,_)) => {
-                    let (memory,entry)=compile_and_publish_entry(body,&*isa,usize::MAX).unwrap();
+                    let (memory,entry)=compile_native_function(body, &*isa, usize::MAX, publish_entry).ok().unwrap();
                     (memory,entry,Vec::new())
                 }
                 Err(_) => live_native_function(&program,id as u32,None),
@@ -16456,7 +16391,7 @@ mod tests {
             function callback(a,fn) {const first=a.value|0; fn(); return first+(a.value|0);}
             let mask=2;
             function mark(){this.value=this.value|mask;}
-            function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
+            function marked(){const o={value:1}; o.mark=mark; return o;} function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
             let owner={value:7};
             for(let i=0;i<64;i++) {
                 if(pair(owner,1,false)!==14 || overwritten(owner)!==107) throw 'plain';
@@ -16468,7 +16403,7 @@ mod tests {
                 if(chained.call(linked,linked,1)!==7.5) throw 'chain result';
                 if(anonymous.call(linked,1)!==15) throw 'anonymous chain result';
                 if(replaced({value:7},{value:19})!==26) throw 'replacement';
-                if(guarded({value:1,mark})!==5) throw 'guarded store';
+                if(guarded(marked())!==5) throw 'guarded store';
                 const joined={value:7};
                 if(diamond(joined,joined,1,false)!==14 || diamond(joined,joined,1,true)!==18) throw 'join alias';
                 if(diamond({value:7},{value:1},1,true)!==14) throw 'join different owner';
@@ -16524,10 +16459,10 @@ mod tests {
             let guarded = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "guarded")).unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, guarded as u32, &[], &*isa, 0);
-            assert_eq!(regions.len(), 1, "guarded call must have a native region");
-            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 1,
-                "forward the pre-call read, but reload after the captured store");
+            let regions = lower_static_typed_regions(&program, guarded as u32, &static_call_targets(&program), &*isa, 0);
+            assert_eq!(regions.len(), 1, "the hinted call inlines into a native region");
+            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 2,
+                "forward the pre-call read, and the inlined store's value to the read after it");
             for (name, forwards) in [("pure", true), ("unrelated", true), ("liveUnrelated", true), ("diamond", false), ("moved", false)] {
                 let id = program.functions.iter().position(|function|
                     function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -17064,7 +16999,7 @@ mod tests {
                     let (body, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
                         JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[],
                         &[StaticTypedRegionEntry { header: region.header, function: &region.function }]).unwrap();
-                    let (memory, entry) = compile_and_publish_entry(body, &*isa, usize::MAX).unwrap();
+                    let (memory, entry) = compile_native_function(body, &*isa, usize::MAX, publish_entry).ok().unwrap();
                     (memory, entry, Vec::new())
                 } else { live_native_function(&program, id as u32, None) };
                 // SAFETY: entries are lowered for this exact host/program ABI.
@@ -17268,7 +17203,7 @@ mod tests {
     #[test]
     fn typed_field_chains_commit_the_sink_before_the_destination() {
         let program = crate::Engine::specialize(
-            "function route(base){this.current=base.next.value;this.finish();return this.current;}",
+            "function route(base,n){for(let i=0;i<n;i++)this.current=base.next.value;return this.current;}",
             "fused-typed.js").unwrap();
         let function = program.function(1);
         assert!(function.instructions().any(|instruction| instruction.op() == Op::GetField
@@ -17330,7 +17265,7 @@ mod tests {
     #[test]
     fn linked_field_probes_share_a_dominating_object_header() {
         let program = crate::Engine::specialize(
-            "function sum(o){let a=o.left;let b=o.right;o.mark();return a+b;}",
+            "function sum(o,n){let s=0;for(let i=0;i<n;i++)s=(s+o.left+o.right+o.mid)|0;return s;}",
             "shared-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
@@ -17498,7 +17433,7 @@ mod tests {
             } else {
                 let (native, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
                     JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[], &[]).unwrap();
-                let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX).unwrap();
+                let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok().unwrap();
                 (memory, entry, Vec::new())
             };
             // SAFETY: the entries use this program and TestHost; owners retain code and operands.
@@ -17961,7 +17896,7 @@ mod tests {
             }).unwrap();
         // No code size budget is needed by this focused publication check; the
         // production object backend handles relocations instead of live addresses.
-        let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX)
+        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
     }
@@ -18178,7 +18113,7 @@ mod tests {
                                 if native.dfg.resolve_aliases(arg) == payload
                                     && i32::from(offset) == std::mem::offset_of!(JsStepDispatch, stop_pc) as i32)).count(), 1,
                             "the activation stop fact is read once, never per instruction");
-                        let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX).unwrap();
+                        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok().unwrap();
                         (memory, entry, Vec::new())
                     };
                     // SAFETY: only the spelling of the opaque context differs.

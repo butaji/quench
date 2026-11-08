@@ -466,9 +466,7 @@ impl<H: Host> Vm<H> {
         writer.bool(*specialized);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
-        for name in atom_text.iter() {
-            writer.str(name);
-        }
+        atom_text.iter().for_each(|name| writer.str(name));
         writer.len(atom_sequence.appended_len());
         for offset in 0..atom_sequence.appended_len() {
             atom_sequence.appended(offset).write_snapshot(&mut writer);
@@ -503,6 +501,7 @@ impl<H: Host> Vm<H> {
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
         writer.u32s(&transitions.children().collect::<Vec<_>>());
+        shape_lookup::owned_dictionaries(shapes).snap(&mut writer)?;
         symbol_registry.snap(&mut writer)?;
         well_known_symbols.snap(&mut writer)?;
         for atom in [length_atom, prototype_atom, to_fixed_atom, to_precision_atom] {
@@ -710,6 +709,7 @@ impl<H: Host> Vm<H> {
                 return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
         }
+        shape_lookup::restore_owned_dictionaries(&mut self.shapes, Snap::unsnap(reader)?)?;
         Ok(())
     }
 

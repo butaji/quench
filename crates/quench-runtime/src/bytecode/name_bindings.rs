@@ -145,7 +145,7 @@ impl Function {
     pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
         match instruction.op() {
             Op::StoreLocal | Op::StoreEnvLocal => Some(instruction.local_slot()),
-            Op::StoreName => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
+            op if op.stores_name() => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
             _ => None,
         }
     }
