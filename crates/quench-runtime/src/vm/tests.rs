@@ -18360,7 +18360,7 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
       function addCaptured(value) {
-        if (value === 63) $262.gc();
+        if (value === 63) { "island".toString(); $262.gc(); } // a primitive's read misses: an island with the call
         return captured.value + value;
       }
       var result = 0;

@@ -6876,9 +6876,10 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
         return value.to_bits();
     }
-    let receiver = Value::from_bits(receiver);
+    let receiver = Value::from_bits(receiver); // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
     match vm.compiled_field_hit(residual, receiver, site) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
+        super::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
     }
 }
@@ -7059,7 +7060,6 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     dispatch.refresh_object_bases(vm);
     1
 }
-
 
 /// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
 #[repr(C)]

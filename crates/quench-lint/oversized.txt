@@ -1460,9 +1460,9 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 521
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
-file-lines crates/quench-runtime/src/vm/compiled.rs 19168
+file-lines crates/quench-runtime/src/vm/compiled.rs 19164
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5744
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5734
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7598
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
@@ -1471,7 +1471,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1944
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23064
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23062
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3030
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -2944,7 +2944,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::typeof_test 54
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::loop_fields 79
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::lower 493
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::capture_entry_preserves_distinct_environments_and_mutations 63
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::capture_entry_preserves_distinct_environments_and_mutations 53
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::inductive_accumulator_keeps_the_predicate_loop_unboxed 51
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::inlined_capture_reads_require_an_admitted_invariant_callee 99
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly 54
@@ -5097,7 +5097,6 @@ magic crates/quench-runtime/src/vm/compiled.rs::successors 1
 magic crates/quench-runtime/src/vm/compiled.rs::unrollable_loops 1
 magic crates/quench-runtime/src/vm/compiled/frame_ssa.rs::FrameFlow::recovery_pc 1
 magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::compile_lane_method 1
-magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::lane_body_work 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::loop_element_write 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::TypedLoad::width 3
