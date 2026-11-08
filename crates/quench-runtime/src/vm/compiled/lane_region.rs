@@ -1482,10 +1482,7 @@ pub(super) fn lower(
         lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
     }
     if coverage.selected_entry() {
-        lowering.written = CompoundBitSet::with_capacity(count);
-        for instruction in instructions.iter().copied() {
-            for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
-        }
+        lowering.written = lowering.facts.written(&instructions, &writes, count);
         // Backedge definitions choose a numeric entry signature. Conformance
         // proves the external input once; every subsequent edge carries the
         // same verified SSA view. This is an admission requirement, not a fact
