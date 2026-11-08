@@ -145,6 +145,8 @@ pub(crate) enum Operation {
     /// Number x Number arithmetic with both operands in `domain`.
     NumberArithmetic { destination: Register, left: Operand, right: Operand,
         operation: NumberArithmetic, domain: Domain, overflow: Overflow },
+    /// `source ± 1` (`++`, or `--` where `decrement`) of an int32 `source`.
+    IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
     /// Number x Number relation, producing its predicate word.
     NumberRelation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
 }
@@ -189,6 +191,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         },
         Operation::NumberArithmetic { destination, left, right, operation, domain, overflow } =>
             numeric::arithmetic(stage, frame, destination, left, right, operation, domain, overflow),
+        Operation::IncDec { destination, source, decrement, overflow } =>
+            numeric::increment(stage, frame, destination, source, decrement, overflow),
         Operation::NumberRelation { left, right, relation, domain } =>
             numeric::relation(stage, frame, left, right, relation, domain),
     }

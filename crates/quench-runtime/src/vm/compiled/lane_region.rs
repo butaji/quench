@@ -2428,18 +2428,16 @@ impl Lowering<'_, '_> {
                 let decrement = instruction.boolean_flag();
                 decrement.map(|decrement| {
                     let exit = self.guard_exit(state, pc32);
-                    let value = self.int(state, instruction.register_b(), exit);
-                    let (result, overflow) = if decrement {
-                        let one = self.ins().iconst(types::I32, 1);
-                        self.ins().ssub_overflow(value, one)
+                    let (source, destination) = (instruction.register_b(), instruction.result_register());
+                    // A loop counter its `<` test bounds never overflows, so its wrapping
+                    // result is exact and needs no exit.
+                    let overflow = if !decrement && self.bounded_increment(pc, source, destination) {
+                        crate::staged::Overflow::Wrap
                     } else {
-                        let one = self.ins().iconst(types::I32, 1);
-                        self.ins().sadd_overflow(value, one)
+                        crate::staged::Overflow::Exit
                     };
-                    if decrement || !self.bounded_increment(pc, instruction.register_b(), instruction.result_register()) {
-                        emit_js_guard_not(&mut self.builder, overflow, exit);
-                    }
-                    self.set_int(state, instruction.result_register(), result);
+                    self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                        crate::staged::Operation::IncDec { destination, source, decrement, overflow });
                     true
                 })
             }

@@ -84,6 +84,7 @@ impl NumericStage for Emit<'_, '_> {
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         emit_checked_int32_arithmetic(self.builder, operation, left, right)
     }
+    fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }

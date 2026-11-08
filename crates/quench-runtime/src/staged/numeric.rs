@@ -37,6 +37,8 @@ pub(crate) trait NumericStage: Stage {
     /// `operation` of two int32 words: the wrapped result and whether it overflowed.
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);
+    /// The int32 word holding `value`.
+    fn i32_constant(&mut self, value: i32) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
@@ -83,15 +85,29 @@ pub(crate) fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
             frame.write(stage, destination, result, fact);
             Step::Value(result)
         }
-        Domain::Int32 => int_arithmetic_result(stage, frame, destination, left, right, operation, overflow, miss),
+        Domain::Int32 => {
+            let left = frame.int_operand(stage, left, miss);
+            let right = frame.int_operand(stage, right, miss);
+            int_arithmetic_result(stage, frame, destination, left, right, operation, overflow, miss)
+        }
     }
 }
 
+/// `source ± 1` (`++`/`--`) of an int32 `source`: the int32 sum or difference with one.
+pub(crate) fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: crate::bytecode::Register, source: crate::bytecode::Register, decrement: bool,
+    overflow: Overflow) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let value = frame.int_operand(stage, Operand::register(source), miss);
+    let one = stage.i32_constant(1);
+    let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
+    int_arithmetic_result(stage, frame, destination, value, one, operation, overflow, miss)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: crate::bytecode::Register, left: Operand, right: Operand,
+    destination: crate::bytecode::Register, left_value: S::Word, right_value: S::Word,
     operation: NumberArithmetic, overflow: Overflow, miss: S::Miss) -> Step<S::Word, F::Control> {
-    let left_value = frame.int_operand(stage, left, miss);
-    let right_value = frame.int_operand(stage, right, miss);
     let (result, overflowed) = stage.int_arithmetic(operation, left_value, right_value);
     if overflow == Overflow::Exit && stage.guard_false(overflowed, miss).is_none() {
         return Step::Unresolved;
@@ -179,6 +195,7 @@ impl NumericStage for super::Concrete {
         let result = checked.unwrap_or_else(|| operation.apply(&mut WrappingInt32Stage, left, right));
         (u64::from(result as u32), overflowed)
     }
+    fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }

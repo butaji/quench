@@ -475,3 +475,26 @@ fn tiers_derive_opcode_meaning_from_the_interpreter() {
             staged/hand_semantics.txt to {count} (or drop it at 0)");
     }
 }
+
+/// `++`/`--` of an int32 register, or `None` where it left at its miss edge.
+fn concrete_increment(value: i32, decrement: bool, overflow: Overflow) -> Option<NumberWord> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = number_frame(NumberWord::Int(value), NumberWord::Int(0));
+    let operation = Operation::IncDec { destination: 2, source: 0, decrement, overflow };
+    match step(&mut stage, &mut frame, operation) {
+        Step::Value(_) => Some(frame.values[2]),
+        Step::Unresolved => None,
+        Step::Control(_) => panic!("an increment transfers no control"),
+    }
+}
+
+#[test]
+fn staged_increments_are_int32_sums_with_one() {
+    assert_eq!(concrete_increment(41, false, Overflow::Exit), Some(NumberWord::Int(42)));
+    assert_eq!(concrete_increment(-41, true, Overflow::Exit), Some(NumberWord::Int(-42)));
+    assert_eq!(concrete_increment(i32::MAX, false, Overflow::Exit), None);
+    assert_eq!(concrete_increment(i32::MIN, true, Overflow::Exit), None);
+    assert_eq!(concrete_increment(i32::MAX, false, Overflow::Wrap), Some(NumberWord::Int(i32::MIN)));
+    assert_eq!(concrete_increment(i32::MIN, true, Overflow::Widen),
+        Some(NumberWord::Float(f64::from(i32::MIN) - 1.0)));
+}
