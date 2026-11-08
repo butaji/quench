@@ -32,3 +32,12 @@ pub(in crate::vm) fn is_int32(value: Value) -> bool {
 pub(in crate::vm) fn is_int32_number(number: f64) -> bool {
     is_int32(Value::number(number))
 }
+
+/// A constant's type: an immediate's, a string's or a BigInt's.
+pub(in crate::vm) fn constant_type(constant: &Constant) -> Type {
+    match constant {
+        Constant::String(_) | Constant::StringUnits(_) => Type::language(crate::ValueType::String),
+        Constant::BigInt(_) => Type::language(crate::ValueType::BigInt),
+        constant => immediate(constant).map_or(Type::ANY, Type::immediate),
+    }
+}

@@ -963,22 +963,6 @@ fn admitted_store(op: Op) -> bool {
     op.field_store().is_some_and(|store| !(store.strict && store.receiver == crate::bytecode::StoreReceiver::This))
 }
 
-/// The PCs of `instructions` control reaches from the first.
-fn reachable(instructions: &[WideInstruction]) -> Vec<bool> {
-    let mut reached = vec![false; instructions.len()];
-    let mut pending = vec![0usize];
-    while let Some(pc) = pending.pop() {
-        if pc >= instructions.len() || reached[pc] {
-            continue;
-        }
-        reached[pc] = true;
-        crate::bytecode::for_each_instruction_successor(pc, instructions[pc], |successor| {
-            pending.push(successor);
-        });
-    }
-    reached
-}
-
 /// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
 /// cannot rename names every register.
 fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
@@ -1060,7 +1044,7 @@ pub(super) fn inline_region<'a>(
         resume: u32,
         window: Register,
         result: Register,
-        reached: Vec<bool>,
+        reached: crate::bitset::BitSet,
     }
     let mut calls: std::collections::BTreeMap<u32, Site<'a>> = std::collections::BTreeMap::new();
     // The caller PCs whose instructions drop out, the setup PCs by the PC they resume at, and
@@ -1159,8 +1143,8 @@ pub(super) fn inline_region<'a>(
         if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
         let callee = resolve(&chain, capture)?;
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
-        let reached = reachable(&callee.instructions);
-        let body = || callee.instructions.iter().copied().zip(reached.iter()).filter(|(_, reached)| **reached).map(|(instruction, _)| instruction);
+        let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
+        let body = || callee.instructions.iter().copied().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
         body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())).then_some(())?;
         // A captured call may bind undefined to the global receiver. Keep this slice
         // receiver-independent; recovery still performs the ordinary binding below.
@@ -1236,7 +1220,7 @@ pub(super) fn inline_region<'a>(
         let mut flat = Vec::with_capacity(site.callee.instructions.len());
         for (index, instruction) in site.callee.instructions.iter().enumerate() {
             flat.push(header + length);
-            if site.reached[index] {
+            if site.reached.contains(index) {
                 length += if instruction.op() == Op::Return {
                     2
                 } else if inlined_returning(*instruction) {
@@ -1318,7 +1302,7 @@ pub(super) fn inline_region<'a>(
         }
         let continuation = caller_flat.get(offset + 1).copied().unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
         for (callee_pc, instruction) in site.callee.instructions.iter().copied().enumerate() {
-            if !site.reached[callee_pc] {
+            if !site.reached.contains(callee_pc) {
                 continue;
             }
             let origin = Origin::Inlined { frame: index, pc: callee_pc as u32 };
@@ -1330,7 +1314,7 @@ pub(super) fn inline_region<'a>(
                 masks.extend([set, set]);
                 continue;
             }
-            let target = |target: u32| flat.get(target as usize).copied().filter(|_| site.reached[target as usize]);
+            let target = |target: u32| flat.get(target as usize).copied().filter(|_| site.reached.contains(target as usize));
             // A returning instruction (`result = op; return result`) computes into its own
             // register, then completes the call as the callee's `Return` does.
             if inlined_returning(instruction) {
