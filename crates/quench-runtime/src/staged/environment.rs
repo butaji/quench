@@ -11,9 +11,12 @@ use crate::value::ValueLayout;
 #[inline(always)]
 pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
     miss: S::Miss) -> Option<S::Word> {
-    let in_bounds = stage.ugt_imm(len, u64::from(slot));
+    let slot = u64::from(slot);
+    let in_bounds = stage.ugt_imm(len, slot);
     stage.guard(in_bounds, miss)?;
-    let value = stage.load_u64(values, i32::from(slot) * std::mem::size_of::<crate::Value>() as i32);
+    // One unsigned widening of `slot` serves the bounds test and the address.
+    let address = stage.add_imm(values, slot * std::mem::size_of::<crate::Value>() as u64);
+    let value = stage.load_u64(address, 0);
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
     stage.guard(ordinary, miss)?;

@@ -65,6 +65,15 @@ impl<T> ThinBoxSlice<T> {
         unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }
     }
 
+    /// Where the elements start and how many there are, for a reader that tests its index
+    /// against the length before it loads: the address is past the header even when the
+    /// slice is empty, so it is dereferenceable only below the length.
+    #[inline(always)]
+    pub(crate) fn run(&self) -> (*const T, usize) {
+        // SAFETY: an offset within the header's allocation, or one past the static empty header.
+        (unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }, self.len())
+    }
+
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.header() & !MARK_BIT

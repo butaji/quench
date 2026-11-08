@@ -3100,7 +3100,7 @@ impl EnvironmentSlots {
     #[inline(always)]
     pub(crate) unsafe fn read_storage(storage: *const usize, slot: u16) -> Option<Value> {
         // SAFETY: as guaranteed by the caller; each slot is a `Value` (`repr(transparent)`).
-        unsafe { let slots = Self::borrow_storage(storage)?; crate::staged::environment::concrete_dense_capture(slots.0.as_ptr().cast(), slots.0.len(), slot) }
+        unsafe { let (values, len) = Self::borrow_storage(storage)?.0.run(); crate::staged::environment::concrete_dense_capture(values.cast(), len, slot) }
     }
 
     /// Write through a cache whose caller has already admitted the store and taken its barrier.
