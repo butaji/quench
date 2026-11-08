@@ -300,18 +300,21 @@ pub(super) fn pairwise_add(value: u128, width: u32, sign: Signedness) -> WasmVal
     }
     WasmValue::V128(result)
 }
+/// `i32x4.dot_i16x8_s`: each i32 lane the wrapping sum of its signed i16 pairs' products,
+/// computed in i32 as the operator is defined, so the kernel stays a few instructions where
+/// the vector region inlines it.
+#[inline]
 pub(super) fn dot(left: u128, right: u128) -> WasmValue {
     let mut result = 0;
     for index in 0..u128::BITS / u32::BITS {
-        let mut sum = 0;
-        for part in 0..PAIR_LANES {
+        let product = |part: u32| {
             let source = (index * PAIR_LANES + part) as u8;
-            let a = signed(lane(left, u16::BITS, source), u16::BITS) as u64;
-            let b = signed(lane(right, u16::BITS, source), u16::BITS) as u64;
-            let product = binary_lane(a, b, u64::BITS, Binary::Multiply);
-            sum = binary_lane(sum, product, u64::BITS, Binary::Add);
-        }
-        result = replace(result, u32::BITS, index as u8, sum);
+            let a = lane(left, u16::BITS, source) as u16 as i16;
+            let b = lane(right, u16::BITS, source) as u16 as i16;
+            i32::from(a) * i32::from(b)
+        };
+        let sum = (0..PAIR_LANES).fold(0_i32, |sum, part| sum.wrapping_add(product(part)));
+        result = replace(result, u32::BITS, index as u8, u64::from(sum as u32));
     }
     WasmValue::V128(result)
 }

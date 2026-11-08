@@ -155,76 +155,20 @@ impl<H: Host> Vm<H> {
     /// The stored form of a validated operand: packed fields keep their low bits, and other
     /// values are stored as they are, since validation already proved their type.
     fn wasm_storage_value(value: Value, storage: wasmparser::StorageType) -> Value {
-        let mask = match storage {
-            wasmparser::StorageType::I8 => i32::from(u8::MAX),
-            wasmparser::StorageType::I16 => i32::from(u16::MAX),
-            wasmparser::StorageType::Val(_) => return value,
-        };
-        Value::integer(value.as_int().expect("validated packed Wasm field") & mask)
+        crate::wasm::gc::GcField::new(0, storage).expect("index 0 fits").store(value)
     }
 
-    pub(super) fn wasm_gc_field(
-        &mut self,
-        reference: Value,
-        location: GcFieldIndex,
-        access: crate::wasm::gc::GcFieldAccess,
-        value: Option<Value>,
-    ) -> Result<Value, JsError> {
-        if reference.is_null() {
-            return Err(JsError::wasm_trap_error(match location {
-                GcFieldIndex::Struct(_) => crate::WasmTrap::NullStructReference,
-                GcFieldIndex::Array(_) => crate::WasmTrap::NullArrayReference,
-            }));
-        }
-        let Some(Cell::WasmGc {
-            declarations,
-            ty,
-            fields,
-            ..
-        }) = self.heap.get(reference)
-        else {
-            return Err(JsError::validation(
-                "invalid Wasm aggregate reference".into(),
-            ));
-        };
-        let (index, field) = match location {
-            GcFieldIndex::Struct(index) => (
-                index,
-                declarations
-                    .struct_fields(*ty)
-                    .and_then(|fields| fields.get(index as usize))
-                    .copied(),
-            ),
-            GcFieldIndex::Array(index) => (index, declarations.array_field(*ty)),
-        };
-        let field = field
-            .filter(|field| access.supports(*field))
-            .ok_or_else(|| JsError::validation("invalid Wasm aggregate field access".into()))?;
-        let stored = fields
-            .get(index as usize)
-            .copied()
-            .ok_or_else(|| match location {
-                GcFieldIndex::Array(_) => {
-                    JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsArray)
-                }
-                GcFieldIndex::Struct(_) => {
-                    JsError::validation("invalid Wasm struct field storage".into())
-                }
-            })?;
-        if access != crate::wasm::gc::GcFieldAccess::Write {
-            return access.read(field.element_type, stored).ok_or_else(|| {
-                JsError::validation("invalid Wasm struct field representation".into())
-            });
-        }
-        let value = Self::wasm_storage_value(
-            value.ok_or_else(|| JsError::validation("missing Wasm struct field value".into()))?,
-            field.element_type,
-        );
-        let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
-            unreachable!("validated live struct")
-        };
-        fields[index as usize] = value;
-        Ok(Value::UNDEFINED)
+    /// The trap of a field access that found no field: a null reference, or an array index
+    /// past the end. Validation rules out every other miss.
+    pub(super) fn wasm_gc_field_trap(reference: Value, location: GcFieldIndex) -> JsError {
+        JsError::wasm_trap_error(match (reference.is_null(), location) {
+            (true, GcFieldIndex::Struct(_)) => crate::WasmTrap::NullStructReference,
+            (true, GcFieldIndex::Array(_)) => crate::WasmTrap::NullArrayReference,
+            (false, GcFieldIndex::Array(_)) => crate::WasmTrap::OutOfBoundsArray,
+            (false, GcFieldIndex::Struct(_)) => {
+                return JsError::validation("invalid Wasm aggregate reference".into());
+            }
+        })
     }
     pub(super) fn wasm_array_new(
         &mut self,
@@ -429,9 +373,12 @@ impl<H: Host> Vm<H> {
         Ok((field, declarations, fields))
     }
 
+    /// Validation proved `reference` an array, so its length is its field count.
     pub(super) fn wasm_array_len(&self, reference: Value) -> Result<u32, JsError> {
-        u32::try_from(self.wasm_array_fields(reference)?.2.len())
-            .map_err(|_| JsError::validation("invalid Wasm array length".into()))
+        match self.heap.get(reference) {
+            Some(Cell::WasmGc { fields, .. }) => Ok(fields.len() as u32),
+            _ => Err(Self::wasm_gc_field_trap(reference, GcFieldIndex::Array(0))),
+        }
     }
 
     pub(super) fn wasm_array_fill(
@@ -500,16 +447,15 @@ impl<H: Host> Vm<H> {
             };
             fields.copy_within(input, output.start);
         } else {
-            // Distinct owners cannot alias; no temporary vector or collector re-entry is needed.
-            for (destination_index, source_index) in output.zip(input) {
-                let Some(Cell::WasmGc { fields, .. }) = self.heap.get(source) else {
-                    unreachable!("validated live source")
-                };
-                let value = fields[source_index];
-                let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(destination) else {
-                    unreachable!("validated live destination")
-                };
-                fields[destination_index] = value;
+            // Distinct owners cannot alias: the destination's fields leave their cell for one pass.
+            let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(destination) else {
+                unreachable!("validated live destination")
+            };
+            let mut to = std::mem::take(fields);
+            let Some(Cell::WasmGc { fields: from, .. }) = self.heap.get(source) else { unreachable!("validated live source") };
+            to[output].copy_from_slice(&from[input]);
+            if let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(destination) {
+                *fields = to;
             }
         }
         Ok(())

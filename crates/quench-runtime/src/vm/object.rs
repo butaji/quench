@@ -1141,7 +1141,7 @@ impl<H: Host> Vm<H> {
 }
 impl FieldCacheSet {
     fn with_pair(first: FieldCache, second: FieldCache) -> Self {
-        let mut entries = [EMPTY_CACHE; FIELD_MEGAMORPHIC_INLINE];
+        let mut entries = [EMPTY_CACHE; super::compiled::tier_policy::POLYMORPHISM];
         entries[0] = first;
         entries[1] = second;
         Self {
@@ -1181,7 +1181,7 @@ impl FieldCacheSet {
             .find(|entry| entry.receiver == cache.receiver && entry.holder == cache.holder)
         {
             *entry = cache;
-        } else if usize::from(self.len) < FIELD_MEGAMORPHIC_INLINE {
+        } else if usize::from(self.len) < super::compiled::tier_policy::POLYMORPHISM {
             self.entries[usize::from(self.len)] = cache;
             self.len += 1;
         } else {
@@ -1581,7 +1581,7 @@ impl<H: Host> Vm<H> {
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
-    /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
+    /// they stay inline (`tier_policy::POLYMORPHISM`); none for a megamorphic site.
     pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
         self.native_field_descriptors(site, false)
     }
@@ -1656,13 +1656,13 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        if set.overflow.is_some() {
-            return Vec::new();
-        }
-        set.recorded()
+        // A site past its inline entries reads its hashed ones (`object_slots::field_load_groups`).
+        let overflow = set.overflow.iter().flat_map(|entries| entries.values());
+        let mut loads: Vec<_> = set.recorded().filter(|_| set.overflow.is_none()).chain(overflow)
             .filter(|entry| holders || entry.holder == NO_FIELD_HOLDER)
-            .filter_map(|entry| self.native_field_entry(*entry))
-            .collect()
+            .filter_map(|entry| self.native_field_entry(*entry)).collect();
+        loads.sort_unstable_by_key(|load| (load.shape, load.holder));
+        loads
     }
 
     /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the
@@ -4031,11 +4031,11 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        // Only an ordinary object reaches the shape cache, so a nullish base always falls
-        // through to the uncached path's TypeError.
+        // Only an ordinary object reaches the shape cache: a nullish base falls through to the uncached path's TypeError.
         if self.set_field_cache_hit(p, object, atom, value, site) {
             return Ok(());
         }
+        if self.is_typed_array_element(object, atom) { return self.set_property_with_program_mode(p, object, atom, value, strict); }
         self.set_field_uncached(p, object, atom, value, site, strict)
     }
 
@@ -4841,9 +4841,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else {
-            return;
-        };
+        let Some(shape) = self.object_data(object).map(Object::shape) else { return };
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
@@ -4868,6 +4866,7 @@ impl<H: Host> Vm<H> {
         let next_id =
             self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
         self.heap.set_object_shape(object, next_id);
+        self.pack_owned_dictionary(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
     }

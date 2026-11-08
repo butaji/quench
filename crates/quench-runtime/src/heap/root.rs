@@ -35,11 +35,34 @@ pub(crate) struct WeakHandle {
     pub(super) value: Value,
 }
 
+/// Persistent roots as a sparse set: `slots` give handles a stable index and generation,
+/// while the live values sit packed in `live`, so a collection reads only live roots however
+/// many slots a burst of roots once left behind.
 pub(crate) struct RootTable {
     id: RootTableId,
-    entries: Vec<Entry>,
+    slots: Vec<Slot>,
     free: Vec<u32>,
+    live: LiveRoots,
     scope: ScopedRoots,
+}
+
+/// A persistent root slot: its generation, and where its value sits in `LiveRoots`
+/// (`Slot::FREE` while it holds none).
+#[derive(Clone, Copy)]
+struct Slot {
+    generation: u32,
+    live: u32,
+}
+
+impl Slot {
+    const FREE: u32 = u32::MAX;
+}
+
+/// The live persistent roots, packed: `values[i]` is held by slot `slots[i]`.
+#[derive(Default)]
+struct LiveRoots {
+    values: Vec<Value>,
+    slots: Vec<u32>,
 }
 
 /// The roots native callback scopes make (`insert_scoped`): a stack, as those scopes nest,
@@ -65,8 +88,9 @@ impl Default for RootTable {
     fn default() -> Self {
         Self {
             id: RootTableId::fresh(),
-            entries: Vec::new(),
+            slots: Vec::new(),
             free: Vec::new(),
+            live: LiveRoots::default(),
             scope: ScopedRoots::default(),
         }
     }
@@ -80,21 +104,44 @@ struct Entry {
 
 impl RootTable {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        writer.len(self.entries.len());
-        for entry in &self.entries {
-            writer.u32(entry.generation);
-            writer.option_value(entry.value);
+        writer.len(self.slots.len());
+        for slot in &self.slots {
+            writer.u32(slot.generation);
+            writer.option_value(self.slot_value(*slot));
         }
         writer.u32s(&self.free);
+    }
+
+    /// The value `slot` holds, if any.
+    fn slot_value(&self, slot: Slot) -> Option<Value> {
+        self.live.values.get(slot.live as usize).copied()
+    }
+
+    /// Fills free `slot` with `value`.
+    fn hold(&mut self, slot: u32, value: Value) {
+        self.slots[slot as usize].live = self.live.values.len() as u32;
+        self.live.values.push(value);
+        self.live.slots.push(slot);
+    }
+
+    /// The slot `root` names while it holds a value.
+    fn held_slot(&self, root: RootId) -> Option<Slot> {
+        let slot = *self.slots.get(root.slot as usize).filter(|_| root.table == self.id)?;
+        (slot.generation == root.generation && slot.live != Slot::FREE).then_some(slot)
     }
 
     /// A table `write_snapshot` wrote, under a fresh identity: handles the host kept across the
     /// snapshot come back through `restored_root`.
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let entries = crate::snapshot::read_list(reader, |reader| {
-            Ok(Entry { generation: reader.u32()?, value: reader.option_value()? })
-        })?;
-        Ok(Self { id: RootTableId::fresh(), entries, free: reader.u32s()?, scope: ScopedRoots::default() })
+        let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.option_value()?)))?;
+        let mut table = Self { free: reader.u32s()?, ..Self::default() };
+        for (index, (generation, value)) in entries.into_iter().enumerate() {
+            table.slots.push(Slot { generation, live: Slot::FREE });
+            if let Some(value) = value {
+                table.hold(index as u32, value);
+            }
+        }
+        Ok(table)
     }
 
     /// The parts of `root` a snapshot keeps: its slot and generation.
@@ -104,34 +151,24 @@ impl RootTable {
 
     /// The handle `snapshot_root` gave the parts of, in this restored table.
     pub(crate) fn restored_root(&self, slot: u32, generation: u32) -> Option<RootId> {
-        let entry = self.entries.get(slot as usize)?;
-        (entry.generation == generation && entry.value.is_some()).then_some(RootId { table: self.id, slot, generation })
+        let root = RootId { table: self.id, slot, generation };
+        self.held_slot(root).map(|_| root)
     }
 
     pub(crate) fn insert(&mut self, value: Value) -> RootId {
         while let Some(slot) = self.free.pop() {
-            let entry = &mut self.entries[slot as usize];
+            let entry = &mut self.slots[slot as usize];
             let Some(generation) = entry.generation.checked_add(1) else {
                 continue;
             };
             entry.generation = generation;
-            entry.value = Some(value);
-            return RootId {
-                table: self.id,
-                slot,
-                generation: entry.generation,
-            };
+            self.hold(slot, value);
+            return RootId { table: self.id, slot, generation };
         }
-        let slot = u32::try_from(self.entries.len()).expect("root table exhausted");
-        self.entries.push(Entry {
-            generation: 1,
-            value: Some(value),
-        });
-        RootId {
-            table: self.id,
-            slot,
-            generation: 1,
-        }
+        let slot = u32::try_from(self.slots.len()).expect("root table exhausted");
+        self.slots.push(Slot { generation: 1, live: Slot::FREE });
+        self.hold(slot, value);
+        RootId { table: self.id, slot, generation: 1 }
     }
 
     /// A root that lasts until the scope that made it ends (`release_scope`).
@@ -184,16 +221,10 @@ impl RootTable {
         if root.table == self.scope.id {
             return self.scoped_entry(root).map(|entry| entry.value = Some(value)).is_some();
         }
-        if root.table != self.id {
-            return false;
-        }
-        let Some(entry) = self.entries.get_mut(root.slot as usize) else {
+        let Some(slot) = self.held_slot(root) else {
             return false;
         };
-        if entry.generation != root.generation || entry.value.is_none() {
-            return false;
-        }
-        entry.value = Some(value);
+        self.live.values[slot.live as usize] = value;
         true
     }
 
@@ -202,13 +233,7 @@ impl RootTable {
             let entry = self.scope.entries.get(root.slot as usize)?;
             return (entry.generation == root.generation).then_some(entry.value).flatten();
         }
-        if root.table != self.id {
-            return None;
-        }
-        let entry = self.entries.get(root.slot as usize)?;
-        (entry.generation == root.generation)
-            .then_some(entry.value)
-            .flatten()
+        self.held_slot(root).and_then(|slot| self.slot_value(slot))
     }
 
     pub(crate) fn remove(&mut self, root: RootId) -> bool {
@@ -220,35 +245,36 @@ impl RootTable {
             self.trim_scope();
             return true;
         }
-        if root.table != self.id {
-            return false;
-        }
-        let Some(entry) = self.entries.get_mut(root.slot as usize) else {
+        let Some(slot) = self.held_slot(root) else {
             return false;
         };
-        if entry.generation != root.generation || entry.value.is_none() {
-            return false;
+        // The last live value moves into the hole, and its slot follows it.
+        self.live.values.swap_remove(slot.live as usize);
+        self.live.slots.swap_remove(slot.live as usize);
+        if let Some(&moved) = self.live.slots.get(slot.live as usize) {
+            self.slots[moved as usize].live = slot.live;
         }
-        entry.value = None;
+        self.slots[root.slot as usize].live = Slot::FREE;
         self.free.push(root.slot);
         true
     }
 
-    /// Entry slots, live or free: the most values `values` yields.
+    /// The most values `values` yields.
     pub(crate) fn slot_count(&self) -> usize {
-        self.entries.len() + self.scope.entries.len()
+        self.live.values.len() + self.scope.entries.len()
     }
 
     pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
-        self.entries.iter().chain(&self.scope.entries).filter_map(|entry| entry.value)
+        self.live.values.iter().copied().chain(self.scope.entries.iter().filter_map(|entry| entry.value))
     }
 
     pub(crate) fn clear(&mut self) {
         // A fresh scoped table, so no handle made before the reset names a later root.
         self.scope = ScopedRoots::default();
         self.free.clear();
-        for (slot, entry) in self.entries.iter_mut().enumerate() {
-            entry.value = None;
+        self.live = LiveRoots::default();
+        for (slot, entry) in self.slots.iter_mut().enumerate() {
+            entry.live = Slot::FREE;
             if entry.generation.checked_add(1).is_some() {
                 self.free.push(slot as u32);
             }
@@ -280,6 +306,20 @@ mod tests {
     }
 
     #[test]
+    fn released_roots_leave_only_live_values_to_scan() {
+        let mut roots = RootTable::default();
+        let burst: Vec<_> = (0..64).map(|n| roots.insert(Value::number(f64::from(n)))).collect();
+        let kept = burst[10];
+        for &root in burst.iter().filter(|&&root| root != kept) {
+            assert!(roots.remove(root));
+        }
+        assert_eq!(roots.slot_count(), 1);
+        assert_eq!(roots.values().collect::<Vec<_>>(), [Value::number(10.0)]);
+        assert!(roots.update(kept, Value::number(5.0)));
+        assert_eq!(roots.get(kept), Some(Value::number(5.0)));
+    }
+
+    #[test]
     fn clearing_the_heap_invalidates_pre_reset_handles() {
         let mut roots = RootTable::default();
         let old = roots.insert(Value::number(1.0));
@@ -294,7 +334,7 @@ mod tests {
     fn exhausted_generations_retire_root_slots_instead_of_wrapping() {
         let mut roots = RootTable::default();
         let first = roots.insert(Value::number(1.0));
-        roots.entries[first.slot as usize].generation = u32::MAX;
+        roots.slots[first.slot as usize].generation = u32::MAX;
         let last_generation = RootId {
             table: roots.id,
             slot: first.slot,
@@ -307,7 +347,7 @@ mod tests {
         assert_eq!(roots.get(last_generation), None);
         assert_eq!(roots.get(replacement), Some(Value::number(2.0)));
         assert!(!roots.free.contains(&last_generation.slot));
-        assert!(roots.entries[last_generation.slot as usize].value.is_none());
+        assert_eq!(roots.slots[last_generation.slot as usize].live, Slot::FREE);
     }
 
     #[test]

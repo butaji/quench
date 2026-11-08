@@ -7,8 +7,7 @@ use crate::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
 /// slot or register defined with more names none.
-pub(super) const STATIC_CALL_SITE_TARGETS: usize = 8;
-pub(crate) type StaticTargets = smallvec::SmallVec<[u32; STATIC_CALL_SITE_TARGETS]>;
+pub(crate) type StaticTargets = smallvec::SmallVec<[u32; super::super::tier_policy::POLYMORPHISM]>;
 
 #[derive(Clone, Copy)]
 enum Definition { Closure(u32), Name(Atom) }

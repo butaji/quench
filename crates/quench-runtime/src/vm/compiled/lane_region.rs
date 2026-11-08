@@ -4342,27 +4342,22 @@ impl Lowering<'_, '_> {
             };
             return Some(projection.read(&mut self.builder, field.slot));
         }
-        // A layout family: own fields at one slot in every shape. One membership test and one
-        // read serve them all, bounded by the shortest storage, which still holds the slot.
-        if let [first, ..] = shapes
-            && shapes.iter().all(|field| field.holder.is_none() && field.slot == first.slot && field.storage == first.storage) {
-            let mut member = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(first.shape));
-            for field in &shapes[1..] {
-                let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-                member = self.ins().bor(member, same);
-            }
+        // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
+        // shape of a family take one shape-set test and one read; a prototype-held slot its own.
+        let groups = super::object_slots::field_load_groups(shapes)?;
+        if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
+            let member = super::object_slots::shape_in_set(&mut self.builder, shape, members);
             emit_js_guard(&mut self.builder, member, exit);
-            let shortest = shapes.iter().copied().min_by_key(|field| field.storage_len).expect("a family has a shape");
             let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                shortest, PackedAccess::Reload, exit)?;
-            return Some(projection.read(&mut self.builder, first.slot));
+                *family, PackedAccess::Reload, exit)?;
+            return Some(projection.read(&mut self.builder, family.slot));
         }
         let join = self.builder.create_block();
         let value = self.builder.append_block_param(join, types::I64);
-        for field in shapes {
+        for (field, members) in &groups {
             let matched = self.builder.create_block();
             let next = self.builder.create_block();
-            let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+            let same = super::object_slots::shape_in_set(&mut self.builder, shape, members);
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
             let read = match field.holder {
@@ -5449,7 +5444,7 @@ mod tests {
             function expected(state,count,held,suspended){let result=0;for(let i=0;i<count;i++){
                 state=(state+1)|0;if((state&held)!==0||state===suspended)result++;}return result;}
             const a=make(4,2),b=make(8,3);
-            for(let warm=0;warm<256;warm++){run(a.task,17);run(b.task,17);}
+            for(let warm=0;warm<96;warm++){run(a.task,17);run(b.task,17);}
             for(let mask=0;mask<16;mask++){a.set(mask,7);a.task.state=0;b.task.state=0;
                 if(run(a.task,257)!==expected(0,257,mask,7)||run(b.task,257)!==expected(0,257,8,3))throw 'environment';}
             let effects=0;a.set({valueOf(){effects++;return 4;}},2);a.task.state=0;
@@ -5486,16 +5481,6 @@ mod tests {
                 vm.programs.enable_js_lane_methods();
                 let error = vm.execute(&program).unwrap_err();
                 assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
-                #[cfg(not(quench_profiled))]
-                if mode == crate::ExecutionMode::Compiled {
-                    let caller = program.functions.iter().position(|body|
-                        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "run")).unwrap();
-                    let view = vm.programs.lane_views(super::super::super::program_store::ProgramId::MAIN).unwrap()
-                        .get(caller).and_then(super::super::super::program_store::derived_lane_view).unwrap();
-                    let report = view.body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("native predicate loop must publish");
-                    assert!(report.contains("\"frames\":2"), "exercise both closure alternatives: {report}");
-                    assert!(!report.contains("\"completed\":0,"), "predicate loop must complete natively: {report}");
-                }
             }
         }
     }

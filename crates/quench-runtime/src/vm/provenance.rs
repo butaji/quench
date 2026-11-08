@@ -78,6 +78,18 @@ impl ConstructedShape {
     }
 }
 
+/// The metadata transitions `shape`'s chain records, which a shape rebuilt without its chain
+/// replays first: its function name, a reconfigured name or length, what constructed it.
+pub(super) fn metadata_transitions(shapes: &[Shape], shape: u32) -> impl Iterator<Item = ShapeTransition> {
+    let (function_name, constructed_name, name_reconfigured) = shape_names(shapes, shape);
+    [
+        function_name.map(|name| ShapeTransition::FunctionName { name }),
+        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
+        shape_function_length_reconfigured(shapes, shape).then_some(ShapeTransition::FunctionLengthReconfigured),
+        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+    ].into_iter().flatten()
+}
+
 pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
     let (mut function, mut constructed, mut reconfigured) = (None, None, false);
     let mut current = Some(shape);
