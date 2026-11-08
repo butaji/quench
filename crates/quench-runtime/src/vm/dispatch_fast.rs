@@ -14317,8 +14317,7 @@ fn lane_pure_native<H: Host>(
             if vm.heap.string(argument).is_some() {
                 return Some(argument);
             }
-            let text = super::coercion::immediate_to_string(argument)?;
-            let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
+            let value = vm.heap.alloc_string(super::coercion::immediate_to_string(argument)?);
             note_allocation(vm);
             Some(value)
         }
@@ -14333,7 +14332,7 @@ fn lane_pure_native<H: Host>(
             if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
         {
             let number = receiver.as_number()?;
-            let text = vm.heap.alloc_string(super::number::number_to_decimal(number).into());
+            let text = vm.heap.alloc_string(super::wtf16::JsString::from_number(number));
             note_allocation(vm);
             Some(text)
         }
