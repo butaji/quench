@@ -40,3 +40,33 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 }
+
+/// A global eval's source text with its text hash, which the heap made once for the
+/// string's record (`Heap::string_hash`): the cache's lookup, insertion and growth read the
+/// hash instead of hashing the text again.
+#[derive(Clone)]
+pub(crate) struct EvalSource {
+    pub(crate) hash: crate::vm::wtf16::TextHash,
+    pub(crate) text: JsString,
+}
+
+impl EvalSource {
+    /// The source of an eval of the heap string `value`, whose text is `text`.
+    pub(super) fn of(heap: &crate::heap::Heap, value: Value, text: &JsString) -> Self {
+        Self { hash: heap.string_hash(value).expect("eval source is a string"), text: text.clone() }
+    }
+}
+
+impl PartialEq for EvalSource {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.text == other.text
+    }
+}
+
+impl Eq for EvalSource {}
+
+impl std::hash::Hash for EvalSource {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.hash);
+    }
+}
