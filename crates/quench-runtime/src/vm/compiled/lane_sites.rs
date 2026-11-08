@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeMap<usize, Option<Value>> {
         let global = |function: u32| program.function_get(function as usize)
             .is_some_and(|body| body.names_resolve_statically(program))
-            && self.programs.unresolved_names_are_global(self.active_program, function);
+            && self.programs.names_are_global(self.active_program);
         unit.instructions.iter().enumerate()
             .filter(|(_, instruction)| matches!(instruction.op(), Op::LoadName | Op::LoadNameCall))
             .filter(|(pc, instruction)| {
