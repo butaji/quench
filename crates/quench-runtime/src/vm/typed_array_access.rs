@@ -257,36 +257,35 @@ impl<H: Host> Vm<H> {
     /// Run `f` over the bytes a typed array or DataView currently views, without copying
     /// them; empty once detached.
     pub(crate) fn embedding_with_view_bytes<T>(&self, value: Value, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
-        let (buffer, offset, byte_length) = match self.heap.get(value)? {
-            Cell::TypedArray {
-                object,
-                buffer,
-                kind,
-                ..
-            } => (
-                *buffer,
-                object.offset,
-                self.typed_array_length(value)?.checked_mul(kind.width())?,
-            ),
-            Cell::DataView { object, buffer, .. } => (
-                *buffer,
-                object.offset,
-                self.embedding_view_bytes_length(value),
-            ),
-            _ => return None,
-        };
-        let Cell::ArrayBuffer {
-            bytes, detached, ..
-        } = self.heap.get(buffer)?
-        else {
+        if matches!(self.heap.get(value)?, Cell::ArrayBuffer { .. }) {
             return None;
-        };
-        if *detached {
-            return Some(f(&[]));
         }
-        let end = offset.checked_add(byte_length)?;
-        let bytes = bytes.read();
-        Some(f(bytes.get(offset..end)?))
+        self.embedding_with_buffer_bytes(value, f)
+    }
+
+    /// Run `f` over the bytes `within` a view and a writable buffer's bytes at once: the input read
+    /// in place unless a write to the output could reach it; `None` past the view's end.
+    pub(crate) fn embedding_with_view_and_buffer_bytes_mut<T>(&mut self, input: Value, within: std::ops::Range<usize>, output: Value, f: impl FnOnce(&[u8], &mut [u8]) -> T) -> Option<T> {
+        if matches!(self.heap.get(input)?, Cell::ArrayBuffer { .. }) {
+            return None;
+        }
+        let (buffer, range) = self.embedding_buffer_range(input)?;
+        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else { return None };
+        let length = if *detached { 0 } else { range.len() };
+        if within.start > within.end || within.end > length {
+            return None;
+        }
+        let within = range.start + within.start..range.start + within.end;
+        if within.is_empty() {
+            return self.embedding_with_buffer_bytes_mut(output, |to| f(&[], to));
+        }
+        let Some(held) = bytes.unaliased_handle() else {
+            let copy = bytes.read().get(within)?.to_vec();
+            return self.embedding_with_buffer_bytes_mut(output, |to| f(&copy, to));
+        };
+        let from = held.read();
+        let from = from.get(within)?;
+        self.embedding_with_buffer_bytes_mut(output, |to| f(from, to))
     }
 
     /// `typed_array_get` of a non-BigInt typed array, which allocates nothing: the element,
