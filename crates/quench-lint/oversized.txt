@@ -492,7 +492,7 @@ complexity crates/quench-runtime/src/bytecode/control_flow.rs::is_bounded 12
 complexity crates/quench-runtime/src/bytecode/disassemble.rs::write_index_immediate 12
 complexity crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_value 29
 complexity crates/quench-runtime/src/bytecode/initialization.rs::accesses 12
-complexity crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 20
+complexity crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 19
 complexity crates/quench-runtime/src/bytecode/validate.rs::ResidualProgram::validate 125
 complexity crates/quench-runtime/src/bytecode/validate.rs::field_domains_in_bounds 28
 complexity crates/quench-runtime/src/bytecode/validate.rs::immediate_domains_in_bounds 46
@@ -537,7 +537,7 @@ complexity crates/quench-runtime/src/compile/early.rs::validate_modifier_groups 
 complexity crates/quench-runtime/src/compile/early.rs::validate_nested 28
 complexity crates/quench-runtime/src/compile/early.rs::validate_strict_statements 23
 complexity crates/quench-runtime/src/compile/frame_registers.rs::drop_unread_self_binding 14
-complexity crates/quench-runtime/src/compile/frame_registers.rs::promote 51
+complexity crates/quench-runtime/src/compile/frame_registers.rs::promote 49
 complexity crates/quench-runtime/src/compile/locals.rs::Compiler<'_>::collect_locals_into 47
 complexity crates/quench-runtime/src/compile/native_sources/constructors.rs::Discovery<'_>::expression 18
 complexity crates/quench-runtime/src/compile/object_registers.rs::promote 11
@@ -1428,7 +1428,7 @@ file-lines crates/quench-runtime/src/compile/ast/statement.rs 851
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2007
 file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 528
-file-lines crates/quench-runtime/src/compile/liveness.rs 713
+file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1682
@@ -2536,7 +2536,7 @@ function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_index_im
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_field 46
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_immediate 54
 function-lines crates/quench-runtime/src/bytecode/disassemble.rs::write_scalar_value 114
-function-lines crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 107
+function-lines crates/quench-runtime/src/bytecode/initialization.rs::initialized_before_reads 94
 function-lines crates/quench-runtime/src/bytecode/tests.rs::compact_encoding_names_every_atom_by_its_text 84
 function-lines crates/quench-runtime/src/bytecode/tests.rs::decoder_rejects_invalid_binding_site_metadata 43
 function-lines crates/quench-runtime/src/bytecode/tests.rs::decoder_rejects_runtime_abi_mismatch_before_tables 99
@@ -2631,7 +2631,7 @@ function-lines crates/quench-runtime/src/compile/early.rs::validate_modifier_gro
 function-lines crates/quench-runtime/src/compile/early.rs::validate_nested 77
 function-lines crates/quench-runtime/src/compile/early.rs::validate_strict_statements 80
 function-lines crates/quench-runtime/src/compile/frame_registers.rs::drop_unread_self_binding 46
-function-lines crates/quench-runtime/src/compile/frame_registers.rs::promote 253
+function-lines crates/quench-runtime/src/compile/frame_registers.rs::promote 252
 function-lines crates/quench-runtime/src/compile/liveness.rs::general_uses 46
 function-lines crates/quench-runtime/src/compile/liveness.rs::tests::branch_roots_are_derived_from_successor_uses 70
 function-lines crates/quench-runtime/src/compile/locals.rs::Compiler<'_>::collect_locals_into 313
@@ -2644,7 +2644,7 @@ function-lines crates/quench-runtime/src/compile/regexp.rs::validate_unicode_esc
 function-lines crates/quench-runtime/src/compile/regexp.rs::validate_unicode_quantifier_braces 48
 function-lines crates/quench-runtime/src/compile/replay.rs::recompile 223
 function-lines crates/quench-runtime/src/compile/replay.rs::verify 68
-function-lines crates/quench-runtime/src/compile/rewrite.rs::coalesce_distant_producer_moves 106
+function-lines crates/quench-runtime/src/compile/rewrite.rs::coalesce_distant_producer_moves 103
 function-lines crates/quench-runtime/src/compile/rewrite.rs::relocate 42
 function-lines crates/quench-runtime/src/compile/rewrite.rs::relocate_source_positions 60
 function-lines crates/quench-runtime/src/compile/rewrite.rs::remove_dead_moves 46
