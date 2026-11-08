@@ -2286,12 +2286,9 @@ impl Lowering<'_, '_> {
             // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
             // and an untyped one is taken for an int, tested once, which leaves where it is not.
             Op::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
-                let source = instruction.register_b();
-                if !state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER) {
-                    let exit = self.guard_exit(state, pc as u32);
-                    self.int(state, source, exit);
-                }
-                self.copy(state, instruction.result_register(), source);
+                let exit = self.guard_exit(state, pc32);
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric {
+                    destination: instruction.result_register(), source: instruction.register_b() }));
                 Some(true)
             }
             // Anything but `null` and `undefined` is coercible; those take the lane's TypeError.
@@ -2433,7 +2430,7 @@ impl Lowering<'_, '_> {
                         crate::staged::Overflow::Exit
                     };
                     self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                        crate::staged::Operation::IncDec { destination, source, decrement, overflow });
+                        crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { destination, source, decrement, overflow }));
                     true
                 })
             }
@@ -2877,7 +2874,7 @@ impl Lowering<'_, '_> {
     fn number_relation_step(&mut self, state: &mut State, miss: ir::Block,
         relation: super::operations::NumberRelation, left: Operand, right: Operand,
         domain: crate::staged::Domain) -> ir::Value {
-        let operation = crate::staged::Operation::NumberRelation { left, right, relation, domain };
+        let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Relation { left, right, relation, domain });
         match self.step(state, frame::Edges::ValueGuarded { miss }, operation) {
             crate::staged::Step::Value(value) => value,
             _ => unreachable!("a relation produces a predicate"),
@@ -4775,9 +4772,9 @@ impl Lowering<'_, '_> {
                     _ => false,
                 });
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
-                    let operation = crate::staged::Operation::NumberArithmetic { destination, left, right,
+                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
                         operation: arithmetic, domain: crate::staged::Domain::Float64,
-                        overflow: crate::staged::Overflow::Exit };
+                        overflow: crate::staged::Overflow::Exit });
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if proved_int {
                     // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
@@ -4787,8 +4784,8 @@ impl Lowering<'_, '_> {
                     } else {
                         crate::staged::Overflow::Exit
                     };
-                    let operation = crate::staged::Operation::NumberArithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow };
+                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
+                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow });
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if arithmetic.int32_projection_is_wrapping()
                     && self.truncated(pc, destination) {

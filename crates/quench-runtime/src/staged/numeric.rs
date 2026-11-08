@@ -1,7 +1,7 @@
 //! Number x Number semantics over `Stage`/`Frame`, shared by the interpreter and native tiers.
 
 use super::{Frame, Stage, Step};
-use crate::bytecode::Operand;
+use crate::bytecode::{Operand, Register};
 use crate::vm::operations::{
     CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberF64Stage, NumberRelation,
     PartialOrderStage,
@@ -54,13 +54,46 @@ pub(crate) trait NumericStage: Stage {
 pub(crate) trait NumericFrame<S: Stage>: Frame<S> {
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
     fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
+    /// Continue where `register` holds a Number; `None` where it does not, so nothing runs
+    /// past it. A specializer may prove a narrower representation its facts favor (an
+    /// untyped register taken for an int32), leaving at `miss` for the rest.
+    fn prove_number(&mut self, stage: &mut S, register: Register, miss: S::Miss) -> Option<()>;
     fn miss(&self) -> S::Miss;
     fn int_fact(&self) -> Self::Fact;
     fn number_fact(&self) -> Self::Fact;
 }
 
+/// A Number operation `step` runs, with the operands a tier decoded.
+#[derive(Clone, Copy)]
+pub(crate) enum NumberOperation {
+    /// Number x Number arithmetic with both operands in `domain`.
+    Arithmetic { destination: Register, left: Operand, right: Operand,
+        operation: NumberArithmetic, domain: Domain, overflow: Overflow },
+    /// Number x Number relation, producing its predicate word.
+    Relation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
+    /// `source ± 1` (`++`, or `--` where `decrement`) of an int32 `source`.
+    IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
+    /// ToNumeric of a Number `source` into `destination`; any other value leaves.
+    ToNumeric { destination: Register, source: Register },
+}
+
+/// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
+#[inline(always)]
+pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: NumberOperation) -> Step<S::Word, F::Control> {
+    match operation {
+        NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow } =>
+            arithmetic(stage, frame, destination, left, right, operation, domain, overflow),
+        NumberOperation::Relation { left, right, relation, domain } =>
+            self::relation(stage, frame, left, right, relation, domain),
+        NumberOperation::IncDec { destination, source, decrement, overflow } =>
+            increment(stage, frame, destination, source, decrement, overflow),
+        NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
+    }
+}
+
 /// A relation of two operands in `domain`; its predicate word.
-pub(crate) fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let (left, right) = match domain {
@@ -72,8 +105,8 @@ pub(crate) fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.
-pub(crate) fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: crate::bytecode::Register, left: Operand, right: Operand,
+fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, left: Operand, right: Operand,
     operation: NumberArithmetic, domain: Domain, overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     match domain {
@@ -93,9 +126,20 @@ pub(crate) fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
     }
 }
 
+/// ToNumeric of a Number `source`: the Number itself, copied with its facts. Any other
+/// value leaves (the interpreter converts a BigInt or a primitive by its general path).
+fn to_numeric<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Register) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    match frame.prove_number(stage, source, miss) {
+        Some(()) => Step::Value(frame.move_register(stage, destination, source)),
+        None => Step::Unresolved,
+    }
+}
+
 /// `source ± 1` (`++`/`--`) of an int32 `source`: the int32 sum or difference with one.
-pub(crate) fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: crate::bytecode::Register, source: crate::bytecode::Register, decrement: bool,
+fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Register, decrement: bool,
     overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let value = frame.int_operand(stage, Operand::register(source), miss);
@@ -106,7 +150,7 @@ pub(crate) fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
 
 #[allow(clippy::too_many_arguments)]
 fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: crate::bytecode::Register, left_value: S::Word, right_value: S::Word,
+    destination: Register, left_value: S::Word, right_value: S::Word,
     operation: NumberArithmetic, overflow: Overflow, miss: S::Miss) -> Step<S::Word, F::Control> {
     let (result, overflowed) = stage.int_arithmetic(operation, left_value, right_value);
     if overflow == Overflow::Exit && stage.guard_false(overflowed, miss).is_none() {

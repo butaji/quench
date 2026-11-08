@@ -240,6 +240,14 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
             .expect("a numeric operand is a register or an immediate")
     }
 
+    fn prove_number(&mut self, stage: &mut Emit<'_, '_>, register: Register, miss: ir::Block) -> Option<()> {
+        // A register its facts do not prove a Number is taken for an int32, tested once.
+        if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) {
+            register_int_value(stage.builder, self.registers, self.state, register, miss);
+        }
+        Some(())
+    }
+
     fn miss(&self) -> ir::Block {
         match self.edges {
             Edges::ValueGuarded { miss } => miss,

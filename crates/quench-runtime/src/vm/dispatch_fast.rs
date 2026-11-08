@@ -2821,7 +2821,7 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
-use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_require_object_coercible};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_require_object_coercible, staged_to_numeric};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -3319,11 +3319,13 @@ script_handler! {
 script_handler! {
     /// Numbers and BigInts convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        if value.as_number().is_none() && !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
-            return exit(ip);
+        if !staged_to_numeric(r, Carried::script(cx), i.a, i.b) {
+            let value = r.get(i.b);
+            if !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
+                return exit(ip);
+            }
+            r.set(i.a, value);
         }
-        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }

@@ -68,6 +68,7 @@ impl NumericFrame<Concrete> for NumberFrame {
             NumberWord::Float(value) => value.to_bits(),
         }
     }
+    fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { Some(()) }
     fn miss(&self) {}
     fn int_fact(&self) -> Domain { Domain::Int32 }
     fn number_fact(&self) -> Domain { Domain::Float64 }
@@ -82,10 +83,10 @@ fn concrete_arithmetic(left: NumberWord, right: NumberWord, operation: NumberAri
     domain: Domain, overflow: Overflow) -> Option<NumberWord> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = number_frame(left, right);
-    let operation = Operation::NumberArithmetic {
+    let operation = Operation::Number(NumberOperation::Arithmetic {
         destination: 2, left: Operand::register(0), right: Operand::register(1),
         operation, domain, overflow,
-    };
+    });
     match step(&mut stage, &mut frame, operation) {
         Step::Value(_) => Some(frame.values[2]),
         Step::Unresolved => None,
@@ -96,9 +97,9 @@ fn concrete_arithmetic(left: NumberWord, right: NumberWord, operation: NumberAri
 fn concrete_relation(left: NumberWord, right: NumberWord, relation: NumberRelation, domain: Domain) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = number_frame(left, right);
-    let operation = Operation::NumberRelation {
+    let operation = Operation::Number(NumberOperation::Relation {
         left: Operand::register(0), right: Operand::register(1), relation, domain,
-    };
+    });
     match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => word != 0,
         _ => panic!("a relation produces a predicate"),
@@ -188,7 +189,7 @@ fn staged_number_relations_are_ieee_comparisons_in_both_domains() {
 fn concrete_increment(value: i32, decrement: bool, overflow: Overflow) -> Option<NumberWord> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = number_frame(NumberWord::Int(value), NumberWord::Int(0));
-    let operation = Operation::IncDec { destination: 2, source: 0, decrement, overflow };
+    let operation = Operation::Number(NumberOperation::IncDec { destination: 2, source: 0, decrement, overflow });
     match step(&mut stage, &mut frame, operation) {
         Step::Value(_) => Some(frame.values[2]),
         Step::Unresolved => None,

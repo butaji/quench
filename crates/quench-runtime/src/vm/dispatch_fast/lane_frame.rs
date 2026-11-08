@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register};
-use crate::staged::{Concrete, Constant, Edge, Frame, NumericFrame, Operation, Step};
+use crate::staged::{Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
@@ -60,6 +60,10 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number operand").to_bits()
     }
 
+    fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
+        Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
+    }
+
     fn miss(&self) {}
     fn int_fact(&self) {}
     fn number_fact(&self) {}
@@ -87,6 +91,19 @@ pub(super) fn staged_require_object_coercible(r: Registers, view: Carried, regis
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a coercibility test transfers no control"),
+    }
+}
+
+/// ToNumeric of a Number register `source` into `destination`, by the staged operation;
+/// false, writing nothing, where `source` is not a Number.
+#[inline(always)]
+pub(super) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    match crate::staged::step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination, source })) {
+        Step::Value(_) => true,
+        Step::Unresolved => false,
+        Step::Control(_) => unreachable!("a conversion transfers no control"),
     }
 }
 

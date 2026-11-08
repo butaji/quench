@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use crate::Value;
@@ -121,6 +122,9 @@ impl NumericFrame<Concrete> for ConcreteFrame<'_> {
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a numeric operand is a register");
         Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits()
+    }
+    fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
+        Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
     }
     fn miss(&self) {}
     fn int_fact(&self) {}
@@ -311,5 +315,24 @@ fn staged_require_object_coercible_rejects_only_null_and_undefined() {
     assert!(!coercible(Value::UNDEFINED));
     for value in [Value::TRUE, Value::FALSE, Value::number(0.0), Value::number(f64::NAN), Value::number(-0.0)] {
         assert!(coercible(value), "{value:?}");
+    }
+}
+
+#[test]
+fn staged_to_numeric_copies_numbers_and_leaves_for_the_rest() {
+    let convert = |value: Value| {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::UNDEFINED.to_bits()], heap: None };
+        match step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination: 1, source: 0 })) {
+            Step::Value(_) => Some(Value::from_bits(frame.registers[1])),
+            Step::Unresolved => { assert_eq!(frame.registers[1], Value::UNDEFINED.to_bits()); None }
+            Step::Control(_) => panic!("a conversion transfers no control"),
+        }
+    };
+    for value in [Value::number(1.5), Value::number(-0.0), Value::number(f64::NAN), Value::number(7.0)] {
+        assert_eq!(convert(value).map(Value::to_bits), Some(value.to_bits()), "{value:?}");
+    }
+    for value in [Value::NULL, Value::UNDEFINED, Value::TRUE] {
+        assert_eq!(convert(value), None, "{value:?}");
     }
 }
