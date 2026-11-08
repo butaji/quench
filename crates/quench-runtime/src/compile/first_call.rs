@@ -192,8 +192,11 @@ pub(super) struct Stubs<'a> {
     pub(super) roots: Starts,
     /// The source of the program a chunk compiles from, which the chunk shares.
     pub(super) kept_source: Option<&'a crate::bytecode::ProgramSource>,
-    /// Nested functions may compile as stubs: the source is an indirect eval's.
+    /// Nested functions may compile as stubs: the source is an indirect eval's. Its lazily
+    /// parsed bodies' call-only facts are deferred (`call_only::deferred`).
     pub(super) nested_allowed: bool,
+    /// The functions whose deferred call-only facts are found, by source range.
+    pub(super) call_only_found: Vec<(u32, u32)>,
     /// The free names of the lazily parsed functions (`BodyFacts::check`).
     pub(super) free_names: FreeNames,
     /// The nested stubs by id, in order, with the scopes their chunks compile against.
@@ -207,10 +210,11 @@ pub(super) struct Stubs<'a> {
 impl Stubs<'_> {
     /// Plans the stubs of a program of `shape`: its root functions, and its nested ones when
     /// the source is an indirect eval's, whose captures `free_names` predict.
-    pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, free_names: FreeNames) {
+    pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, (free_names, call_only_found): (FreeNames, Vec<(u32, u32)>)) {
         self.roots = shape.first_call_roots(replayable, program, inherited_strict);
-        self.nested_allowed = replayable && matches!(shape, ParsedProgramShape::Eval(..));
+        self.nested_allowed = shape.stubs_functions(replayable);
         self.free_names = free_names;
+        self.call_only_found = call_only_found;
     }
 
     /// Whether a program keeps a replay: it has functions a replay compiles (unless
@@ -233,6 +237,7 @@ impl Compiler<'_> {
             return id;
         }
         self.lazy_compiled.push(body);
+        self.find_deferred_call_only_facts(function, &context);
         self.compile_lazy_function(function, context)
     }
 

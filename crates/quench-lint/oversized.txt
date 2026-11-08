@@ -1427,7 +1427,6 @@ file-lines crates/quench-runtime/src/compile/ast/expression.rs 970
 file-lines crates/quench-runtime/src/compile/ast/statement.rs 851
 file-lines crates/quench-runtime/src/compile/class.rs 1285
 file-lines crates/quench-runtime/src/compile/early.rs 2007
-file-lines crates/quench-runtime/src/compile/lazy_bodies.rs 528
 file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
