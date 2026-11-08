@@ -8365,14 +8365,8 @@ fn lane_loop_run<H: Host>(
             LoopContinuation::Jump
         }
         // A run pays for its entry with the iterations it completed, wherever it leaves.
-        LoopOutcome::Resume(pc) => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Resume(pc)
-        }
-        LoopOutcome::Exit(pc) => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Exit(pc)
-        }
+        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
+        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {

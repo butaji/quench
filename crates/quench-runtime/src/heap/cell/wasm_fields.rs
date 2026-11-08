@@ -50,6 +50,7 @@ impl std::ops::Deref for WasmGcFields {
 }
 
 impl std::ops::DerefMut for WasmGcFields {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut [Value] {
         let fields = self.len();
         &mut self.0[..fields]
