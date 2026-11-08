@@ -8,6 +8,7 @@ use std::rc::Rc;
 mod append_buffer;
 mod short_ascii;
 mod concat_all;
+mod search;
 pub(super) use concat_all::JsStringBuilder;
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
 
@@ -258,6 +259,11 @@ impl FlatUnits {
         }
     }
 
+    /// The string of these units' `range`, as `JsString::substring`.
+    pub(crate) fn substring(&self, range: Range<usize>) -> JsString {
+        JsString::from_flat(self.run(range))
+    }
+
     /// The units `range` of these, sharing ASCII storage when the run is too long to hold
     /// inline. `range` must lie within the units.
     fn run(&self, range: Range<usize>) -> Self {
@@ -407,29 +413,6 @@ impl<'a> Units<'a> {
         prefix.len() <= self.len() && self.slice(0..prefix.len()) == prefix
     }
 
-    /// The first index at or after `start` where `search` occurs.
-    pub(crate) fn find(self, search: Units<'_>, start: usize) -> Option<usize> {
-        if search.is_empty() {
-            return Some(start.min(self.len()));
-        }
-        if search.len() > self.len() {
-            return None;
-        }
-        let last = self.len() - search.len();
-        if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            if start > last {
-                return None;
-            }
-            if let [unit] = needle {
-                return memchr::memchr(*unit, &haystack[start..]).map(|offset| start + offset);
-            }
-            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
-        }
-        let first = search.at(0);
-        (start..=last).find(|index| {
-            self.at(*index) == first && self.slice(*index..*index + search.len()) == search
-        })
-    }
 }
 
 impl PartialEq for Units<'_> {
@@ -801,7 +784,7 @@ impl JsString {
     /// The units `range` of this string (`String.prototype.slice` and its kin). A long ASCII
     /// result shares this string's storage; any other result is copied.
     pub(crate) fn substring(&self, range: Range<usize>) -> Self {
-        Self::from_flat(self.flat().run(range))
+        self.flat().substring(range)
     }
 
     /// Number::toString(10) of `value`, written on the stack: text this short is held inline.

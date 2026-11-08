@@ -941,7 +941,7 @@ complexity crates/quench-runtime/src/vm/primitive_bench/captures.rs::dense_read 
 complexity crates/quench-runtime/src/vm/primitive_bench/commutative_reads.rs::alias_states 14
 complexity crates/quench-runtime/src/vm/primitive_bench/field_reads.rs::entry_reads_at 28
 complexity crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::fractional_stencil 20
-complexity crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 100
+complexity crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 96
 complexity crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 17
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 31
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 53
@@ -1509,7 +1509,7 @@ file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2670
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
-file-lines crates/quench-runtime/src/vm/primitives.rs 728
+file-lines crates/quench-runtime/src/vm/primitives.rs 685
 file-lines crates/quench-runtime/src/vm/program_store.rs 4030
 file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
@@ -1539,7 +1539,7 @@ file-lines crates/quench-runtime/src/vm/wasm_gc.rs 517
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1418
 file-lines crates/quench-runtime/src/vm/wasm_js.rs 1978
 file-lines crates/quench-runtime/src/vm/wasm_table.rs 1038
-file-lines crates/quench-runtime/src/vm/wtf16.rs 1424
+file-lines crates/quench-runtime/src/vm/wtf16.rs 1407
 file-lines crates/quench-runtime/src/wasm.rs 2153
 file-lines crates/quench-runtime/src/wasm/constant.rs 980
 file-lines crates/quench-runtime/src/wasm/control.rs 1087
@@ -3433,7 +3433,7 @@ function-lines crates/quench-runtime/src/vm/primitive_bench/fields.rs::cached_ow
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::fractional_stencil 171
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::indexed_composition 62
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs::indexed_number_forwarding_restores_every_fallback_boundary 44
-function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 526
+function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 504
 function-lines crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 66
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 136
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 338
