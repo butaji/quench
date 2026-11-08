@@ -161,14 +161,12 @@ fn typed_field_call_compiles_with_observed_target() {
             .and_then(super::program_store::derived_lane_view).unwrap();
         let report = view.body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("field call must enter the typed unit");
         let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
-        // One leave, once: `c1[ L<line>] <pc> f<function>@<pc> <op>` (`LaneBodyStats::report`).
+        // One leave, once, `c1[ L<line>] <pc> f<function>@<pc> <op>` (`LaneBodyStats::report`), never at the call.
         let leaves = report.split_once("\"leaves\":[[").map(|(_, leaves)| leaves).unwrap_or_default();
-        // It runs to its return, or leaves once at its successor: never at the call.
-        let completed = report.contains("\"completed\":1,") && leaves.is_empty();
+        let completed = report.contains("\"completed\":1,") && leaves.is_empty(); // Or it runs to its return.
         assert!(completed || leaves.ends_with("\",1]]}") && !leaves.contains("],[") && leaves.contains(&format!(" {exit} f")),
             "the native loop must leave once at its successor, never at the call: {report}");
-        let expected = (0..4000).fold(7i32, |control, _|
-            (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
+        let expected = (0..4000).fold(7i32, |control, _| (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
         let answer = vm.intern_atom("answer");
         assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(expected)));
         owners.push(vm);
@@ -6610,7 +6608,7 @@ fn closure_identity_cache_rejects_reused_function_slots() {
             .next()
             .is_none()
     );
-    vm.prune_function_values();
+    vm.prune_function_values(true);
     assert!(!vm.function_values.contains_key(&key));
 }
 
@@ -18459,9 +18457,7 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
       function addCaptured(value) {
-        // A primitive's method read misses every compiled cache: the VM steps it and the call
-        // after it as one island.
-        if (value === 63) { "island".toString(); $262.gc(); }
+        if (value === 63) { "island".toString(); $262.gc(); } // a primitive's read misses: an island with the call
         return captured.value + value;
       }
       var result = 0;

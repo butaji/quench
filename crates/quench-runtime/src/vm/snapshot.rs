@@ -466,9 +466,7 @@ impl<H: Host> Vm<H> {
         writer.bool(*specialized);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
-        for name in atom_text.iter() {
-            writer.str(name);
-        }
+        atom_text.iter().for_each(|name| writer.str(name));
         writer.len(atom_sequence.appended_len());
         for offset in 0..atom_sequence.appended_len() {
             atom_sequence.appended(offset).write_snapshot(&mut writer);
@@ -503,6 +501,7 @@ impl<H: Host> Vm<H> {
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
         writer.u32s(&transitions.children().collect::<Vec<_>>());
+        shape_lookup::owned_dictionaries(shapes).snap(&mut writer)?;
         symbol_registry.snap(&mut writer)?;
         well_known_symbols.snap(&mut writer)?;
         for atom in [length_atom, prototype_atom, to_fixed_atom, to_precision_atom] {
@@ -511,7 +510,7 @@ impl<H: Host> Vm<H> {
         runtime_atoms.snap(&mut writer)?;
         descriptors.snap(&mut writer)?;
         writer.len(function_values.len());
-        for (key, handles) in function_values {
+        for (key, handles) in function_values.iter() {
             key.snap(&mut writer)?;
             let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
@@ -608,7 +607,7 @@ impl<H: Host> Vm<H> {
                         .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
-            self.function_values.insert(key, handles);
+            self.function_values.record(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
@@ -710,6 +709,7 @@ impl<H: Host> Vm<H> {
                 return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
         }
+        shape_lookup::restore_owned_dictionaries(&mut self.shapes, Snap::unsnap(reader)?)?;
         Ok(())
     }
 

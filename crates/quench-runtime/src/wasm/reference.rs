@@ -79,6 +79,13 @@ pub(crate) fn module_type_index(heap: HeapType) -> Option<(u32, bool)> {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReferenceTarget(u32);
+
+/// The heap type a cast target names.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TargetHeap {
+    Module { index: u32, exact: bool },
+    Abstract(AbstractHeapType),
+}
 impl ReferenceTarget {
     pub(crate) fn from_type(ty: RefType) -> Option<Self> {
         let (index, flags) = match ty.heap_type() {
@@ -98,6 +105,12 @@ impl ReferenceTarget {
         let target = Self(tag);
         target.reference_type().map(|_| target)
     }
+    /// The target of a tag bytecode validation accepted (`from_tag`), read without
+    /// rebuilding its type.
+    #[inline]
+    pub(crate) fn validated(tag: u32) -> Self {
+        Self(tag)
+    }
     pub(crate) fn descriptor_type(self, owner: &super::WasmTypes) -> Option<super::WasmType> {
         let (index, exact) = module_type_index(self.reference_type()?.heap_type())?;
         let super::WasmType::Reference {
@@ -114,6 +127,19 @@ impl ReferenceTarget {
     }
     pub(crate) fn tag(self) -> u32 {
         self.0
+    }
+    /// What this target names, read from the tag alone.
+    #[inline]
+    pub(crate) fn heap(self) -> Option<TargetHeap> {
+        let index = self.0 >> INDEX_SHIFT;
+        Some(match (self.0 & DEFINED != 0, self.0 & EXACT != 0) {
+            (true, exact) => TargetHeap::Module { index, exact },
+            (false, false) => TargetHeap::Abstract(*ABSTRACT_TYPES.get(index as usize)?),
+            (false, true) => return None,
+        })
+    }
+    pub(crate) fn is_nullable(self) -> bool {
+        self.0 & NULLABLE != 0
     }
     pub(crate) fn reference_type(self) -> Option<RefType> {
         let index = self.0 >> INDEX_SHIFT;

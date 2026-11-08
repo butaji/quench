@@ -55,6 +55,25 @@ impl<H: Host> Vm<H> {
 }
 
 impl ShapeLookupIndex {
+    /// Each of `storage_len` slots' live property and attributes, as a shape chain derives
+    /// them (`gc::active_shape_attributes`).
+    pub(super) fn slot_entries(&self, storage_len: usize) -> Vec<Option<(PropertyKey, ShapeAttributes)>> {
+        let mut slots = vec![None; storage_len];
+        for &(key, slot) in self.live_entries() {
+            let attributes = self.attributes.get(&slot).copied().unwrap_or(DEFAULT_SHAPE_ATTRIBUTES);
+            slots[slot as usize] = Some((key, attributes));
+        }
+        slots
+    }
+    /// The index `slot_entries` describes: the live properties in slot order, which is an
+    /// owned dictionary's definition order.
+    pub(super) fn from_slots(slots: &[Option<(PropertyKey, ShapeAttributes)>]) -> Self {
+        let live = slots.iter().enumerate().filter_map(|(slot, entry)| Some((slot as u32, (*entry)?)));
+        let entries = live.clone().map(|(slot, (key, _))| (key, slot)).collect();
+        let attributes = live.filter(|(_, (_, attributes))| *attributes != DEFAULT_SHAPE_ATTRIBUTES)
+            .map(|(slot, (_, attributes))| (slot, attributes)).collect();
+        Self::new(entries, attributes)
+    }
     /// The live properties in definition order, with their slots.
     pub(super) fn live_entries(&self) -> impl Iterator<Item = &(PropertyKey, u32)> + Clone {
         self.entries.iter().filter(|(_, slot)| *slot != VACANT_SLOT)
@@ -80,6 +99,18 @@ impl ShapeLookupIndex {
         }
         Some(())
     }
+    /// Renumbers the live properties' slots in definition order, as an owned dictionary packs
+    /// its storage, and returns each one's former slot.
+    pub(super) fn pack(&mut self) -> Vec<u32> {
+        if self.entries.len() != self.live_len() {
+            self.compact();
+        }
+        let former: Vec<u32> = self.entries.iter().map(|&(_, slot)| slot).collect();
+        self.entries.iter_mut().zip(0..).for_each(|(entry, packed)| entry.1 = packed);
+        let mut attributes = std::mem::take(&mut self.attributes);
+        self.attributes = (former.iter().zip(0..)).filter_map(|(slot, packed)| Some((packed, attributes.remove(slot)?))).collect();
+        former
+    }
     /// Drops the vacant entries and renumbers the live ones' positions.
     fn compact(&mut self) {
         self.entries.retain(|(_, slot)| *slot != VACANT_SLOT);
@@ -92,6 +123,9 @@ impl ShapeLookupIndex {
         }
     }
 }
+
+mod owned_dictionary;
+pub(super) use owned_dictionary::{owned_dictionaries, owned_slots, rebuild_owned_dictionary, restore_owned_dictionaries};
 
 #[cfg(test)]
 mod tests;
