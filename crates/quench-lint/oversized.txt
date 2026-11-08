@@ -3041,7 +3041,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_activate
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 68
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_left 52
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_frame 46
+function-lines crates/quench-runtime/src/vm/dispatch_fast/wasm_calls.rs::lane_call_frame 46
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native_out 56
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_read 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_complete_activation 73
