@@ -1,7 +1,8 @@
 //! Owned dictionaries: the shape of the one object that entered dictionary mode by deleting
 //! most of its properties (`DictionaryTrigger::DeletionPattern`). No cache or other object
-//! names it, so its lookup index is the authority and its deletes and descriptor edits
-//! happen in place; the chain does not record them.
+//! names it, so its lookup index is the authority, which each add, delete and descriptor edit
+//! moves to the next shape outside the transition cache. Like every other shape, an owned one
+//! never changes once made: a hint naming it and a slot holds while its object keeps it.
 use super::*;
 use crate::snapshot::{SnapshotError, SnapshotResult};
 
@@ -79,34 +80,28 @@ pub(in crate::vm) fn restore_owned_dictionaries(
 
 impl<H: Host> Vm<H> {
     /// `transition` applied to owned dictionary `shape`, or `None` when `shape` is not one or
-    /// `transition` is metadata, which provenance reads from the chain. A delete or a
-    /// descriptor edits its index and facts in place; an add, which lengthens the storage its
-    /// shape id records (`ValueArena::len`), makes the next shape, which takes the index.
-    /// Neither enters the transition cache, and the index is never derived again: an object
-    /// used as a map otherwise cached and indexed a shape per add and delete, which each
-    /// collection dropped and the next round made again.
+    /// `transition` is metadata, which provenance reads from the chain. An add, a delete or a
+    /// descriptor makes the next shape, which takes the index extended by it, so a shape's slots
+    /// and attributes stay fixed and the global object, which two deletes make an owned
+    /// dictionary, keeps its by-name hints (`Vm::own_data_field_hint`). None enters the
+    /// transition cache, and the index is never derived again: an object used as a map
+    /// otherwise cached and indexed a shape per add and delete, which each collection dropped
+    /// and the next round made again.
     pub(in crate::vm) fn owned_dictionary_edit(&mut self, shape: u32, transition: ShapeTransition) -> Option<u32> {
         if !is_owned(&self.shapes[shape as usize]) {
             return None;
         }
-        match transition {
-            ShapeTransition::Add { .. } => {
-                let storage_len = self.shapes[shape as usize].storage_len() + 1;
-                Some(self.append_shape(shape, transition, storage_len))
-            }
-            ShapeTransition::Delete { .. } | ShapeTransition::Descriptor { .. } => {
-                let index = match self.shapes[shape as usize].lookup_index.take() {
-                    Some(index) => index,
-                    None => Box::new(derive_shape_lookup_index(&self.shapes, shape)),
-                };
-                let index = index.extended_by(transition).expect("an owned dictionary deletes only keys it holds");
-                let entry = &mut self.shapes[shape as usize];
-                entry.lookup_index = OnceCell::from(index);
-                entry.facts = entry.facts.extended_by(transition);
-                Some(shape)
-            }
-            _ => None,
+        let added = match transition {
+            ShapeTransition::Add { .. } => 1,
+            ShapeTransition::Delete { .. } | ShapeTransition::Descriptor { .. } => 0,
+            _ => return None,
+        };
+        if self.shapes[shape as usize].lookup_index.get().is_none() {
+            let index = Box::new(derive_shape_lookup_index(&self.shapes, shape));
+            self.shapes[shape as usize].lookup_index = OnceCell::from(index);
         }
+        let storage_len = self.shapes[shape as usize].storage_len() + added;
+        Some(self.append_shape(shape, transition, storage_len))
     }
 
     /// The shape `transition` makes from `shape`, with `next_storage_len` slots, entering
