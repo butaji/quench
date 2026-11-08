@@ -5307,10 +5307,9 @@ type UpdateForm = u8;
 const UPDATE_STORES: UpdateForm = 0;
 /// The store and its read of the capture (`lane_store_capture_load`).
 const UPDATE_LOADS: UpdateForm = 1;
-/// `UPDATE_LOADS` followed by a `Return` of the read's register: a body that is the update,
-/// as `function () { c = (c + 1) | 0; return c; }` compiles, whose plain call the call record
-/// answers (`lane_script_call_update_capture`).
-const UPDATE_RETURNS: UpdateForm = 2;
+/// The records an `UPDATE_LOADS` run covers: the read, the operator, its truncation, the store
+/// and the store's read.
+const UPDATE_LOADS_RUN: usize = 5;
 
 /// The int32 update a fused record `update` (`lane_update_capture_int32`) makes of its capture
 /// in the dense slots `capture` (`LaneContext::capture`, `ScriptCallTarget::capture`): the old
@@ -11932,62 +11931,6 @@ script_handler! {
     }
 }
 
-/// The call handler of a plain call record `i` whose target is a capture leaf whose body is a
-/// fused capture update returning the value it stores (`UPDATE_RETURNS`):
-/// `lane_script_call_update_capture` of its operator; `None` for any other target or a call
-/// returning its completion.
-fn capture_update_call_handler<H: Host>(target: &ScriptCallTarget, i: &LaneInstruction) -> Option<Handler> {
-    use super::operations::{ADDITION, SUBTRACTION};
-    if target.entry != CallEntry::CaptureLeaf || i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return None;
-    }
-    // SAFETY: the program store keeps a derived view alive with its program.
-    let first = unsafe { &*(*target.view).records() }.handler;
-    if first == lane_update_capture_int32::<H, ADDITION, UPDATE_RETURNS> as Handler as *const () {
-        Some(lane_script_call_update_capture::<H, ADDITION>)
-    } else if first == lane_update_capture_int32::<H, SUBTRACTION, UPDATE_RETURNS> as Handler as *const () {
-        Some(lane_script_call_update_capture::<H, SUBTRACTION>)
-    } else {
-        None
-    }
-}
-
-script_handler! {
-    /// A plain call of a capture leaf whose body is a fused update of `OP` returning the value
-    /// it stores (`capture_update_call_handler`): the update of the target's captures
-    /// (`capture_int32_update`), the call's value, as the leaf's records would make it, without
-    /// entering them. The body reads no parameter, receiver or frame state and runs no guest
-    /// code, so nothing observes the call it does not make. Another target takes
-    /// `lane_script_call_requicken`, an update its record declines `lane_script_call_full`.
-    fn lane_script_call_update_capture<OP: u32>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        let target = if unsafe { (*cx).script_calls } && !lane_constructing(vm, callee) {
-            vm.linked_script_call_entry(callee, &i.call_link)
-        } else {
-            None
-        };
-        // SAFETY: as `Vm::script_call_entry`; the update resolves no target and collects nothing.
-        let Some(target) = target.map(|target| unsafe { &*target }) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
-        };
-        if target.entry != CallEntry::CaptureLeaf {
-            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
-        }
-        // SAFETY: the program store keeps a derived view alive with its program.
-        let update = unsafe { &*(*target.view).records() };
-        // One test proves the body: a view holds this record first only for such a body.
-        if update.handler != lane_update_capture_int32::<H, OP, UPDATE_RETURNS> as Handler as *const () {
-            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
-        }
-        let Some((_, value)) = capture_int32_update::<OP>(target.capture, update) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
 /// The form a call record `i` whose linked target is a leaf (`entry`) calls it with: the
 /// `lane_script_call_leaf` instantiation of its entry and argument count, or, for a record
 /// past `FIXED_ARGUMENT_COPIES` or returning its completion, which completes its caller too,
@@ -13370,6 +13313,8 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
+mod capture_update_calls;
+use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
@@ -21262,7 +21207,6 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
     let store_load = lane_store_capture_load::<H> as Handler as *const ();
     let add = lane_operator_int32::<H, ADDITION, true> as Handler as *const ();
     let subtract = lane_operator_int32::<H, SUBTRACTION, true> as Handler as *const ();
-    let returns = lane_return::<H, NOT_LEAF> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(3) {
         let (read, operator, truncation, write) = (&records[pc], &records[pc + 1], &records[pc + 2], &records[pc + 3]);
         if read.handler != load
@@ -21274,13 +21218,7 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
         {
             continue;
         }
-        let form = if write.handler == store {
-            UPDATE_STORES
-        } else if records.get(pc + 5).is_some_and(|done| done.handler == returns && done.a == records[pc + 4].a) {
-            UPDATE_RETURNS
-        } else {
-            UPDATE_LOADS
-        };
+        let form = if write.handler == store { UPDATE_STORES } else { UPDATE_LOADS };
         macro_rules! forms {
             ($($form:ident),*) => {
                 match (operator.handler == add, form) {
@@ -21290,7 +21228,7 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
                 }
             };
         }
-        let handler = forms!(UPDATE_STORES, UPDATE_LOADS, UPDATE_RETURNS);
+        let handler = forms!(UPDATE_STORES, UPDATE_LOADS);
         records[pc].handler = handler as *const ();
     }
 }
