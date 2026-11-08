@@ -125,7 +125,7 @@ vm/compiled/lane_region/stable.rs LoadName 1
 vm/compiled/lane_region/stable.rs LoadNameCall 1
 vm/compiled/lane_unit.rs Call 8
 vm/compiled/lane_unit.rs Construct 4
-vm/compiled/lane_unit.rs GetField 6
+vm/compiled/lane_unit.rs GetField 5
 vm/compiled/lane_unit.rs GetIndex 1
 vm/compiled/lane_unit.rs IncDec 2
 vm/compiled/lane_unit.rs Jump 4
