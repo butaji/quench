@@ -1,5 +1,5 @@
 //! Constructions native code makes in place: a lane body's planned or initialized
-//! receiver, and a frameless construction's receiver and result.
+//! receiver, a frameless construction's receiver and result, and an intrinsic array.
 use super::{Host, JsStepDispatch, ResidualProgram, Vm};
 use crate::Value;
 
@@ -55,7 +55,28 @@ pub(super) unsafe extern "C" fn general_construct_result<H: Host>(vm: u64, _resi
     if vm.is_object_like(Value::from_bits(value)) { value } else { receiver }
 }
 
-/// The construction helpers' addresses, as `JsStepDispatch` holds them.
-pub(super) fn construct_helpers<H: Host>() -> (usize, usize) {
-    (general_construct_receiver::<H> as *const () as usize, general_construct_result::<H> as *const () as usize)
+/// `new Array(...)` of the `argc` registers at `arguments` (`Vm::intrinsic_array_construction`)
+/// with no collection due; else `Value::DELETED` before any effect. The allocation may have
+/// grown the heap's arenas, whose bases the dispatch then holds again.
+///
+/// # Safety
+/// As `general_user_call`; `arguments` holds `argc` registers of the running frame.
+pub(super) unsafe extern "C" fn general_array_construct<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64,
+    arguments: u64, argc: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    // SAFETY: as the caller promises.
+    let args = unsafe { std::slice::from_raw_parts(arguments as *const Value, argc as usize) };
+    let Some(array) = vm.intrinsic_array_construction(Value::from_bits(callee), args) else { return Value::DELETED.to_bits() };
+    super::super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    array.to_bits()
+}
+
+/// The construction helpers' addresses, as `JsStepDispatch` holds them: the receiver, the
+/// result and the intrinsic array.
+pub(super) fn construct_helpers<H: Host>() -> (usize, usize, usize) {
+    (general_construct_receiver::<H> as *const () as usize, general_construct_result::<H> as *const () as usize,
+        general_array_construct::<H> as *const () as usize)
 }

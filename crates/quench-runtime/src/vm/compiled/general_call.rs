@@ -6,7 +6,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
-use crate::bytecode::{Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::{ConstructArguments, Op, WideInstruction, RETURN_REGISTER};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -119,7 +119,8 @@ fn emit_register_return(builder: &mut FunctionBuilder<'_>, (arguments, destinati
     block
 }
 
-/// Lowers the plain `new` at `pc` frameless, the exact step taking any miss.
+/// Lowers the plain `new` at `pc` frameless, else as an intrinsic array
+/// (`general_array_construct`), the exact step taking any miss.
 fn lower_construct(
     builder: &mut FunctionBuilder<'_>,
     (pc, instruction, next): (usize, WideInstruction, ir::Block),
@@ -134,7 +135,23 @@ fn lower_construct(
     let framed = builder.create_block();
     if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
         destination, framed).is_none() { return false; }
-    exact.emit(builder, framed);
+    builder.switch_to_block(framed);
+    // A frameless construction takes only plain register windows, every register framed.
+    let ConstructArguments::Registers(window) = instruction.construct_arguments() else { unreachable!() };
+    let offset = |register| register_offset(register).expect("the frameless construction's register");
+    let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset(instruction.register_b()));
+    let window_base = if window.count == 0 { 0 } else { offset(window.base) };
+    let values = builder.ins().iadd_imm_s(arguments, i64::from(window_base));
+    let count = builder.ins().iconst(types::I64, i64::from(window.count));
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, array_construct));
+    let array = emit_lane_helper_call(builder, payload, helper, &[payload, callee, values, count]);
+    let built = builder.ins().icmp_imm_u(IntCC::NotEqual, array, Value::DELETED.to_bits() as i64);
+    let (store, fallback) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(built, store, &[], fallback, &[]);
+    builder.switch_to_block(store);
+    builder.ins().store(MemFlagsData::trusted(), array, arguments, destination);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
     true
 }
 
