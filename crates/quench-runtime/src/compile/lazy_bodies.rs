@@ -216,8 +216,9 @@ pub(super) fn parse<'a>(
     source_type: SourceType,
     lazy_from: Option<u32>,
     check: Option<oxc_parser::LazyBodyCheck>,
+    inherited_strict: bool,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);

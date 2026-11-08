@@ -305,6 +305,12 @@ pub struct ParseOptions {
     ///
     /// Default: `None`
     pub lazy_body_check: Option<LazyBodyCheck>,
+
+    /// The program inherits strict mode (eval code in strict code) without a directive of its
+    /// own: lazily parsed bodies are checked as strict code (`lazy_body_check`).
+    ///
+    /// Default: `false`
+    pub inherited_strict: bool,
 }
 
 /// A borrowed check of each lazily parsed function (`ParseOptions::lazy_body_check`).
@@ -355,6 +361,7 @@ impl Default for ParseOptions {
             enable_ident_hashes: true,
             lazy_function_bodies: None,
             lazy_body_check: None,
+            inherited_strict: false,
         }
     }
 }
@@ -808,7 +815,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             is_ts: source_type.is_typescript(),
             lazy_depth: 0,
             lazy_function_bodies: Vec::new(),
-            strict: source_type.is_module(),
+            strict: source_type.is_module() || options.inherited_strict,
             regexp_literals: Vec::new(),
             call_assignment_targets: 0,
         }
