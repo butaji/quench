@@ -105,6 +105,18 @@ fn an_object_used_as_a_map_edits_its_own_dictionary_in_place() {
 }
 
 #[test]
+fn an_owned_dictionary_packs_its_storage_as_keys_come_and_go() {
+    // At most 256 keys live at once, while 100000 come and go: its slots stay near the live count.
+    let source = "var o = {}; for (var i = 0; i < 64; i++) o['k' + i] = i; for (var i = 0; i < 60; i++) delete o['k' + i];
+        for (var i = 0; i < 1e5; i++) { o['x' + (i & 255)] = i; delete o['x' + ((i * 7) & 255)]; }";
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&Engine::specialize(source, "churn.js").unwrap()).unwrap();
+    let owned = vm.shapes.iter().filter(|shape| shape.dictionary_trigger == Some(DictionaryTrigger::DeletionPattern));
+    let widest = owned.map(Shape::storage_len).max().unwrap_or(0);
+    assert!(widest <= 2 * 260, "an owned dictionary grew to {widest} slots");
+}
+
+#[test]
 fn an_owned_dictionary_keeps_order_attributes_and_symbols() {
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));

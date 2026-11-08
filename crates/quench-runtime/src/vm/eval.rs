@@ -1174,7 +1174,7 @@ impl<H: Host> Vm<H> {
         let mut first_home = None;
         for binding in bindings {
             let identity = self.atom_name(binding.atom).to_owned();
-            let Some(label) = private_identity_label(&identity) else { continue; };
+            let Some(label) = private_identity_label(&identity).map(str::to_owned) else { continue; };
             if names.iter().any(|(name, _)| name == &label) { continue; }
             if let Ok(home) = self.load_name_binding(p, frame, binding) {
                 first_home.get_or_insert(home);
@@ -1185,7 +1185,7 @@ impl<H: Host> Vm<H> {
         let home = self.eval_home_binding(p)?;
         let names = self.object_data(home).into_iter().flat_map(|object| object.private_names()).filter_map(|brand| {
             let identity = self.atom_name(brand.name).to_owned();
-            private_identity_label(&identity).map(|label| (label, identity))
+            private_identity_label(&identity).map(str::to_owned).map(|label| (label, identity))
         }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });
         (!names.is_empty()).then_some((home, names))
     }

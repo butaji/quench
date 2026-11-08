@@ -129,6 +129,8 @@ pub(super) fn promote<'a>(
         eligible.remove(usize::from(slot));
     }
     let mut exclude = |slot: usize| eligible.remove(slot);
+    // The atoms by-name accesses resolve; a local of one of them keeps its slot.
+    let mut by_name = Vec::new();
     for instruction in function.instructions() {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
             for member in superinstructions[instruction.superinstruction_index()].code {
@@ -153,12 +155,7 @@ pub(super) fn promote<'a>(
                 | Op::StoreName
                 | Op::StoreResolvedName
         ) {
-            let atom = instruction.atom_index();
-            for (slot, local) in function.local_atoms.iter().enumerate() {
-                if *local == atom {
-                    exclude(slot);
-                }
-            }
+            by_name.push(instruction.atom_index());
         }
         if let Some(target) = instruction.numeric_local_target() {
             exclude(usize::from(target));
@@ -182,6 +179,8 @@ pub(super) fn promote<'a>(
             exclude(slot);
         }
     }
+    by_name.sort_unstable(); by_name.dedup();
+    function.local_atoms.iter().enumerate().filter(|(_, local)| by_name.binary_search(local).is_ok()).for_each(|(slot, _)| exclude(slot));
     // New registers follow the existing ones while liveness still covers the function and
     // operands can name them. A function whose registers already outnumber what liveness
     // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain
