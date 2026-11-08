@@ -1526,7 +1526,7 @@ file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3351
 file-lines crates/quench-runtime/src/vm/tests.rs 25378
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
-file-lines crates/quench-runtime/src/vm/typed_array_access.rs 960
+file-lines crates/quench-runtime/src/vm/typed_array_access.rs 959
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
 file-lines crates/quench-runtime/src/vm/vector_region.rs 950
 file-lines crates/quench-runtime/src/vm/wasm.rs 6501
@@ -2353,7 +2353,7 @@ function-lines crates/quench-node/src/modules/zlib_native_brotli_rust.rs::Codec:
 function-lines crates/quench-node/src/modules/zlib_native_brotli_rust.rs::Codec::write 65
 function-lines crates/quench-node/src/modules/zlib_native_codec_zlib.rs::Codec::new 44
 function-lines crates/quench-node/src/modules/zlib_native_codec_zlib.rs::Codec::process 51
-function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::arguments 42
+function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::arguments 41
 function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::binding 54
 function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::initialize 57
 function-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs::poll 66
