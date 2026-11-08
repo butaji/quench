@@ -28,16 +28,15 @@ enum Verdict {
     Retire,
 }
 
-/// Past its last recompile, a body most of whose runs complete keeps its code and any other
-/// retires: entering code that mostly leaves costs more than the lane. Before it, a body that
+/// Past its last recompile, a body any run of which completed keeps its code and any other
+/// retires: a run that leaves after a long native stretch still paid for its entry. Before it, a body that
 /// left only where its predecessors did gained nothing from their feedback: it settles where
 /// its runs mostly complete, and retires otherwise, as one that left from many places and
 /// never completed does. Any other takes the
 /// places it left at, and its predecessors', generically next (`LaneView::specialize_lane_body`).
-fn verdict(recompiles: u8, completions: u16, exits: u16, leaves: LaneLeaves, stuck: LaneLeaves) -> Verdict {
+fn verdict(recompiles: u8, completed: bool, leaves: LaneLeaves, stuck: LaneLeaves) -> Verdict {
     let repeated = leaves != LaneLeaves::NONE && leaves.within(&stuck);
-    let completed = completions > 0;
-    match (recompiles >= TIERS.lane_body.max_recompiles, completions >= exits) {
+    match (recompiles >= TIERS.lane_body.max_recompiles, completed) {
         (true, true) => Verdict::Keep,
         (true, false) => Verdict::Retire,
         (false, true) if repeated => Verdict::Settle,
@@ -55,7 +54,7 @@ impl LaneView {
         let body = unsafe { &mut *self.tier_lane.get() };
         let LaneBody::Specialized { exits, leaves_at, completed, recompiles, tier_prologue, stuck, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
-            completed.set(completed.get().saturating_add(1));
+            completed.set(true);
             return;
         }
         exits.set(exits.get().saturating_add(1));
@@ -63,13 +62,13 @@ impl LaneView {
         if exits.get() < TIERS.lane_body.reoptimize_exits << *recompiles {
             return;
         }
-        let next = match verdict(*recompiles, completed.get(), exits.get(), leaves_at.get(), *stuck) {
+        let next = match verdict(*recompiles, completed.get(), leaves_at.get(), *stuck) {
             Verdict::Keep => return,
             Verdict::Settle => return *recompiles = TIERS.lane_body.max_recompiles,
             Verdict::Retire => LaneBody::Declined,
             Verdict::Recompile(stuck) => {
                 // A body no run of which completed was a wasted compile, whatever comes next.
-                if completed.get() == 0 { self.note_wasted_compile(); }
+                if !completed.get() { self.note_wasted_compile(); }
                 LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck }
             }
         };
@@ -121,7 +120,7 @@ impl LaneView {
     /// wasted (`LaneBodyHistory`).
     pub(super) fn drop_body(&self, body: &mut LaneBody) {
         let LaneBody::Specialized { completed, leaves_at, stuck, recompiles, .. } = body else { return };
-        let (completed, stuck, recompiles) = (completed.get() > 0, stuck.union(leaves_at.get()), *recompiles);
+        let (completed, stuck, recompiles) = (completed.get(), stuck.union(leaves_at.get()), *recompiles);
         let history = self.history.get();
         self.history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
@@ -145,7 +144,7 @@ impl LaneView {
         };
         use std::cell::Cell;
         LaneBody::Specialized { method, tier_prologue, runs: Cell::new(runs), leaves: Cell::new(0), exits: Cell::new(0),
-            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(0), recompiles, stuck }
+            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 
     /// Whether it may still get a body: its code compiles, or it warms toward a compile its
