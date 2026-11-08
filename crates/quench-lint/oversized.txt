@@ -1450,7 +1450,7 @@ file-lines crates/quench-runtime/src/typed_ir.rs 577
 file-lines crates/quench-runtime/src/value.rs 1031
 file-lines crates/quench-runtime/src/value_vec.rs 1479
 file-lines crates/quench-runtime/src/vm.rs 3772
-file-lines crates/quench-runtime/src/vm/array.rs 1201
+file-lines crates/quench-runtime/src/vm/array.rs 1199
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 668
 file-lines crates/quench-runtime/src/vm/array_modern.rs 924
