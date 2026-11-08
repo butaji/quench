@@ -1506,7 +1506,7 @@ file-lines crates/quench-runtime/src/vm/number.rs 937
 file-lines crates/quench-runtime/src/vm/object.rs 4979
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1462
-file-lines crates/quench-runtime/src/vm/object_integrity.rs 844
+file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
 file-lines crates/quench-runtime/src/vm/object_static.rs 906
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
@@ -3379,7 +3379,7 @@ function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_l
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_get 67
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 114
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::validate_proxy_get 44
-function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 108
+function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 104
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_get_prototype_of 67
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_extensible 50
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_integrity_level 48
