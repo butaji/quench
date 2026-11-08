@@ -1473,15 +1473,11 @@ impl Program {
         taken.map_or(to, |taken| from + taken)
     }
 
-    /// The first match at a position from `first`, trying only `first` when `sticky`.
-    pub(crate) fn find<T: Text + ?Sized>(
-        &self,
-        text: &T,
-        first: usize,
-        sticky: bool,
-    ) -> Option<Found> {
+    /// The first match at a position from `first`, trying only `first` when `sticky`, with
+    /// its captures collected where `captures` asks for them.
+    pub(crate) fn find<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool, captures: bool) -> Option<Found> {
         self.search(text, first, sticky, |registers| {
-            registers[..2 * self.capture_count]
+            registers[..if captures { 2 * self.capture_count } else { 0 }]
                 .as_chunks::<2>().0.iter()
                 .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
                 .collect()
@@ -1489,13 +1485,8 @@ impl Program {
     }
 
     /// `find`'s match bounds alone: its captures are never collected.
-    pub(crate) fn find_bounds<T: Text + ?Sized>(
-        &self,
-        text: &T,
-        first: usize,
-        sticky: bool,
-    ) -> Option<Range<usize>> {
-        self.search(text, first, sticky, |_| Vec::new()).map(|found| found.start..found.end)
+    pub(crate) fn find_bounds<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool) -> Option<Range<usize>> {
+        self.find(text, first, sticky, false).map(|found| found.start..found.end)
     }
 
     /// `find`, with the captures of a match built from its registers by `captures`.
@@ -2255,7 +2246,7 @@ mod tests {
                             .find_units(&units, first)
                             .map(|found| (found.range, found.captures));
                         let actual = program
-                            .find(&units[..], first, false)
+                            .find(&units[..], first, false, true)
                             .map(|found| {
                                 let found = regex.unit_match(
                                     &units,
@@ -2275,8 +2266,8 @@ mod tests {
                         if !regex.flags.unicode {
                             // Outside unicode mode a decoded unit is a code unit.
                             let code_units = subject.encode_utf16().collect::<Vec<_>>();
-                            let wide = program.find(&code_units[..], first, false);
-                            let decoded = program.find(&units[..], first, false);
+                            let wide = program.find(&code_units[..], first, false, true);
+                            let decoded = program.find(&units[..], first, false, true);
                             assert_eq!(
                                 raw(wide),
                                 raw(decoded),
@@ -2285,7 +2276,7 @@ mod tests {
                         }
                         if subject.is_ascii() {
                             let bytes = program
-                                .find(subject.as_bytes(), first, false)
+                                .find(subject.as_bytes(), first, false, true)
                                 .map(|found| (found.start..found.end, found.captures));
                             assert_eq!(
                                 bytes, expected,
@@ -2303,11 +2294,11 @@ mod tests {
                                 "/{pattern}/{flags} sticky on {subject:?} at {first}"
                             );
                         };
-                        let decoded = |sticky| program.find(&units[..], first, sticky);
+                        let decoded = |sticky| program.find(&units[..], first, sticky, true);
                         at_first(&decoded);
                         if subject.is_ascii() {
                             let bytes = subject.as_bytes();
-                            at_first(&|sticky| program.find(bytes, first, sticky));
+                            at_first(&|sticky| program.find(bytes, first, sticky, true));
                         }
                     }
                 }
