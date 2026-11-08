@@ -1,5 +1,5 @@
-use super::module::ModuleRecord;
-use super::promise::PromiseState;
+mod collection_boundary;
+use super::{module::ModuleRecord, promise::PromiseState};
 use super::*;
 use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
