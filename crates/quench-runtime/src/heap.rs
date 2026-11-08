@@ -3702,6 +3702,14 @@ impl Heap {
         else { TargetShape::NONE }
     }
 
+    /// `observed_slot_target` for a store to `slot` of an object of `shape`: a slot whose
+    /// observed pointee is already any shape takes nothing new, so the value's record is not
+    /// classified (`ValueArena::slot_target_settled`).
+    #[inline(always)]
+    fn stored_slot_target(&self, shape: u32, slot: usize, value: Value) -> TargetShape {
+        if self.properties.slot_target_settled(shape, slot) { TargetShape::ANY } else { self.observed_slot_target(value) }
+    }
+
     /// Observes the value before writing the named object's slot.
     #[inline(always)]
     fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
@@ -3787,7 +3795,9 @@ impl Heap {
         if !LOGS && self.object_records.store_logs(record_id, value) {
             return false;
         }
-        let target = self.observed_slot_target(value);
+        // SAFETY: the caller proves the record live.
+        let shape = unsafe { self.object_records.get_live(record_id) }.shape();
+        let target = self.stored_slot_target(shape, slot, value);
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe {
             if LOGS {
@@ -3851,7 +3861,7 @@ impl Heap {
     /// `shape` is a shape outside dictionary storage holding a property at `slot`.
     #[inline(always)]
     pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
-        let target = self.observed_slot_target(value);
+        let target = self.stored_slot_target(shape, slot, value);
         let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
             return false;
         };

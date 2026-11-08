@@ -498,6 +498,22 @@ pub(super) fn restartable_numeric_function(program: &ResidualProgram, function: 
     super::super::js_compiled::function_candidate(function, program) && numeric_instructions(program, instructions)
 }
 
+/// The writes the raw stores of `instructions` may make, once per physical slot (shape and
+/// slot), independently of cache-row binding availability: each store site's one proved
+/// field's declared type.
+pub(super) fn store_domains(instructions: &[WideInstruction], fields: &BTreeMap<u16, Vec<NativeFieldLoad>>) -> BTreeMap<(u32, u16), Type> {
+    let mut domains = BTreeMap::<(u32, u16), Type>::new();
+    for instruction in instructions {
+        if !instruction.op().is_field_store() { continue; }
+        if let Some([field]) = fields.get(&instruction.cache_site_index()).map(Vec::as_slice)
+            && field.ty != Type::NEVER {
+            let domain = domains.entry((field.shape, field.slot)).or_insert(Type::NEVER);
+            *domain = domain.join(field.ty);
+        }
+    }
+    domains
+}
+
 fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstruction]) -> bool {
     instructions.iter().all(|instruction| {
         if instruction.writes_current_this()
@@ -2200,18 +2216,10 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
-        // Profiled raw stores preserve their declared field type. Register those possible
-        // writes once per physical slot, independently of cache-row binding availability.
-        let mut domains = BTreeMap::<(u32, u16), Type>::new();
-        for instruction in instructions {
-            if !instruction.op().is_field_store() { continue; }
-            if let Some(fields) = self.fields.get(&instruction.cache_site_index())
-                && let [field] = fields.as_slice()
-                && field.ty != Type::NEVER {
-                let domain = domains.entry((field.shape, field.slot)).or_insert(Type::NEVER);
-                *domain = domain.join(field.ty);
-            }
-        }
+        // Profiled raw stores preserve their declared field type. An online body's plan
+        // registered those possible writes before it was lowered (`Vm::admit_lane_stores`);
+        // other code registers them here, at each entry.
+        let domains = if self.vm.online.is_some() { BTreeMap::new() } else { store_domains(instructions, self.fields) };
         for ((shape, slot), domain) in domains {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
