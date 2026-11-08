@@ -1147,7 +1147,7 @@ complexity crates/quench-wasm-test/src/wast_json.rs::directive_json 13
 complexity crates/quench-wasm-test/src/wast_json.rs::ret_core_json 15
 complexity crates/quench-wasm-test/src/wast_script.rs::directive_kind 14
 complexity crates/quench-wasm-test/src/wast_script.rs::score_directive 16
-complexity crates/quench-wasm/src/shared.rs::Module::lower_shared_definition 36
+complexity crates/quench-wasm/src/shared.rs::Module<'_>::lower_shared_definition 36
 complexity crates/quench-wasm/src/shared.rs::tests::recursive_type_equivalence_and_ancestry_match_validator_identity 11
 complexity crates/quench-wasm/src/shared/control_tests.rs::bytecode_interpreter_matches_model_in_both_modes::model 11
 complexity quench-bench/src/analysis.rs::analyze_diagnostic_ab_fixture 19
@@ -4108,7 +4108,7 @@ function-lines crates/quench-wasm-test/src/wast_json.rs::directive_json 47
 function-lines crates/quench-wasm-test/src/wast_script.rs::score_directive 60
 function-lines crates/quench-wasm-test/src/wast_script.rs::score_invalid 41
 function-lines crates/quench-wasm-test/src/wast_script.rs::score_valid_module 46
-function-lines crates/quench-wasm/src/shared.rs::Module::lower_shared_definition 243
+function-lines crates/quench-wasm/src/shared.rs::Module<'_>::lower_shared_definition 243
 function-lines crates/quench-wasm/src/shared.rs::decode_elements 66
 function-lines crates/quench-wasm/src/shared.rs::tests::recursive_type_equivalence_and_ancestry_match_validator_identity 109
 function-lines crates/quench-wasm/src/shared.rs::tests::type_declarations_preserve_recursive_indices_and_shared_ownership 43

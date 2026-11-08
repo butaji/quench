@@ -15840,16 +15840,6 @@ fn lane_callee_captures<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> (usi
 }
 
 impl<H: Host> Vm<H> {
-    /// `LaneStack::note_site_callee` while a lane body may read the history: only the
-    /// JavaScript tiers inline a site's callees (`lane_site_targets`), so interpreted
-    /// execution keeps no history, as V8's jitless mode allocates no feedback for an
-    /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
-    fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
-        if self.js_tier_runs() {
-            self.lane_stack.note_site_callee(link, target);
-        }
-    }
-
     /// The dense capture slots of `callee`'s environment (`EnvironmentSlots::native_dense_view`),
     /// as values and count, or none: what an inlined frame of it reads its captures from.
     pub(super) fn lane_callee_captures(&self, callee: Value) -> (usize, usize) {
@@ -19084,9 +19074,7 @@ fn lane_return_script_frame<H: Host>(
     loop {
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
         // a generator resumed in place finishes here as there (`PendingGeneralCall::completion`).
-        let returns_here = pending.last().is_some_and(|call| {
-            call.caller + 1 == frame && frame + 1 == vm.frames.len() && !call.completion.completes_on_general_path()
-        });
+        let returns_here = pending.last().is_some_and(|call| lane_completes_return(cx, call, frame, retired));
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
             // call made, `retired`) completes the loop's own frame with the value there.
@@ -19094,13 +19082,6 @@ fn lane_return_script_frame<H: Host>(
                 return exit(exit_ip);
             }
             return lane_frame_return(vm, exit_ip, value);
-        }
-        // A caller the general path runs without a view (`ProgramStore::entry_lane_view`
-        // deferred it) resumes there: the return runs again on the general path, which keeps
-        // the caller's own cursor, rather than deriving a view of every instruction of a
-        // function that may run once (mandreel's `global_init`: 614K records, 14 MB).
-        if !retired && caller_runs_general(cx, pending.last().expect("the pending call returns here")) {
-            return exit(exit_ip);
         }
         let mut call = pending.pop().expect("a pending call names the returning frame");
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
@@ -19145,17 +19126,6 @@ fn lane_return_script_frame<H: Host>(
 /// so the activation return saves no registers.
 #[cold]
 #[inline(never)]
-/// Whether `call`'s caller is a function of the running program whose view is not derived,
-/// so the general path runs it.
-fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the context's table holds the running program's views for the lane run.
-    call.caller_program.is_none()
-        && unsafe { &*(*cx).views }
-            .get(vm.frames[call.caller].function as usize)
-            .is_some_and(|view| super::program_store::derived_lane_view(view).is_none())
-}
-
 fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Resumed {
     let cx = lane_context::<H>();
     // SAFETY: called only while a lane runs, from its return handler.
@@ -23177,30 +23147,9 @@ mod instruction_set_tests {
 }
 
 #[cfg(test)]
-mod call_site_history_tests {
-    use super::*;
-    use super::super::compiled::{CallTarget, CalleeBinding};
-
-    #[test]
-    fn a_call_sites_history_keeps_each_callee_once_in_first_seen_order() {
-        // A callee met again leaves the record as it is; a further one evicts the oldest
-        // (`LaneStack::note_site_callee`).
-        let stack = LaneStack::default();
-        let link = std::cell::Cell::new(NO_CALL_LINK);
-        let target = |k: i32| CallTarget { callee: CalleeBinding::Identity(Value::integer(k)), function: k as u32 };
-        let history = || {
-            stack.call_sites.borrow()[&std::ptr::from_ref(&link).addr()].iter().map(|target| target.function).collect::<Vec<_>>()
-        };
-        for k in [1, 2, 3, 2, 2] {
-            stack.note_site_callee(&link, target(k));
-        }
-        assert_eq!(history(), [1, 2, 3]);
-        for k in [4, 1, 5] {
-            stack.note_site_callee(&link, target(k));
-        }
-        assert_eq!(history(), [2, 3, 4, 5]);
-    }
-}
+mod call_site_history_tests;
+mod on_demand_metadata;
+use on_demand_metadata::lane_completes_return;
 
 #[cfg(test)]
 mod numeric_pair_tests {
