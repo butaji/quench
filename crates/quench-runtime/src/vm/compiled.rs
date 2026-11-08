@@ -2257,6 +2257,35 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// Whether an equality JumpBinaryFalse (`negated` for `!=`, `!==`) takes its target, on to
+/// `join`, where the operands' identity decides it: one is a direct object and the other a
+/// direct object, `null` or `undefined`, so no conversion runs and neither is IsHTMLDDA, loosely
+/// or strictly. Any other pair goes on to `other`.
+fn emit_identity_equality(builder: &mut FunctionBuilder<'_>, (left, right): (ir::Value, ir::Value), negated: bool,
+    other: ir::Block, join: ir::Block) {
+    use crate::value::ValueLayout;
+    let object = |builder: &mut FunctionBuilder<'_>, bits| {
+        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+        builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64)
+    };
+    let identified = |builder: &mut FunctionBuilder<'_>, bits, object| {
+        let null = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+        let undefined = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+        let nullish = builder.ins().bor(null, undefined);
+        builder.ins().bor(object, nullish)
+    };
+    let (left_object, right_object) = (object(builder, left), object(builder, right));
+    let (left_identified, right_identified) = (identified(builder, left, left_object), identified(builder, right, right_object));
+    let identified = builder.ins().band(left_identified, right_identified);
+    let one_object = builder.ins().bor(left_object, right_object);
+    let decided = builder.ins().band(identified, one_object);
+    let identity = builder.create_block();
+    builder.ins().brif(decided, identity, &[], other, &[]);
+    builder.switch_to_block(identity);
+    let taken = builder.ins().icmp(if negated { IntCC::Equal } else { IntCC::NotEqual }, left, right);
+    builder.ins().jump(join, &[ir::BlockArg::Value(taken)]);
+}
+
 /// Whether JumpBinaryFalse takes its target. Where the IsHTMLDDA object may exist
 /// (`html_dda`), a loose test leaves at `fallback` for any heap value but an object record.
 fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
@@ -3219,33 +3248,22 @@ pub(super) fn lower_js_general_dispatch(
                     left,
                     right,
                 } => {
-                    let left = read_js_tagged_operand(
-                        &mut builder,
-                        program,
-                        left,
-                        arguments,
-                        &register_offset,
-                    )
-                    .expect("prevalidated JS relation operand");
-                    let left = emit_js_tagged_number(&mut builder, left, fallback);
-                    let right = read_js_tagged_operand(
-                        &mut builder,
-                        program,
-                        right,
-                        arguments,
-                        &register_offset,
-                    )
-                    .expect("prevalidated JS relation operand");
-                    let right = emit_js_tagged_number(&mut builder, right, fallback);
-                    let holds = emit_number_relation(
-                        &mut builder,
-                        operator,
-                        left,
-                        right,
-                        NumberRelationDomain::Float64,
-                    )
-                    .expect("prevalidated JavaScript numeric relation");
-                    builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
+                    let [left, right] = [left, right].map(|operand| read_js_tagged_operand(&mut builder, program, operand,
+                        arguments, &register_offset).expect("prevalidated JS relation operand"));
+                    let (number, join) = (builder.create_block(), builder.create_block());
+                    let taken = builder.append_block_param(join, types::I8);
+                    match super::operations::equality_operator(operator) {
+                        Some((_, negated)) => emit_identity_equality(&mut builder, (left, right), negated, number, join),
+                        None => { builder.ins().jump(number, &[]); }
+                    }
+                    builder.switch_to_block(number);
+                    let [left, right] = [left, right].map(|bits| emit_js_tagged_number(&mut builder, bits, fallback));
+                    let holds = emit_number_relation(&mut builder, operator, left, right, NumberRelationDomain::Float64)
+                        .expect("prevalidated JavaScript numeric relation");
+                    let fails = builder.ins().icmp_imm_u(IntCC::Equal, holds, 0);
+                    builder.ins().jump(join, &[ir::BlockArg::Value(fails)]);
+                    builder.switch_to_block(join);
+                    taken
                 }
                 JsGeneralBranch::NullishFalse(comparison) => {
                     let source = register_offset(comparison.source).expect("prevalidated branch register");
