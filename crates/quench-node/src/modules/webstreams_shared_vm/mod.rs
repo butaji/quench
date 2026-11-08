@@ -214,35 +214,26 @@ pub(crate) fn same(c: &mut Context<'_>, left: RootId, right: RootId) -> Result<b
     c.strict_equal_rooted(left, right)
 }
 
-/// A fresh null-prototype record with `fields`.
-pub(crate) fn record(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Outcome {
-    let object = c.null_object_rooted()?;
-    for &(name, value) in fields {
-        put(c, object, name, value)?;
-    }
-    Ok(object)
+/// A fresh null-prototype record of `names` holding `values`, made at its final shape.
+pub(crate) fn record(c: &mut Context<'_>, names: &'static [&'static str], values: &[RootId]) -> Outcome {
+    c.record_rooted(true, names, values)
 }
 
-/// A plain object with `fields` in order, as an object literal makes it.
-pub(crate) fn literal(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Outcome {
-    let object = c.object_rooted()?;
-    for &(name, value) in fields {
-        let key = c.string_rooted(name);
-        c.define_data_property_rooted(object, key, value, true, true, true)?;
-    }
-    Ok(object)
+/// A plain object of `names` holding `values` in order, as an object literal makes it.
+pub(crate) fn literal(c: &mut Context<'_>, names: &'static [&'static str], values: &[RootId]) -> Outcome {
+    c.record_rooted(false, names, values)
 }
 
 /// `{ value, done }`, in the order Node's read requests write it.
 pub(crate) fn read_result(c: &mut Context<'_>, value: RootId, done: bool) -> Outcome {
     let done = c.boolean(done);
-    literal(c, &[("value", value), ("done", done)])
+    literal(c, &["value", "done"], &[value, done])
 }
 
 /// `{ done, value }`, in the order Node's async iterator writes a finished step.
 pub(crate) fn done_result(c: &mut Context<'_>, value: RootId) -> Outcome {
     let done = c.boolean(true);
-    literal(c, &[("done", done), ("value", value)])
+    literal(c, &["done", "value"], &[done, value])
 }
 
 /// A queue of values: a record heading a singly linked list of `{ value, next }` cells.
@@ -258,7 +249,7 @@ pub(crate) mod list {
 
     pub(crate) fn new(c: &mut Context<'_>) -> Outcome {
         let empty = c.number(0.0);
-        record(c, &[(LENGTH, empty)])
+        record(c, &[LENGTH], &[empty])
     }
 
     pub(crate) fn len(c: &mut Context<'_>, list: RootId) -> Result<usize, RootedError> {
@@ -266,7 +257,7 @@ pub(crate) mod list {
     }
 
     pub(crate) fn push(c: &mut Context<'_>, list: RootId, value: RootId) -> Done {
-        let cell = record(c, &[(VALUE, value)])?;
+        let cell = record(c, &[VALUE], &[value])?;
         let tail = get(c, list, TAIL)?;
         if is_undefined(c, tail) {
             put(c, list, HEAD, cell)?;
@@ -335,7 +326,7 @@ pub(crate) fn intrinsic(c: &mut Context<'_>, name: &str) -> Outcome {
 
 fn build_intrinsics(c: &mut Context<'_>) -> Outcome {
     let state = c.private_symbol_rooted(Some("kState"));
-    let table = record(c, &[(key::STATE, state)])?;
+    let table = record(c, &[key::STATE], &[state])?;
     let global = c.global_root()?;
     let promise = get(c, global, "Promise")?;
     let promise_prototype = get(c, promise, "prototype")?;
