@@ -1628,7 +1628,7 @@ fn emit_js_guarded_return(
 }
 
 /// Complete the frame from general dispatch: the value is already in the completion record.
-fn emit_js_return_status(builder: &mut RegionCore<'_>, pc: usize) {
+fn emit_js_return_status(builder: &mut FunctionBuilder<'_>, pc: usize) {
     let status = builder.ins().iconst(
         types::I32,
         i64::from(JS_GENERAL_RETURN_STATUS_BASE)
@@ -2790,8 +2790,8 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
-        if let Some(next) = next && let Some(native) = general_call::lower_shortcut(&mut builder,
-            (pc, instruction, next), &register_offset, (arguments, payload),
+        if let Some(native) = general_call::lower_shortcut(&mut builder,
+            (pc, instruction, next), function.strict, &register_offset, (arguments, payload),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = if native { PcLowering::Native } else { PcLowering::Stepped } as u8;
             continue;
@@ -6681,6 +6681,9 @@ struct JsStepDispatch {
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
     call_targets: usize,
+    /// Whether the host makes a strict function's terminal calls proper tail calls
+    /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
+    proper_tail_calls: u64,
     /// The running heap's charged allocation weight and the weight a collection is due at,
     /// by address (`Heap::should_collect`), which a native back edge compares to leave for its
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
@@ -7432,7 +7435,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0, field_getter: 0,
-                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -7583,7 +7586,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7629,6 +7632,7 @@ impl JsStepDispatch {
         let vm_ref = unsafe { &*vm };
         self.call_targets = if vm_ref.direct_eval || vm_ref.parameter_eval { NO_CALL_TARGETS.as_ptr() }
             else { vm_ref.call_targets.as_ptr() } as usize;
+        self.proper_tail_calls = u64::from(vm_ref.host.proper_tail_calls());
         (self.construct_receiver, self.construct_result) = constructions::construct_helpers::<H>();
         self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
