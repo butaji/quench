@@ -675,7 +675,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether any key of `shape` is an array-index name, memoized on the immutable shape
     /// from its nearest known ancestor. A dictionary shape answers conservatively.
-    fn shape_has_index_key(&self, shape: u32) -> bool {
+    pub(super) fn shape_has_index_key(&self, shape: u32) -> bool {
         if self.shape_is_dictionary(shape) {
             return true;
         }

@@ -247,7 +247,7 @@ pub(super) struct LoopSite {
     hookable: bool,
     /// Backward jumps taken before the region compiles, up to `TIERS.loops.threshold`.
     taken: std::cell::Cell<u32>,
-    /// Native runs that left at an instruction the general path executes.
+    /// The entries native runs have not paid back (`LoopSite::note_run`).
     exits: std::cell::Cell<u32>,
     /// Entries declined since the last that ran native code.
     declines: std::cell::Cell<u32>,
@@ -267,6 +267,18 @@ pub(super) struct LoopSite {
 impl LoopSite {
     fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
+    }
+
+    /// Weighs a native run that took `backedges` backward jumps: a run that took none paid its
+    /// entry for no iteration and counts toward `TIERS.loops.max_exits`, and each iteration
+    /// a run took pays one such entry back.
+    fn note_run(&self, backedges: u64) {
+        let exits = self.exits.get();
+        self.exits.set(match u32::try_from(backedges) {
+            Ok(0) => exits.saturating_add(1),
+            Ok(paid) => exits.saturating_sub(paid),
+            Err(_) => 0,
+        });
     }
 
     fn is_admitted(&self) -> bool {
@@ -8357,14 +8369,13 @@ fn lane_loop_run<H: Host>(
             }
             LoopContinuation::Jump
         }
-        // A run that leaves the loop through its own exit did the loop's work natively: the
-        // exits counted against the site are the ones in a row since such a run.
+        // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => {
-            site.exits.set(0);
+            site.note_run(entry.backedge_count());
             LoopContinuation::Resume(pc)
         }
         LoopOutcome::Exit(pc) => {
-            site.exits.set(site.exits.get() + 1);
+            site.note_run(entry.backedge_count());
             LoopContinuation::Exit(pc)
         }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),

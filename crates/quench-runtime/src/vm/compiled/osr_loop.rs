@@ -1501,8 +1501,8 @@ pub(crate) struct LoopEntry {
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
 /// unsigned comparison bounds every `i32` index.
 pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
-/// The first record word counts executions of the region's own backward edge when shared
-/// GeneralDispatch pricing is enabled.
+/// The first record word counts executions of the region's own backward edge: the iterations
+/// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
 pub(super) const ENTRY_CAPTURES: usize = 1;
 const WORD_BYTES: i32 = 8;
@@ -4146,9 +4146,8 @@ pub(super) fn lower(
     observation: &Observation<'_>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
-    track_backedges: bool,
 ) -> Option<(ir::Function, std::collections::BTreeMap<u32, Widening>)> {
-    lower_verified(verify_region(region, observation).ok()?, observation, isa, poll, track_backedges)
+    lower_verified(verify_region(region, observation).ok()?, observation, isa, poll)
 }
 
 pub(super) fn lower_verified(
@@ -4156,7 +4155,6 @@ pub(super) fn lower_verified(
     observation: &Observation<'_>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
-    track_backedges: bool,
 ) -> Option<(ir::Function, std::collections::BTreeMap<u32, Widening>)> {
     let region = verified.region;
     let pointer = isa.pointer_type();
@@ -4190,7 +4188,6 @@ pub(super) fn lower_verified(
         facts,
         probe_signature,
         poll,
-        track_backedges,
     )
         .lower(isa.frontend_config())?;
     Some((native, widenings))
@@ -4281,8 +4278,6 @@ struct Lowering<'a, 'b> {
     /// The entry record fixes this reservation for the run; admit it once before
     /// any effects. Individual receivers still require range and layout proofs.
     object_table: Option<CheckedObjectTable>,
-    /// Count the region's taken backedges only for the opt-in shared-tier admission path.
-    track_backedges: bool,
     /// Each array as native code indexes it, by register.
     arrays: std::collections::BTreeMap<Register, ArrayView>,
     /// Per entry array word of a region that writes an array, the variable holding the
@@ -4508,7 +4503,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         facts: Int32Facts,
         callout_signature: ir::SigRef,
         poll: Option<i64>,
-        track_backedges: bool,
     ) -> Self {
         let VerifiedRegion { region, webs, values, captures, fields, registers: register_facts, obligations } = verified;
         let start = builder.create_block();
@@ -4582,7 +4576,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             scratch: None,
             entry,
             object_table: None,
-            track_backedges,
             arrays: std::collections::BTreeMap::new(),
             elements: std::collections::BTreeMap::new(),
             resident: Resident::default(),
@@ -5927,7 +5920,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         });
         if target <= pc && !proved_backedge {
             self.body.interrupt_safepoint();
-            if self.track_backedges && pc == self.region.backedge && target == self.region.header {
+            if pc == self.region.backedge && target == self.region.header {
                 let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
                     .expect("OSR entry counter offset fits i32");
                 let entry = self.entry;
@@ -7154,7 +7147,7 @@ mod tests {
             };
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let (native, _) = lower_verified(verify_region(&region, &observation).unwrap(),
-                &observation, &*isa, None, false).unwrap();
+                &observation, &*isa, None).unwrap();
             let shape_loads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .filter(|&instruction| {
                     let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return false };
@@ -7259,12 +7252,12 @@ mod tests {
         };
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let verified = verify_region(&region, &observation).unwrap();
-        assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
+        assert!(lower_verified(verified, &observation, &*isa, None).is_some());
         let mut verified = verify_region(&region, &observation).unwrap();
         let branch = region.instructions.iter().position(|instruction|
             instruction.op() == Op::JumpBinaryFalse).unwrap();
         verified.obligations[branch] = DefinitionObligation::NumberLoad;
-        assert!(lower_verified(verified, &observation, &*isa, None, false).is_none());
+        assert!(lower_verified(verified, &observation, &*isa, None).is_none());
     }
 
     #[test]
@@ -7291,7 +7284,7 @@ mod tests {
         let verified = verify_region(&region, &observation).unwrap();
         assert_eq!(verified.obligations[1], DefinitionObligation::NumberLoad);
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
+        assert!(lower_verified(verified, &observation, &*isa, None).is_some());
     }
 
     #[test]
@@ -7317,7 +7310,7 @@ mod tests {
         assert_eq!(verified.values[comparison].unwrap().ty, Type::language(crate::ValueType::Boolean));
         assert_eq!(verified.obligations[1], DefinitionObligation::None);
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
+        assert!(lower_verified(verified, &observation, &*isa, None).is_some());
 
         // Same tagged machine representation, incompatible semantic type:
         // publication must reject the producer even with no unboxing needed.
@@ -7326,7 +7319,7 @@ mod tests {
         inconsistent.values[comparison] = Some(ValueFact {
             ty: Type::NUMBER, ..fact
         }.verified().unwrap());
-        assert!(lower_verified(inconsistent, &observation, &*isa, None, false).is_none());
+        assert!(lower_verified(inconsistent, &observation, &*isa, None).is_none());
     }
 
     #[test]
@@ -7348,7 +7341,7 @@ mod tests {
             let result = verified.webs.defined(&region, 1);
             assert_eq!(verified.values[result].unwrap().ty, Type::TYPEOF_INDEX);
             let isa = super::super::super::jit_backend::target_isa().unwrap();
-            assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
+            assert!(lower_verified(verified, &observation, &*isa, None).is_some());
         }
     }
 
