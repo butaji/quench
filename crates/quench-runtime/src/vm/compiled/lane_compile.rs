@@ -253,7 +253,8 @@ impl<H: Host> Vm<H> {
         if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
             return LaneBodyOutcome::Stale;
         }
-        // A body still compiling stays where it is held: polling moves nothing.
+        // A body still compiling stays where it is held: polling moves nothing (loop entries
+        // poll at each backward jump).
         match pending.code.poll() {
             std::task::Poll::Pending => LaneBodyOutcome::Compiling(pending),
             std::task::Poll::Ready(Some(Err(reason))) if pending.plan.replans(reason) => LaneBodyOutcome::Stale,

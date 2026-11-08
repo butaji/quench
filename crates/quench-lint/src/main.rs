@@ -1,7 +1,8 @@
 //! Fails when the repository says the same thing twice (`duplicates`) or decides the same case
 //! analysis twice (`decision_trees`), when a function or file outgrows the manifesto's size
 //! laws (`shape`), when a hot path hashes, scans or allocates (`hot_path`), when the engine
-//! tests a guest program's own names (`guest_names`), when a body spells an unnamed number
+//! tests a guest program's own names (`guest_names`) or recognizes a function by its bytecode
+//! shape (`fingerprints`), when a body spells an unnamed number
 //! (`magic`), or when data is laid out against data-oriented design (`data_layout`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
@@ -9,6 +10,7 @@
 mod data_layout;
 mod decision_trees;
 mod duplicates;
+mod fingerprints;
 mod guest_names;
 mod hot_path;
 mod magic;
@@ -30,6 +32,11 @@ const TEST_PATHS: &[&str] = &["test", "primitive_bench"];
 pub(crate) fn in_test_path(subject: &str) -> bool {
     let file = subject.split("::").next().unwrap_or(subject);
     TEST_PATHS.iter().any(|path| file.contains(path))
+}
+
+/// Whether an operator tests equality (`==` or `!=`).
+pub(crate) fn is_equality(op: &syn::BinOp) -> bool {
+    matches!(op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_))
 }
 
 const OVERSIZED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/oversized.txt");

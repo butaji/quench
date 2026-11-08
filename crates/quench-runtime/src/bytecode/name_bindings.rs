@@ -5,7 +5,7 @@
 //! scopes are shared by every function closing over them, so a function costs its own
 //! declarations rather than a copy of every outer name.
 
-use super::{Atom, EvalBinding, EvalBindingLocation};
+use super::{Atom, EvalBinding, EvalBindingLocation, Function, Op, WideInstruction};
 use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
@@ -132,5 +132,18 @@ impl CapturedNames {
         self.bindings
             .iter()
             .map(move |binding| at_depth(*binding, depth))
+    }
+}
+
+impl Function {
+    /// The local slot a store of this function writes: a local store's own, or the slot named
+    /// as a by-name store's atom, which a script root keeps for the global var its functions
+    /// capture.
+    pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
+        match instruction.op() {
+            Op::StoreLocal | Op::StoreEnvLocal => Some(instruction.local_slot()),
+            Op::StoreName => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
+            _ => None,
+        }
     }
 }
