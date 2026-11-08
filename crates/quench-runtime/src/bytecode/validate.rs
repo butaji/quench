@@ -1349,7 +1349,7 @@ mod tests {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
-            replay: None,
+            replay: None, first_call_scopes: Default::default(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),

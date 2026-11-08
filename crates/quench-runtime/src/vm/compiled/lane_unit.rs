@@ -274,9 +274,8 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<S
                         // computed effects/accessor results remain dynamic.
                         observe(&mut methods[atom as usize], id);
                     }
-                if matches!(instruction.op(), Op::StoreLocal | Op::StoreEnvLocal)
-                    && let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten()
-                    && let Some(slot) = captured[start..].get_mut(instruction.local_slot()) {
+                if let Some(slot) = function.stored_slot(instruction).and_then(|slot| captured[start..].get_mut(slot))
+                    && let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
                         observe(slot, target);
                     }
                 let value = match instruction.op() {

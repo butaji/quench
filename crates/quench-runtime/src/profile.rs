@@ -168,8 +168,7 @@ fn object_literal_site(
             _ => return None,
         }
     };
-    let object =
-        (op == Op::SuperConstArrayObject2).then(|| program.superinstructions[site].code[3]);
+    let object = (op == Op::SuperConstArrayObject2).then(|| program.superinstructions[site].code).map(|[.., object]| object);
     let site_op = object.map_or(op, |instruction| instruction.op());
     let site = object.map_or(site, |instruction| instruction.object_site_index());
     Some((op, site_op, site))
