@@ -99,6 +99,8 @@ mod general_names;
 mod general_elements;
 #[path = "compiled/frameless.rs"]
 mod frameless;
+#[path = "compiled/constructions.rs"]
+mod constructions;
 mod exact_budget;
 mod general_getter;
 mod general_binary;
@@ -1987,7 +1989,7 @@ lane_helper_inventory! { H;
     /// A fused `typeof` test of a heap value (`lane_typeof_is`).
     TypeofIs => lane_typeof_is::<H>,
     /// A planned construction (`lane_construct`).
-    Construct => lane_construct::<H>,
+    Construct => constructions::lane_construct::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// An object literal's and an array literal's allocation.
@@ -2786,33 +2788,7 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
-        // `switch (typeof x)`'s name index from an immediate's tag; a heap value's cell
-        // decides its name at the exact step.
-        if instruction.op() == Op::Unary
-            && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
-            && instruction.result_flags() == 0
-            && instruction.numeric_local_target().is_none()
-            && let Some(next) = next
-            && let Some(source) = register_offset(instruction.register_b())
-            && let Some(destination) = register_offset(instruction.result_register())
-        {
-            let fallback = builder.create_block();
-            let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
-            let index = lane_region::immediate_typeof_index(&mut builder, value, fallback);
-            let index = lane_region::int_tagged(&mut builder, index);
-            builder.ins().store(MemFlagsData::trusted(), index, arguments, destination);
-            builder.ins().jump(next, &[]);
-            JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }
-                .emit(&mut builder, fallback);
-            general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
-            continue;
-        }
-        if general_call::lower_returning_call(&mut builder, (pc, instruction), &register_offset, (arguments, payload),
-            &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
-            general_dispatch_native_pcs[pc] = PcLowering::Stepped as u8;
-            continue;
-        }
-        if let Some(next) = next && let Some(native) = general_call::lower_shortcut(&mut builder,
+        if let Some(native) = general_call::lower_shortcut(&mut builder,
             (pc, instruction, next), &register_offset, (arguments, payload),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = if native { PcLowering::Native } else { PcLowering::Stepped } as u8;
@@ -7025,31 +7001,6 @@ unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64
     u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
 }
 
-/// A lane body's `new callee(...)` of the `argc` registers at `arguments`
-/// (`dispatch_fast::lane_body_construction`): the receiver, or `Value::DELETED`, which leaves
-/// the body at the construction. The allocation may have grown the heap's arenas, whose bases
-/// the dispatch then holds again for the body to reload (`JsStepDispatch::refresh_object_bases`).
-unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, arguments: u64, argc: u64) -> u64 {
-    // SAFETY: the body passes its own VM, running residual, dispatch and argument registers;
-    // the construction runs no guest code and collects nothing.
-    let (vm, residual, dispatch) = unsafe {
-        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
-    };
-    // A lane run's frame decides as its context says; a linked region's, as its dispatch does
-    // for the general loop's in-place constructions.
-    let constructs = if dispatch.lane_context == 0 {
-        dispatch.allow_inline_calls
-    } else {
-        unsafe { super::dispatch_fast::lane_context_constructs::<H>(dispatch.lane_context as *mut ()) }
-    };
-    let built = constructs.then(|| unsafe {
-        super::dispatch_fast::lane_body_construction(vm, residual, Value::from_bits(callee), arguments as *const Value, argc as u16)
-    }).flatten();
-
-    dispatch.refresh_object_bases(vm);
-    built.unwrap_or(Value::DELETED).to_bits()
-}
-
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
 /// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
 /// object has (`Vm::primary_own_field_store_hit`, or a polymorphic site's
@@ -7692,7 +7643,7 @@ impl JsStepDispatch {
         self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
-        (self.construct_receiver, self.construct_result) = frameless::construct_helpers::<H>();
+        (self.construct_receiver, self.construct_result) = constructions::construct_helpers::<H>();
         self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
             general_elements::general_element_set::<H> as *const () as usize);
