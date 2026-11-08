@@ -103,6 +103,8 @@ mod frameless;
 mod constructions;
 mod exact_budget;
 mod general_getter;
+mod function_binding;
+use function_binding::{lane_admitted_function_binding, lane_function_binding};
 mod general_binary;
 pub(super) use frameless::{ChainFrame, Frameless};
 use exact_budget::PcLowering;
@@ -6676,6 +6678,9 @@ struct JsStepDispatch {
     call_cache: usize,
     epoch: u64,
     frameless: usize,
+    /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
+    /// binding probes before its helper; an empty table where an eval binds no callee.
+    call_targets: usize,
     /// The running heap's charged allocation weight and the weight a collection is due at,
     /// by address (`Heap::should_collect`), which a native back edge compares to leave for its
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
@@ -6937,29 +6942,6 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
     u64::from(hit)
-}
-
-fn lane_function_matches<H: Host>(vm: &Vm<H>, program: u64, callee: u64, function: u64) -> bool {
-    #[cfg(test)] FUNCTION_BINDING_CALLS.with(|count| count.set(count.get() + 1));
-    !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
-        .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function)
-}
-
-/// Admit the actual closure and complete call depth without entering it.
-unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64, depth: u64) -> u64 {
-    // SAFETY: the linked unit owns this VM/program throughout the no-GC operation.
-    let vm = unsafe { &*(vm as *const Vm<H>) };
-    u64::from(lane_function_matches(vm, program, callee, function)
-        && crate::stack::GuestCallGuard::remaining() as u64 >= depth
-        && vm.enter_guarded_call().is_some())
-}
-
-/// The same binding after closed-loop entry has admitted complete call depth.
-unsafe extern "C" fn lane_admitted_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64) -> u64 {
-    // SAFETY: the region owns the VM; only termination can change asynchronously.
-    let vm = unsafe { &*(vm as *const Vm<H>) };
-    u64::from(lane_function_matches(vm, program, callee, function)
-        && !vm.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Available guest activations, stable until guest reentry. Closed native regions
@@ -7450,7 +7432,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0, field_getter: 0,
-                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0,
+                native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -7601,7 +7583,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7643,6 +7625,10 @@ impl JsStepDispatch {
         self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
+        // SAFETY: the VM outlives this entry; the eval flags hold through it (`lane_function_matches`).
+        let vm_ref = unsafe { &*vm };
+        self.call_targets = if vm_ref.direct_eval || vm_ref.parameter_eval { NO_CALL_TARGETS.as_ptr() }
+            else { vm_ref.call_targets.as_ptr() } as usize;
         (self.construct_receiver, self.construct_result) = constructions::construct_helpers::<H>();
         self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,

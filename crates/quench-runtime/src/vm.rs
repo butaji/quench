@@ -1275,6 +1275,8 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     env: Value::UNDEFINED,
     push: InLoopPush::Body,
 };
+/// A table of empty targets, which no binding matches: its function is the root, never a callee.
+static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// The code units below which a unit is ASCII.
 #[derive(Clone, Copy)]
