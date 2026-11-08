@@ -16,7 +16,10 @@ pub mod units {
     /// `Number.MAX_SAFE_INTEGER`.
     pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+    pub const BINARY_RADIX: u32 = 2;
     pub const OCTAL_RADIX: u32 = 8;
+    pub const DECIMAL_RADIX: u32 = 10;
+    pub const HEXADECIMAL_RADIX: u32 = 16;
     /// A fraction's scale as a percentage.
     pub const PERCENT: f64 = 100.0;
     /// The UTF-16 code units of the line terminators text readers split on.
@@ -38,6 +41,7 @@ mod bitset;
 mod bytecode;
 mod compile;
 mod code_dependencies;
+mod float_layout;
 mod heap;
 mod jit_coverage;
 mod host;
