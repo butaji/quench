@@ -1105,8 +1105,7 @@ pub(super) fn inline_region<'a>(
             callee_path.root = receiver_path.root;
             callee_path.steps.splice(0..0, receiver_path.steps);
         } else if let Some((root, held)) = receivers::rerooted(caller, read_offset, receiver, &defines, callee_path.as_ref(), &captured) {
-            callee_path.as_mut()?.root = root;
-            receiver = held;
+            (callee_path.as_mut()?.root, receiver) = (root, held);
         } else if defines(receiver) {
             let callee_path = callee_path.as_mut()?;
             let own = read_offset.checked_sub(1)?;
