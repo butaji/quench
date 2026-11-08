@@ -363,6 +363,11 @@ struct Lowering<'a, 'f> {
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
     /// runs by the call protocol (`Lowering::construct`).
     generic: &'a [usize],
+    /// Whether the entry is proving a lane body's inputs: its guards share `entry_exit`.
+    proving_entry: bool,
+    /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
+    /// and filled with the other exits.
+    entry_exit: Option<ir::Block>,
     /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
     direct: &'a BTreeMap<usize, *const DirectCallee>,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
@@ -625,6 +630,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// filled after the region, since the current block is still open.
     #[track_caller]
     fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
+        if self.proving_entry {
+            let builder = &mut self.builder;
+            return *self.entry_exit.get_or_insert_with(|| { let block = builder.create_block(); builder.set_cold_block(block); block });
+        }
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
         self.pending.push((block, state.values.clone(), pc, std::panic::Location::caller().line()));
@@ -1143,6 +1152,13 @@ pub(super) fn lower_body(
     Some(LoweredLane { region, clif })
 }
 
+/// The position a failed entry contract takes in a lane body's leave set
+/// (`LaneExit::Entry`): past every instruction, so it names none of them. A plan with it
+/// proves no input contract.
+pub(super) fn entry_leave(unit: &super::lane_unit::Unit) -> usize {
+    unit.instructions.len()
+}
+
 /// Build the typed residual and validate every value/CFG edge before publication.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower(
@@ -1260,6 +1276,8 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
+        proving_entry: false,
+        entry_exit: None,
         direct,
         frame_captures,
         context,
@@ -1308,7 +1326,7 @@ pub(super) fn lower(
     }
     let mut initial = vec![Type::ANY; count]; if numeric { initial[..usize::from(function.params)].fill(Type::NUMBER); }
     let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
-    for instruction in instructions.iter().enumerate().filter(|(pc, _)| !heap.contains(*pc)).map(|(_, i)| i) {
+    for instruction in instructions.iter().enumerate().filter(|(pc, _)| !generic.contains(&entry_leave(unit)) && !heap.contains(*pc)).map(|(_, i)| i) {
         let (operands, required) = match instruction.op() {
             Op::JumpBinaryFalse if nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
             Op::JumpBinaryFalse => {
@@ -1462,7 +1480,7 @@ pub(super) fn lower(
             let available = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, interrupt, 0);
             emit_js_guard(&mut lowering.builder, available, miss);
         }
-        lowering.conform(&mut state, pc);
+        lowering.entry_conform(&mut state, pc, coverage);
         // A region whose sole entry is this loop header has no earlier source
         // edge on which to hoist its invariant reads. Admit them on the native
         // entry edge, before the header and every possible loop effect.
@@ -1510,7 +1528,7 @@ pub(super) fn lower(
     }
     // A prefix pays for its entry with a loop, or with the calls it runs inlined.
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
-    for (block, values, pc, line) in std::mem::take(&mut lowering.pending) {
+    for (block, values, pc, line) in lowering.take_leaves() {
         lowering.switch_to(block, true);
         let mut leaving = State { values, proofs: LocalProofs::default() };
         if lowering.vm.diagnostics {
@@ -2214,6 +2232,25 @@ impl Lowering<'_, '_> {
         self.builder.ins().jump(join, &[ir::BlockArg::Value(unnamed)]);
         self.builder.switch_to_block(join);
         self.builder.ins().band(specialized, free)
+    }
+
+    /// Conform the entry's state to the facts at `pc`. A lane body's failed input proof
+    /// leaves through one shared block with `LaneExit::Entry`, its specialization's feedback
+    /// that the inputs need no contract; other regions leave at `pc`.
+    fn entry_conform(&mut self, state: &mut State, pc: usize, coverage: Coverage) {
+        self.proving_entry = matches!(coverage, Coverage::Prefix) && self.completion == Completion::StatusAndPc;
+        self.conform(state, pc);
+        self.proving_entry = false;
+    }
+
+    /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
+    /// it returns `LaneExit::Entry`, with no register written yet to write back.
+    fn take_leaves(&mut self) -> Vec<(ir::Block, Vec<RegisterFact>, u32, u32)> {
+        if let Some(block) = self.entry_exit.take() {
+            self.switch_to(block, true);
+            self.return_at(super::LaneExit::Entry.word());
+        }
+        std::mem::take(&mut self.pending)
     }
 
     /// Lower the instruction at `pc`; whether control falls through to the next.

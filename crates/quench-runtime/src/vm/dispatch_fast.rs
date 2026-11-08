@@ -15657,8 +15657,8 @@ fn lane_body_left<H: Host>(
     };
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    (match exit {
-        super::compiled::LaneExit::Terminated => unreachable!("termination leaves before recovery"),
+    (match exit.resumed() {
+        super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry => unreachable!("termination leaves before recovery; an entry leave resumes at its first record"),
         super::compiled::LaneExit::At(pc) => {
             let mut carried = Carried::script(cx);
             if let Some(&register) = own.accumulator_registers.get(pc)

@@ -6770,6 +6770,9 @@ pub(super) enum LaneExit {
     Callee,
     /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
     Returned { pc: usize, value: Value },
+    /// The entry's proof of its inputs failed before any instruction ran: the activation
+    /// resumes at its first record, and a plan again proves no input contract.
+    Entry,
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
@@ -6777,6 +6780,8 @@ pub(super) enum LaneExit {
 const INLINED_EXIT: u64 = 1 << 63;
 /// The result word of a leave into a native call's callee activation.
 const CALLEE_EXIT: u64 = 1 << 62;
+/// The result word of a leave at the body's entry, whose proof of its inputs failed.
+const ENTRY_EXIT: u64 = 1 << 61;
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the general dispatch's return statuses and above every small status.
@@ -6803,13 +6808,18 @@ impl LaneExit {
     }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+    }
+    /// Where the activation resumes: an entry leave at its first record.
+    pub(super) fn resumed(self) -> Self {
+        if self == Self::Entry { Self::At(0) } else { self }
     }
     pub(super) fn word(self) -> u64 {
         match self {
             Self::At(pc) => pc as u64,
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
+            Self::Entry => ENTRY_EXIT,
             Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
         }
     }
@@ -6817,6 +6827,9 @@ impl LaneExit {
     fn decode(word: u64) -> Self {
         if word == CALLEE_EXIT {
             return Self::Callee;
+        }
+        if word == ENTRY_EXIT {
+            return Self::Entry;
         }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));

@@ -89,7 +89,7 @@ fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
     generic.iter().filter_map(|exit| unit.origins.iter().position(|origin| match *exit {
         LaneExit::At(pc) => *origin == lane_unit::Origin::Caller(pc as u32),
         LaneExit::Inlined { frame, pc } => *origin == lane_unit::Origin::Inlined { frame, pc },
-        LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated => false,
+        LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated | LaneExit::Entry => false,
     })).collect()
 }
 
@@ -186,8 +186,9 @@ impl<H: Host> Vm<H> {
             .map_or(&[][..], |_| self.programs.constants(active));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
+        let leaves: Vec<usize> = left_at.iter().copied().chain(generic.contains(&LaneExit::Entry).then(|| lane_region::entry_leave(&unit))).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &left_at, &direct_sites, &frame_captures)?;
+            &leaves, &direct_sites, &frame_captures)?;
         if lowered.region.native == 0 { return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, direct_sites, function, invalidation, budget }, native))
@@ -460,6 +461,16 @@ mod tests {
     use crate::typed_ir::Type;
     use crate::Value;
     use std::rc::Rc;
+
+    /// An entry leave's word is its own, and it resumes at the activation's first record.
+    #[test]
+    fn an_entry_leave_round_trips_and_resumes_at_the_first_record() {
+        use super::LaneExit;
+        assert_eq!(LaneExit::decode(LaneExit::Entry.word()), LaneExit::Entry);
+        assert_ne!(LaneExit::decode(LaneExit::Entry.word()), LaneExit::At(0));
+        assert_eq!(LaneExit::Entry.resumed(), LaneExit::At(0));
+        assert_eq!(LaneExit::At(3).resumed(), LaneExit::At(3));
+    }
 
     /// A receiver leaving its shape keeps a lane body's code (its field reads guard the
     /// shape at each use); a holder leaving its shape retires it (its layout is read unguarded).
