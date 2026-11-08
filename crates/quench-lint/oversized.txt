@@ -884,7 +884,6 @@ complexity crates/quench-runtime/src/vm/native_object.rs::emit_native_module 28
 complexity crates/quench-runtime/src/vm/native_stencil.rs::StencilExtension<H>::finish 15
 complexity crates/quench-runtime/src/vm/number.rs::Vm<H>::number_exponential 15
 complexity crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 14
-complexity crates/quench-runtime/src/vm/number.rs::f64_to_half 11
 complexity crates/quench-runtime/src/vm/number.rs::math_numbers 15
 complexity crates/quench-runtime/src/vm/number.rs::math_unary_operation 37
 complexity crates/quench-runtime/src/vm/number.rs::parse_float 17
@@ -1447,7 +1446,7 @@ file-lines crates/quench-runtime/src/profile.rs 953
 file-lines crates/quench-runtime/src/snapshot.rs 892
 file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 577
-file-lines crates/quench-runtime/src/value.rs 1031
+file-lines crates/quench-runtime/src/value.rs 1020
 file-lines crates/quench-runtime/src/value_vec.rs 1479
 file-lines crates/quench-runtime/src/vm.rs 3758
 file-lines crates/quench-runtime/src/vm/array.rs 1199
@@ -1497,7 +1496,7 @@ file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
 file-lines crates/quench-runtime/src/vm/native_graph.rs 798
 file-lines crates/quench-runtime/src/vm/native_object.rs 517
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
-file-lines crates/quench-runtime/src/vm/number.rs 937
+file-lines crates/quench-runtime/src/vm/number.rs 920
 file-lines crates/quench-runtime/src/vm/object.rs 4953
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1346
@@ -1513,7 +1512,7 @@ file-lines crates/quench-runtime/src/vm/promise.rs 5478
 file-lines crates/quench-runtime/src/vm/promise_async.rs 540
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
 file-lines crates/quench-runtime/src/vm/regexp.rs 3430
-file-lines crates/quench-runtime/src/vm/relational.rs 655
+file-lines crates/quench-runtime/src/vm/relational.rs 638
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
 file-lines crates/quench-runtime/src/vm/snapshot.rs 982
 file-lines crates/quench-runtime/src/vm/string.rs 919
@@ -1526,7 +1525,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time.rs 1264
 file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 512
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
-file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3352
+file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3351
 file-lines crates/quench-runtime/src/vm/tests.rs 25381
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 960
@@ -5223,13 +5222,10 @@ magic crates/quench-runtime/src/vm/native_stencil.rs::entry_stencil 1
 magic crates/quench-runtime/src/vm/number.rs::PreciseSumState::add 4
 magic crates/quench-runtime/src/vm/number.rs::Vm<H>::math_hypot 1
 magic crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 2
-magic crates/quench-runtime/src/vm/number.rs::f64_to_half 29
-magic crates/quench-runtime/src/vm/number.rs::fixed_decimal 8
+magic crates/quench-runtime/src/vm/number.rs::fixed_decimal 1
 magic crates/quench-runtime/src/vm/number.rs::format_scientific_exponential 5
-magic crates/quench-runtime/src/vm/number.rs::half_to_f64 15
 magic crates/quench-runtime/src/vm/number.rs::math_unary_operation 2
 magic crates/quench-runtime/src/vm/number.rs::round_half 2
-magic crates/quench-runtime/src/vm/number.rs::scaled_binary_sum 6
 magic crates/quench-runtime/src/vm/object.rs::FieldCacheSet::with_pair 1
 magic crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_value 1
 magic crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_holder_field_value 1

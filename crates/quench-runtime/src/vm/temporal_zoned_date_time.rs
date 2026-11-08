@@ -75,8 +75,7 @@ use crate::vm::temporal_instant_format::CALENDAR_NAME_OPTIONS;
 const OFFSET_DISPLAY_OPTIONS: [&str; 2] = ["auto", "never"];
 const TIME_ZONE_NAME_OPTIONS: [&str; 3] = ["auto", "never", "critical"];
 use crate::units::ROUNDING_TIE_FACTOR;
-use crate::vm::intl_datetime_parts::DECIMAL_RADIX;
-const DECIMAL_RADIX_I128: i128 = 10;
+use crate::units::DECIMAL_RADIX;
 
 struct ZonedDateTimeStringOptions {
     calendar_name: String,
@@ -2846,7 +2845,7 @@ fn zoned_date_time_rounding_quantum(options: &ZonedDateTimeStringOptions) -> Opt
     }
     options
         .fractional_second_digits
-        .map(|digits| DECIMAL_RADIX_I128.pow((MAX_FRACTION_DIGITS - digits) as u32))
+        .map(|digits| i128::from(DECIMAL_RADIX).pow((MAX_FRACTION_DIGITS - digits) as u32))
 }
 
 fn round_zoned_date_time_epoch(

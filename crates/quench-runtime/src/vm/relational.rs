@@ -1,10 +1,6 @@
 use std::cmp::Ordering;
 use crate::heap::ProtoLink;
 
-use crate::bigint::{
-    IEEE754_EXPONENT_BIAS, IEEE754_FRACTION_BITS, IEEE754_MAX_EXPONENT_BITS,
-    IEEE754_SUBNORMAL_EXPONENT,
-};
 use num_bigint::{BigInt, Sign};
 
 impl<H: Host> Vm<H> {
@@ -621,20 +617,7 @@ fn bigint_number_ordering(integer: &BigInt, number: f64) -> Option<Ordering> {
 }
 
 fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
-    let bits = number.to_bits();
-    let exponent_bits = ((bits >> IEEE754_FRACTION_BITS) & IEEE754_MAX_EXPONENT_BITS) as i32;
-    let fraction_mask = (1_u64 << IEEE754_FRACTION_BITS) - 1;
-    let significand = bits & fraction_mask;
-    let significand = if exponent_bits == 0 {
-        significand
-    } else {
-        significand | (1_u64 << IEEE754_FRACTION_BITS)
-    };
-    let exponent = if exponent_bits == 0 {
-        IEEE754_SUBNORMAL_EXPONENT
-    } else {
-        exponent_bits - (IEEE754_EXPONENT_BIAS + IEEE754_FRACTION_BITS as i32)
-    };
+    let (significand, exponent) = crate::float_layout::binary64_parts(number);
     let significand = BigInt::from(significand);
     if exponent >= 0 {
         integer.cmp(&(significand << exponent as usize))
