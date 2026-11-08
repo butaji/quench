@@ -17,7 +17,7 @@ macro_rules! wasm_gc_value_ops {
             WasmArrayNew WasmArrayNewDefault WasmArrayNewFixed
             WasmStructGet WasmStructGetS WasmStructGetU WasmStructSet
             WasmStructNew WasmStructNewDefault WasmStructNewDesc WasmStructNewDefaultDesc WasmRefGetDesc
-            WasmRefTest WasmRefCast WasmDescriptorTest WasmDescriptorCast)
+            WasmRefTest WasmRefCast WasmDescriptorTest WasmDescriptorCast WasmIndirectTarget WasmRefFunc)
     };
 }
 pub(in crate::vm) use wasm_gc_value_ops;
@@ -31,13 +31,14 @@ pub(in crate::vm) const fn wasm_gc_value_op(op: Op) -> bool {
 }
 
 impl<H: Host> Vm<H> {
-    /// One of the `wasm_gc_value_op`s of `program`, of the registers `read` answers: the value
+    /// One of the `wasm_gc_value_op`s of `program`'s instance `env`, of the registers `read` answers: the value
     /// it writes to its result register, if any. Inlined, so a lane handler of one opcode
     /// keeps only that opcode's arm.
     #[inline]
     pub(in crate::vm) fn wasm_gc_value_step(
         &mut self,
         program: ProgramId,
+        env: Value,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
@@ -60,8 +61,27 @@ impl<H: Host> Vm<H> {
             Op::WasmRefTest | Op::WasmRefCast | Op::WasmDescriptorTest | Op::WasmDescriptorCast => {
                 self.wasm_cast_step(program, i, read)
             }
+            Op::WasmIndirectTarget | Op::WasmRefFunc => self.wasm_call_target_step(program, env, i, read).map(Some),
             _ => self.wasm_reference_step(i, read),
         }
+    }
+
+    /// The function a call through a reference calls: a `call_indirect`'s table element, once
+    /// its signature matches, or `ref.func`'s reference to a function of instance `env`.
+    fn wasm_call_target_step(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+        i: WideInstruction,
+        read: impl Fn(&Self, u16) -> Value,
+    ) -> Result<Value, JsError> {
+        if i.op() == Op::WasmIndirectTarget {
+            let table = read(self, i.register_b());
+            let index = self.wasm_table_index(table, read(self, i.register_c()))?;
+            return self.wasm_indirect_target(program, table, index, i.imm());
+        }
+        let residual = self.programs.get(program).ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
+        self.wasm_function_reference(&residual, i.imm(), env)
     }
 
     /// The declarations of `program`, a Wasm module's.
