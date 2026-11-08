@@ -21438,7 +21438,7 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
             return false;
         }
         match decoded[pc].op() {
-            Op::Return => return true,
+            Op::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
             Op::Jump => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
