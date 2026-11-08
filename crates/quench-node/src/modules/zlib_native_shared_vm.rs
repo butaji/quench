@@ -9,10 +9,6 @@ const CACHE: &str = "\0binding:zlib/native";
 #[derive(Default)]
 pub(crate) struct State {
     entries: Vec<Entry>,
-    /// The synchronous writes' input copy, kept between them: a chunk past the allocator's
-    /// mapping threshold was mapped, faulted in and unmapped on every write (FlightPlanner's
-    /// 1 MB chunks, 1400 a run).
-    input: Vec<u8>,
 }
 struct Entry {
     identity: HostWeakRoot,
@@ -337,7 +333,8 @@ fn initialize_zlib(
 }
 struct Write {
     flush: i32,
-    input: Vec<u8>,
+    /// The input view and the range of it to compress, validated; `None` for an empty null.
+    input: Option<(RootId, std::ops::Range<usize>)>,
     delivery: Delivery,
 }
 struct Delivery {
@@ -346,7 +343,7 @@ struct Delivery {
     capacity: usize,
     input_length: usize,
 }
-fn arguments(c: &mut Context<'_>, args: &[RootId], mut copy: Vec<u8>) -> Result<Write, RootedError> {
+fn arguments(c: &mut Context<'_>, args: &[RootId]) -> Result<Write, RootedError> {
     let flush = number(c, args, 0)? as i32;
     let input = *args
         .get(1)
@@ -354,14 +351,14 @@ fn arguments(c: &mut Context<'_>, args: &[RootId], mut copy: Vec<u8>) -> Result<
     let begin = number(c, args, 2)?;
     let length = number(c, args, 3)?;
     let range = begin..begin.checked_add(length).ok_or_else(|| fail(c, "Compression input range overflow"))?;
-    // Only the input's range is copied: the view is often a whole file's bytes.
-    copy.clear();
-    if !(c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0) {
-        c.with_view_bytes_rooted(input, |bytes| bytes.get(range).map(|bytes| copy.extend_from_slice(bytes)))
-            .ok_or_else(|| fail(c, "Compression input is not a buffer view"))?
-            .ok_or_else(|| fail(c, "Compression input range out of bounds"))?;
-    }
-    let input = copy;
+    // Not copied: a synchronous write reads the view, often a whole file's bytes, in place.
+    let input = if c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0 {
+        None
+    } else if c.with_view_bytes_rooted(input, |bytes| range.end <= bytes.len()).ok_or_else(|| fail(c, "Compression input is not a buffer view"))? {
+        Some((input, range))
+    } else {
+        return Err(fail(c, "Compression input range out of bounds"));
+    };
     let output = *args
         .get(4)
         .ok_or_else(|| RootedError::host("compression output missing"))?;
@@ -376,7 +373,6 @@ fn arguments(c: &mut Context<'_>, args: &[RootId], mut copy: Vec<u8>) -> Result<
     {
         return Err(fail(c, "Compression output range out of bounds"));
     }
-    let input_length = input.len();
     Ok(Write {
         flush,
         input,
@@ -384,9 +380,13 @@ fn arguments(c: &mut Context<'_>, args: &[RootId], mut copy: Vec<u8>) -> Result<
             target: output,
             offset,
             capacity,
-            input_length,
+            input_length: length,
         },
     })
+}
+/// A worker's own copy of the input range, which the guest may change while it runs.
+fn input_copy(c: &Context<'_>, input: Option<&(RootId, std::ops::Range<usize>)>) -> Vec<u8> {
+    input.and_then(|(view, range)| c.with_view_bytes_rooted(*view, |bytes| bytes.get(range.clone()).map(<[u8]>::to_vec))?).unwrap_or_default()
 }
 fn complete(
     c: &mut Context<'_>,
@@ -432,7 +432,7 @@ pub(crate) fn write_sync(
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
     let shared = c.host_mut().shared_state();
-    let write = arguments(c, args, std::mem::take(&mut shared.borrow_mut().zlib_native.input))?;
+    let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
@@ -444,15 +444,15 @@ pub(crate) fn write_sync(
     };
     // The engine writes into the output view itself, as Node's does.
     let range = write.delivery.offset..write.delivery.offset + write.delivery.capacity;
-    let result = c
-        .with_buffer_bytes_mut_rooted(write.delivery.target, |bytes| bytes.get_mut(range).map(|to| engine.write(write.flush, &write.input, to)))
-        .flatten();
+    let (flush, target) = (write.flush, write.delivery.target);
+    let step = |from: &[u8], bytes: &mut [u8]| bytes.get_mut(range).map(|to| engine.write(flush, from, to));
+    let result = match write.input {
+        Some((input, within)) => c.with_view_and_buffer_bytes_mut_rooted(input, within, target, step),
+        None => c.with_buffer_bytes_mut_rooted(target, |bytes| step(&[], bytes)),
+    };
     // Restore the real engine before any guest callback can close or re-enter it.
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
-    let result = result.ok_or_else(|| fail(c, "Compression output is not writable"))?;
-    let mut input = write.input;
-    input.clear();
-    shared.borrow_mut().zlib_native.input = input;
+    let result = result.flatten().ok_or_else(|| fail(c, "Compression output is not writable"))?;
     complete(c, api, handle, write.delivery, &result, None, false)?;
     Ok(c.undefined())
 }
@@ -485,7 +485,7 @@ pub(crate) fn write(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
-    let write = arguments(c, args, Vec::new())?;
+    let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let shared = c.host_mut().shared_state();
     let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
@@ -497,7 +497,7 @@ pub(crate) fn write(
         }
     };
     let (tx, rx) = mpsc::channel();
-    let input = write.input;
+    let input = input_copy(c, write.input.as_ref());
     let flush = write.flush;
     let capacity = write.delivery.capacity;
     super::native_work::submit(move || {
@@ -711,4 +711,4 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     }
 }
 
-crate::host::startup_snapshot::host_snap_empty!(State { entries, input } "a zlib stream");
+crate::host::startup_snapshot::host_snap_empty!(State { entries } "a zlib stream");

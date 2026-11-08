@@ -199,6 +199,11 @@ impl BufferBytes {
             }),
         }
     }
+    /// Another handle on these bytes, for reading them while a different buffer is written:
+    /// only for stores that any write copies first, so no write can reach the bytes it reads.
+    pub(crate) fn unaliased_handle(&self) -> Option<Self> {
+        matches!(*self.0, BufferStore::Owned(_) | BufferStore::Shared(_)).then(|| Self(self.0.clone()))
+    }
     pub(crate) fn from_shared(backing: Arc<SharedBacking>) -> Self {
         Self(Rc::new(BufferStore::AtomicShared(backing)))
     }

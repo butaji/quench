@@ -1745,9 +1745,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.
     pub fn view_bytes_rooted(&self, root: RootId) -> Option<Vec<u8>> {
-        self.vm
-            .root_value(root)
-            .and_then(|value| self.vm.embedding_view_bytes(value))
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_view_bytes(value))
     }
 
     /// Run `f` over the bytes of an ArrayBuffer, SharedArrayBuffer, typed array or
@@ -1762,17 +1760,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
         let value = self.vm.root_value(root)?;
         self.vm.embedding_with_buffer_bytes_mut(value, f)
     }
-
     /// Run `f` over the bytes a typed array or DataView views, without copying them.
     pub fn with_view_bytes_rooted<T>(&self, root: RootId, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
         self.vm.root_value(root).and_then(|value| self.vm.embedding_with_view_bytes(value, f))
     }
+    /// Run `f` over the bytes `within` a view and a writable buffer's bytes at once.
+    pub fn with_view_and_buffer_bytes_mut_rooted<T>(&mut self, input: RootId, within: std::ops::Range<usize>, output: RootId, f: impl FnOnce(&[u8], &mut [u8]) -> T) -> Option<T> {
+        let (input, output) = (self.vm.root_value(input)?, self.vm.root_value(output)?);
+        self.vm.embedding_with_view_and_buffer_bytes_mut(input, within, output, f)
+    }
 
     /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.
     pub fn bytes_prefix_rooted(&self, root: RootId, maximum: usize) -> Option<Vec<u8>> {
-        self.vm
-            .root_value(root)
-            .and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
     }
 
     /// Check callability without coercion or invoking guest code.
