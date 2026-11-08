@@ -889,7 +889,6 @@ complexity crates/quench-runtime/src/vm/number.rs::f64_to_half 11
 complexity crates/quench-runtime/src/vm/number.rs::math_numbers 15
 complexity crates/quench-runtime/src/vm/number.rs::math_unary_operation 37
 complexity crates/quench-runtime/src/vm/number.rs::parse_float 17
-complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 11
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::append_shape 16
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_getter 11
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_field_value 13
@@ -979,7 +978,7 @@ complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::ordinary_instanceo
 complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::plain_in 11
 complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::steady_instanceof 14
 complexity crates/quench-runtime/src/vm/snapshot.rs::ShapeTransition::unsnap 11
-complexity crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 20
+complexity crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 19
 complexity crates/quench-runtime/src/vm/string.rs::Vm<H>::string_basic_native 20
 complexity crates/quench-runtime/src/vm/string.rs::Vm<H>::string_replace_native 14
 complexity crates/quench-runtime/src/vm/string_extra.rs::number_to_radix 16
@@ -1482,7 +1481,7 @@ file-lines crates/quench-runtime/src/vm/embedding.rs 1962
 file-lines crates/quench-runtime/src/vm/environment.rs 2729
 file-lines crates/quench-runtime/src/vm/error.rs 2691
 file-lines crates/quench-runtime/src/vm/eval.rs 1369
-file-lines crates/quench-runtime/src/vm/gc.rs 1316
+file-lines crates/quench-runtime/src/vm/gc.rs 1314
 file-lines crates/quench-runtime/src/vm/generator.rs 1803
 file-lines crates/quench-runtime/src/vm/index.rs 918
 file-lines crates/quench-runtime/src/vm/intl_collator.rs 695
@@ -1501,7 +1500,7 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 798
 file-lines crates/quench-runtime/src/vm/native_object.rs 517
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 4979
+file-lines crates/quench-runtime/src/vm/object.rs 4954
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1462
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
@@ -3175,7 +3174,6 @@ function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::function_caller 
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::initialize_bound_function_metadata 81
 function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 559
 function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::compact_live_shapes 60
-function-lines crates/quench-runtime/src/vm/gc.rs::active_shape_attributes 43
 function-lines crates/quench-runtime/src/vm/gc.rs::rebuild_shape 61
 function-lines crates/quench-runtime/src/vm/gc.rs::tests::shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions 79
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::async_generator_delegate 98
@@ -3334,7 +3332,7 @@ function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 57
 function-lines crates/quench-runtime/src/vm/number.rs::math_numbers 41
 function-lines crates/quench-runtime/src/vm/number.rs::math_unary_operation 56
 function-lines crates/quench-runtime/src/vm/number.rs::parse_float 56
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 51
+function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 43
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_shape 63
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_store_hit 44
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_field_value 77
@@ -3542,7 +3540,7 @@ function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::shadow_realm
 function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::wrap_shadow_callable 77
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::read_atoms 45
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::restore_snapshot_state 79
-function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 295
+function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 294
 function-lines crates/quench-runtime/src/vm/sort.rs::try_stable_sort_by 42
 function-lines crates/quench-runtime/src/vm/startup_intrinsics.rs::Vm<H>::leave_startup_intrinsics 43
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::install_string_prototype 72
