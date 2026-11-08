@@ -18,21 +18,16 @@ const USER_CALL_STOPPED: i64 = 1;
 const USER_CALL_MISSED: u64 = 2;
 
 /// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture
-/// (`general_capture`), a plain or return-fused call, or an index store (`general_elements`). Whether its PC
+/// (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
 /// is native, or `None` where only the exact step applies. A call stays in a fallback
 /// island's batch: native code only resumes past it.
 pub(super) fn lower_shortcut(
-    builder: &mut super::RegionCore<'_>,
-    (pc, instruction, next): (usize, WideInstruction, Option<ir::Block>),
+    builder: &mut FunctionBuilder<'_>,
+    (pc, instruction, next): (usize, WideInstruction, ir::Block),
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> Option<bool> {
-    // `return f(x)` returns from here, so it continues nowhere.
-    if lower_returning_call(builder, (pc, instruction), register_offset, (arguments, payload), exact) {
-        return Some(false);
-    }
-    let next = next?;
     if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact) {
         return Some(true);
     }
@@ -45,14 +40,6 @@ pub(super) fn lower_shortcut(
         .then_some(true)
 }
 
-/// A plain `Call` (no direct eval) whose value lands in a register, or with `returns`, is
-/// the frame's return value (`return f(x)`).
-fn plain_call(instruction: WideInstruction, returns: bool) -> bool {
-    let flags = if returns { crate::bytecode::RETURN_REGISTER } else { 0 };
-    instruction.op() == Op::Call && instruction.result_flags() == flags && instruction.returns_from_frame() == returns
-        && !instruction.direct_eval() && !instruction.parameter_eval()
-}
-
 /// Lowers the plain call at `pc` through its shortcuts, the exact step taking any miss;
 /// false where only the exact step applies.
 fn lower_call(
@@ -62,7 +49,8 @@ fn lower_call(
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> bool {
-    if !plain_call(instruction, false) {
+    if instruction.op() != Op::Call || instruction.result_flags() != 0 || instruction.returns_from_frame()
+        || instruction.direct_eval() || instruction.parameter_eval() {
         return false;
     }
     let Some(destination) = register_offset(instruction.result_register()) else { return false };
@@ -82,37 +70,6 @@ fn lower_call(
         destination, framed).is_none() { builder.ins().jump(framed, &[]); }
     builder.switch_to_block(framed);
     emit_user_call(builder, (pc, next, fallback), payload, exact);
-    true
-}
-
-/// Lowers the return-fused plain call at `pc` (`return f(...)`) frameless: the callee's value
-/// completes this frame. A requested interrupt or a refused activation takes the exact step,
-/// which makes the call and returns.
-fn lower_returning_call(
-    builder: &mut super::RegionCore<'_>,
-    (pc, instruction): (usize, WideInstruction),
-    register_offset: &dyn Fn(u16) -> Option<i32>,
-    (arguments, payload): (ir::Value, ir::Value),
-    exact: &JsExactFallback,
-) -> bool {
-    if !plain_call(instruction, true) {
-        return false;
-    }
-    // The returned value passes through the call's register, dead once the frame completes.
-    let Some(destination) = register_offset(instruction.result_register()) else { return false };
-    let (call, returned, fallback) = (builder.create_block(), builder.create_block(), builder.create_block());
-    let interrupted = super::emit_js_interrupt_requested(builder);
-    builder.ins().brif(interrupted, fallback, &[], call, &[]);
-    builder.switch_to_block(call);
-    if super::frameless::emit_call(builder, (pc, instruction, returned), register_offset, (arguments, payload), exact,
-        destination, fallback).is_none() {
-        builder.ins().jump(fallback, &[]);
-    }
-    builder.switch_to_block(returned);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, destination);
-    builder.ins().store(MemFlagsData::trusted(), value, exact.result_pointer, 0);
-    super::emit_js_return_status(builder, pc);
-    exact.emit(builder, fallback);
     true
 }
 
