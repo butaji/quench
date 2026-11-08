@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 
 mod buffer;
 mod target_shapes;
+mod subscribe;
 pub(crate) use target_shapes::TargetShape;
 use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
@@ -484,17 +485,6 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
         self.owner_types[self.slot_owner(shape, slot) as usize]
-    }
-
-    pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
-        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
-        let crate::code_dependencies::SlotDependency { shape, slot, ty, target_shape } = dependency;
-        let slot = usize::from(slot);
-        if !self.tracking || slot >= self.shape_length(shape)
-            || self.slot_observation(shape, slot).ty() != ty
-            || target_shape.is_some_and(|target| self.slot_target_shape(shape, slot) != Some(target)) { return false; }
-        self.subscribe_shape(shape, code)
-            && self.slot_readers.subscribe(self.slot_owner(shape, slot), code)
     }
 
     /// Observe the next departure from this shape, not the contents of its slots.

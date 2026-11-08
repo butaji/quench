@@ -12,9 +12,12 @@ use std::rc::Rc;
 pub(in crate::vm) struct OsrFacts {
     /// By exit PC, in order.
     widenings: Box<[(u32, Widening)]>,
-    /// Own-field descriptors embed shape IDs. Shape compaction retires this code
+    /// Shape IDs the code embeds, the receiver's included. Shape compaction retires this code
     /// through its lane view before execution can resume with remapped IDs.
     pub(in crate::vm) shape_dependencies: Vec<u32>,
+    /// Holder shapes: their layout is read without the receiver-shape guard, so their
+    /// departure discards the compile.
+    departure_shapes: Vec<u32>,
     slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
 }
 
@@ -25,10 +28,12 @@ impl OsrFacts {
         Some(self.widenings[found].1)
     }
 
-    /// Subscribes `code` to the facts; whether all hold.
+    /// Subscribes `code` to the facts; whether all hold. A receiver shape is guarded at each
+    /// field use, so only a holder shape's departure discards it; a receiver shape ID still
+    /// retires it at compaction (`shape_dependencies`).
     pub(in crate::vm) fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap) -> bool {
-        self.shape_dependencies.iter().all(|shape| heap.subscribe_shape(*shape, code))
-            && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
+        self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
+            && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
     }
 }
 
@@ -68,6 +73,9 @@ pub(in crate::vm) fn start_osr_region(
     let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
     shape_dependencies.sort_unstable();
     shape_dependencies.dedup();
+    let mut departure_shapes: Vec<_> = loads().filter_map(|field| field.holder).collect();
+    departure_shapes.sort_unstable();
+    departure_shapes.dedup();
     let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
     slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
     slot_dependencies.dedup();
@@ -75,7 +83,8 @@ pub(in crate::vm) fn start_osr_region(
         compile_native_function(function, &*isa, osr_loop::MAX_CODE_BYTES, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts: OsrFacts { widenings: widenings.into_iter().collect(), shape_dependencies, slot_dependencies } })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif,
+        facts: OsrFacts { widenings: widenings.into_iter().collect(), shape_dependencies, departure_shapes, slot_dependencies } })
 }
 
 impl PendingOsrRegion {
@@ -83,6 +92,11 @@ impl PendingOsrRegion {
     pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap) -> bool {
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
         self.facts.subscribe(&watch, heap)
+    }
+
+    /// Makes it stale where its code names shape ids, which a compaction renumbers.
+    pub(in crate::vm) fn retire_named_shapes(&self) {
+        if !self.facts.shape_dependencies.is_empty() { self.watch.retire(); }
     }
 
     /// What its compile came to, or itself while its code compiles.

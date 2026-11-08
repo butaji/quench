@@ -21,6 +21,12 @@ impl LoopTier {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }
 
+    /// Makes the compile under way stale where its code names shape ids, which a shape
+    /// compaction renumbers.
+    pub(super) fn retire_named_shapes(&self) {
+        if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+    }
+
     /// Whether the site has native code or may still compile it. A site whose compilations
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost

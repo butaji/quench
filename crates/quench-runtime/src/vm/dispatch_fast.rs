@@ -928,6 +928,7 @@ impl LaneView {
         self.clear_name_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
+            tier.retire_named_shapes();
             if let Some(publication) = &tier.code
                 && publication.lease().is_some_and(|code| !code.facts.shape_dependencies.is_empty()) {
                 publication.retire();
@@ -15166,9 +15167,13 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     assert!(!publications.is_empty(), "must exercise actual OSR field code");
     let recovery: Vec<_> = publications.iter().map(|code| code.lease().unwrap()).collect();
     let weak: Vec<_> = recovery.iter().map(Rc::downgrade).collect();
+    // A receiver departure falls out at its use guard; only compaction renumbers embedded IDs.
     let added = vm.intern_atom("added");
     let next = vm.transition_shape(shape, added);
     vm.heap.property_add(owner, Value::integer(2), next);
+    assert!(publications.iter().all(|code| code.is_published() && code.lease().is_some()),
+        "a receiver shape departure must fall out at its guard, not retire the code");
+    vm.programs.invalidate_shape_bindings();
     assert!(publications.iter().all(|code| !code.is_published() && code.lease().is_none()));
     assert!(weak.iter().all(|code| code.upgrade().is_some()));
     drop(recovery);
