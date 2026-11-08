@@ -16148,6 +16148,25 @@ mod tests {
         }
     }
 
+    /// Whether the binding `helper` call's cached-target probe, the block that decides
+    /// admission (`Lowering::function_binding`), runs before every loop of `function` and its
+    /// cold helper inside none.
+    #[cfg(feature = "aot")]
+    fn assert_admission_precedes_loops(function: &ir::Function, helper: ir::Inst) {
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
+        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(function, &cfg);
+        let helper = function.layout.inst_block(helper).unwrap();
+        let mut probes = cfg.pred_iter(helper);
+        let probe = probes.next().expect("the probe branches to its helper").block;
+        assert!(probes.next().is_none(), "only the probe reaches the helper");
+        for block in function.layout.blocks().filter(|block| dom.is_reachable(*block)) {
+            for header in cfg.succ_iter(block).filter(|target| dom.dominates(*target, block, &function.layout)) {
+                assert!(dom.dominates(probe, header, &function.layout) && !dom.dominates(header, helper, &function.layout),
+                    "callee admission must precede every loop");
+            }
+        }
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn independent_typed_loops_preserve_effect_boundaries_and_local_call_binding() {
@@ -16227,14 +16246,7 @@ mod tests {
                                 .any(|helper| i32::from(offset) == helper as i32 * std::mem::size_of::<usize>() as i32))
                     }).collect();
                 assert_eq!(bindings.len(), 1, "one actual callee admission per region: {function}\n{}", program.disassemble());
-                let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
-                let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(function, &cfg);
-                for block in function.layout.blocks() {
-                    if !dom.is_reachable(block) { continue; }
-                    for header in cfg.succ_iter(block).filter(|target| dom.dominates(*target, block, &function.layout)) {
-                        assert!(dom.dominates(bindings[0], header, &function.layout), "callee admission must precede every loop");
-                    }
-                }
+                assert_admission_precedes_loops(function, bindings[0]);
             }
             let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default());
@@ -17034,13 +17046,11 @@ mod tests {
             assert_eq!(value.as_int(), Some(2));
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
             let budgets = CALL_BUDGET_READS.with(std::cell::Cell::get);
-            assert!(bindings > 0, "the native binding path must execute");
-            if looping {
-                assert!(budgets > 0 && budgets < bindings,
-                    "closed-loop budget must be amortized: {budgets} reads, {bindings} bindings");
-            } else {
-                assert_eq!(budgets, 0, "straight-line calls keep the combined admission helper");
-            }
+            // Each `walk` makes two `mark` calls; the loop's last one makes a hundred.
+            let calls = if looping { 20 * 2 + 100 } else { 21 * 2 };
+            assert_eq!(bindings, 1, "only the cold binding asks its helper; later ones probe the warmed target inline");
+            assert!(budgets > 0 && budgets < calls,
+                "the call depth is read once per unit entry, not per call: {budgets} reads, {calls} calls");
         }
     }
 
