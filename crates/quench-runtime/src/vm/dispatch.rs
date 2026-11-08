@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
                 return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
             }
         }
-        let entry = self.in_loop_call_entry(p, callee)?;
+        let Some(entry) = self.in_loop_call_entry(p, callee) else { return self.try_forwarded_user_call(p, f, i, pc, callee) };
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
             // Settling calls consume the ordinary register window and cannot take
