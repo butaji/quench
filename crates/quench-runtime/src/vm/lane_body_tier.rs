@@ -95,12 +95,6 @@ impl LaneView {
         history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
     }
 
-    /// Whether every body it compiled ran to completion at least once, and its history affords
-    /// another: a hot loop of such a function waits for its next body.
-    pub(super) fn productive(&self) -> bool {
-        self.history.get().wasted == 0 && self.affords_compile()
-    }
-
     /// A compile none of whose runs completed counts toward `TIERS.lane_body.max_wasted`.
     fn note_wasted_compile(&self) {
         let history = self.history.get();
@@ -145,17 +139,6 @@ impl LaneView {
         use std::cell::Cell;
         LaneBody::Specialized { method, tier_prologue, runs: Cell::new(runs), leaves: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
-    }
-
-    /// Whether it may still get a body: its code compiles, or it warms toward a compile its
-    /// history affords.
-    pub(super) fn may_specialize(&self) -> bool {
-        // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Compiling { .. } => true,
-            LaneBody::Unspecialized { .. } => self.productive(),
-            _ => false,
-        }
     }
 
     /// Whether its body's code is compiling (`LaneBody::Compiling`).
