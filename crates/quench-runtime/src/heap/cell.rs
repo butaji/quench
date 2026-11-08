@@ -871,7 +871,7 @@ impl Native {
     }
 
     /// `Array.prototype.forEach` and the other array methods that call a callback per index
-    /// (`Vm::array_callback_native`).
+    /// (`Vm::array_callback_native`), the reducers (`Native::is_array_reducer`) among them.
     pub(crate) fn is_array_callback(self) -> bool {
         matches!(
             self,
@@ -883,7 +883,7 @@ impl Native {
                 | Self::ArrayFind
                 | Self::ArrayFindIndex
                 | Self::ArrayFindLast
-                | Self::ArrayFindLastIndex
+                | Self::ArrayFindLastIndex | Self::ArrayReduce | Self::ArrayReduceRight
         )
     }
 
@@ -1282,7 +1282,7 @@ impl IteratorKind {
 #[derive(Clone, Debug)]
 pub(crate) enum IteratorHelper {
     RegExpStringMatchAll {
-        input: JsString,
+        input: Value, // The string matched, the value each step passes to `exec`.
         global: bool,
         unicode: bool,
     },

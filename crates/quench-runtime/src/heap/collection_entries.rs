@@ -92,6 +92,10 @@ pub(crate) struct CollectionEntries<T> {
     /// a linear scan serves, so a small collection allocates its slots alone.
     hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]>,
     live: usize,
+    /// No live entry sits before this slot: deleting the oldest entries (a queue, an LRU
+    /// cache evicting `map.keys().next()`) leaves holes at the front, which a walk from the
+    /// first slot would otherwise step over again on every iteration.
+    head: usize,
     /// Present once the slots outnumber `LINEAR_SCAN_ENTRIES`.
     index: Option<index::KeyIndex>,
     /// Iterators over this collection, renumbered by compaction and reset by `clear`. Not
@@ -108,6 +112,7 @@ impl<T> Default for CollectionEntries<T> {
             slots: Vec::new(),
             hashes: SmallVec::new(),
             live: 0,
+            head: 0,
             index: None,
             iterators: Vec::new(),
             walks: 0,
@@ -146,7 +151,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The entries `snapshot_parts` gave; the key index is rebuilt from the hashes.
     pub(crate) fn from_snapshot_parts(slots: Vec<T>, hashes: Vec<u32>, live: usize, iterators: Vec<Value>) -> Self {
         let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
-        Self { slots, hashes: SmallVec::from_vec(hashes), live, index, iterators, walks: 0 }
+        Self { slots, hashes: SmallVec::from_vec(hashes), live, head: 0, index, iterators, walks: 0 }
     }
 
     /// Entries with distinct keys, each with its key's hash.
@@ -175,7 +180,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The live entries in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.slots
+        self.slots[self.head..]
             .iter()
             .copied()
             .filter(|entry| entry.key() != HOLE)
@@ -195,6 +200,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The first live entry at or after `slot`, with its slot.
     pub(crate) fn next_live(&self, slot: usize) -> Option<(usize, T)> {
+        let slot = slot.max(self.head);
         self.slots
             .get(slot..)?
             .iter()
@@ -236,6 +242,9 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     pub(crate) fn remove(&mut self, slot: usize) -> Option<Compaction> {
         self.slots[slot] = T::hole();
         self.live -= 1;
+        if slot == self.head {
+            self.head += self.slots[slot..].iter().take_while(|entry| entry.key() == HOLE).count();
+        }
         let holes = self.slots.len() - self.live;
         (self.walks == 0 && holes >= MIN_COMPACTED_HOLES && holes > self.live)
             .then(|| self.compact())
@@ -255,6 +264,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         self.hashes.retain(|_| kept.next().unwrap_or(false));
         self.slots.retain(|entry| entry.key() != HOLE);
         self.index = (self.slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&self.hashes));
+        self.head = 0;
         Compaction { live_before }
     }
 
@@ -271,6 +281,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             self.slots.fill(T::hole());
         }
         self.live = 0;
+        self.head = self.slots.len();
     }
 
     /// Registers a new iterator, each registered once (a fresh one, or one `take_iterators`

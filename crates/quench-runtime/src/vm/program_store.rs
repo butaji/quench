@@ -3056,7 +3056,7 @@ impl ProgramStore {
 
     /// What a lane running program `id` reads of it, from one look at its entry: its
     /// residual, lane views (`lane_views`) and constants (`constants`).
-    #[inline]
+    #[inline(always)]
     pub(super) fn lane_program(
         &self,
         id: ProgramId,

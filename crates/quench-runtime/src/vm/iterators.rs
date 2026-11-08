@@ -3004,7 +3004,7 @@ impl<H: Host> Vm<H> {
                                 input,
                                 global,
                                 unicode,
-                            } => (input.clone(), *global, *unicode),
+                            } => (*input, *global, *unicode),
                             _ => {
                                 return Err(
                                     vm.type_error(p, "invalid RegExp string iterator".into())
@@ -3014,15 +3014,14 @@ impl<H: Host> Vm<H> {
                     }
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
-                let input_value = vm.heap.alloc_string(input.clone());
-                let result = vm.regexp_exec_value(p, source, input_value)?;
+                let result = vm.regexp_exec_value(p, source, input)?;
                 if result.is_null() {
                     if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(this) {
                         *done = true;
                     }
                     return vm.iterator_result(Value::UNDEFINED, true);
                 }
-                return vm.with_call_roots([source, result], |vm| {
+                return vm.with_call_roots([source, result, input], |vm| {
                     if global {
                         let matched_atom = vm.intern_atom("0");
                         let matched = vm.get_property(p, result, matched_atom)?;
@@ -3030,11 +3029,8 @@ impl<H: Host> Vm<H> {
                             let last_index_atom = vm.intern_atom("lastIndex");
                             let last_index = vm.get_property(p, source, last_index_atom)?;
                             let index = vm.regexp_to_length_value(p, last_index)?;
-                            let next = super::regexp::advance_string_index_units(
-                                input.units(),
-                                index,
-                                unicode,
-                            );
+                            let units = vm.heap.string(input).expect("the input is a string").units();
+                            let next = super::regexp::advance_string_index_units(units, index, unicode);
                             vm.set_property_with_program_mode(
                                 p,
                                 source,
@@ -3076,35 +3072,18 @@ impl<H: Host> Vm<H> {
                     vm.array_iterator_item(p, this, source, kind, index)?
                 }
                 _ => match (kind, vm.heap.get(source)) {
+                    // A string iterator's position is the code unit its next code point
+                    // starts at, so each step reads one code point.
                     (IteratorKind::String, _) if let Some(text) = vm.heap.string(source) => {
                         let units = text.units();
-                        {
-                            let mut element = 0;
-                            let mut offset = 0;
-                            let mut selected = None;
-                            while offset < units.len() {
-                                let end = if units.get(offset + 1).is_some_and(|low| {
-                                    crate::unicode::decode_surrogate_pair(units.at(offset), low)
-                                        .is_some()
-                                }) {
-                                    offset + 2
-                                } else {
-                                    offset + 1
-                                };
-                                if element == index {
-                                    let value = vm.heap.alloc_string(
-                                        super::wtf16::JsString::from_unit_run(
-                                            units.slice(offset..end),
-                                        ),
-                                    );
-                                    selected = Some((value, None));
-                                    break;
-                                }
-                                element += 1;
-                                offset = end;
-                            }
-                            selected
-                        }
+                        let run = (index < units.len()).then(|| {
+                            let pair = units.get(index + 1).is_some_and(|low| {
+                                crate::unicode::decode_surrogate_pair(units.at(index), low).is_some()
+                            });
+                            next_position = index + 1 + usize::from(pair);
+                            super::wtf16::JsString::from_unit_run(units.slice(index..next_position))
+                        });
+                        run.map(|run| (vm.heap.alloc_string(run), None))
                     }
                     (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
                         entries.next_live(index).map(|(slot, (key, _))| {
