@@ -139,10 +139,11 @@ impl Function {
     /// The local slot a store of this function writes: a local store's own, or the slot named
     /// as a by-name store's atom, which a script root keeps for the global var its functions
     /// capture.
+    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
         match instruction.op() {
             Op::StoreLocal | Op::StoreEnvLocal => Some(instruction.local_slot()),
-            Op::StoreName => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
+            op if op.stores_name() => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
             _ => None,
         }
     }

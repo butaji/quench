@@ -16464,7 +16464,7 @@ mod tests {
             function callback(a,fn) {const first=a.value|0; fn(); return first+(a.value|0);}
             let mask=2;
             function mark(){this.value=this.value|mask;}
-            function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
+            function marked(){const o={value:1}; o.mark=mark; return o;} function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
             let owner={value:7};
             for(let i=0;i<64;i++) {
                 if(pair(owner,1,false)!==14 || overwritten(owner)!==107) throw 'plain';
@@ -16476,7 +16476,7 @@ mod tests {
                 if(chained.call(linked,linked,1)!==7.5) throw 'chain result';
                 if(anonymous.call(linked,1)!==15) throw 'anonymous chain result';
                 if(replaced({value:7},{value:19})!==26) throw 'replacement';
-                if(guarded({value:1,mark})!==5) throw 'guarded store';
+                if(guarded(marked())!==5) throw 'guarded store';
                 const joined={value:7};
                 if(diamond(joined,joined,1,false)!==14 || diamond(joined,joined,1,true)!==18) throw 'join alias';
                 if(diamond({value:7},{value:1},1,true)!==14) throw 'join different owner';
@@ -16532,10 +16532,10 @@ mod tests {
             let guarded = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "guarded")).unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, guarded as u32, &[], &*isa, 0);
-            assert_eq!(regions.len(), 1, "guarded call must have a native region");
-            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 1,
-                "forward the pre-call read, but reload after the captured store");
+            let regions = lower_static_typed_regions(&program, guarded as u32, &static_call_targets(&program), &*isa, 0);
+            assert_eq!(regions.len(), 1, "the hinted call inlines into a native region");
+            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 2,
+                "forward the pre-call read, and the inlined store's value to the read after it");
             for (name, forwards) in [("pure", true), ("unrelated", true), ("liveUnrelated", true), ("diamond", false), ("moved", false)] {
                 let id = program.functions.iter().position(|function|
                     function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -17276,7 +17276,7 @@ mod tests {
     #[test]
     fn typed_field_chains_commit_the_sink_before_the_destination() {
         let program = crate::Engine::specialize(
-            "function route(base){this.current=base.next.value;this.finish();return this.current;}",
+            "function route(base,n){for(let i=0;i<n;i++)this.current=base.next.value;return this.current;}",
             "fused-typed.js").unwrap();
         let function = program.function(1);
         assert!(function.instructions().any(|instruction| instruction.op() == Op::GetField
@@ -17338,7 +17338,7 @@ mod tests {
     #[test]
     fn linked_field_probes_share_a_dominating_object_header() {
         let program = crate::Engine::specialize(
-            "function sum(o){let a=o.left;let b=o.right;o.mark();return a+b;}",
+            "function sum(o,n){let s=0;for(let i=0;i<n;i++)s=(s+o.left+o.right+o.mid)|0;return s;}",
             "shared-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();

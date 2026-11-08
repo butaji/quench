@@ -13,6 +13,9 @@
 use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
+#[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[cfg(feature = "aot")] pub(crate) use static_hints::{static_call_targets, StaticTargets};
+#[cfg(all(test, feature = "aot"))] use static_hints::STATIC_CALL_SITE_TARGETS;
 
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
@@ -199,122 +202,6 @@ impl Unit {
         let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
-}
-
-#[cfg(feature = "aot")]
-/// Every register output retires the previous hypothesis before its new value is recorded.
-fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction) {
-    for register in instruction.written_registers() { hints[usize::from(register)] = None; }
-}
-
-/// The bodies a call site's callee may name statically: a superset of the callees it meets,
-/// which the unit's inlining budgets choose among, each behind its own body guard. A name,
-/// slot or register defined with more names none.
-#[cfg(feature = "aot")]
-const STATIC_CALL_SITE_TARGETS: usize = 8;
-#[cfg(feature = "aot")]
-pub(crate) type StaticTargets = smallvec::SmallVec<[u32; STATIC_CALL_SITE_TARGETS]>;
-
-/// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
-/// A hint is never a proof: replacement/aliasing is handled by call-edge admission, which
-/// tries each target a site names behind its own body guard.
-#[cfg(feature = "aot")]
-pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<StaticTargets>> {
-    #[derive(Clone, Copy)]
-    enum Definition { Closure(u32), Name(crate::bytecode::Atom) }
-    // Derive a flat constant-index projection once, without allocating lookup
-    // nodes or rescanning all names at each method definition.
-    let constant_names: Vec<_> = {
-        let mut names: Vec<_> = program.atoms.iter().enumerate().map(|(atom, name)|
-            (name, crate::bytecode::Atom::try_from(atom).expect("validated atom index"))).collect();
-        names.sort_unstable_by_key(|&(name, _)| name);
-        program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::String(name) => names.binary_search_by(|(candidate, _)|
-                candidate.cmp(&name.as_ref())).ok().map(|index| names[index].1),
-            _ => None,
-        }).collect()
-    };
-    // `None` once more definitions than a site admits have been observed.
-    let mut methods = vec![Some(StaticTargets::new()); program.atoms.len()];
-    let mut captured = Vec::new();
-    let mut offsets = Vec::with_capacity(program.function_count() + 1);
-    let mut parents = Vec::with_capacity(program.function_count());
-    let observe = |slot: &mut Option<StaticTargets>, target| {
-        if let Some(targets) = slot && !targets.contains(&target) {
-            if targets.len() == targets.inline_size() { *slot = None } else { targets.push(target) }
-        }
-    };
-    for id in 0..program.function_count() {
-        program.with_record(id, |function| {
-            let start = captured.len();
-            offsets.push(start);
-            parents.push(function.parent);
-            captured.resize(start + usize::from(function.locals), Some(StaticTargets::new()));
-            let mut definitions = vec![None; usize::from(function.registers)];
-            for instruction in function.instructions() {
-                // A stored or literal-defined data property holding a closure names its body.
-                if instruction.op().field_store().map_or_else(|| instruction.op() == Op::DefineField, |store| store.receiver == crate::bytecode::StoreReceiver::Register)
-                    && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
-                        observe(&mut methods[instruction.atom_index() as usize], id);
-                    }
-                if instruction.op() == Op::DefinePropertyRecord
-                    && matches!(instruction.property_definition_mode(),
-                        Some(crate::bytecode::PropertyDefinitionMode::Method | crate::bytecode::PropertyDefinitionMode::ReadonlyMethod))
-                    && let Some(Definition::Closure(id)) = definitions[usize::from(instruction.register_a())]
-                    && let Some(Definition::Name(atom)) = definitions[usize::from(instruction.register_c())] {
-                        // Class definitions use an explicit key register. Only
-                        // an admitted literal name contributes a body hint;
-                        // computed effects/accessor results remain dynamic.
-                        observe(&mut methods[atom as usize], id);
-                    }
-                if let Some(slot) = function.stored_slot(instruction).and_then(|slot| captured[start..].get_mut(slot))
-                    && let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
-                        observe(slot, target);
-                    }
-                let value = match instruction.op() {
-                    Op::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
-                    Op::LoadConst => constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
-                    Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
-                    _ => None,
-                };
-                clear_written_hints(&mut definitions, instruction);
-                if let Some(register) = instruction.defined_register() { definitions[usize::from(register)] = value; }
-                if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { definitions.fill(None); }
-            }
-        });
-    }
-    offsets.push(captured.len());
-    (0..program.function_count()).map(|id| program.with_record(id, |function| {
-        let mut methods_by_register = vec![None::<StaticTargets>; usize::from(function.registers)];
-        function.instructions().map(|instruction| {
-            let target = (instruction.op() == Op::Call).then(||
-                methods_by_register[usize::from(instruction.register_b())].clone()).flatten().unwrap_or_default();
-            let method = match instruction.op() {
-                Op::GetField => match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).cloned().flatten(),
-                    _ => None,
-                },
-                Op::MakeClosure => Some(smallvec::smallvec![instruction.closure_function_index()]),
-                Op::LoadCapture => {
-                    // The lexical owner and source slot come from the same layout as
-                    // capture execution. This identifies a possible body, never the
-                    // closure: admission checks its body, and captures read its actual environment.
-                    let owner = (0..=instruction.capture_depth()).try_fold(id, |owner, _|
-                        parents.get(owner).copied().flatten().map(|parent| parent as usize));
-                    owner.and_then(|owner| captured[offsets[owner]..offsets[owner + 1]]
-                        .get(usize::from(instruction.capture_slot())).cloned().flatten())
-                }
-                Op::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
-                _ => None,
-            };
-            clear_written_hints(&mut methods_by_register, instruction);
-            if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
-            // Hints survive control-flow edges, including loops around a local
-            // closure. They are hypotheses only: inline admission checks the
-            // actual closure/program/body before any callee effect.
-            target
-        }).collect()
-    })).collect()
 }
 
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at
