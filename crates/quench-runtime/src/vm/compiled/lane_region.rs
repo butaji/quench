@@ -35,6 +35,8 @@ mod stable;
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
+#[path = "lane_region/store_domains.rs"] mod store_domains;
+pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
 use polls::specialize_closed_polls;
 #[cfg(test)]
@@ -2171,19 +2173,11 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
-        // Profiled raw stores preserve their declared field type. Register those possible
-        // writes once per physical slot, independently of cache-row binding availability.
-        let mut domains = BTreeMap::<(u32, u16), Type>::new();
-        for instruction in instructions {
-            if !instruction.op().is_field_store() { continue; }
-            if let Some(fields) = self.fields.get(&instruction.cache_site_index())
-                && let [field] = fields.as_slice()
-                && field.ty != Type::NEVER {
-                let domain = domains.entry((field.shape, field.slot)).or_insert(Type::NEVER);
-                *domain = domain.join(field.ty);
-            }
-        }
-        for ((shape, slot), domain) in domains {
+        // Profiled raw stores preserve their declared field type. An online body's plan
+        // registered those possible writes before it was lowered (`Vm::admit_lane_stores`);
+        // other code registers them here, at each entry.
+        let domains = if self.vm.online.is_some() { Vec::new() } else { store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) };
+        for (shape, slot, domain) in domains {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
             let slot = self.builder.ins().iconst(types::I64, i64::from(slot));

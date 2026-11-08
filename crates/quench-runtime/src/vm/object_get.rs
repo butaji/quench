@@ -3,6 +3,7 @@ use std::ops::ControlFlow;
 use super::*;
 use crate::heap::PrivateBrand;
 mod plain_key_set;
+mod proxy_get;
 
 /// Where constructors of one shape hold their own `@@species` getter
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
@@ -170,145 +171,6 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
-    fn proxy_trap(
-        &mut self,
-        p: &ResidualProgram,
-        handler: Value,
-        name: &str,
-    ) -> Result<Value, JsError> {
-        let atom = self.intern_atom(name);
-        self.get_property(p, handler, atom)
-    }
-
-    fn proxy_key_value(
-        &mut self,
-        p: &ResidualProgram,
-        property: PropertyKey,
-    ) -> Result<Value, JsError> {
-        match property {
-            PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.atom_string(atom))
-            }
-            PropertyKey::Symbol(key) => Ok(key),
-            PropertyKey::String(_) | PropertyKey::Private(_) => {
-                Err(self.type_error(p, "private member is not present on this object".into()))
-            }
-        }
-    }
-
-    pub(super) fn proxy_get(
-        &mut self,
-        p: &ResidualProgram,
-        target: Value,
-        handler: Value,
-        receiver: Value,
-        property: PropertyKey,
-    ) -> Result<Value, JsError> {
-        let key = self.proxy_key_value(p, property)?;
-        if handler.is_null() {
-            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
-        }
-        let target = self.heap.root(target);
-        let handler = self.heap.root(handler);
-        let receiver = self.heap.root(receiver);
-        let key = self.heap.root(key);
-        let mut result_root = None;
-        let outcome = (|| {
-            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), "get")?;
-            if trap.is_null() || trap.is_undefined() {
-                let target = self.heap.root_value(target).unwrap();
-                let receiver = self.heap.root_value(receiver).unwrap();
-                return match property {
-                    PropertyKey::String(atom) => {
-                        self.get_property_with_receiver(p, target, atom, receiver)
-                    }
-                    PropertyKey::Symbol(_) => self.get_symbol_property_with_receiver(
-                        p,
-                        target,
-                        self.heap.root_value(key).unwrap(),
-                        receiver,
-                    ),
-                    PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Get"),
-                };
-            }
-            if !self.is_function(trap) {
-                return Err(self.type_error(p, "proxy get trap is not callable".into()));
-            }
-            let result = self.call_value(
-                p,
-                trap,
-                self.heap.root_value(handler).unwrap(),
-                &[
-                    self.heap.root_value(target).unwrap(),
-                    self.heap.root_value(key).unwrap(),
-                    self.heap.root_value(receiver).unwrap(),
-                ],
-            )?;
-            let result = self.heap.root(result);
-            result_root = Some(result);
-            self.validate_proxy_get(p, target, key, result)?;
-            Ok(self.heap.root_value(result).unwrap())
-        })();
-        for root in [
-            Some(target),
-            Some(handler),
-            Some(receiver),
-            Some(key),
-            result_root,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.heap.release_root(root);
-        }
-        outcome
-    }
-
-    fn validate_proxy_get(
-        &mut self,
-        p: &ResidualProgram,
-        target: RootId,
-        key: RootId,
-        result: RootId,
-    ) -> Result<(), JsError> {
-        let (target, key) = (self.heap.root_value(target).unwrap(), self.heap.root_value(key).unwrap());
-        // No own property constrains the result: the shape shows it without a descriptor.
-        if self
-            .string_key_atom(key)
-            .and_then(|atom| self.shape_own_presence(target, atom))
-            == Some(false)
-        {
-            return Ok(());
-        }
-        let Some(descriptor) = self.own_property_descriptor_record(p, target, key)?
-        else {
-            return Ok(());
-        };
-        if descriptor.configurable == Some(true) {
-            return Ok(());
-        }
-        let result = self.heap.root_value(result).unwrap();
-        if descriptor.has_data_fields()
-            && descriptor.writable == Some(false)
-            && !self.same_value(descriptor.value.unwrap_or(Value::UNDEFINED), result)
-        {
-            return Err(self.type_error(
-                p,
-                "proxy get trap returned a different value for a frozen property".into(),
-            ));
-        }
-        if descriptor.has_accessor_fields()
-            && descriptor.getter.is_none_or(Value::is_undefined)
-            && !result.is_undefined()
-        {
-            return Err(self.type_error(
-                p,
-                "proxy get trap returned a value for an accessor without a getter".into(),
-            ));
-        }
-        Ok(())
-    }
-
     pub(super) fn proxy_set(
         &mut self,
         p: &ResidualProgram,
@@ -341,7 +203,7 @@ impl<H: Host> Vm<H> {
         let key = self.heap.root(key);
         let value = self.heap.root(value);
         let outcome = (|| {
-            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), "set")?;
+            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), self.runtime_atoms.set)?;
             if trap.is_null() || trap.is_undefined() {
                 let delegate_target = self.heap.root_value(target).unwrap();
                 let receiver = self.heap.root_value(receiver).unwrap();
@@ -665,13 +527,39 @@ impl<H: Host> Vm<H> {
         self.plain_proved_get(object, PropertyKey::string(atom))
     }
 
+    /// The object a proved read of `key` starts from: an ordinary object for any key, and for
+    /// a symbol any object but a Proxy, since exotic objects differ only on string keys (a
+    /// typed array's, iterator's or collection's `@@iterator`). An array's reads walk unproved
+    /// (`plain_keyed_get`).
+    #[inline(always)]
+    fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
+        if let Some(data) = self.heap.ordinary_object(object) {
+            return Some(data);
+        }
+        if !matches!(key, PropertyKey::Symbol(_))
+            || self.heap.array(object).is_some()
+            || matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
+        {
+            return None;
+        }
+        self.heap.object(object)
+    }
+
+    /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
+    /// read starts from (`proved_read_receiver`), or an array where `array_ordinary` says
+    /// the key is none of its exotic ones.
+    fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
+        self.proved_read_receiver(object, key)
+            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object)).flatten())
+    }
+
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
     /// the proof of where the walk from a receiver of the same shape found it
     /// (`symbol_load_proofs`), or by `prove_symbol_load`.
     #[inline]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.proved_read_receiver(object, key)?;
         let epoch = crate::heap::prototype_layout_epoch();
         let answer = self.symbol_load_proofs.answer(data.shape(), key, epoch);
         // A proof's shape is an ordinary one, so the receiver is no namespace, deferred module
@@ -709,13 +597,13 @@ impl<H: Host> Vm<H> {
     fn prove_symbol_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let symbol = key;
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.proved_read_receiver(object, key)?;
         let (shape, prototype) = (data.shape(), data.proto());
         let mut current = object;
         let mut depth = 0u8;
         let (answer, value) = loop {
             let link = if depth == 0 {
-                self.heap.ordinary_object(current)
+                self.proved_read_receiver(current, key)
             } else {
                 self.heap.object_record(current)
             };
@@ -816,11 +704,7 @@ impl<H: Host> Vm<H> {
         };
         let mut current = object;
         loop {
-            let data = match self.heap.ordinary_object(current) {
-                Some(data) => data,
-                None if array_ordinary && self.heap.array(current).is_some() => self.heap.object(current)?,
-                None => return None,
-            };
+            let data = self.plain_link(current, key, array_ordinary)?;
             if data.is_module_namespace() || data.deferred_module().is_some() {
                 return None;
             }
