@@ -6,6 +6,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 mod append_buffer;
+mod short_ascii;
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
 
 /// Bytes of text made on demand since the collector last took them. A string is charged its
@@ -154,13 +155,6 @@ pub(crate) struct ShortAscii {
 pub(crate) const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<FlatUnits>() == 3 * size_of::<usize>());
-
-impl ShortAscii {
-    pub(crate) fn as_str(&self) -> &str {
-        // SAFETY: only `FlatUnits::ascii` fills the bytes, from ASCII text.
-        unsafe { std::str::from_utf8_unchecked(&self.bytes[..usize::from(self.length)]) }
-    }
-}
 
 impl FlatUnits {
     /// ASCII `text` in its canonical storage.
@@ -1290,6 +1284,11 @@ impl JsString {
     /// template literal's pieces, a key built from parts, a rope's last leaf and the text
     /// appended to it).
     fn joined(left: &Self, right: &Self) -> Self {
+        if let (Repr::Flat(FlatUnits::Short(head)), Repr::Flat(FlatUnits::Short(tail))) = (&left.repr, &right.repr)
+            && let Some(joined) = head.joined(tail)
+        {
+            return Self { repr: Repr::Flat(FlatUnits::Short(joined)) };
+        }
         if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
             (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
         {
