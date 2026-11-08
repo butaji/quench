@@ -2227,9 +2227,6 @@ pub(super) struct VmFacts<'a> {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
-    /// The `call` name and the realm's `Function.prototype.call`, through which a call
-    /// inlines the function it calls (`lane_unit::Frame::function_call`).
-    pub(super) function_call: Option<(Atom, Value)>,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
@@ -2239,14 +2236,13 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
     /// no Stable facts.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, online: None };
+    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, online: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call, online: None }
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
     }
 }
 

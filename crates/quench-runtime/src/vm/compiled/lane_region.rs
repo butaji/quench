@@ -2115,7 +2115,7 @@ impl Lowering<'_, '_> {
                                 self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),
-                                CalleeBinding::Identity(identity) => self.builder.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64),
+                                CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.builder.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64),
                             };
                             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                             emit_js_guard(&mut self.builder, matched, exit);
@@ -3132,10 +3132,10 @@ impl Lowering<'_, '_> {
         let callee_index = usize::from(inlined.callee_register);
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
-            CalleeBinding::Identity(identity) if state.values[callee_index].value.ty.function_identity() == Some(identity)
+            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } if state.values[callee_index].value.ty.function_identity() == Some(identity)
                 || self.entry.as_ref().expect("entry facts").calls.contains(frame) =>
                     (None, Some(Type::function(identity).expect("admitted callee locator"))),
-            CalleeBinding::Identity(identity) => (
+            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
                 Some(self.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64)),
                 Some(Type::function(identity).expect("admitted callee locator")),
             ),
@@ -3165,12 +3165,11 @@ impl Lowering<'_, '_> {
                 binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
             }).expect("an admitted callee and its dominating check");
         }
-        // A call through `call` is the call of the function it names while `call` is the realm's.
-        if let Some(register) = inlined.function_call {
-            let (_, call) = self.vm.function_call.expect("a call through `call` plans only where the realm's is known");
+        // A forwarded call is the call of the function it forwards to while its native is the one seen.
+        if let Some((register, through)) = inlined.function_call {
             let native = self.tagged(state, register);
-            let realm = self.ins().icmp_imm_u(IntCC::Equal, native, call.to_bits() as i64);
-            emit_js_guard(&mut self.builder, realm, exit);
+            let seen = self.ins().icmp_imm_u(IntCC::Equal, native, through.to_bits() as i64);
+            emit_js_guard(&mut self.builder, seen, exit);
         }
         let receiver = self.tagged(state, inlined.receiver);
         let entry = self.entry.as_ref().expect("entry facts");
@@ -3705,7 +3704,7 @@ impl Lowering<'_, '_> {
                         .and_then(|read| self.hoisted.get(&read).copied()) else { continue };
                     let target = self.unit.frames[frame].target;
                     let admitted = match target.callee {
-                        CalleeBinding::Identity(identity) => read.ty.function_identity() == Some(identity),
+                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
                         CalleeBinding::Function => read.ty.body_index() == Some(target.function),
                     };
                     if !admitted { continue; }
@@ -3765,7 +3764,7 @@ impl Lowering<'_, '_> {
                     let (matched, admitted) = match target.callee {
                         CalleeBinding::Function => (self.function_binding(value, target.function),
                             Type::function_body(target.function)),
-                        CalleeBinding::Identity(identity) => (
+                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
                             self.ins().icmp_imm_u(IntCC::Equal, value, identity.to_bits() as i64),
                             Type::function(identity).expect("admitted callee locator")),
                     };

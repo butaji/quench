@@ -112,7 +112,8 @@ impl<H: Host> Vm<H> {
         if caller == function && generic.contains(&LaneExit::At(pc as usize)) { return Vec::new(); }
         let mut bound = targets(caller, pc);
         for target in &mut bound {
-            if !numeric_callee(program, target.function) { continue; }
+            // A forwarded target keeps its identity: the site calls it through its native.
+            if !numeric_callee(program, target.function) || target.through().is_some() { continue; }
             if let Some(callee) = target.identity()
                 && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
                     owner == self.active_program && function == target.function) {
@@ -120,13 +121,7 @@ impl<H: Host> Vm<H> {
             }
             target.callee = CalleeBinding::Function;
         }
-        let mut kept = 0;
-        for index in 0..bound.len() {
-            let target = bound[index];
-            if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
-        }
-        bound.truncate(kept);
-        bound
+        each_once(bound)
     }
 
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
@@ -135,13 +130,12 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let body = program.function_get(function as usize)?;
         let valid = std::cell::Cell::new(true);
-        let atom = self.vm_facts().function_call.map(|(atom, _)| atom);
         let unit = lane_unit::with_budget(program, function, body, budget,
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc),
-            &|callee| program.function_get(callee as usize), atom)?;
+            &|callee| program.function_get(callee as usize))?;
         if !valid.get() { return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
-            CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
+            CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
         }).then_some(unit)
@@ -315,4 +309,15 @@ impl LanePlan {
             loop_header: self.loop_header, amortizes, direct: self.direct, closed,
         })
     }
+}
+
+/// `targets`, each once, in first-seen order.
+fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
+    let mut kept = 0;
+    for index in 0..targets.len() {
+        let target = targets[index];
+        if !targets[..kept].contains(&target) { targets[kept] = target; kept += 1; }
+    }
+    targets.truncate(kept);
+    targets
 }
