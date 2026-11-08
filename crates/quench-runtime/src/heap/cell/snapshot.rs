@@ -180,8 +180,8 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         private_elements,
         stack_data,
         element_facts,
-        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`).
-        watch: _,
+        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`); its code holds no global value.
+        watch: _, global_values: _,
     } = extras;
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
@@ -262,7 +262,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         private_elements,
         stack_data,
         element_facts,
-        watch: Default::default(),
+        watch: Default::default(), global_values: None,
     })
 }
 

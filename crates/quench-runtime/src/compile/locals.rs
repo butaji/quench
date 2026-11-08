@@ -8,10 +8,10 @@ impl Compiler<'_> {
         output: &mut Vec<Atom>,
         strict: bool,
         implicit_arguments_binding: bool,
+        annex_b_collisions: &early::AnnexBCollisions,
     ) -> FxHashSet<Atom> {
         let mut seen: FxHashSet<_> = output.iter().copied().collect();
         let mut function_scope = seen.clone();
-        let annex_b_collisions = self.annex_b_collisions(body);
         self.collect_locals_into(
             body,
             output,
@@ -20,7 +20,7 @@ impl Compiler<'_> {
             strict,
             implicit_arguments_binding,
             false,
-            &annex_b_collisions,
+            annex_b_collisions,
         );
         function_scope
     }
@@ -34,7 +34,7 @@ impl Compiler<'_> {
         strict: bool,
         implicit_arguments_binding: bool,
         nested: bool,
-        annex_b_collisions: &FxHashSet<u32>,
+        annex_b_collisions: &early::AnnexBCollisions,
     ) {
         for statement in body {
             let statement = super::early::statement_without_labels(statement);
@@ -60,7 +60,7 @@ impl Compiler<'_> {
                                 .is_some_and(|identifier| identifier.name == "arguments"))
                         && (!nested
                             || (super::early::annex_b_function_eligible(function)
-                                && !annex_b_collisions.contains(&function.span.start))) =>
+                                && !annex_b_collisions.contains(function.span.start))) =>
                 {
                     self.collect_name(
                         function.id.as_ref().map(|name| name.name.as_str()),
@@ -272,7 +272,7 @@ impl Compiler<'_> {
                             if matches!(statement, Statement::VariableDeclaration(declaration)
                                 if super::is_lexical_binding_declaration(declaration.kind))
                                 || matches!(statement, Statement::FunctionDeclaration(function)
-                                    if strict || annex_b_collisions.contains(&function.span.start))
+                                    if strict || annex_b_collisions.contains(function.span.start))
                             {
                                 continue;
                             }

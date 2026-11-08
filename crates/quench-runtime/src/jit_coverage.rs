@@ -51,9 +51,9 @@ fn in_code_zone(pc: usize) -> bool {
 static NATIVE_HELPERS: std::sync::OnceLock<Box<[usize]>> = std::sync::OnceLock::new();
 
 /// Records the addresses of the helpers compiled code calls.
-pub(crate) fn note_native_helpers(addresses: &[usize]) {
+pub(crate) fn note_native_helpers(addresses: &[*const ()]) {
     if crate::trace::Channel::JitCoverage.on() {
-        NATIVE_HELPERS.get_or_init(|| addresses.into());
+        NATIVE_HELPERS.get_or_init(|| addresses.iter().map(|&address| address as usize).collect());
     }
 }
 

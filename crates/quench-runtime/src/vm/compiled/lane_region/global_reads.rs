@@ -1,47 +1,37 @@
 //! By-name loads that read the global scope (`Vm::lane_global_reads`).
 use super::*;
-
-/// What a by-name load of the global scope reads, as planned.
-#[derive(Clone, Copy)]
-pub(in crate::vm) enum GlobalRead {
-    /// An immutable global's constant (`builtins::immutable_globals`).
-    Constant(Value),
-    /// A fixed global variable of this global object (`Vm::fixed_global_variable`): no
-    /// lexical binding can shadow it, so the site's field cache entry reads it.
-    Fixed(Value),
-    /// Any other name: the lane's own read.
-    Dynamic,
-}
+use crate::vm::global_facts::GlobalRead;
 
 impl Lowering<'_, '_> {
     /// `LoadName` or `LoadNameCall` at `pc` of a name the global scope resolves: an immutable
-    /// global's constant; a fixed variable's slot through its site's cache entry, else the
-    /// lane's own read, which leaves where it misses.
+    /// global's constant (`builtins::immutable_globals`); a global cell's value, held as a
+    /// Stable fact while the realm compiled against is the active one (`hold_global`); else
+    /// the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let result = instruction.result_register();
         match self.global_reads[&pc] {
             GlobalRead::Constant(constant) => {
                 let value = self.ins().iconst(types::I64, constant.to_bits() as i64);
-                self.define(state, result, value, RegisterFact::definition(Type::immediate(constant), Representation::Tagged));
+                self.define(state, instruction.result_register(), value,
+                    RegisterFact::definition(Type::immediate(constant), Representation::Tagged));
             }
-            GlobalRead::Fixed(globals) => {
+            GlobalRead::Stable { value, ty, fact, global, realm_offset } if self.division().folds(BindingTime::Stable) => {
                 let exit = self.guard_exit(state, pc as u32);
-                let (slow, done) = (self.builder.create_block(), self.builder.create_block());
-                self.builder.set_cold_block(slow);
-                let value = self.builder.append_block_param(done, types::I64);
-                let object = self.ins().iconst(types::I64, globals.to_bits() as i64);
-                let read = self.cached_own_read(object, instruction.cache_site_index(), slow, done);
-                self.ins().jump(done, &[ir::BlockArg::Value(read)]);
-                self.builder.switch_to_block(slow);
-                let read = self.lane_global_read(instruction, exit);
-                self.ins().jump(done, &[ir::BlockArg::Value(read)]);
-                self.builder.switch_to_block(done);
-                self.set_tagged(state, result, value);
+                self.hold_global(state, exit, fact, (global, realm_offset));
+                let constant = self.ins().iconst(types::I64, value.to_bits() as i64);
+                let held = RegisterFact::admit(Fact { ty, representation: Representation::Tagged,
+                    binding: BindingTime::Stable, proof: Proof::Dependency, projection: Projection::Exact })
+                    .expect("a Stable fact's dependency proves any type");
+                self.define(state, instruction.result_register(), constant, held);
             }
-            GlobalRead::Dynamic => {
+            GlobalRead::Stable { .. } | GlobalRead::Dynamic => {
                 let exit = self.guard_exit(state, pc as u32);
-                let value = self.lane_global_read(instruction, exit);
-                self.set_tagged(state, result, value);
+                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
+                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
+                let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
+                let value = emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, hit, exit);
+                self.set_tagged(state, instruction.result_register(), value);
             }
         }
         // A call's receiver is `undefined` for a binding of the global scope.
@@ -53,36 +43,36 @@ impl Lowering<'_, '_> {
         true
     }
 
-    /// The lane's own read of the name (`compiled::lane_global_get`), which leaves at `exit`
-    /// where it misses.
-    fn lane_global_read(&mut self, instruction: WideInstruction, exit: ir::Block) -> ir::Value {
-        let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
-        let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
-        let value = self.helper_call(LaneHelper::GlobalGet, &[atom, site]);
-        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, hit, exit);
-        value
+    /// Before loop `header`, the proofs its blocks would otherwise make each iteration: the
+    /// realm its Stable global reads were compiled against (`prove_realm`; a call returns to
+    /// its caller's realm), and, where its body changes no Stable fact's subject
+    /// (`keeps_stable_facts`), the invalidation word (`hold_stable`). A write elsewhere retires
+    /// the code then, and the next entry leaves; a body that may write reads the word again
+    /// after each such instruction (`State::call_effect`).
+    pub(super) fn hoist_stable(&mut self, state: &mut State, header: usize) {
+        if !self.division().folds(BindingTime::Stable) { return; }
+        let Some(end) = self.loop_end(header) else { return };
+        let global = self.loop_realm(header, end);
+        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| instruction.op() == Op::GetField);
+        let stable = folds && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
+        if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
+        let exit = self.guard_exit(state, header as u32);
+        if stable && !state.proofs.stable { self.read_invalidation(state, exit); }
+        if let Some(realm) = global.filter(|_| !state.proofs.realm) { self.test_realm(state, exit, realm); }
+        self.hold_in_loop(header, end, stable, global.is_some());
     }
 
-    /// The own data field of `object` that `site`'s field cache entry names, read where the
-    /// entry's shape is the object's; anything else goes to `slow`. A narrow slot's value
-    /// joins at `done`.
-    fn cached_own_read(&mut self, object: ir::Value, site: u16, slow: ir::Block, done: ir::Block) -> ir::Value {
-        let packed = self.builder.create_block();
-        let packed_address = self.builder.append_block_param(packed, types::I64);
-        let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-            JsFieldReceiver::Value(object), site, false, slow, None, None, Some(packed));
-        let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-        let current = self.builder.current_block().expect("a read's block");
-        self.builder.switch_to_block(packed);
-        let narrow = self.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
-        let table = match self.helpers {
-            #[cfg(feature = "aot")]
-            LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
-            _ => NarrowTable::Process,
-        };
-        emit_narrow_read(&mut self.builder, narrow, table, done);
-        self.builder.switch_to_block(current);
-        value
+    /// The last backedge of the loop at `header`, if one closes there.
+    fn loop_end(&self, header: usize) -> Option<usize> {
+        self.unit.instructions.iter().rposition(|instruction|
+            instruction.op() == Op::Jump && instruction.jump_target() as usize == header).filter(|end| *end >= header)
+    }
+
+    /// The realm a Stable global read in `header..=end` was compiled against, if any.
+    fn loop_realm(&self, header: usize, end: usize) -> Option<(Value, i32)> {
+        self.global_reads.range(header..=end).find_map(|(_, read)| match *read {
+            GlobalRead::Stable { global, realm_offset, .. } => Some((global, realm_offset)),
+            _ => None,
+        })
     }
 }

@@ -3959,8 +3959,8 @@ impl<H: Host> Vm<H> {
         }
         let data = self.heap.object(object)?;
         let properties = data.properties();
-        // A prototype's stores move what its inheritors read (`Object::note_prototype_value_write`).
-        if properties.is_dictionary() || data.was_used_as_prototype() {
+        // A prototype's or a read global's stores move what code holds (`Object::note_value_write`).
+        if properties.is_dictionary() || data.observes_value_writes() {
             return None;
         }
         let cache = self.field_cache_entry(site);
@@ -4815,25 +4815,34 @@ impl<H: Host> Vm<H> {
             }
         };
         let mut next = self.append_shape(shape, transition, next_storage_len);
-        if matches!(transition, ShapeTransition::Add { .. })
-            && self.shapes[next as usize].dictionary_trigger.is_none()
-            && next_storage_len > FIELD_CACHE_SLOT_CAPACITY
-        {
-            next = self.append_shape(
-                next,
-                ShapeTransition::Dictionary {
-                    trigger: DictionaryTrigger::PropertyCount,
-                },
-                next_storage_len,
-            );
-            self.profile
-                .dictionary_transition(DictionaryTrigger::PropertyCount);
+        // The dictionary shape stands for the transition in the cache (`shape_transitions::origin`),
+        // so every object taking it shares one dictionary shape and the transitions out of it.
+        if let Some(trigger) = self.dictionary_step(next, transition) {
+            next = self.append_shape(next, ShapeTransition::Dictionary { trigger }, next_storage_len);
+            self.profile.dictionary_transition(trigger);
         }
         if let Some(key) = key {
             self.transitions.insert(&self.shapes, shape, key, next);
             self.shapes[shape as usize].last_child.set(next);
         }
         next
+    }
+    /// The dictionary mode `transition`, which made `shape`, leads into: past the property
+    /// count field caches address, or once more of its slots are vacated than hold properties.
+    /// Its storage is then mostly holes, and add-and-delete churn (an object used as a map)
+    /// would otherwise grow its shape chain without bound.
+    fn dictionary_step(&self, shape: u32, transition: ShapeTransition) -> Option<DictionaryTrigger> {
+        let entry = &self.shapes[shape as usize];
+        let storage_len = entry.storage_len();
+        match transition {
+            _ if entry.dictionary_trigger.is_some() => None,
+            ShapeTransition::Add { .. } => (storage_len > FIELD_CACHE_SLOT_CAPACITY).then_some(DictionaryTrigger::PropertyCount),
+            ShapeTransition::Delete { .. } => {
+                let vacated = storage_len - self.shape_entry_count(shape);
+                (vacated > storage_len - vacated).then_some(DictionaryTrigger::DeletionPattern)
+            }
+            _ => None,
+        }
     }
     /// The shape an object of `shape` had before `shape` added `key` at `slot`, its last slot,
     /// when deleting `key` can return the object to it: a plain add from an ordinary shape,
@@ -4881,34 +4890,8 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_key(key);
             return;
         }
-        let next_id = self.append_cached_shape_transition(
-            shape,
-            ShapeTransition::Delete {
-                key,
-                slot: slot as u32,
-            },
-        );
-        // An object keeps a shape, which caches serve, until more of its slots are vacated
-        // than hold properties: its storage is then mostly holes, and add-and-delete churn
-        // (an object used as a map) would otherwise grow its shape chain without bound.
-        let storage_len = self.shapes[next_id as usize].storage_len();
-        let vacated = storage_len - self.shape_entry_count(next_id);
-        let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none()
-            && vacated > storage_len - vacated
-        {
-            let dictionary_shape = self.append_shape(
-                next_id,
-                ShapeTransition::Dictionary {
-                    trigger: DictionaryTrigger::DeletionPattern,
-                },
-                storage_len,
-            );
-            self.profile
-                .dictionary_transition(DictionaryTrigger::DeletionPattern);
-            dictionary_shape
-        } else {
-            next_id
-        };
+        let next_id =
+            self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
         self.heap.set_object_shape(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);

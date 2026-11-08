@@ -69,6 +69,7 @@ impl Functions<'_> {
         }
         if !self.test {
             crate::guest_names::scan(&subject, body, self.measures);
+            crate::fingerprints::scan(&subject, body, self.measures);
             crate::magic::scan(&subject, body, self.measures);
             self.trees.scan(&subject, body);
         }
