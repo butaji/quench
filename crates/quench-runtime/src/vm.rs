@@ -152,6 +152,7 @@ mod first_call_chunk;
 mod function;
 mod function_cache;
 mod gc;
+mod collection_boundary;
 mod generator;
 mod global_facts;
 mod group_by;
