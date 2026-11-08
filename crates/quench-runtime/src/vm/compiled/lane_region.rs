@@ -2297,12 +2297,8 @@ impl Lowering<'_, '_> {
             // Anything but `null` and `undefined` is coercible; those take the lane's TypeError.
             Op::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers => {
                 let exit = self.guard_exit(state, pc as u32);
-                let bits = self.tagged(state, instruction.register_b());
-                let null = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
-                let undefined = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
-                let nullish = self.ins().bor(null, undefined);
-                let coercible = self.ins().icmp_imm_u(IntCC::Equal, nullish, 0);
-                emit_js_guard(&mut self.builder, coercible, exit);
+                self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                    crate::staged::Operation::RequireObjectCoercible { register: instruction.register_b() });
                 Some(true)
             }
             Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),

@@ -77,6 +77,19 @@ pub(super) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, reg
     }
 }
 
+/// Whether `register` is coercible to an object (neither `null` nor `undefined`), by the
+/// staged RequireObjectCoercible.
+#[inline(always)]
+pub(super) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view };
+    match crate::staged::step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
+        Step::Value(_) => true,
+        Step::Unresolved => false,
+        Step::Control(_) => unreachable!("a coercibility test transfers no control"),
+    }
+}
+
 /// The edge a staged unconditional jump takes.
 #[inline(always)]
 pub(super) fn staged_jump(r: Registers, view: Carried) -> Edge {

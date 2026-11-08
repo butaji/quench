@@ -2821,7 +2821,7 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
-use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_require_object_coercible};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -3355,8 +3355,7 @@ script_handler! {
     /// `RequireObjectCoercible`: any value but `null` and `undefined` passes; the general
     /// path throws for those.
     fn lane_require_object_coercible<>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        if value.is_null() || value.is_undefined() {
+        if !staged_require_object_coercible(r, Carried::script(cx), i.b) {
             return exit(ip);
         }
         next!(cx, r, following(ip), Carried::script(cx))

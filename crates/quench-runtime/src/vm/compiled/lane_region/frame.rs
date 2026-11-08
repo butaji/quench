@@ -41,6 +41,11 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     #[inline(always)]
+    fn tagged(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
+        register_tagged(stage.builder, self.registers, self.state, register)
+    }
+
+    #[inline(always)]
     fn write(&mut self, stage: &mut Emit<'_, '_>, register: Register, value: ir::Value, fact: RegisterFact) {
         register_define(stage.builder, self.registers, self.written, self.state, register, value, fact);
     }

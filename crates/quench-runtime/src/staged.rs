@@ -99,6 +99,12 @@ pub(crate) trait Frame<S: Stage> {
     /// `register`'s word in the representation its fact names; tagged where it is tagged.
     fn read(&mut self, stage: &mut S, register: Register) -> S::Word;
 
+    /// `register`'s tagged word (`Value::to_bits`), boxing an unboxed representation.
+    #[inline(always)]
+    fn tagged(&mut self, stage: &mut S, register: Register) -> S::Word {
+        self.read(stage, register)
+    }
+
     /// Define `register` with `value`, carrying `fact`.
     fn write(&mut self, stage: &mut S, register: Register, value: S::Word, fact: Self::Fact);
 
@@ -147,6 +153,10 @@ pub(crate) enum Operation {
         operation: NumberArithmetic, domain: Domain, overflow: Overflow },
     /// `source ± 1` (`++`, or `--` where `decrement`) of an int32 `source`.
     IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
+    /// Continue where register `register` is neither `null` nor `undefined`; those leave at
+    /// the frame's miss edge, where the interpreter throws the TypeError
+    /// (RequireObjectCoercible).
+    RequireObjectCoercible { register: Register },
     /// Number x Number relation, producing its predicate word.
     NumberRelation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
 }
@@ -166,8 +176,8 @@ pub(crate) enum Step<W, C> {
     Value(W),
     /// The operation transferred control to `C`.
     Control(C),
-    /// A value's heap cell decides its truthiness, so the interpreter must take its
-    /// fallback path.
+    /// The operation left at its miss edge (a failed guard), or a value's heap cell decides
+    /// its truthiness: the interpreter must take its fallback path.
     Unresolved,
 }
 
@@ -195,6 +205,23 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             numeric::increment(stage, frame, destination, source, decrement, overflow),
         Operation::NumberRelation { left, right, relation, domain } =>
             numeric::relation(stage, frame, left, right, relation, domain),
+        Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
+    }
+}
+
+/// RequireObjectCoercible of `register`: its tagged word where it is neither `null` nor
+/// `undefined`; those leave at the frame's miss edge.
+#[inline(always)]
+fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    register: Register) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let value = frame.tagged(stage, register);
+    let null = stage.eq_imm(value, crate::Value::NULL.to_bits());
+    let undefined = stage.eq_imm(value, crate::Value::UNDEFINED.to_bits());
+    let nullish = stage.either(null, undefined);
+    match stage.guard_false(nullish, miss) {
+        Some(()) => Step::Value(value),
+        None => Step::Unresolved,
     }
 }
 

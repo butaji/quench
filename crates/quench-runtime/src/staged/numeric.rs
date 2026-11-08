@@ -43,7 +43,7 @@ pub(crate) trait NumericStage: Stage {
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
     fn both(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
-    fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
+    fn either(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
     fn cond_word(&mut self, cond: Self::Cond) -> Self::Word;
     /// Continue only where `cond` is false.
     fn guard_false(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
@@ -115,7 +115,7 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
     let negative_zero = negative_zero(stage, operation, left_value, right_value, result);
     if overflow == Overflow::Widen {
         let widen = match negative_zero {
-            Some(negative_zero) => stage.any(overflowed, negative_zero),
+            Some(negative_zero) => stage.either(overflowed, negative_zero),
             None => overflowed,
         };
         let number = stage.choose(widen, |stage| {
@@ -200,7 +200,10 @@ impl NumericStage for super::Concrete {
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }
     fn both(&mut self, a: bool, b: bool) -> bool { a && b }
-    fn any(&mut self, a: bool, b: bool) -> bool { a || b }
+    fn either(&mut self, a: bool, b: bool) -> bool { a || b }
     fn cond_word(&mut self, cond: bool) -> u64 { u64::from(cond) }
     fn guard_false(&mut self, cond: bool, _miss: ()) -> Option<()> { (!cond).then_some(()) }
 }
+
+#[cfg(test)]
+mod tests;

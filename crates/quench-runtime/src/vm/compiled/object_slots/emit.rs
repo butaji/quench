@@ -89,7 +89,7 @@ impl NumericStage for Emit<'_, '_> {
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
     fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }
-    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
     fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
     fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         let passed = self.builder.create_block();
