@@ -19,9 +19,6 @@ impl<H: Host> Vm<H> {
                 self.array_group_native(p, native, this, args)
             }
             Native::ArrayFlatMap => self.array_flatten_native(p, native, this, args),
-            Native::ArrayReduce | Native::ArrayReduceRight => {
-                self.array_reduce_native(p, native, this, args)
-            }
             _ => unreachable!("non-indexed native routed to array index dispatch"),
         }
     }
@@ -283,9 +280,6 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "typed array callback receiver is invalid".into()));
         }
         let length = self.typed_array_length(this).unwrap_or(0);
-        if matches!(native, Native::ArrayReduce | Native::ArrayReduceRight) {
-            return self.array_reduce_with_length(p, native, this, args, length, true);
-        }
         self.array_callback_with_length(p, native, this, args, length, true)
     }
 
@@ -301,6 +295,15 @@ impl<H: Host> Vm<H> {
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_function(callback) {
             return Err(self.type_error(p, "array callback is not callable".into()));
+        }
+        if native.is_array_reducer() {
+            let mut iteration = ArrayIteration::new(native, this, callback, Value::UNDEFINED, Value::UNDEFINED, false, typed_array, length);
+            iteration.result = match args.get(1) {
+                Some(initial) => *initial,
+                None => self.array_first_present(p, &mut iteration)?
+                    .ok_or_else(|| self.type_error(p, "reduce of empty array with no initial value".into()))?,
+            };
+            return self.array_iteration_run(p, &mut iteration);
         }
         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let fresh = if typed_array { None } else { self.fresh_array_iteration(native, this, callback, this_arg, length) };
@@ -352,7 +355,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         iteration: &mut ArrayIteration,
     ) -> Result<Value, JsError> {
-        let result_root = (!iteration.result.is_undefined()).then(|| self.heap.root(iteration.result));
+        // The receiver may be a wrapper only this loop holds; a reducer's accumulator, its
+        // result, changes with each step.
+        let roots = [self.heap.root(iteration.receiver), self.heap.root(iteration.result)];
         let mut filtered_value_roots = Vec::new();
         let (this, typed_array) = (iteration.receiver, iteration.typed_array);
         let typed_filter = typed_array && iteration.native == Native::ArrayFilter;
@@ -374,7 +379,7 @@ impl<H: Host> Vm<H> {
                         vm.get_index(p, this, key)?
                     }
                 };
-                let mapped = vm.call_prepared(p, prepared, &[value, key, this])?;
+                let mapped = vm.call_array_callback(p, prepared, iteration, value, key)?;
                 if typed_filter {
                     if vm.truthy(mapped) {
                         filtered_value_roots.push(vm.heap.root(value));
@@ -384,6 +389,7 @@ impl<H: Host> Vm<H> {
                 if let Some(done) = vm.array_iteration_apply(p, iteration, index, value, mapped)? {
                     return Ok(done);
                 }
+                vm.heap.update_root(roots[1], iteration.result);
             }
             if !typed_filter {
                 return Ok(iteration.completion());
@@ -397,13 +403,28 @@ impl<H: Host> Vm<H> {
             vm.heap.release_root(target_root);
             result.map(|()| target)
         });
-        if let Some(root) = result_root {
-            self.heap.release_root(root);
-        }
-        for root in filtered_value_roots {
+        for root in roots.into_iter().chain(filtered_value_roots) {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    /// The callback's call of `iteration` for the element `value` at `key`: passed the element,
+    /// the key and the array, after a reducer's accumulator.
+    fn call_array_callback(
+        &mut self,
+        p: &ResidualProgram,
+        prepared: &mut PreparedCallback<H>,
+        iteration: &ArrayIteration,
+        value: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        let this = iteration.receiver;
+        if iteration.native.is_array_reducer() {
+            self.call_prepared(p, prepared, &[iteration.result, value, key, this])
+        } else {
+            self.call_prepared(p, prepared, &[value, key, this])
+        }
     }
 
     /// The step of an array callback method after its callback returned `mapped` for the
@@ -459,6 +480,10 @@ impl<H: Host> Vm<H> {
                 }
                 None
             }
+            Native::ArrayReduce | Native::ArrayReduceRight => {
+                iteration.result = mapped;
+                None
+            }
             Native::ArraySome => self.truthy(mapped).then_some(Value::TRUE),
             Native::ArrayEvery => (!self.truthy(mapped)).then_some(Value::FALSE),
             Native::ArrayFind | Native::ArrayFindLast => self.truthy(mapped).then_some(value),
@@ -483,72 +508,25 @@ impl<H: Host> Vm<H> {
         Ok(number.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize)
     }
 
-    pub(super) fn array_reduce_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let object = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, object)?;
-        self.array_reduce_with_length(p, native, object, args, length, false)
+    /// The first element a reducer called without an initial value visits
+    /// (`ArrayIteration::advance`), skipping what HasProperty finds absent: its accumulator.
+    /// `None` when every element is absent.
+    fn array_first_present(&mut self, p: &ResidualProgram, iteration: &mut ArrayIteration) -> Result<Option<Value>, JsError> {
+        while let Some(index) = iteration.advance() {
+            let key = Value::length(index);
+            if iteration.typed_array || self.has_property(p, iteration.receiver, key)? {
+                return self.get_index(p, iteration.receiver, key).map(Some);
+            }
+        }
+        Ok(None)
     }
+}
 
-    fn array_reduce_with_length(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        object: Value,
-        args: &[Value],
-        length: usize,
-        typed_array: bool,
-    ) -> Result<Value, JsError> {
-        let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !self.is_function(callback) {
-            return Err(self.type_error(p, "reduce callback is not callable".into()));
-        }
-        let object_root = self.heap.root(object);
-        let callback_root = self.heap.root(callback);
-        let mut accumulator_root = args.get(1).map(|value| self.heap.root(*value));
-        let reverse = matches!(native, Native::ArrayReduceRight);
-        let mut indices = 0..length;
-        let outcome = self.with_prepared_callback(callback, Value::UNDEFINED, |vm, prepared| {
-            while let Some(index) = if reverse {
-                indices.next_back()
-            } else {
-                indices.next()
-            } {
-                let key = Value::length(index);
-                let object = vm.heap.root_value(object_root).unwrap();
-                if !typed_array && !vm.has_property(p, object, key)? {
-                    continue;
-                }
-                let object = vm.heap.root_value(object_root).unwrap();
-                let value = vm.get_index(p, object, key)?;
-                match accumulator_root {
-                    None => accumulator_root = Some(vm.heap.root(value)),
-                    Some(root) => {
-                        let accumulator = vm.heap.root_value(root).unwrap();
-                        let object = vm.heap.root_value(object_root).unwrap();
-                        let result = vm.call_prepared(p, prepared, &[accumulator, value, key, object])?;
-                        vm.heap.update_root(root, result);
-                    }
-                }
-            }
-            match accumulator_root {
-                Some(root) => Ok(vm.heap.root_value(root).unwrap()),
-                None => {
-                    Err(vm.type_error(p, "reduce of empty array with no initial value".into()))
-                }
-            }
-        });
-        if let Some(root) = accumulator_root {
-            self.heap.release_root(root);
-        }
-        self.heap.release_root(callback_root);
-        self.heap.release_root(object_root);
-        outcome
+impl Native {
+    /// `Array.prototype.reduce` and `reduceRight`: array callback methods whose callback is
+    /// passed the accumulator first and whose second argument is the initial one, not `thisArg`.
+    pub(crate) fn is_array_reducer(self) -> bool {
+        matches!(self, Self::ArrayReduce | Self::ArrayReduceRight)
     }
 }
 
@@ -564,13 +542,13 @@ pub(crate) struct ArrayIteration {
     pub(super) receiver: Value,
     pub(super) callback: Value,
     pub(super) this_arg: Value,
-    /// A map's or filter's result, `undefined` for the methods that make none and for a
-    /// typed filter, which makes its result at the end.
+    /// A map's or filter's result, a reducer's accumulator, `undefined` for the methods that
+    /// make none and for a typed filter, which makes its result at the end.
     pub(super) result: Value,
     /// Whether ArrayCreate made the result (`Vm::fresh_array_iteration`).
     pub(super) fresh: bool,
     pub(super) typed_array: bool,
-    /// The elements visited, from the end for `findLast*`.
+    /// The elements visited, from the end for `findLast*` and `reduceRight`.
     pub(super) visited: usize,
     pub(super) length: usize,
     /// The elements a filter kept.
@@ -598,7 +576,7 @@ impl ArrayIteration {
         }
         self.visited += 1;
         Some(match self.native {
-            Native::ArrayFindLast | Native::ArrayFindLastIndex => self.length - self.visited,
+            Native::ArrayFindLast | Native::ArrayFindLastIndex | Native::ArrayReduceRight => self.length - self.visited,
             _ => self.visited - 1,
         })
     }
@@ -607,7 +585,7 @@ impl ArrayIteration {
     #[inline(always)]
     pub(super) fn completion(&self) -> Value {
         match self.native {
-            Native::ArrayMap | Native::ArrayFilter => self.result,
+            Native::ArrayMap | Native::ArrayFilter | Native::ArrayReduce | Native::ArrayReduceRight => self.result,
             Native::ArraySome => Value::FALSE,
             Native::ArrayEvery => Value::TRUE,
             Native::ArrayFindIndex | Native::ArrayFindLastIndex => Value::number(-1.0),

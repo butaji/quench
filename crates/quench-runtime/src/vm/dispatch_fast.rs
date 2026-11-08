@@ -8508,12 +8508,11 @@ fn lane_region_field<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if vm.is_private_name(field.atom) {
-        return None;
-    }
+    if vm.is_private_name(field.atom) { return None; }
     let receiver = match field.receiver {
         super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
         super::compiled::FieldReceiver::Register(register) => r.get(register),
+        super::compiled::FieldReceiver::Capture(slot) => lane_capture_value(cx, 0, slot)?,
         super::compiled::FieldReceiver::Field(index) => earlier(index),
     };
     // The site's primary entry first, as the lane's own reads take it (`lane_get_field_own`).
@@ -13300,7 +13299,7 @@ unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value]
 }
 
 /// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
-/// `receiver` and `args`: the in-place cases every tier shares (`Vm::steady_native_value`),
+/// `receiver` and `args`: the in-place cases every tier shares (`Vm::in_place_native_value`),
 /// the lane's own, else `lane_string_or_native_call`. `None` leaves the call to the general path,
 /// which raises an error the call stashed in `Vm::lane_raised`. Out of line: its calls take
 /// stack temporaries, which a handler inlining them would hold on its common path.
@@ -13332,18 +13331,6 @@ fn lane_native_value<H: Host>(
                 return value;
             }
         }
-        _ if let Some(value) = vm.steady_native_value(native, receiver, args) => return Some(value),
-        Native::MapSet if vm.map_set(receiver, args) => {
-            note_allocation(vm);
-            return Some(receiver);
-        }
-        Native::ObjectCreate if args.get(1).is_none_or(|properties| properties.is_undefined()) => {
-            let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
-            if let Some(object) = vm.object_create(proto) {
-                note_allocation(vm);
-                return Some(object);
-            }
-        }
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
             return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
         }
@@ -13373,7 +13360,10 @@ mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
+mod in_place_natives;
 mod native_calls;
+mod array_steps;
+use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
@@ -13383,7 +13373,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
-    pub(super) fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
             Native::ArrayPush => self.array_push_dense(receiver, args),
@@ -13397,6 +13387,7 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
     }
+
 }
 
 /// Whether liveness proves the result register of the running function's call record `i`
@@ -13445,299 +13436,6 @@ script_handler! {
         }
         let value = lane_call_native_out(cx, ip, native, callee, r.get(i.c), args);
         resume!(cx, lane_native_complete(cx, ip, i, value))
-    }
-}
-
-/// The values an array callback method passes its callback: the element, its index and the
-/// array.
-const ARRAY_CALLBACK_ARGUMENTS: usize = 3;
-
-/// An array callback method's iteration a lane runs (`lane_begin_array_iteration`), one
-/// entry per `Completion::ArrayStep` activation, innermost last: the loop's state and what
-/// entering its callback's activation again for the next element reads.
-#[derive(Clone, Copy)]
-struct LaneArrayStep {
-    iteration: super::array_indexed::ArrayIteration,
-    /// The element the running callback was passed, at `index`: a filter keeps it, a find
-    /// answers it.
-    element: Value,
-    index: usize,
-    entry: PreparedEntry,
-}
-
-/// An array callback method's callback and `thisArg` among the values it was passed.
-#[inline(always)]
-fn array_callback_arguments(args: &[Value]) -> Option<(Value, Value)> {
-    Some((*args.first()?, args.get(1).copied().unwrap_or(Value::UNDEFINED)))
-}
-
-/// The activation of an array callback method's `callback` called with `this_arg` from the
-/// call record `ip`, passed an element, its index and the array, completing as `completion`
-/// says: its shape and entry (`PreparedShape`). `None` for a callback no lane call activates.
-#[inline(always)]
-fn lane_array_callback_activation<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    callback: Value,
-    this_arg: Value,
-    completion: Completion,
-) -> Option<(PreparedShape, PreparedEntry)> {
-    let mut resolved = None;
-    let target = lane_callback_target(cx, ip, callback, &mut resolved)?;
-    let this = lane_call_this(unsafe { vm(cx) }, target, this_arg)?;
-    // SAFETY: the running lane's context, which nothing else accesses.
-    let mut shape = PreparedShape::of(unsafe { &*cx }, ip, target, ARRAY_CALLBACK_ARGUMENTS)?;
-    if let ActivationKind::Script(script) = &mut shape.activation.kind {
-        script.completion = completion;
-    }
-    let entry = shape.entry(target, this);
-    Some((shape, entry))
-}
-
-/// `lane_script_target_in` of an array callback method's `callback` at its call record `ip`,
-/// whose read memo slot (`CallOperand::memo`), which no native's call reads, links the
-/// callback's cache entry as a script call's `call_link` links its callee's: the link, tested
-/// first, skips the set's hash. The record's `call_link` stays its own callee's, which a lane
-/// body reads (`lane_site_targets`); a read memo the slot named once is another site's or
-/// this one's, as `site_read_memo` tells.
-#[inline(always)]
-fn lane_callback_target<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    callback: Value,
-    resolved: &mut Option<ScriptCallTarget>,
-) -> Option<&ScriptCallTarget> {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: a call record's operand is `call`.
-    let link = unsafe { (*ip).operand.call.memo } as usize;
-    if vm.script_call_holds(link, callback) && !lane_constructing(vm, callback) {
-        // SAFETY: `script_call_holds` found the entry within the cache, which nothing
-        // resolves into before the caller reads it.
-        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.script_targets.entries.get_unchecked(link)) };
-        return lane_admits_activation(target).then_some(target);
-    }
-    let target = lane_script_target_in(cx, callback, resolved)?;
-    if let Some(index) = vm.script_call_index(callback) {
-        // SAFETY: as `requicken`: the record's operand is the call's, written in place.
-        unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
-    }
-    Some(target)
-}
-
-/// Whether a target of the running program activates in the lane from a path besides a
-/// plain call (`lane_script_target_in`): not a frame, an environment or a settling one.
-#[inline(always)]
-fn lane_admits_activation(target: &ScriptCallTarget) -> bool {
-    !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
-}
-
-/// `forEach` at the lane `Call` record `ip`, whose result nothing reads
-/// (`lane_call_result_dead`), over a dense array `receiver` whose storage holds one element (the
-/// caller tested it), with `args`: where the element is present, the callback's one call with
-/// it, its index and the array, a plain activation (`Completion::Plain`) whose value the dead
-/// register takes. The method's own value, `undefined`, is never read, and the length it read
-/// bounds its loop to that call. `None` leaves the call to `lane_begin_array_iteration`.
-#[inline(never)]
-fn lane_call_for_each_once<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    receiver: Value,
-    args: &[Value],
-) -> Option<(Registers, Ip)> {
-    let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls } || vm.with_scope_entered || vm.own_array_length(receiver) != Some(1) {
-        return None;
-    }
-    let element = lane_dense_element(vm, receiver, 0)?;
-    let (callback, this_arg) = array_callback_arguments(args)?;
-    let (shape, entry) = lane_array_callback_activation(cx, ip, callback, this_arg, Completion::Plain)?;
-    let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
-    // SAFETY: the admission pushed the activation over the window.
-    let start = unsafe { lane_enter_prepared_values(cx, &entry, [element, Value::length(0), receiver], window) };
-    // SAFETY: the entry made the callback's registers the context's.
-    Some((unsafe { (*cx).registers }, start))
-}
-
-/// The call of an array callback method `native` at the lane `Call` record `ip` over a dense
-/// array `receiver` with `args`, run in the lane as the bytecode JSC's builtin runs: each
-/// element's callback is an activation of the caller's lane (`Completion::ArrayStep`) whose
-/// return steps the loop and enters the activation again for the next element
-/// (`lane_step_array_iteration_in_place`), with no native frame and no nested run. `None`
-/// leaves the call to the native: another receiver, a callback no lane call activates, or a
-/// result the species makes.
-#[inline(never)]
-fn lane_begin_array_iteration<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    native: Native,
-    receiver: Value,
-    args: &[Value],
-) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls } || vm.with_scope_entered {
-        return None;
-    }
-    let length = lane_array_object(vm, receiver)?.elements().len();
-    if vm.own_array_length(receiver) != Some(length) {
-        return None;
-    }
-    let (callback, this_arg) = array_callback_arguments(args)?;
-    let (shape, entry) = lane_array_callback_activation(cx, ip, callback, this_arg, Completion::ArrayStep)?;
-    let mut iteration = vm.fresh_array_iteration(native, receiver, callback, this_arg, length)?;
-    note_allocation(vm);
-    let Some(index) = iteration.advance() else {
-        // SAFETY: `ip` is the call record of the running function's view.
-        return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
-    };
-    if let Some(element) = lane_dense_element(vm, receiver, index)
-        && let Some(window) = lane_admit_prepared(cx, &shape.activation, shape.room)
-    {
-        let values = [element, Value::length(index), receiver];
-        // SAFETY: the admission pushed the activation over the window.
-        let start = unsafe { lane_enter_prepared_values(cx, &entry, values, window) };
-        vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry });
-        // SAFETY: the entry made the callback's registers the context's.
-        return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
-    }
-    iteration.visited -= 1;
-    Some(lane_resume_array_iteration(cx, ip, iteration))
-}
-
-/// The array `receiver` names: a direct array's record, found inline as
-/// `Vm::own_array_length` finds it, or a slot's.
-#[inline(always)]
-fn lane_array_object<H: Host>(vm: &Vm<H>, receiver: Value) -> Option<&crate::heap::ArrayObject> {
-    match vm.heap.record_array(receiver) {
-        Some(object) => Some(object),
-        None => vm.heap.array(receiver),
-    }
-}
-
-/// The present element at `index` of `receiver`'s dense storage: an own data property,
-/// which HasProperty finds and Get reads observing nothing.
-#[inline(always)]
-fn lane_dense_element<H: Host>(vm: &Vm<H>, receiver: Value, index: usize) -> Option<Value> {
-    let element = *lane_array_object(vm, receiver)?.elements().get(index)?;
-    (!element.is_deleted()).then_some(element)
-}
-
-/// The iteration `iteration` of the call at `ip`, whose caller runs, past its last element:
-/// the call completes with the method's value; else the rest of its loop on the native's
-/// path from the caller's frame (`Vm::array_iteration_run`), which reads holes and anything
-/// else generically.
-#[inline(always)]
-fn lane_resume_array_iteration<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    iteration: super::array_indexed::ArrayIteration,
-) -> Resumed {
-    if iteration.visited == iteration.length {
-        // SAFETY: `ip` is the call record of the running function's view.
-        return lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion()));
-    }
-    lane_run_array_iteration_from_frame(cx, ip, iteration)
-}
-
-/// `lane_resume_array_iteration` of an iteration with elements left: the native's loop.
-#[inline(never)]
-fn lane_run_array_iteration_from_frame<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    mut iteration: super::array_indexed::ArrayIteration,
-) -> Resumed {
-    let value = lane_call_from_frame(cx, ip, |vm, code| vm.array_iteration_run(code, &mut iteration));
-    // SAFETY: `ip` is the call record of the running function's view.
-    lane_native_complete(cx, ip, unsafe { &*ip }, value)
-}
-
-/// The return of an array callback method's callback `activation` with `mapped`, its
-/// caller restored (`lane_restore_caller`): the step of the innermost lane iteration, then
-/// the rest of its loop (`lane_finish_array_step`).
-fn lane_step_array_iteration<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, mapped: Value) -> Resumed {
-    let applied = lane_apply_array_step(cx, mapped);
-    lane_finish_array_step(cx, activation, applied)
-}
-
-/// The step of the innermost lane iteration whose callback returned `mapped`
-/// (`Vm::fresh_array_step`): the method's value where the step ends it.
-#[inline(always)]
-fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
-    // SAFETY: the entry stays in place while the step, which reads no lane stack, runs.
-    let step = unsafe { &mut *step };
-    let applied = vm.fresh_array_step(&mut step.iteration, step.index, step.element, mapped);
-    note_allocation(vm);
-    applied
-}
-
-/// `lane_step_array_iteration` of the innermost activation, a callback that returned
-/// `mapped`: where the step goes on to a present dense element and no collection is due,
-/// the activation is entered again for it in place, as the lane's own loop of calls would
-/// make its next one (`lane_enter_prepared`); otherwise the activation retires to its
-/// caller first.
-///
-/// The step runs inside the returning handler: a `forEach` applies nothing, and the next
-/// element is read from the receiver's dense storage by its index alone.
-#[inline(always)]
-fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
-    // SAFETY: the entry stays in place while the step, which reads no lane stack, runs and
-    // the callback's window is filled again.
-    let step = unsafe { &mut *step };
-    let applied = if step.iteration.native == Native::ArrayForEach {
-        None
-    } else {
-        lane_apply_array_step(cx, mapped)
-    };
-    let depth = vm.lane_stack.activations.len() - 1;
-    if applied.is_none()
-        && depth < vm.lane_stack.activation_limit.get()
-        && let Some(index) = step.iteration.advance()
-    {
-        let receiver = step.iteration.receiver;
-        if let Some(element) = lane_dense_element(vm, receiver, index) {
-            step.element = element;
-            step.index = index;
-            // The callback's completed loops close nothing more.
-            vm.lane_stack.drop_iterators_from(depth);
-            // SAFETY: an activation runs, the innermost, at `depth`.
-            let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window;
-            // SAFETY: the window the activation held, which its return left in place.
-            let values = [element, Value::length(index), receiver];
-            let start = unsafe { lane_reenter_prepared_values(cx, &step.entry, values, window) };
-            return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
-        }
-        step.iteration.visited -= 1;
-    }
-    Some(lane_retire_array_step(cx, applied))
-}
-
-/// `lane_step_array_iteration_in_place` past the in-place step: the callback's activation
-/// retires to its caller, then the iteration finishes (`lane_finish_array_step`).
-#[inline(never)]
-fn lane_retire_array_step<H: Host>(cx: *mut LaneContext<H>, applied: Option<Value>) -> Resumed {
-    let vm = unsafe { vm(cx) };
-    let activation = vm.lane_stack.pop_activation().expect("an array step's activation runs");
-    lane_restore_caller(cx, &activation);
-    lane_finish_array_step(cx, &activation, applied)
-}
-
-/// The iteration of the call `activation` made, its caller restored, after a step that
-/// `applied`: the iteration retires, and the call completes with the method's value where
-/// the step ended it, else goes on as `lane_resume_array_iteration` does.
-#[inline(always)]
-fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, applied: Option<Value>) -> Resumed {
-    let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.steps.len() - 1;
-    let iteration = vm.lane_stack.steps[depth].iteration;
-    vm.lane_stack.steps.truncate(depth);
-    // SAFETY: the call record lies in the restored caller's view.
-    let i = unsafe { &*activation.call };
-    match applied {
-        None => lane_resume_array_iteration(cx, activation.call, iteration),
-        value => lane_native_complete(cx, activation.call, i, value),
     }
 }
 
@@ -13885,10 +13583,9 @@ fn lane_string_or_native_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if let Some(value) = vm.pure_string_method_call(code, native, receiver, args) {
-        return Some(value);
-    }
-    if let Some(value) = lane_pure_native(vm, code, native, callee, receiver, args) {
+    if let Some(value) = vm.in_place_native_value(code, native, callee, receiver, args) {
+        // An in-place case may allocate; a due collection runs at the lane's next safepoint.
+        note_allocation(vm);
         return Some(value);
     }
     lane_call_native(cx, ip, native, callee, receiver, args)
@@ -13947,120 +13644,6 @@ fn lane_promise_native<H: Host>(
     }
 }
 
-/// A native call whose common case runs no guest code and observes no frame, answered in
-/// place so the lane's activations need not become frames (`lane_call_native`): a dense
-/// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
-/// allocates its string, `Number`'s predicates, which coerce nothing
-/// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
-/// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
-/// ToBoolean runs no guest code, `String` called with a string or an immediate primitive,
-/// `ArrayBuffer.isView`, an array iterator's step over a plain array
-/// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
-/// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
-/// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
-/// `Object.is`, `Symbol.for`
-/// of a string, and the Map and Set mutators on their own collections
-/// (`Vm::plain_collection_mutation`), a DataView element get or set that raises nothing
-/// (`Vm::plain_data_view_access`), and a Date getter of a Date (`Vm::plain_date_get`). `None` leaves any other call to `lane_call_native`.
-#[inline(never)]
-fn lane_pure_native<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    native: Native,
-    callee: Value,
-    receiver: Value,
-    args: &[Value],
-) -> Option<Value> {
-    let native = &native;
-    let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
-    match native {
-        Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
-        Native::StringFromCharCode => {
-            let text = vm.from_char_code_numbers(args)?;
-            note_allocation(vm);
-            Some(text)
-        }
-        Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
-            vm.plain_own_property_query(code, *native, receiver, *args.first()?)
-        }
-        Native::ArraySplice => {
-            let removed = vm.plain_array_splice(code, callee, receiver, args)?;
-            note_allocation(vm);
-            Some(removed)
-        }
-        native if super::data_view::data_view_element(*native) => {
-            vm.plain_data_view_access(*native, receiver, args)
-        }
-        Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
-        Native::ArrayShift => vm.plain_array_shift(receiver),
-        native if super::date::date_reads(*native) => vm.plain_date_get(*native, receiver),
-        Native::ObjectHasOwn => vm.plain_own_property_query(
-            code,
-            Native::ObjectPrototypeHasOwnProperty,
-            *args.first()?,
-            *args.get(1)?,
-        ),
-        // Pure of any arguments: SameValue.
-        Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
-        // `super` reads (`Reflect.get` and `Reflect.getPrototypeOf` of a home object): an
-        // ordinary target's data property, whose read ignores the receiver, and its prototype.
-        Native::ReflectGet => {
-            let target = *args.first()?;
-            vm.heap.ordinary_object(target)?;
-            vm.plain_keyed_get(target, *args.get(1)?)
-        }
-        Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
-        // The registry lookup of a string key, which ToString leaves as it is.
-        Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) => {
-            let symbol = vm.call_symbol_native(code, Native::SymbolFor, args).ok()?;
-            note_allocation(vm);
-            Some(symbol)
-        }
-        native @ (Native::MapSet
-        | Native::MapDelete
-        | Native::MapClear
-        | Native::SetAdd
-        | Native::SetDelete
-        | Native::SetClear) => vm.plain_collection_mutation(code, *native, receiver, args),
-        Native::ArrayIteratorNext => {
-            let result = vm.plain_array_iterator_next(callee, receiver)?;
-            note_allocation(vm);
-            Some(result)
-        }
-        Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
-        Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
-        // `String(value)` of a string is that string; of a primitive whose ToString reads no
-        // cell, its spelling (`coercion::immediate_to_string`).
-        Native::String if !args.is_empty() => {
-            if vm.heap.string(argument).is_some() {
-                return Some(argument);
-            }
-            let value = vm.heap.alloc_string(super::coercion::immediate_to_string(argument)?);
-            note_allocation(vm);
-            Some(value)
-        }
-        // `Number(value)` of a primitive whose ToNumber reads no cell but a string's text, as
-        // Node's `utf8Write` converts its offset and length; a BigInt, a Symbol and any object
-        // take the general call.
-        Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
-        // `Number.prototype.toString` of a Number primitive in decimal, as a status code's
-        // `toString()` reads; a wrapper object, another radix or a radix to coerce take the
-        // general call.
-        Native::NumberString
-            if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
-        {
-            let number = receiver.as_number()?;
-            let text = vm.heap.alloc_string(super::wtf16::JsString::from_number(number));
-            note_allocation(vm);
-            Some(text)
-        }
-        Native::GlobalIsNaN | Native::GlobalIsFinite => {
-            super::number::global_number_predicate(*native, vm.primitive_to_number(argument)?).map(Value::boolean)
-        }
-        native => super::number::number_predicate(*native, argument).map(Value::boolean),
-    }
-}
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
 /// makes it from the running frame: with the frame's resume PC published and the arguments
@@ -21564,7 +21147,7 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
             return false;
         }
         match decoded[pc].op() {
-            Op::Return => return true,
+            Op::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
             Op::Jump => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
