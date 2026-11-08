@@ -90,4 +90,13 @@ impl<H: Host> Vm<H> {
         self.heap.record_string_atom(key, atom);
         Some(atom)
     }
+
+    /// ToString of `value` as a string value: a string is itself, read and copied no further.
+    pub(super) fn string_of_value(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+        if self.heap.is_string(value) {
+            return Ok(value);
+        }
+        let text = self.coerce_js_string(p, value)?;
+        Ok(self.heap.alloc_string(text))
+    }
 }
