@@ -2023,7 +2023,7 @@ unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
         let last = entries.last().expect("a recovery chain");
         INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((last.function, last.source_pc))));
     }
-    let chain = frameless::chain(vm, dispatch, entries[0].call_pc, inlined);
+    let chain = frameless::chain(vm, program, dispatch, entries[0].call_pc, inlined);
     materialize_chain(vm, program, dispatch, &chain);
     0
 }
