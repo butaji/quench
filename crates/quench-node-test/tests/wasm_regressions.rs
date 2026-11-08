@@ -177,3 +177,37 @@ try { calls(0); } catch (e) { console.log(e.constructor.name, e.message, callers
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+/// A shared memory's plain loads and stores address its bytes in place, in the lane and in
+/// compiled code, before and after the memory grows, and agree with its JavaScript views and
+/// atomics.
+#[test]
+fn shared_memory_accesses_agree_with_views_across_growth_like_node() {
+    // (module (import "env" "mem" (memory 1 4 shared))
+    //   (func (export "sum") (param i32) (result i32)) sums the first n i32s,
+    //   (func (export "put") (param i32 i32)) and (func (export "get") (param i32) (result i32)).
+    let source = r#"
+const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,11,2,96,1,127,1,127,96,2,127,127,0,2,13,1,3,101,110,118,3,109,101,109,2,3,1,4,3,4,3,0,1,0,7,19,3,3,115,117,109,0,0,3,112,117,116,0,1,3,103,101,116,0,2,10,54,3,34,1,2,127,3,64,32,2,32,1,65,2,116,40,2,0,106,33,2,32,1,65,1,106,34,1,32,0,73,13,0,11,32,2,11,9,0,32,0,32,1,54,2,0,11,7,0,32,0,40,2,0,11]);
+const memory = new WebAssembly.Memory({ initial: 1, maximum: 4, shared: true });
+const e = new WebAssembly.Instance(new WebAssembly.Module(bytes), { env: { mem: memory } }).exports;
+const view = new Int32Array(memory.buffer);
+for (let i = 0; i < 1000; i++) view[i] = i;
+let total = 0;
+for (let k = 0; k < 300; k++) total = e.sum(1000);
+e.put(8, 77);
+console.log(total, view[2], e.get(8));
+memory.grow(1);
+const grown = new Int32Array(memory.buffer);
+e.put(65540, 5);
+console.log(grown[16385], e.get(65540), memory.buffer.byteLength, view.length);
+try { e.get(131072); } catch (error) { console.log(error instanceof WebAssembly.RuntimeError); }
+console.log(Atomics.add(grown, 2, 1), e.get(8));
+for (let k = 0; k < 300; k++) total = e.sum(1000);
+console.log(total);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}

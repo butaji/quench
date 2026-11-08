@@ -6608,7 +6608,7 @@ fn closure_identity_cache_rejects_reused_function_slots() {
             .next()
             .is_none()
     );
-    vm.prune_function_values();
+    vm.prune_function_values(true);
     assert!(!vm.function_values.contains_key(&key));
 }
 

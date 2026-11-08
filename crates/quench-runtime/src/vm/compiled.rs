@@ -4822,7 +4822,7 @@ impl Default for FastReferenceCache {
     }
 }
 
-/// Fill an already bounds-checked range in the instance's unshared memory.
+/// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
 /// leaf, and no VM call can move the guarded memory during the operation.
 unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) -> i64 {
@@ -5038,7 +5038,7 @@ fn note_reference_call_site(
 
 fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
     if context.memory != Value::UNDEFINED
-        && let Some((_, length)) = super::dispatch_fast::unshared_memory(vm, context.memory)
+        && let Some((_, length)) = super::dispatch_fast::direct_memory(vm, context.memory)
     {
         context.memory_length = length as u64;
     }
@@ -5641,7 +5641,7 @@ fn direct_reference_entry<H: Host>(
             if binding != context_memory {
                 return None;
             }
-            let (base, length) = super::dispatch_fast::unshared_memory(vm, binding)?;
+            let (base, length) = super::dispatch_fast::direct_memory(vm, binding)?;
             let guard = guarded_memory(vm, binding);
             if compiled.guarded && guard.is_none()
                 || compiled.fixed_base.is_some_and(|fixed| {
@@ -8737,7 +8737,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// Check `register` names the function's memory for a vector access: the memory
-    /// register, or a register an instance binding loaded the same unshared memory into
+    /// register, or a register an instance binding loaded the same direct memory into
     /// (lowering binds the memory afresh for each such access), which then is the
     /// function's compiled memory (`memory_slot`).
     fn vector_memory(
@@ -8751,7 +8751,7 @@ impl<H: Host> Analysis<'_, H> {
         match state.get(register, function.registers)? {
             Slot::Memory if Some(register) == memory_register => {}
             Slot::Binding(slot)
-                if self.binds_unshared_memory(slot) && memory_slot.is_none_or(|known| known == slot) =>
+                if self.binds_direct_memory(slot) && memory_slot.is_none_or(|known| known == slot) =>
             {
                 *memory_slot = Some(slot);
             }
@@ -8787,20 +8787,19 @@ impl<H: Host> Analysis<'_, H> {
         }
     }
 
-    /// Whether `slot` binds an unshared memory compiled code can view.
-    fn binds_unshared_memory(&self, slot: u32) -> bool {
+    /// Whether `slot` binds a memory compiled code can view (`MemoryStorage::is_direct`).
+    fn binds_direct_memory(&self, slot: u32) -> bool {
         let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
             return false;
         };
         matches!(
             self.vm.heap.get(binding),
-            Some(Cell::WasmMemory { bytes, .. })
-                if matches!(**bytes, crate::wasm::memory::MemoryStorage::Unshared(_))
+            Some(Cell::WasmMemory { bytes, .. }) if bytes.is_direct()
         )
     }
 
     /// Whether a bound memory has the representation supported by native
-    /// linear-memory operations: unshared memory32 with ordinary Wasm pages.
+    /// linear-memory operations: direct memory32 with ordinary Wasm pages.
     fn supports_compiled_memory(&self, slot: u32) -> bool {
         let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
             return false;
@@ -8808,7 +8807,7 @@ impl<H: Host> Analysis<'_, H> {
         matches!(
             self.vm.heap.get(binding),
             Some(Cell::WasmMemory { bytes, header, .. })
-                if matches!(**bytes, crate::wasm::memory::MemoryStorage::Unshared(_))
+                if bytes.is_direct()
                     && !header.ty.memory64
                     && header.ty.page_size() as usize
                         == (1usize << crate::wasm::memory::WASM_PAGE_BITS)
@@ -9352,7 +9351,7 @@ impl<H: Host> Analysis<'_, H> {
             Op::WasmInstanceBinding => {
                 let slot = instruction.imm();
                 if Some(instruction.a()) == memory_register {
-                    if !self.binds_unshared_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
+                    if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
                         return None;
                     }
                     *memory_slot = Some(slot);
@@ -12273,51 +12272,15 @@ fn compile_entry(isa: &dyn cranelift_codegen::isa::TargetIsa, func: ir::Function
     Some(compiled.code_buffer().to_vec())
 }
 
-/// The guard reservation of an unshared memory binding.
 /// A memory base an x86-64 addressing mode can carry as its signed 32-bit
 /// displacement.
 fn displacement_base(base: *mut u8) -> Option<i32> {
     i32::try_from(base as usize).ok()
 }
 
-/// The bytes of the unshared memory `binding` names and their guard reservation, if any,
-/// read under one borrow: a native entry needs both (`run_compiled_inner`). `None` when the
-/// memory is shared or its bytes are borrowed by a suspended host access, which the general
-/// path reports exactly.
-fn memory_and_guard<H: Host>(
-    vm: &Vm<H>,
-    binding: Value,
-) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
-        return None;
-    };
-    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-        return None;
-    };
-    let mut state = state.try_borrow_mut().ok()?;
-    let guard = state.guard();
-    let view = (state.as_mut_ptr(), state.len());
-    (!view.0.is_null()).then_some((view, guard))
-}
-
+/// The guard reservation of a direct memory binding.
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
-    memory_bytes(vm, binding, crate::wasm::memory::LinearBytes::guard)
-}
-
-/// `query` of the bytes of the unshared memory `binding` names.
-fn memory_bytes<H: Host, T>(
-    vm: &Vm<H>,
-    binding: Value,
-    query: impl FnOnce(&crate::wasm::memory::LinearBytes) -> Option<T>,
-) -> Option<T> {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
-        return None;
-    };
-    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-        return None;
-    };
-    let bytes = state.try_borrow().ok()?;
-    query(&bytes)
+    super::dispatch_fast::direct_memory_and_guard(vm, binding)?.1
 }
 
 thread_local! {
@@ -14269,7 +14232,7 @@ impl<H: Host> Vm<H> {
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let (view, guard) = memory_and_guard(self, binding)?;
+                    let (view, guard) = super::dispatch_fast::direct_memory_and_guard(self, binding)?;
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
                         return None;
