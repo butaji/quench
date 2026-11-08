@@ -107,7 +107,7 @@ fn emit_builtin_shortcut(builder: &mut FunctionBuilder<'_>, (arguments, payload)
 }
 
 /// Lowers the plain `new` at `pc` frameless, else as an intrinsic array
-/// (`general_array_construct`), the exact step taking any miss.
+/// (`general_array_construct`), else framed (`general_user_call`), the exact step taking any miss.
 fn lower_construct(
     builder: &mut FunctionBuilder<'_>,
     (pc, instruction, next): (usize, WideInstruction, ir::Block),
@@ -133,12 +133,13 @@ fn lower_construct(
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, array_construct));
     let array = emit_lane_helper_call(builder, payload, helper, &[payload, callee, values, count]);
     let built = builder.ins().icmp_imm_u(IntCC::NotEqual, array, Value::DELETED.to_bits() as i64);
-    let (store, fallback) = (builder.create_block(), builder.create_block());
-    builder.ins().brif(built, store, &[], fallback, &[]);
+    let (store, user, fallback) = (builder.create_block(), builder.create_block(), builder.create_block());
+    builder.ins().brif(built, store, &[], user, &[]);
     builder.switch_to_block(store);
     builder.ins().store(MemFlagsData::trusted(), array, arguments, destination);
     builder.ins().jump(next, &[]);
-    exact.emit(builder, fallback);
+    builder.switch_to_block(user);
+    emit_user_call(builder, (pc, next, fallback), payload, exact);
     true
 }
 
@@ -211,8 +212,9 @@ pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, residual: 
     value.to_bits()
 }
 
-/// The plain call at `pc` of the payload's frame, as the exact step's in-loop call runs it
-/// (`Vm::try_inline_user_call`, `Vm::complete_pushed_call`) without the step around it:
+/// The plain call or construction at `pc` of the payload's frame, as the exact step's in-loop
+/// push runs it (`Vm::try_inline_user_call`, `Vm::try_inline_construct`,
+/// `Vm::complete_pushed_call`) without the step around it:
 /// `USER_CALL_COMPLETED` with the value in its register, `USER_CALL_STOPPED` with the
 /// transition in the payload, or `USER_CALL_MISSED` before any effect.
 ///
@@ -238,7 +240,10 @@ fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut 
     vm.frames[caller].pc = pc;
     vm.frames[caller].pc_is_resume = false;
     if let Err(error) = vm.check_execution_interrupt() { return stop(dispatch, pc, Err(error)); }
-    let Some(pushed) = vm.try_inline_user_call(program, caller, instruction, next) else { return USER_CALL_MISSED };
+    // Only calls and constructions take the framed path.
+    let pushed = if instruction.op().is_ordinary_call() { vm.try_inline_user_call(program, caller, instruction, next) }
+        else if dispatch.allow_inline_calls { vm.try_inline_construct(program, caller, instruction, next) } else { None };
+    let Some(pushed) = pushed else { return USER_CALL_MISSED };
     let step = vm.complete_pushed_call(program, caller, instruction, pushed);
     if !matches!(step, Ok(super::super::StepResult::Continue)) { return stop(dispatch, pc, step); }
     let frame = &mut vm.frames[caller];

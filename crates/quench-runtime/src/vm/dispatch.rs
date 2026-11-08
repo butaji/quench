@@ -151,6 +151,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A plain construction the loop pushes in place (`inline_construct_target`), its receiver bound.
+    pub(super) fn try_inline_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize)
+        -> Option<Result<StepResult, JsError>> {
+        let (crate::bytecode::ConstructArguments::Registers(window), false) = (i.construct_arguments(), i.is_super_construct())
+            else { return None };
+        let callee = self.read(f, i.register_b());
+        let (program, id, env, this) = self.inline_construct_target(p, f, callee)?;
+        let arguments: *const [Value] = self.register_window(f, window);
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        self.push_in_loop_activation(p, f, pc, (program, id, env), callee, this, unsafe { &*arguments },
+            i.result_register(), CallCompletion::Constructor(this))
+    }
+
     /// A field read's `getter`, a user function the loop may push in place, run as the next
     /// in-loop activation with receiver `this` and no arguments, writing `destination`.
     #[inline(never)]
@@ -1723,22 +1736,9 @@ impl<H: Host> Vm<H> {
             }
             Op::Construct => {
                 self.profile.call_source(CallSource::Construct);
-                // A construction whose result is returned is pushed too; its caller returns
-                // the constructed value (see `PendingGeneralCall::returns`).
-                if allow_inline_calls
-                    && !i.is_super_construct()
-                    && let crate::bytecode::ConstructArguments::Registers(window) =
-                        i.construct_arguments()
-                {
-                    let callee = self.read(f, i.register_b());
-                    if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
-                        let arguments: *const [Value] = self.register_window(f, window);
-                        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                        if let Some(step) = self.push_in_loop_activation(p, f, *pc, (program, id, env), callee, this,
-                            unsafe { &*arguments }, i.result_register(), CallCompletion::Constructor(this)) {
-                            return step;
-                        }
-                    }
+                // A returned construction is pushed too; its caller returns it (`PendingGeneralCall::returns`).
+                if allow_inline_calls && let Some(step) = self.try_inline_construct(p, f, i, *pc) {
+                    return step;
                 }
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {

@@ -383,7 +383,8 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn try_forwarded_user_call(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize,
         callee: Value) -> Option<Result<StepResult, JsError>> {
-        if i.op() != Op::Call { return None; }
+        // Only a call passing a register window forwards its values (not `CallArray`'s array).
+        if !matches!(i.op().immediate_layout(), crate::bytecode::ImmediateLayout::CallWindowWithEvalFlags) { return None; }
         let window: *const [Value] = self.register_window(f, i.call_window());
         // SAFETY: the window lies in the caller frame, which callee setup only reads.
         let forwarded = self.forwarded_call(callee, self.read(f, i.register_c()), unsafe { &*window })?;
