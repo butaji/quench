@@ -14,7 +14,7 @@ impl<H: Host> Analysis<'_, H> {
             .map(|index| allowed.contains(index).then(|| self.plan(index, allowed, &mut memory_slot)).flatten())
             .collect();
         let mut callable = BitSet::from_fn(plans.len(), |index| plans[index].is_some());
-        let edges = self.known_call_edges();
+        let edges = self.known_call_edges(allowed);
         let mut dropped: Vec<u32> = allowed.iter().filter(|&index| plans[index].is_none()).map(|index| index as u32).collect();
         while let Some(callee) = dropped.pop() {
             let start = edges.partition_point(|&(to, _)| to < callee);
@@ -32,10 +32,11 @@ impl<H: Host> Analysis<'_, H> {
         (plans, memory_slot)
     }
 
-    /// Every statically known call as a `(callee, caller)` pair, sorted by callee.
-    fn known_call_edges(&self) -> Vec<(u32, u32)> {
+    /// Every statically known call of an `allowed` caller, the only callers that can be
+    /// callable, as a `(callee, caller)` pair, sorted by callee.
+    fn known_call_edges(&self, allowed: &BitSet) -> Vec<(u32, u32)> {
         let mut edges = Vec::new();
-        for caller in 0..self.code.functions.len() {
+        for caller in allowed.iter() {
             let function = self.code.function(caller);
             for packed in &function.code {
                 let instruction = super::super::dispatch_fast::decoded_instruction(function, *packed);

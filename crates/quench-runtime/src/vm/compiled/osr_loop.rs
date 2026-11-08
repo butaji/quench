@@ -319,11 +319,11 @@ pub(crate) struct RegionAnalysisFailure {
 }
 
 impl RegionAnalysisFailure {
+    /// The region stops only at a call, which may run inlined once the site is hot.
+    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(Op::Call) }
+
     fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
-        Self {
-            reason,
-            pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)),
-        }
+        Self { reason, pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)) }
     }
 }
 

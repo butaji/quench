@@ -1,7 +1,6 @@
-//! How a loop site weighs the native runs it enters.
-use super::LoopSite;
+//! What a loop site's native runs pay back of their entries.
 
-impl LoopSite {
+impl super::LoopSite {
     /// Weighs a native run that took `backedges` backward jumps: a run that took none paid its
     /// entry for no iteration and counts toward `TIERS.loops.max_exits`, and each iteration
     /// a run took pays one such entry back.

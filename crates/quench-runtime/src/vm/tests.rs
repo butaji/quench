@@ -13172,7 +13172,7 @@ fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
 
     let compiled_output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(compiled_output.clone()));
-    vm.programs.enable_js_general_dispatch();
+    vm.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     vm.programs.compile_general_baseline_when_hot();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
@@ -17006,7 +17006,7 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
 
     let mut compiled = Vm::new(TestHost::default());
 
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -17097,7 +17097,7 @@ fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
     let expected_text = interpreter.to_string(&program, expected).unwrap();
 
     let mut compiled = Vm::new(TestHost::default().with_test262());
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -17234,7 +17234,7 @@ fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
     let expected = interpreter.to_string(&program, expected).unwrap();
 
     let mut compiled = Vm::new(TestHost::default().with_test262());
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
@@ -17325,7 +17325,7 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
 
     let mut compiled = Vm::new(TestHost::default());
 
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -17387,7 +17387,7 @@ fn js_jit_general_dispatch_lowers_return_to_the_shared_frame_dispatcher() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -18387,7 +18387,7 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let mut interpreter = Vm::new(TestHost::default().with_test262());
     interpreter.execute(&program).unwrap();
     let mut compiled = Vm::new(TestHost::default().with_test262());
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
@@ -18450,7 +18450,7 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
         .unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -18582,7 +18582,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .unwrap();
 
     let mut compiled = Vm::new(TestHost::default().with_test262());
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.programs.enable_js_jit_diagnostics();
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
@@ -18738,7 +18738,7 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
 
     let mut compiled = Vm::new(TestHost::default());
 
-    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -19156,7 +19156,7 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     let mut interpreter = Vm::new(TestHost::default());
     interpreter.execute(&program).unwrap();
     let mut vm = Vm::new(TestHost::default());
-    vm.programs.enable_js_general_dispatch();
+    vm.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.compile_general_baseline_when_hot();
     vm.execute(&program).unwrap();
@@ -19178,7 +19178,7 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
 
     let mut exhausted = Vm::new(TestHost::default());
 
-    exhausted.programs.enable_js_general_dispatch();
+    exhausted.programs.enable_js_general_dispatch(); super::dispatch_fast::call_from_script_root_in_frames();
     exhausted.set_execution_mode(crate::ExecutionMode::Compiled);
     exhausted.programs.compile_general_baseline_when_hot();
     let exhausted_id = exhausted.programs.insert(program.clone()).unwrap();
