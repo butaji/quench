@@ -2050,17 +2050,8 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
     let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
-    // The activation the instruction's exact step pushes (`Vm::push_in_loop_activation`): a
-    // getter's of its read (`general_getter`), a construction's or a call's.
-    let getter = instruction.op() == Op::GetField;
-    let callee = if getter { entry.callee } else { vm.read(caller, instruction.register_b()) };
-    let construction = (instruction.op() == Op::Construct).then(|| instruction.construct_arguments());
-    let (window, receiver, completion) = match construction {
-        Some(crate::bytecode::ConstructArguments::Registers(window)) => (window, entry.this, super::CallCompletion::Constructor(entry.this)),
-        Some(crate::bytecode::ConstructArguments::Array(_)) => unreachable!("a frameless construction passes registers"),
-        None if getter => (crate::bytecode::RegisterWindow { base: 0, count: 0 }, entry.this, super::CallCompletion::Value),
-        None => (instruction.call_window(), vm.read(caller, instruction.register_c()), super::CallCompletion::Value),
-    };
+    // The activation the instruction's step pushes (`Vm::pushed_frame`).
+    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
     let target = (vm.frames[caller].program, entry.function, env);
@@ -2241,9 +2232,6 @@ pub(super) struct VmFacts<'a> {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
-    /// The `call` name and the realm's `Function.prototype.call`, through which a call
-    /// inlines the function it calls (`lane_unit::Frame::function_call`).
-    pub(super) function_call: Option<(Atom, Value)>,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
@@ -2253,14 +2241,13 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
     /// no Stable facts.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, function_call: None, online: None };
+    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, online: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        let function_call = self.lookup_atom("call").and_then(|atom| Some((atom, self.own_property(self.function_proto, atom)?)));
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), function_call, online: None }
+        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
     }
 }
 
@@ -6744,6 +6731,7 @@ pub(super) fn subscribe_lane_dependencies(slots: &[crate::code_dependencies::Slo
     slots.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
         && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
         && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+        && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
 }
 
 fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
@@ -7027,8 +7015,7 @@ unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
     crate::stack::GuestCallGuard::remaining() as u64
 }
 
-/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
-/// for one the lane's own read would not take, which leaves the body at the read.
+/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED` for one the lane's own read would not take.
 unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
@@ -7185,15 +7172,12 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 
 impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
-    /// global object's cached data property; none for a binding in its TDZ or a miss.
+    /// does (`dispatch_fast::lane_load_global_name_refresh`): its global lexical binding's, else
+    /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
     pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
-        if self.realm.global_lexical_declarations.contains(&atom) {
-            return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted());
-        }
-        match self.cached_field_hit(code, self.realm.globals, site) {
-            super::object::FieldCacheProbe::Hit(value) => Some(value),
-            _ => None,
+        match self.global_name_read(code, atom, site) {
+            super::field_cache::GlobalNameRead::Value(value, _) => Some(value),
+            super::field_cache::GlobalNameRead::Uninitialized | super::field_cache::GlobalNameRead::Miss => None,
         }
     }
 

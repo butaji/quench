@@ -40,6 +40,7 @@ pub(super) struct Facts {
 impl Facts {
     pub(super) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
     pub(super) fn backedge(&self) -> &[Type] { &self.backedge }
+
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
     /// the PC table stores element offsets, including reachable zero-register rows.
     pub(super) fn at(&self, pc: usize) -> Option<&[Type]> {
@@ -469,13 +470,11 @@ mod tests {
     }
 }
 
-#[path = "facts/immediates.rs"]
-mod immediates;
+#[path = "facts/immediates.rs"] mod immediates;
+#[path = "facts/written.rs"] mod written;
+#[path = "facts/binary.rs"] mod binary;
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32, is_int32_number};
-#[path = "facts/binary.rs"]
-mod binary;
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 
 #[cfg(test)]
-#[path = "facts/decode_ratchet.rs"]
-mod decode_ratchet;
+#[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

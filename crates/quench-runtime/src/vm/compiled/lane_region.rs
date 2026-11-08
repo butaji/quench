@@ -140,13 +140,13 @@ struct LocalProofs {
     fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
     /// Pure ToInt32 results, separate from each source value's semantic type.
     int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
-    /// Dense array views by the tagged base they prove, until an instruction that could
-    /// change an array's storage (`retains_array_views`).
+    /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
-    /// Whether this block read the code's invalidation word since the last helper that may
-    /// change a Stable fact's subject (run JavaScript, write a prototype, name a method):
-    /// every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
+    /// Whether this block read the code's invalidation word since the last helper that may change a Stable fact's subject
+    /// (run JavaScript, write a prototype, name a method): every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
     stable: bool,
+    /// Whether this block proved the realm its global reads were compiled against active (`Lowering::hold_global`).
+    realm: bool,
 }
 
 impl LocalProofs {
@@ -154,8 +154,7 @@ impl LocalProofs {
         if readable { self.readable.insert(owner); } else { self.readable.remove(owner); }
     }
 
-    /// An admitted existing own-slot write changes only this name. Retire it
-    /// for every receiver, since distinct receiver values may alias.
+    /// An admitted existing own-slot write changes only this name. Retire it for every receiver, since distinct receiver values may alias.
     fn write_field(&mut self, atom: Atom) {
         self.fields.retain(|field| field.atom != atom);
     }
@@ -166,7 +165,7 @@ impl State {
         Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false,
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
             arrays: smallvec::SmallVec::new() } }
     }
 
@@ -348,7 +347,7 @@ struct Lowering<'a, 'f> {
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
-    global_reads: &'a BTreeMap<usize, Option<Value>>,
+    global_reads: &'a BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
@@ -756,6 +755,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
+        state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -1234,7 +1234,7 @@ pub(super) fn lower_body(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, Option<Value>>,
+    global_reads: &BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1261,7 +1261,7 @@ pub(super) fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, Option<Value>>,
+    global_reads: &BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1482,10 +1482,7 @@ pub(super) fn lower(
         lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
     }
     if coverage.selected_entry() {
-        lowering.written = CompoundBitSet::with_capacity(count);
-        for instruction in instructions.iter().copied() {
-            for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
-        }
+        lowering.written = lowering.facts.written(&instructions, &writes, count);
         // Backedge definitions choose a numeric entry signature. Conformance
         // proves the external input once; every subsequent edge carries the
         // same verified SSA view. This is an admission requirement, not a fact
@@ -1540,7 +1537,7 @@ pub(super) fn lower(
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
-    for start in &starts { lowering.entered.insert(*start); }
+    for start in &starts { lowering.entered.insert(*start); lowering.stable.starts.push(*start); }
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
     if let [at_first, at_header] = start_blocks[..] {
         let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
@@ -1874,10 +1871,10 @@ impl Lowering<'_, '_> {
     fn reader(&self, at: usize, register: Register) -> (usize, Register) {
         let instruction = |at: usize| self.unit.instructions.get(at).copied();
         let (at, register) = match instruction(at) {
-            Some(moved) if moved.op().js_denotation() == crate::bytecode::JsDenotation::Move && moved.register_b() == register && !self.is_live(at + 1, register) => (at + 1, moved.result_register()),
+            Some(moved) if moved.op().copies_register() && moved.register_b() == register && !self.is_live(at + 1, register) => (at + 1, moved.result_register()),
             _ => (at, register),
         };
-        match instruction(at) { Some(jump) if jump.op().js_denotation() == crate::bytecode::JsDenotation::Jump => (jump.jump_target() as usize, register), _ => (at, register) }
+        match instruction(at) { Some(jump) if jump.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Jump => (jump.jump_target() as usize, register), _ => (at, register) }
     }
 
     /// `state` past a join with `incoming`: each register's facts as both paths prove them.
@@ -2118,7 +2115,7 @@ impl Lowering<'_, '_> {
                                 self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),
-                                CalleeBinding::Identity(identity) => self.builder.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64),
+                                CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.builder.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64),
                             };
                             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                             emit_js_guard(&mut self.builder, matched, exit);
@@ -3133,10 +3130,10 @@ impl Lowering<'_, '_> {
         let callee_index = usize::from(inlined.callee_register);
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
-            CalleeBinding::Identity(identity) if state.values[callee_index].value.ty.function_identity() == Some(identity)
+            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } if state.values[callee_index].value.ty.function_identity() == Some(identity)
                 || self.entry.as_ref().expect("entry facts").calls.contains(frame) =>
                     (None, Some(Type::function(identity).expect("admitted callee locator"))),
-            CalleeBinding::Identity(identity) => (
+            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
                 Some(self.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64)),
                 Some(Type::function(identity).expect("admitted callee locator")),
             ),
@@ -3166,12 +3163,11 @@ impl Lowering<'_, '_> {
                 binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
             }).expect("an admitted callee and its dominating check");
         }
-        // A call through `call` is the call of the function it names while `call` is the realm's.
-        if let Some(register) = inlined.function_call {
-            let (_, call) = self.vm.function_call.expect("a call through `call` plans only where the realm's is known");
+        // A forwarded call is the call of the function it forwards to while its native is the one seen.
+        if let Some((register, through)) = inlined.function_call {
             let native = self.tagged(state, register);
-            let realm = self.ins().icmp_imm_u(IntCC::Equal, native, call.to_bits() as i64);
-            emit_js_guard(&mut self.builder, realm, exit);
+            let seen = self.ins().icmp_imm_u(IntCC::Equal, native, through.to_bits() as i64);
+            emit_js_guard(&mut self.builder, seen, exit);
         }
         let receiver = self.tagged(state, inlined.receiver);
         let entry = self.entry.as_ref().expect("entry facts");
@@ -3693,7 +3689,7 @@ impl Lowering<'_, '_> {
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
     /// guard that fails there leaves at the header, before the loop runs.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
-        self.hoist_arrays(state, header);
+        self.hoist_arrays(state, header); self.hoist_stable(state, header);
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         let boundaries = leaders(&self.unit.instructions);
         for InvariantRead { pc, owner, rooted } in reads.iter().copied() {
@@ -3706,7 +3702,7 @@ impl Lowering<'_, '_> {
                         .and_then(|read| self.hoisted.get(&read).copied()) else { continue };
                     let target = self.unit.frames[frame].target;
                     let admitted = match target.callee {
-                        CalleeBinding::Identity(identity) => read.ty.function_identity() == Some(identity),
+                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
                         CalleeBinding::Function => read.ty.body_index() == Some(target.function),
                     };
                     if !admitted { continue; }
@@ -3766,7 +3762,7 @@ impl Lowering<'_, '_> {
                     let (matched, admitted) = match target.callee {
                         CalleeBinding::Function => (self.function_binding(value, target.function),
                             Type::function_body(target.function)),
-                        CalleeBinding::Identity(identity) => (
+                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
                             self.ins().icmp_imm_u(IntCC::Equal, value, identity.to_bits() as i64),
                             Type::function(identity).expect("admitted callee locator")),
                     };

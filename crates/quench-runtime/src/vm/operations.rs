@@ -2200,7 +2200,7 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.intern_dynamic_concat(left, right) {
+        if let Some(value) = self.intern_dynamic_concat(left, right).or_else(|| self.short_ascii_concat(left, right)) {
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat(true);
             return Ok(value);

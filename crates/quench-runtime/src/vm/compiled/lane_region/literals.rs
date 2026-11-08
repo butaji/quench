@@ -103,7 +103,7 @@ impl Lowering<'_, '_> {
 /// Whether the loop at `header` runs an instruction `op` selects: from it to the last
 /// backward jump to it.
 pub(super) fn loop_runs(unit: &super::super::lane_unit::Unit, header: usize, op: impl Fn(Op) -> bool) -> bool {
-    let jump = |instruction: &WideInstruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::Jump;
+    let jump = |instruction: &WideInstruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Jump;
     let back = unit.instructions.iter().rposition(|instruction| jump(instruction) && instruction.jump_target() as usize == header);
     unit.instructions[header..=back.unwrap_or(header)].iter().any(|instruction| op(instruction.op()))
 }

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 // The code that took a value a prototype offers its inheritors as a constant, by the
 // prototype's exact shape: a Stable fact (`typed_ir::BindingTime::Stable`). A write to a slot
-// of a prototype of that shape (`Object::note_prototype_value_write`) retires that code, and a
+// of a prototype of that shape (`Object::note_value_write`) retires that code, and a
 // layout change retires all of it (`advance_prototype_layout_epoch`), so the code itself checks
 // nothing per read. Guest heaps and their native publications are thread-confined (Rc
 // ownership): another thread's prototype writes never retire this thread's code.

@@ -119,7 +119,8 @@ impl<H: Host> Vm<H> {
         if caller == function && generic.contains(&LaneExit::At(pc as usize)) { return Vec::new(); }
         let mut bound = targets(caller, pc);
         for target in &mut bound {
-            if !numeric_callee(program, target.function) { continue; }
+            // A forwarded target keeps its identity: the site calls it through its native.
+            if !numeric_callee(program, target.function) || target.through().is_some() { continue; }
             if let Some(callee) = target.identity()
                 && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
                     owner == self.active_program && function == target.function) {
@@ -127,13 +128,7 @@ impl<H: Host> Vm<H> {
             }
             target.callee = CalleeBinding::Function;
         }
-        let mut kept = 0;
-        for index in 0..bound.len() {
-            let target = bound[index];
-            if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
-        }
-        bound.truncate(kept);
-        bound
+        each_once(bound)
     }
 
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
@@ -142,13 +137,12 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let body = program.function_get(function as usize)?;
         let valid = std::cell::Cell::new(true);
-        let atom = self.vm_facts().function_call.map(|(atom, _)| atom);
         let unit = lane_unit::with_budget(program, function, body, budget,
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc),
-            &|callee| program.function_get(callee as usize), atom)?;
+            &|callee| program.function_get(callee as usize))?;
         if !valid.get() { return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
-            CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
+            CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
         }).then_some(unit)
@@ -241,7 +235,7 @@ impl<H: Host> Vm<H> {
         direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, loop_header: Option<u32>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
         let mut pending = match work {
             LaneBodyWork::Start { generic } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS),
-            LaneBodyWork::Poll(pending) => return self.lane_body_poll(*pending),
+            LaneBodyWork::Poll(pending) => return self.lane_body_poll(pending),
         };
         // A plan again after a rejection starts at once; code the thread compiled at once
         // (or the calling thread, without one) publishes at once.
@@ -250,7 +244,7 @@ impl<H: Host> Vm<H> {
             let direct = direct(self);
             let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, loop_header, &generic, budget)
             else { return LaneBodyOutcome::Declined };
-            match self.lane_body_poll(started) {
+            match self.lane_body_poll(Box::new(started)) {
                 LaneBodyOutcome::Stale => pending = (generic, budget / 2),
                 outcome => return outcome,
             }
@@ -259,7 +253,8 @@ impl<H: Host> Vm<H> {
 
     /// What a pending body's compile came to; `Stale` also asks for a plan again at half its
     /// budget when its code was too large.
-    fn lane_body_poll(&mut self, pending: PendingLaneMethod) -> LaneBodyOutcome {
+    /// A poll moves nothing while the code compiles: loop entries poll at each backward jump.
+    fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> LaneBodyOutcome {
         if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
             return LaneBodyOutcome::Stale;
         }
@@ -282,9 +277,9 @@ fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
 
 impl PendingLaneMethod {
     /// What its compile came to, or itself while its code compiles.
-    fn poll(self) -> Result<LaneCompile, Box<Self>> {
+    fn poll(self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
-            std::task::Poll::Pending => return Err(Box::new(self)),
+            std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) => LaneCompile::Replan,
             std::task::Poll::Ready(_) => LaneCompile::Done(None),
@@ -335,4 +330,15 @@ impl LanePlan {
             loop_header: self.loop_header, amortizes, direct: self.direct, closed,
         })
     }
+}
+
+/// `targets`, each once, in first-seen order.
+fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
+    let mut kept = 0;
+    for index in 0..targets.len() {
+        let target = targets[index];
+        if !targets[..kept].contains(&target) { targets[kept] = target; kept += 1; }
+    }
+    targets.truncate(kept);
+    targets
 }
