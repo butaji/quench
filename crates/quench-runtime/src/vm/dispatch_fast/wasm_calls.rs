@@ -6,6 +6,11 @@ pub(super) const fn known_call_handler<H: Host>() -> Handler {
     lane_call_known::<H>
 }
 
+/// The reference call's handler, for Wasm views.
+pub(super) const fn reference_call_handler<H: Host>() -> Handler {
+    lane_call_wasm_reference::<H>
+}
+
 /// Enters `$function` of the running program and instance as a Wasm call: out of the lane when
 /// native code may run it, else as an activation pushed as the general loop's inline call would
 /// be; `$no_room` takes the call when the lane has no room. Shared by the known and reference calls.
@@ -116,18 +121,6 @@ lane_handler! {
     }
 }
 
-/// A Wasm view's handler for `op` where it differs from a JavaScript view's.
-pub(super) fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
-    match op {
-        // A Wasm reference call enters Wasm functions, never a frameless script call.
-        Op::Call => Some(Some(LaneHandler { handler: lane_call_wasm_reference::<H> as Handler, produces: false })),
-        // Its handler reads the context a JavaScript view carries where a Wasm view carries
-        // its memory; Wasm stores a capture only for the rare `data.drop` and `elem.drop`.
-        Op::StoreCapture => Some(None),
-        _ => None,
-    }
-}
-
 lane_handler! {
     /// A Wasm reference call (`call_ref`, or `call_indirect` past its target check) of a
     /// function of the running program and instance, entered as `lane_call_known` enters its
@@ -143,4 +136,51 @@ lane_handler! {
         let Some(function) = callee else { return exit(ip) };
         enter_wasm_function!(cx, r, ip, i, view, function, exit(ip))
     }
+}
+
+/// A lane call without room for an activation, or to a function whose lane
+/// view is not yet derived: the activations
+/// become frames and the call pushes one, as the general loop would; the
+/// emptied stack then grows so that later calls fit. Out of line so the
+/// activation path saves no registers.
+#[cold]
+#[inline(never)]
+fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
+    let cx = lane_context::<H>();
+    // SAFETY: called only while a lane runs, from its call handler.
+    let i = unsafe { &*ip };
+    let vm = unsafe { vm(cx) };
+    let code = unsafe { &*(*cx).code };
+    let callee = u32::from(i.b);
+    let count = usize::from(code.function(usize::from(i.b)).registers);
+    let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
+    let stack = &vm.lane_stack;
+    let full = stack.full(window);
+    vm.materialize_lane_activations(cx);
+    vm.lane_stack.grow(full, window);
+    let caller = unsafe { (*cx).frame };
+    // SAFETY: `ip` is a record of the active view.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let window = crate::bytecode::RegisterWindow {
+        base: ImmediateLayout::call_window_base(i.imm()),
+        count: ImmediateLayout::argument_count(i.imm()),
+    };
+    let Ok(call_guard) = vm.push_wasm_frame(code, caller, callee, window) else {
+        return Resumed::Exit(exit(ip));
+    };
+    vm.frames[caller].pc = call_pc + 1;
+    vm.frames[caller].pc_is_resume = true;
+    unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+        caller,
+        caller_cursor: None,
+        call_pc: call_pc as u32,
+        destination: i.a,
+        completion: CallCompletion::Value,
+        returns: false,
+        call_guard: Some(call_guard),
+        caller_program: None,
+    });
+    // The pushed frame's guard narrows the activations the thread admits.
+    vm.lane_stack.refresh_activation_limit();
+    lane_enter_frame(cx, caller + 1, 0)
 }
