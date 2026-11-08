@@ -1,6 +1,12 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+/// Keys an object lists, held inline up to a count most objects stay within, so listing
+/// them allocates no buffer beside the array that takes them.
+pub(super) type EnumerableKeys<T> = smallvec::SmallVec<[T; INLINE_ENUMERABLE_KEYS]>;
+/// Object literals and class instances mostly hold up to eight properties.
+const INLINE_ENUMERABLE_KEYS: usize = 8;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum EnumerableOwnPropertyKind {
     Key,
@@ -8,7 +14,31 @@ pub(super) enum EnumerableOwnPropertyKind {
     KeyValue,
 }
 
+impl EnumerableOwnPropertyKind {
+    /// What `Object.keys`, `Object.values` or `Object.entries` lists.
+    pub(super) fn of(native: Native) -> Option<Self> {
+        match native {
+            Native::ObjectKeys => Some(Self::Key),
+            Native::ObjectValues => Some(Self::Value),
+            Native::ObjectEntries => Some(Self::KeyValue),
+            _ => None,
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
+    /// EnumerableOwnProperties of an object whose shape answers it (`shape_enumerable_keys`,
+    /// `shape_enumerable_data_items`): no guest code runs and nothing raises. `None` leaves
+    /// Proxies, accessors and every other object to the general path.
+    pub(super) fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
+        if kind != EnumerableOwnPropertyKind::Key {
+            return self.shape_enumerable_data_items(object, kind);
+        }
+        let keys: EnumerableKeys<Value> =
+            self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
+        Some(self.array_of(&keys))
+    }
+
     pub(super) fn indexed_name_keys(&mut self, object: Value) -> Option<Vec<Value>> {
         let (indices, array_length) = if self.heap.array(object).is_some() {
             (
@@ -34,11 +64,11 @@ impl<H: Host> Vm<H> {
     /// (not a Proxy, array, typed array or module namespace): enumerability is read from the
     /// shape in OrdinaryOwnPropertyKeys order, without key strings or descriptor objects.
     /// `None` sends every other object through the generic path.
-    pub(super) fn shape_enumerable_keys(&self, object: Value) -> Option<Vec<Atom>> {
+    pub(super) fn shape_enumerable_keys(&self, object: Value) -> Option<EnumerableKeys<Atom>> {
         if let Some(slots) = self.shape_enumerable_slots(object) {
             return Some(slots.iter().map(|(atom, _)| *atom).collect());
         }
-        self.shape_enumerable_key_walk(object)
+        self.shape_enumerable_key_walk(object).map(EnumerableKeys::from_vec)
     }
 
     /// `shape_enumerable_keys` with each key's slot, for an object whose shape alone decides
@@ -118,9 +148,6 @@ impl<H: Host> Vm<H> {
     /// nothing. Each item is kept in the call roots while the next allocates. `None` leaves
     /// keys, accessors and every other object to the general path.
     fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
-        if kind == EnumerableOwnPropertyKind::Key {
-            return None;
-        }
         let slots = self.shape_enumerable_slots(object)?;
         let data = self.object_data(object)?;
         let values = slots
@@ -141,18 +168,14 @@ impl<H: Host> Vm<H> {
                 EnumerableOwnPropertyKind::KeyValue => {
                     let key = self.atom_string(atom);
                     self.active_call_roots.push(key);
-                    self.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![key, value]),
-                    })
+                    self.array_of(&[key, value])
                 }
                 _ => value,
             };
             self.active_call_roots.push(item);
             items.push(item);
         }
-        let result = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), items),
-        });
+        let result = self.array_of(&items);
         self.active_call_roots.truncate(start);
         Some(result)
     }
@@ -164,17 +187,8 @@ impl<H: Host> Vm<H> {
         kind: EnumerableOwnPropertyKind,
     ) -> Result<Value, JsError> {
         let object = self.box_object(object)?;
-        if let EnumerableOwnPropertyKind::Key = kind
-            && let Some(keys) = self.shape_enumerable_keys(object)
-        {
-            let keys: Vec<Value> = keys
-                .into_iter()
-                .map(|atom| self.atom_string(atom))
-                .collect();
-            return Ok(self.array_of(keys));
-        }
-        if let Some(items) = self.shape_enumerable_data_items(object, kind) {
-            return Ok(items);
+        if let Some(listed) = self.plain_enumerable_own_properties(object, kind) {
+            return Ok(listed);
         }
         let object = self.heap.root(object);
         let mut keys = Vec::new();

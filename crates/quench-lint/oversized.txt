@@ -916,7 +916,7 @@ complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_get_p
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::object_is_integrity_level 12
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::prevent_extensions 11
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::set_prototype_of 21
-complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 35
+complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 32
 complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::define_ordinary_property_key 27
 complexity crates/quench-runtime/src/vm/object_static.rs::Vm<H>::object_prototype_to_string 29
 complexity crates/quench-runtime/src/vm/object_symbols.rs::Vm<H>::copy_plain_properties 33
@@ -1427,7 +1427,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
-file-lines crates/quench-runtime/src/heap.rs 4702
+file-lines crates/quench-runtime/src/heap.rs 4701
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 3992
@@ -1463,7 +1463,7 @@ file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5684
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7587
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
-file-lines crates/quench-runtime/src/vm/construction.rs 1484
+file-lines crates/quench-runtime/src/vm/construction.rs 1483
 file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
@@ -1487,7 +1487,7 @@ file-lines crates/quench-runtime/src/vm/intl_namespace.rs 1159
 file-lines crates/quench-runtime/src/vm/intl_number.rs 2296
 file-lines crates/quench-runtime/src/vm/intl_plural_rules.rs 690
 file-lines crates/quench-runtime/src/vm/intl_relative.rs 611
-file-lines crates/quench-runtime/src/vm/iterators.rs 3500
+file-lines crates/quench-runtime/src/vm/iterators.rs 3479
 file-lines crates/quench-runtime/src/vm/jit_backend/select.rs 679
 file-lines crates/quench-runtime/src/vm/json.rs 2166
 file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
@@ -1499,8 +1499,8 @@ file-lines crates/quench-runtime/src/vm/object.rs 4949
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1323
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
-file-lines crates/quench-runtime/src/vm/object_static.rs 906
-file-lines crates/quench-runtime/src/vm/object_symbols.rs 835
+file-lines crates/quench-runtime/src/vm/object_static.rs 896
+file-lines crates/quench-runtime/src/vm/object_symbols.rs 833
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2670
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
@@ -1524,7 +1524,7 @@ file-lines crates/quench-runtime/src/vm/temporal_date_time_difference.rs 569
 file-lines crates/quench-runtime/src/vm/temporal_instant.rs 512
 file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3351
-file-lines crates/quench-runtime/src/vm/tests.rs 25381
+file-lines crates/quench-runtime/src/vm/tests.rs 25378
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 960
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
@@ -2990,7 +2990,7 @@ function-lines crates/quench-runtime/src/vm/compiled/static_loops.rs::constants 
 function-lines crates/quench-runtime/src/vm/compiled/static_loops.rs::scalar 42
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::closure_in_realm 215
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_native_with_new_target 172
-function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_value_with_new_target 171
+function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_value_with_new_target 169
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::function_realm 41
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::inline_construct_target 53
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::is_constructable 108
@@ -3369,9 +3369,8 @@ function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::set_inte
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::set_prototype_of 121
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::test_integrity_level 42
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::validate_proxy_define_property_record 56
-function-lines crates/quench-runtime/src/vm/object_keys.rs::Vm<H>::enumerable_own_properties 78
-function-lines crates/quench-runtime/src/vm/object_keys.rs::Vm<H>::shape_enumerable_data_items 43
-function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 100
+function-lines crates/quench-runtime/src/vm/object_keys.rs::Vm<H>::enumerable_own_properties 69
+function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::call_object_native 90
 function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::define_ordinary_property_key 70
 function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::install_object_prototype_methods 43
 function-lines crates/quench-runtime/src/vm/object_static.rs::Vm<H>::object_for_in_keys 69
