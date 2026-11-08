@@ -13,13 +13,18 @@
 use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
+#[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[cfg(feature = "aot")] pub(crate) use static_hints::{static_call_targets, StaticTargets};
+#[cfg(all(test, feature = "aot"))] use static_hints::STATIC_CALL_SITE_TARGETS;
 
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
 /// bindings are accepted for verified plain bodies with explicit restart or exact-state
-/// recovery.
+/// recovery. A forwarded binding is a closure the site called through a native that
+/// forwards its receiver as the callee (`Function.prototype.call`, `Vm::forwarded_call`):
+/// the call guards the native's identity too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CalleeBinding { Identity(Value), Function }
+pub(crate) enum CalleeBinding { Identity(Value), Function, Forwarded { through: Value, callee: Value } }
 
 /// How a leave inside a function-bound frame recovers: restart the call, which ran no
 /// effect yet, or materialize the callee's exact activation.
@@ -35,7 +40,12 @@ pub(crate) struct CallTarget {
 
 impl CallTarget {
     pub(crate) fn identity(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Identity(value) => Some(value), CalleeBinding::Function => None }
+        match self.callee { CalleeBinding::Identity(value) | CalleeBinding::Forwarded { callee: value, .. } => Some(value), _ => None }
+    }
+
+    /// The forwarding native this site called the target through.
+    pub(crate) fn through(self) -> Option<Value> {
+        match self.callee { CalleeBinding::Forwarded { through, .. } => Some(through), _ => None }
     }
 }
 
@@ -65,17 +75,19 @@ pub(crate) struct Frame {
     /// The call's first argument register.
     pub(crate) window: Register,
     pub(crate) arguments: u16,
+    /// The register the call's completion writes in its parent, dead until then; `None` for a returning call.
+    pub(crate) result: Option<Register>,
     /// The callee's register 0.
     pub(crate) base: Register,
     pub(crate) registers: u16,
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub(crate) alternative: Option<usize>,
-    /// For a call through `Function.prototype.call` (`f.call(receiver, ...arguments)`), the
-    /// register holding the `call` native, whose identity the call guards too; the callee
-    /// register then holds `f`, the receiver is the first argument and the window the rest
-    /// (`Planner::through_call`).
-    pub(crate) function_call: Option<Register>,
+    /// For a call through a forwarding native (`CalleeBinding::Forwarded`), the register
+    /// holding the native and its identity, which the call guards too; the callee register
+    /// then holds the function it calls, the receiver is the first argument and the window
+    /// the rest (`Planner::through_call`).
+    pub(crate) function_call: Option<(Register, Value)>,
 }
 
 impl Frame {
@@ -119,15 +131,7 @@ impl Unit {
 
     /// Maximum simultaneous inlined activations, derived from the parent graph.
     pub(crate) fn recovery_depth(&self) -> usize {
-        (0..self.frames.len()).map(|index| {
-            let mut depth = 1;
-            let mut parent = self.frames[index].parent;
-            while let Some(index) = parent {
-                depth += 1;
-                parent = self.frames[index].parent;
-            }
-            depth
-        }).max().unwrap_or(0)
+        (0..self.frames.len()).map(|index| self.chain(index).len()).max().unwrap_or(0)
     }
 
     /// Project the original functions' recovery liveness onto unit registers. A suspended
@@ -156,7 +160,7 @@ impl Unit {
                 Some(parent) => (callees[parent], suspended[parent]),
             };
             let call = frame.call as usize;
-            let around = parent.get(call)? | parent.get(call + 1).unwrap_or(0);
+            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or(0) & !frame.result.map_or(0, |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
             callees.push(program.register_root_masks(frame.target.function)?);
         }
@@ -207,123 +211,6 @@ impl Unit {
     }
 }
 
-#[cfg(feature = "aot")]
-/// Every register output retires the previous hypothesis before its new value is recorded.
-fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction) {
-    for register in instruction.written_registers() { hints[usize::from(register)] = None; }
-}
-
-/// The bodies a call site's callee may name statically: a superset of the callees it meets,
-/// which the unit's inlining budgets choose among, each behind its own body guard. A name,
-/// slot or register defined with more names none.
-#[cfg(feature = "aot")]
-const STATIC_CALL_SITE_TARGETS: usize = 8;
-#[cfg(feature = "aot")]
-pub(crate) type StaticTargets = smallvec::SmallVec<[u32; STATIC_CALL_SITE_TARGETS]>;
-
-/// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
-/// A hint is never a proof: replacement/aliasing is handled by call-edge admission, which
-/// tries each target a site names behind its own body guard.
-#[cfg(feature = "aot")]
-pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<StaticTargets>> {
-    #[derive(Clone, Copy)]
-    enum Definition { Closure(u32), Name(crate::bytecode::Atom) }
-    // Derive a flat constant-index projection once, without allocating lookup
-    // nodes or rescanning all names at each method definition.
-    let constant_names: Vec<_> = {
-        let mut names: Vec<_> = program.atoms.iter().enumerate().map(|(atom, name)|
-            (name, crate::bytecode::Atom::try_from(atom).expect("validated atom index"))).collect();
-        names.sort_unstable_by_key(|&(name, _)| name);
-        program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::String(name) => names.binary_search_by(|(candidate, _)|
-                candidate.cmp(&name.as_ref())).ok().map(|index| names[index].1),
-            _ => None,
-        }).collect()
-    };
-    // `None` once more definitions than a site admits have been observed.
-    let mut methods = vec![Some(StaticTargets::new()); program.atoms.len()];
-    let mut captured = Vec::new();
-    let mut offsets = Vec::with_capacity(program.function_count() + 1);
-    let mut parents = Vec::with_capacity(program.function_count());
-    let observe = |slot: &mut Option<StaticTargets>, target| {
-        if let Some(targets) = slot && !targets.contains(&target) {
-            if targets.len() == targets.inline_size() { *slot = None } else { targets.push(target) }
-        }
-    };
-    for id in 0..program.function_count() {
-        program.with_record(id, |function| {
-            let start = captured.len();
-            offsets.push(start);
-            parents.push(function.parent);
-            captured.resize(start + usize::from(function.locals), Some(StaticTargets::new()));
-            let mut definitions = vec![None; usize::from(function.registers)];
-            for instruction in function.instructions() {
-                // A stored or literal-defined data property holding a closure names its body.
-                if instruction.op().field_store().map_or_else(|| instruction.op() == Op::DefineField, |store| store.receiver == crate::bytecode::StoreReceiver::Register)
-                    && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
-                        observe(&mut methods[instruction.atom_index() as usize], id);
-                    }
-                if instruction.op() == Op::DefinePropertyRecord
-                    && matches!(instruction.property_definition_mode(),
-                        Some(crate::bytecode::PropertyDefinitionMode::Method | crate::bytecode::PropertyDefinitionMode::ReadonlyMethod))
-                    && let Some(Definition::Closure(id)) = definitions[usize::from(instruction.register_a())]
-                    && let Some(Definition::Name(atom)) = definitions[usize::from(instruction.register_c())] {
-                        // Class definitions use an explicit key register. Only
-                        // an admitted literal name contributes a body hint;
-                        // computed effects/accessor results remain dynamic.
-                        observe(&mut methods[atom as usize], id);
-                    }
-                if matches!(instruction.op(), Op::StoreLocal | Op::StoreEnvLocal)
-                    && let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten()
-                    && let Some(slot) = captured[start..].get_mut(instruction.local_slot()) {
-                        observe(slot, target);
-                    }
-                let value = match instruction.op() {
-                    Op::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
-                    Op::LoadConst => constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
-                    Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
-                    _ => None,
-                };
-                clear_written_hints(&mut definitions, instruction);
-                if let Some(register) = instruction.defined_register() { definitions[usize::from(register)] = value; }
-                if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { definitions.fill(None); }
-            }
-        });
-    }
-    offsets.push(captured.len());
-    (0..program.function_count()).map(|id| program.with_record(id, |function| {
-        let mut methods_by_register = vec![None::<StaticTargets>; usize::from(function.registers)];
-        function.instructions().map(|instruction| {
-            let target = (instruction.op() == Op::Call).then(||
-                methods_by_register[usize::from(instruction.register_b())].clone()).flatten().unwrap_or_default();
-            let method = match instruction.op() {
-                Op::GetField => match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).cloned().flatten(),
-                    _ => None,
-                },
-                Op::MakeClosure => Some(smallvec::smallvec![instruction.closure_function_index()]),
-                Op::LoadCapture => {
-                    // The lexical owner and source slot come from the same layout as
-                    // capture execution. This identifies a possible body, never the
-                    // closure: admission checks its body, and captures read its actual environment.
-                    let owner = (0..=instruction.capture_depth()).try_fold(id, |owner, _|
-                        parents.get(owner).copied().flatten().map(|parent| parent as usize));
-                    owner.and_then(|owner| captured[offsets[owner]..offsets[owner + 1]]
-                        .get(usize::from(instruction.capture_slot())).cloned().flatten())
-                }
-                Op::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
-                _ => None,
-            };
-            clear_written_hints(&mut methods_by_register, instruction);
-            if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
-            // Hints survive control-flow edges, including loops around a local
-            // closure. They are hypotheses only: inline admission checks the
-            // actual closure/program/body before any callee effect.
-            target
-        }).collect()
-    })).collect()
-}
-
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at
 /// every call site, and short bodies (accessors, field updates) are where a call costs most
 /// relative to its work.
@@ -368,11 +255,9 @@ fn inlinable(instruction: WideInstruction) -> bool {
 }
 
 /// The shared lowering performs only guarded, non-guest operations for an inlinable pure
-/// leaf. A miss may restart that call without replaying effects. Captured stores
-/// additionally allow one final write with an infallible tail.
+/// leaf. A miss may restart that call without replaying effects.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
         Op::SetIndex | Op::Call => false,
         op if op.is_field_store() => false,
@@ -441,9 +326,9 @@ struct Plan {
     /// Whether a call the plan does not inline has run (its site linked a target): an
     /// inlined callee's never-run call is an exit of the unit, one that runs is not.
     blocked: bool,
-    /// Per PC, the register of the `call` native an inlined call through it guards; its
-    /// instruction in `code` is then the call of the function it calls.
-    through_call: Vec<Option<Register>>,
+    /// Per PC, the register and identity of the forwarding native an inlined call through it
+    /// guards; its instruction in `code` is then the call of the function it calls.
+    through_call: Vec<Option<(Register, Value)>>,
 }
 
 struct InlinedPlan {
@@ -478,8 +363,6 @@ struct Planner<'t, 'f> {
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
-    /// The `call` name, where the realm's `Function.prototype.call` is known.
-    call: Option<crate::bytecode::Atom>,
 }
 
 impl Planner<'_, '_> {
@@ -493,14 +376,14 @@ impl Planner<'_, '_> {
             .iter()
             .enumerate()
             .map(|(pc, instruction)| {
-                // A call through `call` inlines as the call of the function it calls.
-                let through = self.through_call(&code, pc, *instruction);
+                // A call through a forwarding native inlines as the call of the function it calls.
+                let through = self.through_call(function, pc as u32, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
                 let (calls, ran) = if instruction.op() == Op::Call && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
-                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth) };
+                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some()) };
                 blocked |= calls.is_empty() && ran;
                 if let Some((call, native)) = through.filter(|_| !calls.is_empty()) {
                     called.push((pc, call));
@@ -515,32 +398,24 @@ impl Planner<'_, '_> {
         Plan { code, calls, blocked, through_call }
     }
 
-    /// `f.call(receiver, ...arguments)` at `pc`, its callee read as `call` off `f` before it:
-    /// the call of `f` with that receiver and those arguments, and the register holding the
-    /// `call` native.
-    fn through_call(&self, code: &[WideInstruction], pc: usize, instruction: WideInstruction) -> Option<(WideInstruction, Register)> {
-        let atom = self.call?;
+    /// The call at `pc` of `function` as the call of the function it forwards to, where its
+    /// site called its targets through a forwarding native (`CalleeBinding::Forwarded`): the
+    /// receiver is the callee and the first argument the receiver. With the native's register
+    /// and identity, which the inlined call guards.
+    fn through_call(&self, function: u32, pc: u32, instruction: WideInstruction) -> Option<(WideInstruction, (Register, Value))> {
         let imm = instruction.imm();
         let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
         (instruction.op() == Op::Call && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
-        let native = instruction.register_b();
-        let read = code[..pc].iter().rev().find(|earlier| {
-            earlier.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister
-                && earlier.result_register() == native
-        })?;
-        (read.op() == Op::GetField
-            && matches!(read.field_lookup(), Some(FieldLookup::Atom { atom: name, base: object, .. })
-                if name == atom && object.register_index() == Some(instruction.register_c())))
-            .then_some(())?;
+        let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
         let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
             ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
-        Some((call, native))
+        Some((call, (instruction.register_b(), through)))
     }
 
     /// The callees the call at `pc` of `function` inlines: each target its site linked that
     /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
-    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> (Vec<InlinedPlan>, bool) {
+    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool) -> (Vec<InlinedPlan>, bool) {
         if instruction.op() != Op::Call {
             return (Vec::new(), false);
         }
@@ -549,7 +424,11 @@ impl Planner<'_, '_> {
         {
             return (Vec::new(), true);
         }
-        let found = (self.targets)(function, pc);
+        // A forwarded call inlines the targets reached through the native; a plain call, the others.
+        let found: Vec<_> = (self.targets)(function, pc).into_iter().filter_map(|target| match target.callee {
+            CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
+            _ => (!forwarded).then_some(target),
+        }).collect();
         let ran = !found.is_empty();
         // A target that does not inline gives back what it reserved (`inline_target`).
         let alternatives = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
@@ -652,11 +531,11 @@ impl Emitter {
                         callee_register: register(instruction.register_b()),
                         receiver: register(instruction.register_c()),
                         window: register(ImmediateLayout::call_window_base(instruction.imm())),
-                        arguments: ImmediateLayout::argument_count(instruction.imm()),
+                        arguments: ImmediateLayout::argument_count(instruction.imm()), result: (!returns).then_some(call_result),
                         base: callee_base,
                         registers: call.registers,
                         alternative: next,
-                        function_call: plan.through_call[pc].map(register),
+                        function_call: plan.through_call[pc].map(|(native, through)| (register(native), through)),
                     };
                     self.unit.frames.push(frame_record);
                     // The marker: the call's guards and bindings (`Lowering::inline_call`); a
@@ -728,7 +607,7 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
-    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body, None)
+    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
 }
 
 /// Plan the same unit under a smaller inlining budget after code-size rejection.
@@ -739,10 +618,9 @@ pub(crate) fn with_budget<'f>(
     budget: usize,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
-    call: Option<crate::bytecode::Atom>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget, call };
+    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

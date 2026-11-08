@@ -54,9 +54,18 @@ impl<H: Host> Vm<H> {
         self.insert_dynamic_atom(JsString::from_unit_run(units), hash)
     }
 
+    pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
+        let units = name.units();
+        let hash = Self::atom_hash_units(units);
+        if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal(atom, units)) {
+            return atom;
+        }
+        self.insert_dynamic_atom(name.clone(), hash)
+    }
+
     pub(super) fn lookup_js_atom(&self, name: &JsString) -> Option<Atom> {
-        let hash = Self::atom_hash_units(name.units());
-        self.find_atom(hash, |atom| self.atom_units_equal(atom, name.units()))
+        let units = name.units();
+        self.find_atom(Self::atom_hash_units(units), |atom| self.atom_units_equal(atom, units))
     }
 
     /// `lookup_js_atom` of the heap string `key`, found once per string record and then
@@ -157,7 +166,20 @@ fn atom_hash_wide(len: usize, units: impl Iterator<Item = u16>) -> u64 {
     for lane in 0..filled {
         hasher.write_u16((word >> (lane as u32 * u16::BITS)) as u16);
     }
-    hasher.finish()
+    spread_hash(hasher.finish())
+}
+
+/// `hash` with every input bit spread over every output bit (MurmurHash3's 64-bit
+/// finalizer). Fx alone left short keys that differ in one late unit, such as `d100` and
+/// `d101`, sharing the table's control bits: ~4 key comparisons a lookup instead of ~1.
+fn spread_hash(mut hash: u64) -> u64 {
+    /// MurmurHash3 `fmix64`'s shift and multipliers.
+    const SHIFT: u32 = 33;
+    const MULTIPLIERS: [u64; 2] = [0xff51_afd7_ed55_8ccd, 0xc4ce_b9fe_1a85_ec53];
+    for multiplier in MULTIPLIERS {
+        hash = (hash ^ (hash >> SHIFT)).wrapping_mul(multiplier);
+    }
+    hash ^ (hash >> SHIFT)
 }
 
 /// `atom_hash_wide` of ASCII `bytes`, each byte one unit, widened a word at a time.
@@ -171,7 +193,7 @@ fn atom_hash_ascii(bytes: &[u8]) -> u64 {
     for &byte in remainder {
         hasher.write_u16(u16::from(byte));
     }
-    hasher.finish()
+    spread_hash(hasher.finish())
 }
 
 /// Four ASCII bytes (the first lowest) as four UTF-16 units in 16-bit lanes: the high pair
@@ -196,5 +218,24 @@ mod tests {
             
             assert_eq!(super::atom_hash_ascii(ascii), super::atom_hash_wide(len, ascii.iter().map(|&byte| u16::from(byte))));
         }
+    }
+
+    #[test]
+    fn similar_short_keys_find_their_atom_in_about_one_comparison() {
+        // `d0`..`d255` differ only in late units; a weak hash shares their table control bits.
+        let mut vm = super::Vm::new(crate::test_host::TestHost::default());
+        let source = "var o = {}; for (var i = 0; i < 256; i++) o['d' + i] = i;";
+        vm.execute(&crate::Engine::specialize(source, "keys.js").unwrap()).unwrap();
+        let mut comparisons = 0;
+        for index in 0..256 {
+            let name = super::JsString::from_str(&format!("d{index}"));
+            let hash = super::Vm::<crate::test_host::TestHost>::atom_hash_units(name.units());
+            let found = vm.find_atom(hash, |atom| {
+                comparisons += 1;
+                vm.atom_units_equal(atom, name.units())
+            });
+            assert!(found.is_some(), "d{index} is interned");
+        }
+        assert!(comparisons < 256 * 5 / 4, "{comparisons} comparisons for 256 lookups");
     }
 }

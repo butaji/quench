@@ -334,10 +334,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn variables(&mut self, declaration: &VariableDeclaration<'_>) {
-        if matches!(
-            declaration.kind,
-            VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
-        ) {
+        if super::disposal::disposes(declaration.kind) {
             if declaration.kind == VariableDeclarationKind::AwaitUsing && !self.async_function {
                 self.owner
                     .reject(declaration.span, "await using requires an async function");

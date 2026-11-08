@@ -243,10 +243,7 @@ impl<H: Host> Vm<H> {
                 self.typeof_test_value(value, index, negated)
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
-            crate::bytecode::UNARY_TO_STRING => {
-                let text = self.coerce_js_string(p, value)?;
-                self.string_value_from(value, &text)
-            }
+            crate::bytecode::UNARY_TO_STRING => return self.string_of_value(p, value),
             _ => return Err(JsError("unsupported unary operator".into())),
         })
     }

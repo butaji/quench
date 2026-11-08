@@ -58,6 +58,20 @@
                       (iconst_u _ 0)))
       (subsume inner))
 
+;; Quench: eq(fcmp(ty, cc, x, y), 0) == fcmp(ty, cc_complement, x, y). The
+;; complement keeps NaN on the other side (lt <-> uge), and a branch on the
+;; fcmp lowers to ucomisd + jcc instead of ucomisd + setcc + test + jcc.
+(rule (simplify (eq ty
+                      (uextend_maybe _ (fcmp ty cc x y))
+                      (iconst_u _ 0)))
+      (subsume (fcmp ty (floatcc_complement cc) x y)))
+
+;; Quench: ne(fcmp(ty, cc, x, y), 1) == fcmp(ty, cc_complement, x, y).
+(rule (simplify (ne ty
+                      (uextend_maybe _ (fcmp ty cc x y))
+                      (iconst_u _ 1)))
+      (subsume (fcmp ty (floatcc_complement cc) x y)))
+
 ;; eq(icmp(ty, cc, x, y), 0) == icmp(ty, cc_complement, x, y)
 ;; e.g. eq(ugt(x, y), 0) == ule(x, y)
 (rule (simplify (eq ty

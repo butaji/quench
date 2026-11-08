@@ -40,6 +40,7 @@ pub(super) struct Facts {
 impl Facts {
     pub(super) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
     pub(super) fn backedge(&self) -> &[Type] { &self.backedge }
+
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
     /// the PC table stores element offsets, including reachable zero-register rows.
     pub(super) fn at(&self, pc: usize) -> Option<&[Type]> {
@@ -143,13 +144,12 @@ fn register(operand: Operand) -> Option<Register> {
 pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
         Some(OperandKind::Register) => register_type(operand.payload()),
-        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
-            .map_or(Type::ANY, Type::immediate),
+        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).map_or(Type::ANY, constant_type),
         _ => Type::ANY,
     }
 }
 
-fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
+pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
     for register in operands.into_iter().filter_map(register) {
         if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
             set(types, register, Type::NUMBER);
@@ -191,8 +191,7 @@ fn transfer(
     let op = instruction.op();
     match op {
         Op::LoadConst => {
-            let ty = constants.get(instruction.constant_index()).and_then(immediate)
-                .map_or(Type::ANY, Type::immediate);
+            let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
@@ -207,45 +206,7 @@ fn transfer(
             set(types, instruction.result_register(), Type::INT32);
             Flow::Next
         }
-        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => {
-            let operator = instruction.binary_operator();
-            match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
-                Some(bitwise) => {
-                    // ToInt32 of any Number runs natively; anything else leaves.
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    let right = constant_number(constants, instruction.operand_c());
-                    let result = if bitwise.result_is_int32(right) { Type::INT32 } else { Type::NUMBER };
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), result);
-                    }
-                }
-                None if super::super::operations::NumberArithmetic::from_js_instruction(op, operator).is_some() => {
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::NUMBER);
-                    }
-                }
-                None if super::super::operations::NumberRelation::from_operator(operator).is_some() => {
-                    // An equality decides operands of any type (`lane_region::relation`) and
-                    // proves nothing of them; every other relation compares Numbers.
-                    if super::super::operations::equality_operator(operator).is_none() {
-                        prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    }
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
-                    }
-                }
-                None => {
-                    for register in written(instruction) {
-                        set(types, register, Type::ANY);
-                    }
-                    if boolean_binary(operator) && !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
-                    }
-                }
-            }
-            if instruction.returns_from_frame() { Flow::Leaves } else { Flow::Next }
-        }
+        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
         Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
@@ -263,10 +224,6 @@ fn transfer(
             if operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_int32(types, operands); }
             else if numeric { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
-        }
-        Op::Call if super::guarded_call_instruction(instruction) => {
-            set(types, instruction.result_register(), Type::ANY);
-            Flow::Next
         }
         Op::Call if native_calls => {
             for ty in types.iter_mut() {
@@ -417,7 +374,6 @@ mod tests {
             "function caller(f, value) { f(value); return value; }", "shape-call.js").unwrap();
         let function = program.function(1);
         let call = function.instructions().find(|instruction| instruction.op() == Op::Call).unwrap();
-        assert!(!super::super::guarded_call_instruction(call));
         let null = Type::language(crate::ValueType::Null);
         for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
             Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
@@ -438,7 +394,7 @@ mod tests {
         let instructions: Vec<_> = function.instructions().collect();
         let leaders = super::super::lane_region::leaders(&instructions);
         let edges: Vec<_> = instructions.iter().enumerate().filter_map(|(pc, instruction)|
-            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc).map(|target| (target, pc))).collect();
         let header = edges.iter().map(|(header, _)| *header).min().unwrap();
         let back = edges.iter().filter(|(target, _)| *target == header).map(|(_, pc)| *pc).max().unwrap();
@@ -514,10 +470,11 @@ mod tests {
     }
 }
 
-#[path = "facts/immediates.rs"]
-mod immediates;
-pub(in crate::vm) use immediates::{constant_number, immediate, is_int32, is_int32_number};
+#[path = "facts/immediates.rs"] mod immediates;
+#[path = "facts/written.rs"] mod written;
+#[path = "facts/binary.rs"] mod binary;
+pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32, is_int32_number};
+pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 
 #[cfg(test)]
-#[path = "facts/decode_ratchet.rs"]
-mod decode_ratchet;
+#[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

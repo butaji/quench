@@ -11,13 +11,18 @@ use super::{WeakMapEntries, WeakSetEntries};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod global_values;
 mod modes;
 mod prototype_values;
+mod shape_id;
 mod snapshot;
 mod typed_array_kind;
+mod wasm_fields;
+pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
+pub(crate) use global_values::{GlobalCell, GlobalFact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_value};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -1795,6 +1800,8 @@ struct ObjectExtras {
     /// A prototype's subject in its heap's dependency table, which its layout and element
     /// changes retire (`Object::note_prototype_layout_change`).
     watch: super::dependencies::Watch,
+    /// A global object's table of the values code read from it by name (`global_values`).
+    global_values: Option<Box<global_values::GlobalValues>>,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -2517,14 +2524,6 @@ impl Object {
         }
     }
 
-    /// A write to one of this object's slots: what it offers its inheritors may change.
-    #[inline(always)]
-    pub(crate) fn note_prototype_value_write(&self) {
-        if self.was_used_as_prototype() {
-            prototype_values::retire(self.exact_shape());
-        }
-    }
-
     pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
@@ -2570,9 +2569,7 @@ impl Object {
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
-        let mut properties = ValueVec::from_parts(0, self.auxiliary);
-        properties.set_auxiliary(shape);
-        self.auxiliary = properties.into_parts().1;
+        self.renumber_shape(shape);
     }
     pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
@@ -3363,13 +3360,13 @@ impl EnvironmentSlots {
         &self,
         environment: Value,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
         owned_value: impl Fn(Value, usize) -> Option<Value>,
     ) -> Option<Self> {
         let len = self.len();
         let copy_slot = |index: usize| -> Option<EnvironmentSlot> {
             let slot = u16::try_from(index).ok()?;
-            if reset.binary_search(&slot).is_ok() {
+            if reset.contains(slot) {
                 return Some(EnvironmentSlot::owned(Value::UNDEFINED));
             }
             let fresh = fresh.binary_search(&slot).is_ok();
@@ -3400,7 +3397,7 @@ impl EnvironmentSlots {
                     EnvironmentSlotState::Shared(owner) => owned_value(owner, index)?,
                 });
             }
-            for &slot in reset {
+            for slot in reset.iter() {
                 if let Some(target) = copy.get_mut(usize::from(slot)) {
                     *target = EnvironmentSlot::owned(Value::UNDEFINED);
                 }
@@ -3414,7 +3411,7 @@ impl EnvironmentSlots {
         let mut indexes = merge_ascending(
             merge_ascending(self.sparse_indexes(), fresh.iter().map(|&slot| usize::from(slot)))
                 .into_iter(),
-            reset.iter().map(|&slot| usize::from(slot)),
+            reset.iter().map(usize::from),
         );
         indexes.truncate(indexes.partition_point(|&index| index < len));
         let shared = Value::shared_environment_slot(owner);
@@ -3585,39 +3582,6 @@ impl std::ops::DerefMut for BufferViewObject {
     }
 }
 
-/// A Wasm GC object's field values and optional descriptor, boxed together so the cell
-/// keeps four words; field access reads the values through `Deref`.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WasmGcFields {
-    pub(crate) values: Vec<Value>,
-    pub(crate) descriptor: Option<Value>,
-}
-
-/// A Wasm table's references and optional maximum, boxed together so the cell keeps four
-/// words; element access reads the references through `Deref`.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WasmTableElements {
-    pub(crate) values: Vec<Value>,
-    pub(crate) maximum: Option<u64>,
-}
-
-macro_rules! deref_to_values {
-    ($($owner:ty),*) => {$(
-        impl std::ops::Deref for $owner {
-            type Target = Vec<Value>;
-            fn deref(&self) -> &Vec<Value> {
-                &self.values
-            }
-        }
-
-        impl std::ops::DerefMut for $owner {
-            fn deref_mut(&mut self) -> &mut Vec<Value> {
-                &mut self.values
-            }
-        }
-    )*};
-}
-deref_to_values!(WasmGcFields, WasmTableElements);
 
 /// A PlainDateTime's ISO year, month and day with its hour-through-nanosecond fields, boxed
 /// together so the cell keeps four words.
@@ -3816,9 +3780,9 @@ pub(crate) enum Cell {
         payload: Box<Vec<Value>>,
     },
     /// A tag retains its original declaration; identity is independent of type equality.
-    WasmTag { declarations: Box<crate::WasmTypes>, ty: u32 },
+    WasmTag { object: Box<Object>, declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
-    WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<WasmGcFields> },
+    WasmGc { declarations: crate::WasmTypes, ty: u32, fields: WasmGcFields },
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         target: WasmHostTarget,
@@ -3841,7 +3805,7 @@ pub(crate) enum Cell {
         table64: bool,
         elements: Box<WasmTableElements>,
         element_type: wasmparser::RefType,
-        declarations: Box<crate::WasmTypes>,
+        declarations: crate::WasmTypes,
     },
     /// Digits inline up to `bigint::INLINE_DIGITS`, within the slot (`cells_stay_compact`).
     BigInt(crate::bigint::JsBigInt),

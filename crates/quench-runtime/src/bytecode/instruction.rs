@@ -68,10 +68,7 @@ impl WideInstruction {
             .copied()
             .filter_map(move |field| {
                 let operand = Operand(self.field_value(field));
-                (matches!(
-                    self.op().field_layout(field),
-                    FieldLayout::Operand | FieldLayout::NumericIndexOperand
-                ) && operand.kind() == Some(super::OperandKind::Local))
+                (self.op().field_layout(field).holds_operand() && operand.kind() == Some(super::OperandKind::Local))
                 .then(|| operand.payload())
             });
         immediate

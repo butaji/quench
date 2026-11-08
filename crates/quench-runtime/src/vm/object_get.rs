@@ -1256,7 +1256,7 @@ impl<H: Host> Vm<H> {
         {
             return Ok(());
         }
-        let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
+        let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom)).to_owned();
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }
 

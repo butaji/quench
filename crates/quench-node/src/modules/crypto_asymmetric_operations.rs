@@ -29,7 +29,7 @@ pub(crate) fn apply_signature_options<T>(
     id: openssl::pkey::Id,
     options: &SignatureOptions,
 ) -> Result<(), openssl::error::ErrorStack> {
-    if matches!(id, openssl::pkey::Id::RSA | openssl::pkey::Id::RSA_PSS) {
+    if crate::modules::crypto_provider_facts::is_rsa(id) {
         if let Some(padding) = options.padding {
             // RSA-PSS keys are already constrained to PSS by OpenSSL. Some
             // providers reject an explicit RSA padding control on that key

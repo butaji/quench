@@ -940,6 +940,7 @@ pub(crate) struct ProgramStore {
 
 impl Default for ProgramStore {
     fn default() -> Self {
+        crate::jit_coverage::sample_this_thread();
         Self {
             native_call_bindings: Default::default(),
             programs: Vec::new(),
@@ -956,10 +957,8 @@ impl Default for ProgramStore {
             js_general_artifacts: FxHashMap::default(),
             js_general_artifact_key_bytes: 0,
             js_general_artifact_clock: 0,
-            // TOD-191's correctness oracle may force hot candidates past the
-            // payback model so guarded exits can be tested independently of
-            // profitability. This is diagnostic-only and never set by score
-            // harnesses.
+            // TOD-191's correctness oracle may force hot candidates past the payback model so
+            // guarded exits can be tested independently of profitability (diagnostic only).
             wasm_module_compile: if super::compiled::jit_wasm_selective_enabled() {
                 WasmModuleCompile::NEVER
             } else {
@@ -2076,12 +2075,6 @@ impl ProgramStore {
             .map(|counters| counters.field_cache_probes)
     }
 
-    #[cfg(all(test, not(quench_profiled)))]
-    pub(super) fn js_jit_captured_store_entries(&self, id: ProgramId, function: u32) -> Option<u64> {
-        self.js_jit_diagnostics.as_ref()?.get(&(id.raw(), function))
-            .map(|counters| counters.captured_store_fast_entries)
-    }
-
     pub(super) fn note_js_jit_dataview_float64(&mut self, setter: bool) {
         if self.js_jit_diagnostics.is_none() {
             return;
@@ -2678,87 +2671,6 @@ impl ProgramStore {
             counters.field_store_cache_hits = counters
                 .field_store_cache_hits
                 .saturating_add(u64::from(hit));
-        }
-    }
-
-    pub(super) fn record_js_jit_field_return_candidate(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        fixed_this: bool,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_return_candidate_entries =
-                counters.field_return_candidate_entries.saturating_add(1);
-            counters.field_return_fixed_this_entries = counters
-                .field_return_fixed_this_entries
-                .saturating_add(u64::from(fixed_this));
-        }
-    }
-
-    pub(super) fn record_js_jit_field_return_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_return_fast_entries =
-                counters.field_return_fast_entries.saturating_add(1);
-        }
-    }
-
-    pub(super) fn record_js_jit_field_increment_candidate(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        fixed_this: bool,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_increment_candidate_entries =
-                counters.field_increment_candidate_entries.saturating_add(1);
-            counters.field_increment_fixed_this_entries = counters
-                .field_increment_fixed_this_entries
-                .saturating_add(u64::from(fixed_this));
-        }
-    }
-
-    pub(super) fn record_js_jit_field_increment_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_increment_fast_entries =
-                counters.field_increment_fast_entries.saturating_add(1);
-        }
-    }
-
-    pub(super) fn record_js_jit_captured_store_entry(&mut self, id: ProgramId, function: u32) {
-        self.record_js_jit_entry(id, function, false, 0);
-        if let Some(counters) = self.js_jit_diagnostics.as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.captured_store_fast_entries = counters.captured_store_fast_entries.saturating_add(1);
-        }
-    }
-
-    pub(super) fn record_js_jit_numeric_find_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.numeric_find_fast_entries = counters
-                .numeric_find_fast_entries
-                .saturating_add(1);
         }
     }
 

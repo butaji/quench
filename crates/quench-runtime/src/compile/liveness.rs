@@ -8,7 +8,7 @@ use crate::bytecode::{
 pub(crate) type RegisterSet = u128;
 
 mod solve;
-pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers};
+pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_successors, analyze_transfers};
 use solve::LiveMask;
 
 /// A function's live registers before each instruction (`analyze`), held at the width they
@@ -25,6 +25,17 @@ impl RegisterMasks {
     pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
         let narrow: Option<Box<[u64]>> = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect();
         narrow.map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Narrow)
+    }
+
+    /// `function`'s masks (`analyze`), solved at the width its registers need, when liveness
+    /// covers it: a wide solve's tables before narrowing were 30 MB at a cold mandreel run's
+    /// peak (`global_init`: 614K instructions over 9 registers).
+    pub(crate) fn of(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> Option<Self> {
+        (function.registers <= ROOT_MAP_REGISTERS).then(|| if u32::from(function.registers) <= u64::BITS {
+            Self::Narrow(live_masks::<u64>(function, methods, fields, superinstructions).into_boxed_slice())
+        } else {
+            Self::new(live_masks::<RegisterSet>(function, methods, fields, superinstructions))
+        })
     }
 
     /// The registers live before instruction `pc`, one past the last included.
@@ -124,21 +135,11 @@ pub(crate) fn mark_register_roots<'a>(
 }
 
 /// `function`'s liveness coverage and dead call results, as `mark_register_roots` records them.
-pub(crate) fn register_roots(
-    function: &Function,
-    methods: &(impl MethodArguments + ?Sized),
-    fields: &[FieldSite],
-    superinstructions: &[Superinstruction],
-) -> crate::bytecode::RegisterRoots {
-    if function.registers > ROOT_MAP_REGISTERS {
-        return crate::bytecode::RegisterRoots::new(false);
-    }
-    let dead = if u32::from(function.registers) <= u64::BITS {
-        dead_call_results(function, &live_masks::<u64>(function, methods, fields, superinstructions))
-    } else {
-        dead_call_results(function, &live_masks::<RegisterSet>(function, methods, fields, superinstructions))
-    };
-    crate::bytecode::RegisterRoots::with_dead_call_results(true, dead)
+pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> crate::bytecode::RegisterRoots {
+    RegisterMasks::of(function, methods, fields, superinstructions).map_or_else(
+        || crate::bytecode::RegisterRoots::new(false),
+        |live| crate::bytecode::RegisterRoots::with_dead_call_results(true, dead_call_results(function, &live)),
+    )
 }
 
 /// `function`'s live registers before each instruction, solved at the width `M`, which holds
@@ -160,16 +161,14 @@ fn live_masks<M: LiveMask>(
 /// skip building a result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
 /// A lane derived each from the per-pc masks on its first run, 3-6% of the instructions of
 /// cached npm runs (axios, schema-utils, ajv-formats), which a compile-cache hit now keeps.
-fn dead_call_results<M: LiveMask>(function: &Function, live: &[M]) -> crate::heap::ThinBoxSlice<u32> {
+fn dead_call_results(function: &Function, live: &RegisterMasks) -> crate::heap::ThinBoxSlice<u32> {
     function
         .instructions()
         .enumerate()
         .filter(|(pc, instruction)| {
             instruction.op() == crate::bytecode::Op::Call
                 && instruction.result_flags() == 0
-                && live.get(pc + 1).is_some_and(|&after| {
-                    register_dead(after.into(), usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
-                })
+                && live.get(pc + 1).is_some_and(|after| register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK)))
         })
         .map(|(pc, _)| u32::try_from(pc).expect("a function's pcs fit u32"))
         .collect()
@@ -217,21 +216,9 @@ pub(crate) fn transfer(
     )
 }
 
-/// Live registers before each instruction. A reverse pass settles every instruction whose
-/// successors all follow it, so only code with a backward successor iterates to a fixed point.
-/// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
-/// + 1]]`, which every pass then reads.
-pub(super) fn live_out(
-    function: &Function,
-    live: &[RegisterSet],
-    pc: usize,
-    instruction: WideInstruction,
-) -> RegisterSet {
-    let mut output = 0;
-    function.for_each_successor(pc, instruction, |successor, _| {
-        output |= live.get(successor).copied().unwrap_or(0);
-    });
-    output
+/// The registers live after the instruction at `pc`: those live before any of its successors.
+pub(super) fn live_out(successors: &crate::bytecode::Successors, live: &[RegisterSet], pc: usize) -> RegisterSet {
+    successors.at(pc).fold(0, |output, (successor, _)| output | live.get(successor).copied().unwrap_or(0))
 }
 
 /// The transfer of an op whose field layout alone decides it: each of A, B and C a register

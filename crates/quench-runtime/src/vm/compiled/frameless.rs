@@ -37,14 +37,14 @@ const META_PARAMS: u32 = META_REGISTERS + u16::BITS;
 const THIS_RECEIVER: u64 = 0;
 const THIS_NONE: u64 = 1;
 
-/// A frameless activation: its function, the call in its caller that made it, its
-/// registers, the `this` its body reads (`JsStepDispatch::fixed_this_slot`) and its callee.
+/// A frameless activation: the call in its caller that made it, the `this` its body reads
+/// (`JsStepDispatch::fixed_this_slot`) and its callee, whose function it runs. Its registers
+/// are the window past the records below it, each as long as its function's register count
+/// (`chain`), so the record holds neither.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct ShadowRecord {
-    function: u32,
-    call_pc: u32,
-    window: *const Value,
+    call_pc: u64,
     this: Value,
     callee: Value,
 }
@@ -81,8 +81,7 @@ pub(crate) struct Frameless {
 
 impl Default for Frameless {
     fn default() -> Self {
-        let empty = ShadowRecord { function: 0, call_pc: 0, window: std::ptr::null(), this: Value::UNDEFINED,
-            callee: Value::UNDEFINED };
+        let empty = ShadowRecord { call_pc: 0, this: Value::UNDEFINED, callee: Value::UNDEFINED };
         Self {
             windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
             shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
@@ -164,7 +163,7 @@ pub(super) fn emit_activation(
         None => emit_receiver(builder, payload, (callee, record), framed),
     };
     emit_window(builder, (arguments, top), passed, registers);
-    emit_record(builder, record, (meta, pc, top), callee);
+    emit_record(builder, record, pc, callee);
     let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, registers, record, this));
     emit_returned(builder, (payload, arguments), exact, (status, constructed), (destination, next));
 }
@@ -212,15 +211,11 @@ fn emit_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (callee,
     (builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64), Some(receiver))
 }
 
-/// The shadow record's function (the low half of `meta`), call PC, window and callee.
-fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, (meta, pc, top): (ir::Value, usize, ir::Value),
-    callee: ir::Value) {
+/// The shadow record's call PC and callee.
+fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, pc: usize, callee: ir::Value) {
     builder.ins().store(MemFlagsData::trusted(), callee, record, std::mem::offset_of!(ShadowRecord, callee) as i32);
-    let function = builder.ins().ireduce(types::I32, meta);
-    builder.ins().store(MemFlagsData::trusted(), function, record, std::mem::offset_of!(ShadowRecord, function) as i32);
-    let call_pc = builder.ins().iconst(types::I32, pc as i64);
+    let call_pc = builder.ins().iconst(types::I64, pc as i64);
     builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
-    builder.ins().store(MemFlagsData::trusted(), top, record, std::mem::offset_of!(ShadowRecord, window) as i32);
 }
 
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
@@ -427,12 +422,19 @@ fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<u
 /// The chain of the payload's frameless activations, outermost first, followed by `inlined`:
 /// each continues at its callee's call, the innermost at `pc`. Counts the leave against the
 /// innermost frameless function (`MATERIALIZATION_LIMIT`).
-pub(super) fn chain<H: Host>(vm: &mut Vm<H>, dispatch: &JsStepDispatch, pc: u32,
+pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, pc: u32,
     inlined: impl Iterator<Item = ChainFrame>) -> Vec<ChainFrame> {
     let live = vm.frameless.live(dispatch);
-    let continues = live.iter().skip(1).map(|record| record.call_pc).chain([pc]);
-    let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| ChainFrame { function: record.function,
-        call_pc: record.call_pc, source_pc, registers: record.window, this: record.this, callee: record.callee }).collect();
+    let continues = live.iter().skip(1).map(|record| record.call_pc as u32).chain([pc]);
+    // An admitted callee is a user function of the entry's program; its window follows (`emit_enter`).
+    let mut window = vm.frameless.windows.as_ptr();
+    let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| {
+        let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(record.callee).map(|callee| callee.kind)
+            else { unreachable!("a frameless callee is an admitted user function") };
+        let registers = window;
+        window = window.wrapping_add(usize::from(program.function(function as usize).registers));
+        ChainFrame { function, call_pc: record.call_pc as u32, source_pc, registers, this: record.this, callee: record.callee }
+    }).collect();
     if let Some(last) = records.last() {
         let epoch = vm.heap.collection_epoch();
         let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last.function)).or_default();
@@ -477,7 +479,7 @@ pub(super) unsafe extern "C" fn general_construct_result<H: Host>(vm: u64, _resi
 /// chain's frames, which the general loop continues from (`StepResult::ResumeFrames`).
 pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch, pc: usize) -> Option<JsNativeStep> {
     if !vm.frameless.inside(dispatch) { return None; }
-    let chain = chain(vm, dispatch, pc as u32, std::iter::empty());
+    let chain = chain(vm, program, dispatch, pc as u32, std::iter::empty());
     super::materialize_chain(vm, program, dispatch, &chain);
     dispatch.outcome.take()
 }

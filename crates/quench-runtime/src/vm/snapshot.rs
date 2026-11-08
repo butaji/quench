@@ -466,9 +466,7 @@ impl<H: Host> Vm<H> {
         writer.bool(*specialized);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
-        for name in atom_text.iter() {
-            writer.str(name);
-        }
+        atom_text.iter().for_each(|name| writer.str(name));
         writer.len(atom_sequence.appended_len());
         for offset in 0..atom_sequence.appended_len() {
             atom_sequence.appended(offset).write_snapshot(&mut writer);
@@ -503,6 +501,7 @@ impl<H: Host> Vm<H> {
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
         writer.u32s(&transitions.children().collect::<Vec<_>>());
+        shape_lookup::owned_dictionaries(shapes).snap(&mut writer)?;
         symbol_registry.snap(&mut writer)?;
         well_known_symbols.snap(&mut writer)?;
         for atom in [length_atom, prototype_atom, to_fixed_atom, to_precision_atom] {
@@ -517,8 +516,8 @@ impl<H: Host> Vm<H> {
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
-        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag } = wasm_js;
-        [*module, *instance, *memory, *table, *global, *js_tag].snap(&mut writer)?;
+        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
+        [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
         write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
@@ -611,8 +610,8 @@ impl<H: Host> Vm<H> {
             self.function_values.insert(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
-        let [module, instance, memory, table, global, js_tag] = <[Value; 6]>::unsnap(&mut reader)?;
-        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag };
+        let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
+        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
         self.set_instanceof_has_instance_holder(holder);
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
@@ -710,6 +709,7 @@ impl<H: Host> Vm<H> {
                 return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
         }
+        shape_lookup::restore_owned_dictionaries(&mut self.shapes, Snap::unsnap(reader)?)?;
         Ok(())
     }
 

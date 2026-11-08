@@ -51,19 +51,17 @@ pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
+    shape_lookup::owned_slots(shapes, shape).unwrap_or_else(|| chain_shape_attributes(shapes, shape))
+}
+
+fn chain_shape_attributes(
+    shapes: &[Shape],
+    shape: u32,
+) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
     // Both vectors are sized exactly: collections call this for every rooted shape.
-    let mut depth = 0;
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        depth += 1;
-        current = shapes[id as usize].parent();
-    }
-    let mut chain = Vec::with_capacity(depth);
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        chain.push(id);
-        current = shapes[id as usize].parent();
-    }
+    let ancestors = || std::iter::successors(Some(shape), |&id| shapes[id as usize].parent());
+    let mut chain = Vec::with_capacity(ancestors().count());
+    chain.extend(ancestors());
     chain.reverse();
 
     let mut entries = Vec::with_capacity(shapes[shape as usize].storage_len());
@@ -176,8 +174,8 @@ struct ParallelShapeTrace<'a> {
 }
 
 // SAFETY: the shape vector is immutable for the duration of collection, and
-// `append_shape_roots` reads only `parent` and `transition`, never the
-// interior-mutable caches. All shared bitmap updates are atomic; owned roots
+// `append_shape_roots` reads only `parent`, `transition` and an owned dictionary's
+// already-initialized lookup index, never initializing or mutating a cache. All shared bitmap updates are atomic; owned roots
 // are read-only. The trace object cannot outlive the joined worker scope.
 unsafe impl Send for ParallelShapeTrace<'_> {}
 // SAFETY: same immutable-metadata contract as the Send implementation.

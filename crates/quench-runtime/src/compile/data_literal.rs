@@ -10,16 +10,16 @@
 use oxc_ast::ast::{AssignmentOperator, Expression, Program, Statement};
 
 /// A script's JSON literal, at byte `start` of its text, and the text OXC parses instead.
-pub(super) struct DataLiteral {
-    pub(super) start: u32,
-    pub(super) substituted: String,
+pub(crate) struct DataLiteral {
+    pub(crate) start: u32,
+    pub(crate) substituted: String,
 }
 
 /// The JSON literal `text` assigns first: after leading whitespace and comments, a target
 /// of identifier characters, dots and whitespace (`let data`, `module.exports`), `=`, and a
 /// JSON array or object. The target is only located here; OXC parses the statement, and
 /// `is_top_level_value` admits the literal only where the parsed statement takes it.
-pub(super) fn locate(text: &str) -> Option<DataLiteral> {
+pub(crate) fn locate(text: &str) -> Option<DataLiteral> {
     let bytes = text.as_bytes();
     let mut at = skip_trivia(bytes, 0);
     while bytes.get(at).is_some_and(|&byte| is_target_byte(byte)) {
@@ -42,7 +42,7 @@ pub(super) fn locate(text: &str) -> Option<DataLiteral> {
 /// Whether the empty literal at `start` is the value a top-level declaration or plain
 /// assignment of `program` takes: there the JSON text, which is a literal of the same kind,
 /// is a whole expression with the same surroundings.
-pub(super) fn is_top_level_value(program: &Program<'_>, start: u32) -> bool {
+pub(crate) fn is_top_level_value(program: &Program<'_>, start: u32) -> bool {
     let placeholder = |value: &Expression<'_>| match value {
         Expression::ArrayExpression(array) => array.span.start == start && array.elements.is_empty(),
         Expression::ObjectExpression(object) => object.span.start == start && object.properties.is_empty(),

@@ -7,25 +7,34 @@ use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
 use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcFieldAccess, StructConstruction};
 use crate::wasm::reference::ReferenceTarget;
 
+/// Applies `$then!` to the opcodes `Vm::wasm_gc_value_step` makes: the one list that
+/// `wasm_gc_value_op` and the lane's handler of each opcode derive from.
+macro_rules! wasm_gc_value_ops {
+    ($then:ident) => {
+        $then!(WasmRefIsNull WasmRefAsNonNull WasmRefEq WasmI31 WasmExternalConversion
+            WasmArrayGet WasmArrayGetS WasmArrayGetU WasmArraySet WasmArrayLen
+            WasmArrayNewData WasmArrayNewElem WasmArrayInitData WasmArrayInitElem WasmArrayFill WasmArrayCopy
+            WasmArrayNew WasmArrayNewDefault WasmArrayNewFixed
+            WasmStructGet WasmStructGetS WasmStructGetU WasmStructSet
+            WasmStructNew WasmStructNewDefault WasmStructNewDesc WasmStructNewDefaultDesc WasmRefGetDesc
+            WasmRefTest WasmRefCast WasmDescriptorTest WasmDescriptorCast)
+    };
+}
+pub(in crate::vm) use wasm_gc_value_ops;
+
 /// Whether `op` is one of the operations `Vm::wasm_gc_value_step` makes.
 pub(in crate::vm) const fn wasm_gc_value_op(op: Op) -> bool {
-    matches!(
-        op,
-        Op::WasmRefIsNull | Op::WasmRefAsNonNull | Op::WasmRefEq | Op::WasmI31 | Op::WasmExternalConversion
-            | Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArraySet | Op::WasmArrayLen
-            | Op::WasmArrayNewData | Op::WasmArrayNewElem | Op::WasmArrayInitData | Op::WasmArrayInitElem
-            | Op::WasmArrayFill | Op::WasmArrayCopy
-            | Op::WasmArrayNew | Op::WasmArrayNewDefault | Op::WasmArrayNewFixed
-            | Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet
-            | Op::WasmStructNew | Op::WasmStructNewDefault | Op::WasmStructNewDesc | Op::WasmStructNewDefaultDesc
-            | Op::WasmRefGetDesc
-            | Op::WasmRefTest | Op::WasmRefCast | Op::WasmDescriptorTest | Op::WasmDescriptorCast
-    )
+    macro_rules! listed {
+        ($($name:ident)*) => { matches!(op, $(Op::$name)|*) };
+    }
+    wasm_gc_value_ops!(listed)
 }
 
 impl<H: Host> Vm<H> {
     /// One of the `wasm_gc_value_op`s of `program`, of the registers `read` answers: the value
-    /// it writes to its result register, if any.
+    /// it writes to its result register, if any. Inlined, so a lane handler of one opcode
+    /// keeps only that opcode's arm.
+    #[inline]
     pub(in crate::vm) fn wasm_gc_value_step(
         &mut self,
         program: ProgramId,
@@ -187,13 +196,9 @@ impl<H: Host> Vm<H> {
         let window = (!mode.defaulted() || mode.described()).then(|| i.register_window());
         let fields = window.map_or(0, |window| window.count - u16::from(mode.described()));
         let descriptor = window.filter(|_| mode.described()).map(|window| read(self, window.base + fields));
-        let values = match window.filter(|_| !mode.defaulted()) {
-            Some(window) => {
-                let failed = || JsError::validation("Wasm struct allocation failed".into());
-                Some(self.wasm_window_values(window.base, fields, read, failed)?)
-            }
-            None => None,
-        };
+        let operands = window.filter(|_| !mode.defaulted()).map(|window| window.base);
+        let field = |vm: &Self, index: usize| read(vm, operands.unwrap_or_default() + index as u16);
+        let values = operands.map(|_| (usize::from(fields), &field as &dyn Fn(&Self, usize) -> Value));
         self.wasm_struct_new(&declarations, i.imm(), values, descriptor).map(Some)
     }
 
@@ -211,14 +216,35 @@ impl<H: Host> Vm<H> {
             (valid, crate::WasmTrap::DescriptorCastFailure)
         } else {
             let target = target.reference_type().expect("validated reference target");
-            let ty = declarations.callable_value_type(wasmparser::ValType::Ref(target))
-                .ok_or_else(|| JsError::validation("invalid reference cast declaration".into()))?;
-            (self.wasm_reference_valid_in(reference, ty, Some(&declarations)), crate::WasmTrap::CastFailure)
+            let valid = match self.wasm_gc_object_cast(&declarations, target, reference) {
+                Some(valid) => valid,
+                None => {
+                    let ty = declarations.callable_value_type(wasmparser::ValType::Ref(target))
+                        .ok_or_else(|| JsError::validation("invalid reference cast declaration".into()))?;
+                    self.wasm_reference_valid_in(reference, ty, Some(&declarations))
+                }
+            };
+            (valid, crate::WasmTrap::CastFailure)
         };
         match i.op() {
             Op::WasmRefTest | Op::WasmDescriptorTest => Ok(Some(Value::integer(i32::from(valid)))),
             _ if valid => Ok(Some(reference)),
             _ => Err(JsError::wasm_trap_error(failure)),
+        }
+    }
+
+    /// Whether a cast to a declared type of `declarations` admits `reference` when that is
+    /// null or a GC object, read from the object's declared ancestry; `None` otherwise.
+    fn wasm_gc_object_cast(&self, declarations: &crate::WasmTypes, target: wasmparser::RefType, reference: Value) -> Option<bool> {
+        let wasmparser::HeapType::Concrete(wasmparser::UnpackedIndex::Module(index)) = target.heap_type() else {
+            return None;
+        };
+        if reference.is_null() {
+            return Some(target.is_nullable());
+        }
+        match self.heap.get(reference) {
+            Some(Cell::WasmGc { declarations: owner, ty, .. }) => Some(owner.is_subtype(*ty as usize, declarations, index as usize)),
+            _ => None,
         }
     }
 

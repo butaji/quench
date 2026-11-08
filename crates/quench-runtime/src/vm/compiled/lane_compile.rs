@@ -34,13 +34,6 @@ pub(in crate::vm) struct PendingLaneMethod {
     epoch: u64,
 }
 
-/// What a pending body's compile came to.
-enum LaneCompile {
-    /// Its code needed more memory than a body may take: plan again inlining half as much.
-    Replan,
-    Done(Option<LaneMethod>),
-}
-
 /// What a function's lane body asks of the VM at an entry past its warm-up.
 pub(in crate::vm) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code.
@@ -58,9 +51,23 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
+/// Lane bodies with at least this many IR instructions allocate registers in one pass; smaller
+/// ones keep the backtracking allocator. One pass pays off where compile latency dominates (large
+/// bodies), backtracking where a small hot loop runs millions of times. Experiment build, 3
+/// interleaved rounds (2026-11-07): one pass everywhere cost call-method 2.2 -> 5.2 ns and
+/// call-polymorphic 8.6 -> 15.9 ns (bodies of 400-1900 instructions); at 2048 those recover
+/// (2.21, 8.63 ns) while richards (bodies 2k-17k) keeps 28.5 vs 26.9 all-backtracking and
+/// delta-blue 48.0 vs 43.9.
+const LANE_SINGLE_PASS_MIN_INSTS: usize = 2048;
+
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = super::jit_backend::lane_body_isa().ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
+    let isa = if function.dfg.num_insts() >= LANE_SINGLE_PASS_MIN_INSTS {
+        super::jit_backend::lane_body_isa()
+    } else {
+        super::jit_backend::target_isa()
+    }
+    .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 
@@ -105,7 +112,8 @@ impl<H: Host> Vm<H> {
         if caller == function && generic.contains(&LaneExit::At(pc as usize)) { return Vec::new(); }
         let mut bound = targets(caller, pc);
         for target in &mut bound {
-            if !numeric_callee(program, target.function) { continue; }
+            // A forwarded target keeps its identity: the site calls it through its native.
+            if !numeric_callee(program, target.function) || target.through().is_some() { continue; }
             if let Some(callee) = target.identity()
                 && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
                     owner == self.active_program && function == target.function) {
@@ -113,13 +121,7 @@ impl<H: Host> Vm<H> {
             }
             target.callee = CalleeBinding::Function;
         }
-        let mut kept = 0;
-        for index in 0..bound.len() {
-            let target = bound[index];
-            if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
-        }
-        bound.truncate(kept);
-        bound
+        each_once(bound)
     }
 
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
@@ -128,13 +130,12 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let body = program.function_get(function as usize)?;
         let valid = std::cell::Cell::new(true);
-        let atom = self.vm_facts().function_call.map(|(atom, _)| atom);
         let unit = lane_unit::with_budget(program, function, body, budget,
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc),
-            &|callee| program.function_get(callee as usize), atom)?;
+            &|callee| program.function_get(callee as usize))?;
         if !valid.get() { return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
-            CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
+            CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
         }).then_some(unit)
@@ -159,13 +160,16 @@ impl<H: Host> Vm<H> {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
+        let helpers = LaneHelpers::Process(LaneHelper::addresses::<H>());
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
         let method_cache_atoms = self.method_cache_atoms.bits().clone();
+        let active = self.active_program;
+        let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
+            .map_or(&[][..], |_| self.programs.constants(active));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address() }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &left_at, &direct_sites, &frame_captures, loop_entry, allow_first_entry)?;
         if lowered.region.native == 0 { return None; }
@@ -224,7 +228,7 @@ impl<H: Host> Vm<H> {
         direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, loop_header: Option<u32>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
         let mut pending = match work {
             LaneBodyWork::Start { generic } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS),
-            LaneBodyWork::Poll(pending) => return self.lane_body_poll(*pending),
+            LaneBodyWork::Poll(pending) => return self.lane_body_poll(pending),
         };
         // A plan again after a rejection starts at once; code the thread compiled at once
         // (or the calling thread, without one) publishes at once.
@@ -233,7 +237,7 @@ impl<H: Host> Vm<H> {
             let direct = direct(self);
             let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, loop_header, &generic, budget)
             else { return LaneBodyOutcome::Declined };
-            match self.lane_body_poll(started) {
+            match self.lane_body_poll(Box::new(started)) {
                 LaneBodyOutcome::Stale => pending = (generic, budget / 2),
                 outcome => return outcome,
             }
@@ -242,16 +246,19 @@ impl<H: Host> Vm<H> {
 
     /// What a pending body's compile came to; `Stale` also asks for a plan again at half its
     /// budget when its code was too large.
-    fn lane_body_poll(&mut self, pending: PendingLaneMethod) -> LaneBodyOutcome {
+    fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> LaneBodyOutcome {
         if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
             return LaneBodyOutcome::Stale;
         }
-        match pending.poll() {
-            Err(pending) => LaneBodyOutcome::Compiling(pending),
-            Ok(LaneCompile::Replan) => LaneBodyOutcome::Stale,
-            Ok(LaneCompile::Done(method)) => method
+        // A body still compiling stays where it is held: polling moves nothing (loop entries
+        // poll at each backward jump).
+        match pending.code.poll() {
+            std::task::Poll::Pending => LaneBodyOutcome::Compiling(pending),
+            std::task::Poll::Ready(Some(Err(reason))) if pending.plan.replans(reason) => LaneBodyOutcome::Stale,
+            std::task::Poll::Ready(Some(Ok(code))) => pending.plan.finish(&code)
                 .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
+            std::task::Poll::Ready(_) => LaneBodyOutcome::Declined,
         }
     }
 }
@@ -261,19 +268,6 @@ impl<H: Host> Vm<H> {
 fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
         lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
-}
-
-impl PendingLaneMethod {
-    /// What its compile came to, or itself while its code compiles.
-    fn poll(self) -> Result<LaneCompile, Box<Self>> {
-        Ok(match self.code.poll() {
-            std::task::Poll::Pending => return Err(Box::new(self)),
-            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
-            std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) => LaneCompile::Replan,
-            std::task::Poll::Ready(_) => LaneCompile::Done(None),
-        })
-    }
-
 }
 
 impl LanePlan {
@@ -318,4 +312,15 @@ impl LanePlan {
             loop_header: self.loop_header, amortizes, direct: self.direct, closed,
         })
     }
+}
+
+/// `targets`, each once, in first-seen order.
+fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
+    let mut kept = 0;
+    for index in 0..targets.len() {
+        let target = targets[index];
+        if !targets[..kept].contains(&target) { targets[kept] = target; kept += 1; }
+    }
+    targets.truncate(kept);
+    targets
 }

@@ -190,7 +190,6 @@ type JsonText = Vec<u8>;
 /// A completed JSON text as a string. Every writer appends UTF-8: ASCII punctuation,
 /// literals and numbers, host strings, and JavaScript strings whose lone surrogates it
 /// escapes (`write_json_string`).
-
 fn json_text_str(text: &[u8]) -> &str {
     debug_assert!(std::str::from_utf8(text).is_ok(), "JSON text is written as UTF-8");
     // SAFETY: as above, every byte sequence written is UTF-8.
