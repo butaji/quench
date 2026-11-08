@@ -4841,9 +4841,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else {
-            return;
-        };
+        let Some(shape) = self.object_data(object).map(Object::shape) else { return };
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
@@ -4868,6 +4866,7 @@ impl<H: Host> Vm<H> {
         let next_id =
             self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
         self.heap.set_object_shape(object, next_id);
+        self.pack_owned_dictionary(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
     }

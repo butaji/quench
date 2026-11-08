@@ -1481,7 +1481,7 @@ file-lines crates/quench-runtime/src/vm/embedding.rs 1962
 file-lines crates/quench-runtime/src/vm/environment.rs 2729
 file-lines crates/quench-runtime/src/vm/error.rs 2691
 file-lines crates/quench-runtime/src/vm/eval.rs 1369
-file-lines crates/quench-runtime/src/vm/gc.rs 1314
+file-lines crates/quench-runtime/src/vm/gc.rs 1312
 file-lines crates/quench-runtime/src/vm/generator.rs 1803
 file-lines crates/quench-runtime/src/vm/index.rs 918
 file-lines crates/quench-runtime/src/vm/intl_collator.rs 695
@@ -1500,7 +1500,7 @@ file-lines crates/quench-runtime/src/vm/native_graph.rs 798
 file-lines crates/quench-runtime/src/vm/native_object.rs 517
 file-lines crates/quench-runtime/src/vm/native_stencil.rs 764
 file-lines crates/quench-runtime/src/vm/number.rs 937
-file-lines crates/quench-runtime/src/vm/object.rs 4954
+file-lines crates/quench-runtime/src/vm/object.rs 4953
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 987
 file-lines crates/quench-runtime/src/vm/object_get.rs 1462
 file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
@@ -3173,7 +3173,7 @@ function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::function_caller 
 function-lines crates/quench-runtime/src/vm/function.rs::Vm<H>::initialize_bound_function_metadata 81
 function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 559
 function-lines crates/quench-runtime/src/vm/gc.rs::Vm<H>::compact_live_shapes 60
-function-lines crates/quench-runtime/src/vm/gc.rs::rebuild_shape 61
+function-lines crates/quench-runtime/src/vm/gc.rs::rebuild_shape 59
 function-lines crates/quench-runtime/src/vm/gc.rs::tests::shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions 79
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::async_generator_delegate 98
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::async_generator_delegate_fulfilled 76
