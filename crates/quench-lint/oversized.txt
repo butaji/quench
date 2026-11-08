@@ -1474,7 +1474,7 @@ file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1946
 file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23326
-file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3032
+file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3031
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1962
@@ -3106,7 +3106,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::promote_fr
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame 59
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame_with_registers 41
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_frame_from_lane 48
-function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 1073
+function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 1068
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::unwind_general_loop 83
 function-lines crates/quench-runtime/src/vm/dispatch_wasm.rs::Vm<H>::step_wasm 654
 function-lines crates/quench-runtime/src/vm/disposal.rs::Vm<H>::async_iterator_dispose 54
