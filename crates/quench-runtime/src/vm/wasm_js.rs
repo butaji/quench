@@ -415,13 +415,11 @@ impl<H: Host> Vm<H> {
         let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
         match native {
             Native::WebAssemblyValidate => {
-                let bytes = self.wasm_source_bytes(p, arg(0), native)?;
                 let mode = self.execution_mode;
-                Ok(if !bytes.is_empty() && self.host.validate_wasm(&bytes, mode) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let valid = self.with_wasm_source(p, arg(0), native, |host, bytes| {
+                    !bytes.is_empty() && host.validate_wasm(bytes, mode)
+                })?;
+                Ok(Value::boolean(valid))
             }
             Native::WebAssemblyCompile => {
                 let module = self.wasm_compile_module(p, arg(0), native);
@@ -712,30 +710,31 @@ impl<H: Host> Vm<H> {
         Ok(promise)
     }
 
-    fn wasm_source_bytes(
+    /// Run `f` with the host over a Wasm source's bytes, borrowed in place (a module binary
+    /// is megabytes; copying it doubles the compile's peak). Detached sources read empty.
+    fn with_wasm_source<T>(
         &mut self,
         p: &ResidualProgram,
         source: Value,
         consumer: Native,
-    ) -> Result<Vec<u8>, JsError> {
-        let bytes = match self.heap.get(source) {
-            Some(Cell::ArrayBuffer {
-                bytes, detached, shared: false, ..
-            }) => Some(if *detached {
-                Vec::new()
-            } else {
-                bytes.to_vec()
-            }),
-            Some(Cell::TypedArray { .. }) => self.embedding_view_bytes(source),
+        f: impl FnOnce(&mut H, &[u8]) -> T,
+    ) -> Result<T, JsError> {
+        let range = match self.heap.get(source) {
+            Some(Cell::ArrayBuffer { shared: false, .. } | Cell::TypedArray { .. }) => self.embedding_buffer_range(source),
             _ => None,
         };
-        bytes.ok_or_else(|| {
+        let Some((buffer, range)) = range else {
             let name = wasm_source_consumer_name(consumer);
             let required = if consumer == Native::WebAssemblyInstantiate {
                 "a buffer source or a WebAssembly.Module object"
             } else { "a buffer source" };
-            self.type_error(p, format!("WebAssembly.{name}(): Argument 0 must be {required}"))
-        })
+            return Err(self.type_error(p, format!("WebAssembly.{name}(): Argument 0 must be {required}")));
+        };
+        let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(buffer) else {
+            return Ok(f(&mut self.host, &[]));
+        };
+        let read = bytes.read();
+        Ok(f(&mut self.host, if *detached { &[] } else { read.get(range).unwrap_or_default() }))
     }
 
     fn wasm_compile_module(
@@ -744,17 +743,16 @@ impl<H: Host> Vm<H> {
         source: Value,
         consumer: Native,
     ) -> Result<Value, JsError> {
-        let bytes = self.wasm_source_bytes(p, source, consumer)?;
-        if bytes.is_empty() {
+        let mode = self.execution_mode;
+        let compiled = self.with_wasm_source(p, source, consumer, |host, bytes| {
+            (!bytes.is_empty()).then(|| host.compile_wasm(bytes, mode))
+        })?;
+        let Some(compiled) = compiled else {
             let name = wasm_source_consumer_name(consumer);
             return Err(self.wasm_js_error(p, Native::WasmCompileError,
                 format!("WebAssembly.{name}(): BufferSource argument is empty")));
-        }
-        let mode = self.execution_mode;
-        let module = self
-            .host
-            .compile_wasm(&bytes, mode)
-            .map_err(|message| self.wasm_js_error(p, Native::WasmCompileError, message))?;
+        };
+        let module = compiled.map_err(|message| self.wasm_js_error(p, Native::WasmCompileError, message))?;
         Ok(self.heap.alloc(Cell::WasmObject {
             object: Box::new(Self::empty_object(self.wasm_js.module)),
             slot: WasmObjectSlot::Module(Box::new(module)),

@@ -19,7 +19,7 @@ fn main() -> ExitCode {
     } else {
         fs::read(&path)
             .map_err(|error| error.to_string())
-            .and_then(|bytes| engine.compile(&bytes).map_err(|error| error.to_string()))
+            .and_then(|bytes| engine.compile(&bytes).map(quench_wasm::Module::into_owned).map_err(|error| error.to_string()))
     };
     match module.and_then(|module| module.lower_shared_module().map_err(|e| e.to_string())) {
         Ok(module) => {

@@ -213,7 +213,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The backing buffer of an ArrayBuffer or view and the byte range it currently covers.
-    fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
+    pub(super) fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::ArrayBuffer { bytes, .. } => (value, 0, bytes.len()),
             Cell::TypedArray { object, buffer, kind, .. } => {

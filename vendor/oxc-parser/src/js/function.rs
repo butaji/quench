@@ -143,8 +143,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let mut statements = ArenaVec::new_in(self);
         statements.push(statement);
         let program = Program::new(span, self.source_type, self.source_text, [], None, directives, statements, self);
+        let in_function = self.ctx.has_return();
         // SAFETY: `ParseOptions::lazy_body_check` outlives the parse.
-        unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets }) };
+        unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function }) };
         std::mem::forget(program);
     }
 
