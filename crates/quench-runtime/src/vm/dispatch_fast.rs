@@ -280,30 +280,6 @@ impl LoopSite {
     }
 }
 
-/// A loop site's compilations: the current code, if any, and the values earlier code found
-/// were no `i32`, which the next compilation holds as `f64`s.
-#[derive(Default)]
-struct LoopTier {
-    code: Option<Rc<crate::code_dependencies::PublishedCode<super::compiled::CompiledOsrRegion>>>,
-    widened: std::collections::BTreeSet<super::compiled::Widening>,
-    compilations: u32,
-}
-
-impl LoopTier {
-    fn is_published(&self) -> bool {
-        self.code.as_ref().is_some_and(|code| code.is_published())
-    }
-
-    /// Whether the site has native code or may still compile it. A site whose compilations
-    /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
-    /// the interpreter without reading an entry: reading one at every iteration had cost
-    /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
-        self.is_published()
-            || (self.compilations < TIERS.loops.max_compilations && super::compiled::loop_tier_compiles(policy))
-    }
-}
-
 type Ip = *const LaneInstruction;
 
 /// A function's lane view: one record per instruction, and the one register
@@ -637,6 +613,9 @@ mod lane_body_stats;
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
+#[path = "loop_tier.rs"]
+mod loop_tier;
+use loop_tier::{lane_loop_compile, LoopTier};
 use lane_body_tier::LaneBodyHistory;
 use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
@@ -957,7 +936,7 @@ impl LaneView {
         for site in &self.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
-                && publication.lease().is_some_and(|code| !code.shape_dependencies.is_empty()) {
+                && publication.lease().is_some_and(|code| !code.facts.shape_dependencies.is_empty()) {
                 publication.retire();
             }
         }
@@ -5203,11 +5182,7 @@ script_handler! {
             let vm = unsafe { vm(cx) };
             let env = unsafe { (*cx).env };
             let code = unsafe { &*(*cx).code };
-            let function = vm
-                .lane_stack
-                .activations
-                .last()
-                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let function = lane_running_function(cx);
             let body = code.function_get(function as usize);
             let shape = vm.current_capture_slots(unsafe { (*cx).frame }).map(|(slots, root)| {
                 (root.is_some(), unsafe { &*slots }.dense().is_some(), unsafe { &*slots }.len())
@@ -5275,18 +5250,6 @@ script_handler! {
     /// (`specialize_register_operands`): the index of `typeof`'s name, which runs no guest code.
     fn lane_typeof_index<>(cx, r, ip, i, view) {
         r.set(i.a, unsafe { vm(cx) }.typeof_index_value(r.get(i.b)));
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `Unary`: logical not and `typeof` of any value, and the numeric operators of a
-    /// Number, run no guest code; any other operand takes the general path.
-    fn lane_unary<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_unary_value(cx, r, i) }) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -8090,6 +8053,9 @@ fn lane_loop_native<H: Host>(
     // record remains contiguous in this lane view.
     let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
     // The record is filled where it lives, so its words are neither cleared nor copied.
+    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
+        return LoopAttempt::Declined;
+    }
     let mut entry = super::compiled::LoopEntry::new();
     if lane_loop_entry(cx, r, region, &mut entry).is_none() {
         site.declines.set(site.declines.get() + 1);
@@ -8100,7 +8066,7 @@ fn lane_loop_native<H: Host>(
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {
-        LoopContinuation::Jump => LoopAttempt::Declined,
+        LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
         LoopContinuation::Exit(pc) => LoopAttempt::Leave(match region.inlined_exit(pc) {
             Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
@@ -8301,7 +8267,11 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
     // A header record the site holds gets its own handler back.
-    lane_loop_release_header(unsafe { ip.byte_offset(site.jump) }, site);
+    let header = unsafe { ip.byte_offset(site.jump) };
+    lane_loop_release_header(header, site);
+    // No site holds the header from now on, so its record, which linked this site alone, takes
+    // field hints again (`holds_loop_site`).
+    if site.hookable { unsafe { (*header).call_link.set(NO_CALL_LINK) }; }
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, lane_jump_always::<H, true>);
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
@@ -8341,6 +8311,8 @@ enum LoopContinuation {
     Exit(u32),
     /// The backward jump's safepoint ends the execution termination stopped.
     Safepoint,
+    /// The region's code compiles: take the jump, which declines nothing.
+    Compiling,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -8361,84 +8333,9 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        tier.compilations += 1;
-        if site.diagnostics {
-            site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
-        }
-        // SAFETY: the lane's VM is live, and nothing borrows it across the call.
-        unsafe { vm(cx) }.host.before_native_compilation();
-        let captures = entry.captures(region.captures.len());
-        let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
-        let machine = unsafe { vm(cx) };
-        let (properties_base, properties_len) = machine.heap.native_property_values();
-        let native_heap_available =
-            machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
-        let native_field_loads = region
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(index, field)| {
-                if native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index) {
-                    machine.native_field_load_descriptors(field.cache_site)
-                } else {
-                    Default::default()
-                }
-            })
-            .collect::<Vec<_>>();
-        let heap = &machine.heap;
-        // A field's array is the value its entry word holds, not yet the register's.
-        let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
-            Some(super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(region, *index),
-            _ => r.get(register),
-        };
-        let int32_elements = |register| {
-            heap.record_array(array_value(register)).is_some_and(|array| {
-                array.elements().iter().take(TIERS.loops.element_sample).all(|value| value.as_int().is_some())
-            })
-        };
-        let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
-        // An inlined callee's register is no register of the running activation: it holds
-        // nothing at entry.
-        let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
-        let observation = super::compiled::Observation {
-            register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
-            int32_elements: &int32_elements,
-            only_int32: &only_int32,
-            captures: &captures,
-            fields: &fields,
-            native_field_loads: &native_field_loads,
-            widened: &tier.widened,
-        };
-        let track_backedges = unsafe { vm(cx) }
-            .programs
-            .js_jit_general_dispatch_enabled();
-        tier.code =
-            super::compiled::compile_osr_region(
-                region,
-                &observation,
-                &unsafe { vm(cx) }.execution_interrupt,
-                heap.memory_policy(),
-                track_backedges,
-            ).map(crate::code_dependencies::PublishedCode::new).map(Rc::new);
-        // SAFETY: as above; the observation's borrow of the heap has ended.
-        unsafe { vm(cx) }.host.after_native_compilation();
-        if let Some(publication) = &tier.code {
-            let code = publication.lease().expect("new publication");
-            let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-            let heap = &mut unsafe { vm(cx) }.heap;
-            let admitted = code.shape_dependencies.iter().all(|shape| heap.subscribe_shape(*shape, &dependent))
-                && code.slot_dependencies.iter().all(|dependency| heap.subscribe_slot(*dependency, &dependent));
-            if !admitted {
-                publication.retire();
-            }
-        }
-        if site.diagnostics && tier.is_published() {
-            site.compile_successes
-                .set(site.compile_successes.get().saturating_add(1));
-        }
+        lane_loop_compile(cx, r, site, region, entry, &mut tier);
         if !tier.is_published() {
-            tier.compilations = TIERS.loops.max_compilations;
-            return LoopContinuation::Jump;
+            return LoopContinuation::Compiling;
         }
     }
     let publication = Rc::clone(tier.code.as_ref().expect("compiled above"));
@@ -12986,7 +12883,7 @@ const LOAD_NAME_TYPEOF: u8 = 2;
 script_handler! {
     /// A `LoadName`'s first run: a name the global object answers whenever no global
     /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function whose
-    /// unresolved names are global (`ProgramStore::unresolved_names_are_global`) and resolve
+    /// unresolved names are global (`ProgramStore::names_are_global`) and resolve
     /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
     /// other always takes the general path. `KIND` is the load's (`LOAD_NAME`): a call's also
     /// writes its receiver, `undefined` for a binding of the global object's environment.
@@ -13008,11 +12905,7 @@ script_handler! {
         // The running function decides the name's scope: a running leaf's is its
         // materialized activation's.
         lane_materialize_running_leaf(cx);
-        let function = vm
-            .lane_stack
-            .activations
-            .last()
-            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        let function = lane_running_function(cx);
         // An internal name is no binding source text can declare, except the internal globals
         // the realm installs on its global object, which a static lookup reads as any other.
         // Static resolution rules out a `with` object, which the general search consults first.
@@ -13020,7 +12913,7 @@ script_handler! {
             .function_get(function as usize)
             .is_some_and(|function| function.names_resolve_statically(code));
         let global = statically
-            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
+            && vm.programs.names_are_global(unsafe { (*cx).program })
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
         // The global object's `undefined` is non-writable and non-configurable, and no global
@@ -13060,28 +12953,31 @@ script_handler! {
     }
 }
 
+/// The function the lane runs: its innermost activation's, or else its frame's.
+#[inline(always)]
+fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
+    let vm = unsafe { vm(cx) };
+    vm.lane_stack.activations.last().map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function)
+}
+
 /// The global value property `lane_load_name_first` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
     /// A `StoreName`'s first run: an assignment to a name the global object answers whenever
     /// no global lexical binding shadows it (as `lane_load_name_first` decides for a read)
-    /// takes `lane_store_global_name`; any other store, an initializing one among them,
+    /// takes `lane_store_global_name`, a `var`'s initializer too, which stores as one: the
+    /// declaration made the property, and a lexical binding is never hinted. Any other store
     /// always takes the general path.
     #[inline(never)]
     fn lane_store_name_first<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let function = vm
-            .lane_stack
-            .activations
-            .last()
-            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-        let global = i.b == 0
-            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+        let function = lane_running_function(cx);
+        let global = !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
             && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
-            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function);
+            && vm.programs.names_are_global(unsafe { (*cx).program });
         if global {
             requicken::<H>(ip, lane_store_global_name::<H>);
             sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
@@ -13767,6 +13663,8 @@ fn lane_native_value<H: Host>(
 }
 
 mod named_keys;
+mod denoted;
+use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod native_calls;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
@@ -13799,15 +13697,10 @@ impl<H: Host> Vm<H> {
 /// its value is never read: what the call writes there is unobservable.
 #[cold]
 fn lane_call_result_dead<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> bool {
-    let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     // A leaf makes no call, so the innermost activation, or else the frame, runs `i`.
-    let function = vm
-        .lane_stack
-        .activations
-        .last()
-        .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+    let function = lane_running_function(cx);
     // SAFETY: `ip` is a record of the running view, which starts at the context's base.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     code.register_root_masks(function)
@@ -16037,7 +15930,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
         for site in &view.loops {
             let tier = site.tier.borrow();
             if let Some(publication) = &tier.code
-                && publication.lease().is_some_and(|code| code.shape_dependencies.contains(&shape)) {
+                && publication.lease().is_some_and(|code| code.facts.shape_dependencies.contains(&shape)) {
                 publications.push(publication.clone());
             }
         }
@@ -19387,7 +19280,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
-        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => Some(lane_binary::<H>),
+        op if denoted_handler::<H>(op).is_some() => denoted_handler::<H>(op),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
@@ -19395,7 +19288,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
         Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
-        Op::Unary => Some(lane_unary::<H>),
         Op::StoreCapture => Some(lane_store_capture::<H>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
@@ -19571,7 +19463,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             }
             layout => !layout.is_register_field() || value < registers,
         });
-    let window_fits = !matches!(op, Op::WasmFillRegisters | Op::MakeObjectLiteral)
+    let window_fits = op.field_layout(InstructionField::B) != FieldLayout::RegisterWindowBase
         || u32::from(instruction.b()) + u32::from(instruction.c()) <= u32::from(registers);
     let pair_fits = op.immediate_layout() != ImmediateLayout::RegisterPair || {
         let (first, second) = ImmediateLayout::register_pair(instruction.imm());
@@ -21197,7 +21089,7 @@ fn specialize_register_operands<H: Host>(
     };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
-    let unary = lane_unary::<H> as Handler as *const ();
+    let unary = unary_handler::<H>() as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
@@ -23205,11 +23097,7 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             // The record's opcode from its packed instruction: the census needs the mix, and
             // the lane record keeps only the handler.
             let vm = unsafe { vm(cx) };
-            let function = vm
-                .lane_stack
-                .activations
-                .last()
-                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let function = lane_running_function(cx);
             let code = unsafe { &*(*cx).code };
             let pc = unsafe { ip.offset_from((*cx).base) as usize };
             if let Some(body) = code.function_get(function as usize)

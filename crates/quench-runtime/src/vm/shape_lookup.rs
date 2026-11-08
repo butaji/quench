@@ -99,6 +99,18 @@ impl ShapeLookupIndex {
         }
         Some(())
     }
+    /// Renumbers the live properties' slots in definition order, as an owned dictionary packs
+    /// its storage, and returns each one's former slot.
+    pub(super) fn pack(&mut self) -> Vec<u32> {
+        if self.entries.len() != self.live_len() {
+            self.compact();
+        }
+        let former: Vec<u32> = self.entries.iter().map(|&(_, slot)| slot).collect();
+        self.entries.iter_mut().zip(0..).for_each(|(entry, packed)| entry.1 = packed);
+        let mut attributes = std::mem::take(&mut self.attributes);
+        self.attributes = (former.iter().zip(0..)).filter_map(|(slot, packed)| Some((packed, attributes.remove(slot)?))).collect();
+        former
+    }
     /// Drops the vacant entries and renumbers the live ones' positions.
     fn compact(&mut self) {
         self.entries.retain(|(_, slot)| *slot != VACANT_SLOT);
@@ -113,7 +125,7 @@ impl ShapeLookupIndex {
 }
 
 mod owned_dictionary;
-pub(super) use owned_dictionary::{owned_dictionaries, owned_slots, restore_owned_dictionaries};
+pub(super) use owned_dictionary::{owned_dictionaries, owned_slots, rebuild_owned_dictionary, restore_owned_dictionaries};
 
 #[cfg(test)]
 mod tests;

@@ -141,9 +141,9 @@ impl FunctionCompiler<'_, '_> {
     /// source at its target's slot with its kind's capture marker, hiding the markers of the
     /// same source outside. Cached unless a private name's identity reads `outer`.
     fn capture_layer(&mut self, index: usize, outer: &CaptureScope) -> Rc<CaptureLayer> {
-        let lexical = &self.lexical_scopes[index];
         let mut layer = CaptureLayer::default();
-        let mut private = false;
+        let private = self.hide_stale_private_names(index, outer, &mut layer);
+        let lexical = &self.lexical_scopes[index];
         for (source, target) in &lexical.bindings {
             let Some(slot) = self.local_slots.get(target).copied() else {
                 self.capture_memo.unslotted_targets.insert_growing(*target as usize);
@@ -151,11 +151,6 @@ impl FunctionCompiler<'_, '_> {
             };
             layer.insert(*source, Some(slot));
             let kind = lexical.kinds.get(source).copied().unwrap_or(LexicalBindingKind::Mutable);
-            if kind == LexicalBindingKind::PrivateName {
-                private = true;
-                self.hide_stale_private_names(*source, outer, &mut layer);
-                layer.insert(*source, Some(slot));
-            }
             // Markers exist only as `capture_marker` made them, which records each.
             for marker in LexicalBindingKind::ALL
                 .map(Some)
@@ -177,18 +172,30 @@ impl FunctionCompiler<'_, '_> {
         layer
     }
 
-    /// Hides every binding visible over `outer` and in `layer` whose private identity is
-    /// private name `source`'s: an inner class's private name replaces an outer one's.
-    fn hide_stale_private_names(&self, source: Atom, outer: &CaptureScope, layer: &mut CaptureLayer) {
-        let label = crate::bytecode::private_identity_label(&self.owner.atoms[source as usize]);
-        let visible = outer.keys().chain(layer.iter().filter(|(_, slot)| slot.is_some()).map(|(atom, _)| *atom));
-        let stale = visible.filter(|atom| {
-            let text: &str = self.owner.atoms[*atom as usize].as_ref();
-            let identity = text.strip_prefix(LexicalBindingKind::PrivateName.capture_prefix()).unwrap_or(text);
-            label.is_some() && crate::bytecode::private_identity_label(identity) == label
-        }).collect::<Vec<_>>();
-        for atom in stale {
-            layer.insert(atom, None);
+    /// Hides every binding visible over `outer` whose private identity is that of a private
+    /// name lexical scope `index` declares: an inner class's private name replaces an outer
+    /// one's. One pass over `outer` against the scope's sorted labels; returns whether the
+    /// scope declares a private name.
+    fn hide_stale_private_names(&self, index: usize, outer: &CaptureScope, layer: &mut CaptureLayer) -> bool {
+        let lexical = &self.lexical_scopes[index];
+        let atoms = &self.owner.atoms;
+        let mut labels = lexical
+            .bindings
+            .keys()
+            .filter(|source| lexical.kinds.get(*source) == Some(&LexicalBindingKind::PrivateName))
+            .filter_map(|source| crate::bytecode::private_identity_label(&atoms[*source as usize]))
+            .collect::<Vec<_>>();
+        if labels.is_empty() {
+            return lexical.kinds.values().any(|kind| *kind == LexicalBindingKind::PrivateName);
         }
+        labels.sort_unstable();
+        for atom in outer.keys() {
+            let text: &str = atoms[atom as usize].as_ref();
+            let identity = text.strip_prefix(LexicalBindingKind::PrivateName.capture_prefix()).unwrap_or(text);
+            if crate::bytecode::private_identity_label(identity).is_some_and(|label| labels.binary_search(&label).is_ok()) {
+                layer.insert(atom, None);
+            }
+        }
+        true
     }
 }
