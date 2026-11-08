@@ -238,7 +238,7 @@ impl<H: Host> Vm<H> {
         direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, loop_header: Option<u32>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
         let mut pending = match work {
             LaneBodyWork::Start { generic } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS),
-            LaneBodyWork::Poll(pending) => return self.lane_body_poll(*pending),
+            LaneBodyWork::Poll(pending) => return self.lane_body_poll(pending),
         };
         // A plan again after a rejection starts at once; code the thread compiled at once
         // (or the calling thread, without one) publishes at once.
@@ -247,7 +247,7 @@ impl<H: Host> Vm<H> {
             let direct = direct(self);
             let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, loop_header, &generic, budget)
             else { return LaneBodyOutcome::Declined };
-            match self.lane_body_poll(started) {
+            match self.lane_body_poll(Box::new(started)) {
                 LaneBodyOutcome::Stale => pending = (generic, budget / 2),
                 outcome => return outcome,
             }
@@ -256,7 +256,8 @@ impl<H: Host> Vm<H> {
 
     /// What a pending body's compile came to; `Stale` also asks for a plan again at half its
     /// budget when its code was too large.
-    fn lane_body_poll(&mut self, pending: PendingLaneMethod) -> LaneBodyOutcome {
+    /// A poll moves nothing while the code compiles: loop entries poll at each backward jump.
+    fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> LaneBodyOutcome {
         if pending.epoch != self.heap.collection_epoch() || !pending.watch.is_published() {
             return LaneBodyOutcome::Stale;
         }
@@ -279,9 +280,9 @@ fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
 
 impl PendingLaneMethod {
     /// What its compile came to, or itself while its code compiles.
-    fn poll(self) -> Result<LaneCompile, Box<Self>> {
+    fn poll(self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
-            std::task::Poll::Pending => return Err(Box::new(self)),
+            std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) => LaneCompile::Replan,
             std::task::Poll::Ready(_) => LaneCompile::Done(None),

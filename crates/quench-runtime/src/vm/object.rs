@@ -3959,8 +3959,8 @@ impl<H: Host> Vm<H> {
         }
         let data = self.heap.object(object)?;
         let properties = data.properties();
-        // A prototype's stores move what its inheritors read (`Object::note_prototype_value_write`).
-        if properties.is_dictionary() || data.was_used_as_prototype() {
+        // A prototype's or a read global's stores move what code holds (`Object::note_value_write`).
+        if properties.is_dictionary() || data.observes_value_writes() {
             return None;
         }
         let cache = self.field_cache_entry(site);

@@ -1787,33 +1787,33 @@ impl Heap {
     /// each shape's length and parent (a parent precedes its children), its slot owners, and
     /// their representations joined anew from the values live objects hold.
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], layouts: &[(usize, Option<(u32, usize)>)]) {
-        self.properties.retire_shape_readers();
+        self.dependencies_mut().retire_all(); // renumbered ids; shape readers reset below
         self.object_records.for_each_live_mut(|_, object| {
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape], &mut self.properties);
+            object.renumber_shape(mapping[old_shape]);
         });
         self.array_records.for_each_live_mut(|_, array| {
             let old_shape = array.shape() as usize;
-            array.set_shape(mapping[old_shape], &mut self.properties);
+            array.renumber_shape(mapping[old_shape]);
         });
         self.function_records.for_each_live_mut(|_, function| {
             let old_shape = function.object.shape() as usize;
-            function.object.set_shape(mapping[old_shape], &mut self.properties);
+            function.object.renumber_shape(mapping[old_shape]);
         });
         self.promise_records.for_each_live_mut(|_, promise| {
             let old_shape = promise.object.shape() as usize;
-            promise.object.set_shape(mapping[old_shape], &mut self.properties);
+            promise.object.renumber_shape(mapping[old_shape]);
         });
         self.iterator_records.for_each_live_mut(|_, iterator| {
             let old_shape = iterator.object.shape() as usize;
-            iterator.object.set_shape(mapping[old_shape], &mut self.properties);
+            iterator.object.renumber_shape(mapping[old_shape]);
         });
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
                 continue;
             };
             let old_shape = object.shape() as usize;
-            object.set_shape(mapping[old_shape], &mut self.properties);
+            object.renumber_shape(mapping[old_shape]);
         }
         self.register_shape_layouts(layouts);
     }
@@ -3721,7 +3721,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3751,7 +3751,7 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             let vector = data.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
@@ -3799,8 +3799,7 @@ impl Heap {
         store_exact_slot(data, &mut self.properties, slot, value, target, layout)
     }
 
-    /// Whether the arena keeps slot representations, which observe every store
-    /// (`ValueArena::tracks`).
+    /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
     pub(crate) fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
     }
@@ -3836,6 +3835,7 @@ impl Heap {
             // caller.
             ExactStorage::Extended { .. } if data.was_used_as_prototype() => false,
             ExactStorage::Extended { inline } => {
+                data.note_value_write(slot);
                 // SAFETY: as `store_exact_slot`.
                 unsafe { store_extended_slot(data, &mut self.properties, slot, value, inline) };
                 true
@@ -4656,7 +4656,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
             }
         }
         ExactStorage::Extended { inline } => {
-            data.note_prototype_value_write();
+            data.note_value_write(slot);
             // SAFETY: as above.
             unsafe { store_extended_slot(data, properties, slot, value, inline) };
         }

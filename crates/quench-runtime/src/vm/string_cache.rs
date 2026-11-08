@@ -3,6 +3,30 @@ use super::*;
 const STRING_CONCAT_HASH_MULTIPLIER: usize = 0x9e37_79b1;
 
 impl<H: Host> Vm<H> {
+    /// `left + right` of strings and Numbers whose text is ASCII and short enough to sit
+    /// inline (`SHORT_ASCII_CAPACITY`), such as a key built as `"d" + i`: each operand's
+    /// bytes written once into the result, with no string made per operand or joined.
+    pub(super) fn short_ascii_concat(&mut self, left: Value, right: Value) -> Option<Value> {
+        let mut bytes = crate::number_to_string::Short::new();
+        for operand in [left, right] {
+            match self.heap.string(operand) {
+                Some(text) => match text.existing_flat()?.view() {
+                    super::wtf16::Units::Ascii(text) if text.len() <= wtf16::SHORT_ASCII_CAPACITY => {
+                        bytes.extend_from_slice(text);
+                    }
+                    _ => return None,
+                },
+                None => crate::number_to_string::write(operand.as_number()?, &mut bytes),
+            }
+        }
+        if bytes.len() > wtf16::SHORT_ASCII_CAPACITY {
+            return None;
+        }
+        // SAFETY: every byte came from ASCII text or a Number's ASCII digits.
+        let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        Some(self.heap.alloc_string(JsString::from_str(text)))
+    }
+
     /// The cache slot for an operand pair.
     #[inline(always)]
     fn concat_cache_index(left: Value, right: Value) -> Option<usize> {
@@ -89,5 +113,14 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_js_atom(&name);
         self.heap.record_string_atom(key, atom);
         Some(atom)
+    }
+
+    /// ToString of `value` as a string value: a string is itself, read and copied no further.
+    pub(super) fn string_of_value(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+        if self.heap.is_string(value) {
+            return Ok(value);
+        }
+        let text = self.coerce_js_string(p, value)?;
+        Ok(self.heap.alloc_string(text))
     }
 }

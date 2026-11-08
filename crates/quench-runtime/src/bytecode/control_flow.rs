@@ -39,6 +39,20 @@ pub(crate) fn for_each_instruction_successor(
     }
 }
 
+/// The PCs of `instructions` control reaches from `starts` by ordinary successors.
+pub(crate) fn reachable_from(instructions: &[WideInstruction], starts: impl IntoIterator<Item = usize>) -> crate::bitset::BitSet {
+    let mut reached = crate::bitset::BitSet::new(instructions.len());
+    let mut pending: Vec<usize> = starts.into_iter().collect();
+    while let Some(pc) = pending.pop() {
+        if pc >= instructions.len() || reached.contains(pc) {
+            continue;
+        }
+        reached.insert(pc);
+        for_each_instruction_successor(pc, instructions[pc], |successor| pending.push(successor));
+    }
+    reached
+}
+
 pub(super) fn is_bounded(function: &Function) -> bool {
     let code = &function.code;
     let mut reachable = crate::bitset::BitSet::new(code.len());
