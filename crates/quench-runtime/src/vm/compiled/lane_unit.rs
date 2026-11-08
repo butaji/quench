@@ -218,9 +218,7 @@ fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction)
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
 /// slot or register defined with more names none.
 #[cfg(feature = "aot")]
-const STATIC_CALL_SITE_TARGETS: usize = 8;
-#[cfg(feature = "aot")]
-pub(crate) type StaticTargets = smallvec::SmallVec<[u32; STATIC_CALL_SITE_TARGETS]>;
+pub(crate) type StaticTargets = smallvec::SmallVec<[u32; super::tier_policy::POLYMORPHISM]>;
 
 /// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
 /// A hint is never a proof: replacement/aliasing is handled by call-edge admission, which
@@ -783,7 +781,7 @@ mod tests {
     #[test]
     fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
         // Each case names how many bodies the call site is hinted with: every distinct
-        // definition of the name, each guarded at the call, up to `STATIC_CALL_SITE_TARGETS`.
+        // definition of the name, each guarded at the call, up to `tier_policy::POLYMORPHISM`.
         for (definition, expected) in [
             ("class Thing { probe(){return 1;} }", 1),
             ("class Thing { static probe(){return 1;} }", 1),
@@ -795,7 +793,7 @@ mod tests {
             ("class Thing { probe(){return 1;} probe(){return 2;} }", 2),
             ("class First { probe(){return 1;} } class Second { probe(){return 2;} }", 2),
             ("class Thing { probe(){return 1;} } Thing.prototype.probe=function replacement(){return 2;};", 2),
-            (&(0..=STATIC_CALL_SITE_TARGETS).map(|n| format!("class C{n} {{ probe(){{return {n};}} }}")).collect::<String>(), 0),
+            (&(0..=crate::vm::compiled::tier_policy::POLYMORPHISM).map(|n| format!("class C{n} {{ probe(){{return {n};}} }}")).collect::<String>(), 0),
             ("class Thing { get probe(){return function(){return 1;};} }", 0),
             ("class Thing { set probe(value){} }", 0),
             ("class Thing { get probe(){return 1;} set probe(value){} }", 0),
