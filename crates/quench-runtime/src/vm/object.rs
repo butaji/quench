@@ -4031,11 +4031,11 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        // Only an ordinary object reaches the shape cache, so a nullish base always falls
-        // through to the uncached path's TypeError.
+        // Only an ordinary object reaches the shape cache: a nullish base falls through to the uncached path's TypeError.
         if self.set_field_cache_hit(p, object, atom, value, site) {
             return Ok(());
         }
+        if self.is_typed_array_element(object, atom) { return self.set_property_with_program_mode(p, object, atom, value, strict); }
         self.set_field_uncached(p, object, atom, value, site, strict)
     }
 
