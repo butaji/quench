@@ -163,7 +163,9 @@ fn typed_field_call_compiles_with_observed_target() {
         let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
         // One leave, once: `c1[ L<line>] <pc> f<function>@<pc> <op>` (`LaneBodyStats::report`).
         let leaves = report.split_once("\"leaves\":[[").map(|(_, leaves)| leaves).unwrap_or_default();
-        assert!(leaves.ends_with("\",1]]}") && !leaves.contains("],[") && leaves.contains(&format!(" {exit} f")),
+        // It runs to its return, or leaves once at its successor: never at the call.
+        let completed = report.contains("\"completed\":1,") && leaves.is_empty();
+        assert!(completed || leaves.ends_with("\",1]]}") && !leaves.contains("],[") && leaves.contains(&format!(" {exit} f")),
             "the native loop must leave once at its successor, never at the call: {report}");
         let expected = (0..4000).fold(7i32, |control, _|
             (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
@@ -18457,7 +18459,9 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
       function addCaptured(value) {
-        if (value === 63) $262.gc();
+        // A primitive's method read misses every compiled cache: the VM steps it and the call
+        // after it as one island.
+        if (value === 63) { "island".toString(); $262.gc(); }
         return captured.value + value;
       }
       var result = 0;
