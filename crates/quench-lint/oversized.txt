@@ -659,7 +659,7 @@ complexity crates/quench-runtime/src/vm/compiled/frame_ssa.rs::FrameFlow::promot
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 53
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::bounded_increment 17
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::capture_int32_use 17
-complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 57
+complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 53
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::get_field 31
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::hoist_reads 32
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::inline_call 19
@@ -1429,8 +1429,8 @@ file-lines crates/quench-runtime/src/compile/early.rs 2007
 file-lines crates/quench-runtime/src/compile/liveness.rs 701
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
-file-lines crates/quench-runtime/src/compile/rewrite.rs 1682
-file-lines crates/quench-runtime/src/heap.rs 4707
+file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
+file-lines crates/quench-runtime/src/heap.rs 4702
 file-lines crates/quench-runtime/src/heap/access.rs 910
 file-lines crates/quench-runtime/src/heap/array_elements.rs 684
 file-lines crates/quench-runtime/src/heap/cell.rs 3992
@@ -1462,7 +1462,7 @@ file-lines crates/quench-runtime/src/vm/coercion.rs 521
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
 file-lines crates/quench-runtime/src/vm/compiled.rs 19156
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5732
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5726
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7598
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 595
@@ -2645,7 +2645,7 @@ function-lines crates/quench-runtime/src/compile/rewrite.rs::coalesce_distant_pr
 function-lines crates/quench-runtime/src/compile/rewrite.rs::relocate 42
 function-lines crates/quench-runtime/src/compile/rewrite.rs::relocate_source_positions 60
 function-lines crates/quench-runtime/src/compile/rewrite.rs::remove_dead_moves 46
-function-lines crates/quench-runtime/src/compile/rewrite.rs::remove_nops 59
+function-lines crates/quench-runtime/src/compile/rewrite.rs::remove_nops 57
 function-lines crates/quench-runtime/src/compile/rewrite.rs::rewrite_once 112
 function-lines crates/quench-runtime/src/compile/rewrite.rs::rewrite_super_window 68
 function-lines crates/quench-runtime/src/compile/rewrite.rs::tests::conditional_local_field_copy_keeps_valid_native_metadata 43
@@ -2926,7 +2926,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::call 73
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::construct 44
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::direct_call 102
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 232
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 224
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::equality 83
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::get_field 111
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::hoist_reads 140

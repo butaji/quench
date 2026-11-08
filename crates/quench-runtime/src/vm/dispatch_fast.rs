@@ -574,12 +574,12 @@ mod getters;
 mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
-mod loop_fields;
-use loop_fields::lane_loop_field_stores;
+mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan;
 use construct_plan::{initializer_store_value, ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
+mod root_calls; #[cfg(test)] pub(super) use root_calls::call_from_script_root_in_frames;
 mod unary_values;
 use unary_values::lane_unary_value;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
@@ -22091,7 +22091,7 @@ impl<H: Host> Vm<H> {
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && !self.direct_eval
                 && !self.parameter_eval
-                && *frame + 1 == self.frames.len(),
+                && root_calls::in_lane(*frame + 1 == self.frames.len(), self.frames[*frame].function),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
