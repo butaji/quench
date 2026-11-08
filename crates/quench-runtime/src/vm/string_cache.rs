@@ -17,6 +17,7 @@ impl<H: Host> Vm<H> {
                     super::wtf16::Units::Ascii(text) => bytes.try_extend(text)?,
                     super::wtf16::Units::Wide(_) => return None,
                 },
+                None if let Some(integer) = operand.as_int() => bytes.try_extend(itoa::Buffer::new().format(integer).as_bytes())?,
                 None => {
                     let mut number = crate::number_to_string::Short::new();
                     crate::number_to_string::write(operand.as_number()?, &mut number);
