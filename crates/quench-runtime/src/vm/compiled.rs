@@ -16449,9 +16449,7 @@ mod tests {
                 "optimized native bound stores must admit their write domains");
             let [reads, writes] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
             assert!(reads <= 2, "only entry misses may call the read helper: {reads}");
-            // The two cold stores, plus `count`'s retried once where its first miss leaves a frameless `advance`
-            // and the recovered frame resumes at that store (`frameless::leave`).
-            assert_eq!(writes, 3, "only cold stores may use the recording mutation; hot packed stores stay native");
+            assert_eq!(writes, 3, "only cold stores (and count's, retried once when its miss leaves frameless advance) may use the recording mutation");
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
             assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
         }
