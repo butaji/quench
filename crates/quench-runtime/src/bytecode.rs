@@ -3484,6 +3484,9 @@ impl ProgramKind {
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
+    /// The text of a guest string the program compiled from (an eval's source), shared with
+    /// that string's storage.
+    Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
 }
@@ -3551,6 +3554,7 @@ impl std::ops::Deref for SourceText {
     fn deref(&self) -> &str {
         match self {
             Self::Shared(text) => text,
+            Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
         }
@@ -3599,7 +3603,7 @@ impl SourceText {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         match self {
             // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
-            Self::Shared(_) | Self::Kept(_) => {
+            Self::Shared(_) | Self::Local(_) | Self::Kept(_) => {
                 writer.u8(0);
                 writer.str(self);
             }

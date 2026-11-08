@@ -249,7 +249,14 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let source_name = format!("<Eval:{}>", self.programs.len());
-        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false)
+        // The program keeps the string's own text, not a copy of it, as V8's Script keeps the
+        // source string (inspector code-load: 2 MB per eval, every one kept by its function).
+        let shared_text = source_text
+            .existing_flat()
+            .and_then(crate::vm::wtf16::FlatUnits::shared_ascii)
+            .filter(|(shared, range)| *range == (0..shared.len()) && shared.len() == text.len())
+            .map(|(shared, _)| shared.clone());
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, shared_text)
     }
 
     pub(super) fn eval_global_script(
@@ -269,7 +276,7 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, strict, source_name, None, false)
+        self.eval_global_script_with_cache(p, source, strict, source_name, None, false, None)
     }
 
     /// A host's script, which is sloppy global code no guest frame calls: its compilation goes
@@ -280,7 +287,7 @@ impl<H: Host> Vm<H> {
         source: &str,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, false, source_name, None, true)
+        self.eval_global_script_with_cache(p, source, false, source_name, None, true, None)
     }
 
     fn eval_global_script_with_cache(
@@ -291,6 +298,7 @@ impl<H: Host> Vm<H> {
         source_name: &str,
         cache_source: Option<JsString>,
         host_script: bool,
+        shared_text: Option<std::rc::Rc<str>>,
     ) -> Result<Value, JsError> {
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();
@@ -344,7 +352,7 @@ impl<H: Host> Vm<H> {
                 self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
             });
         let compiled = kept.is_none();
-        let residual = match kept {
+        let mut residual = match kept {
             Some(residual) => Ok(residual),
             None => crate::Engine::specialize_eval_with_context(
             source,
@@ -369,6 +377,12 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
+        if let (Some(shared), Some(source)) = (shared_text, residual.source.as_mut())
+            && source.base == 0
+            && *source.text == *shared
+        {
+            source.text = crate::bytecode::SourceText::Local(shared);
+        }
         let cache_source = cache_source.filter(|_| {
             residual.functions.first().is_some_and(|root| !root.strict)
                 && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0)
