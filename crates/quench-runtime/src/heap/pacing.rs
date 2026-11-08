@@ -636,12 +636,12 @@ const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 /// 34.8 -> 30.4 MB, bigint-noble-ed25519 +4% / 31.4 -> 28.7, UniPoker flat / 22.1 -> 19.9,
 /// hash-map flat / 27.3 -> 25.9, pbkdf2 and sha256 within noise, acorn-wtb +4% / +2.6 MB.
 /// Lowered to 2^12 (TOD-1229): at three quarters of 2^16 a small V8-v7 heap such as Richards
-/// never collected, so its whole run's garbage stayed resident. With collection-time releases
-/// paced (`resident_pages::release_at_collection`) the extra young collections cost no Score:
-/// no-JIT max RSS Richards 5304 -> 3584-3732 KiB, RayTrace 6564 -> 4436-4648, Score Richards
-/// 1746-1979 -> 1974-2084, RayTrace 5203-5498 (incremental production build, pinned, x86_64
-/// 4 vCPU, 2026-11-01). Releasing at every collection had cost RayTrace 3600 against 4700.
-const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 12;
+/// never collected, so its whole run's garbage stayed resident (max RSS 5304 -> 3584-3732 KiB).
+/// Raised to 2^14: npm packages' live sets (about 10k weight) sit on the floor, and at 2^12
+/// react-ssr ran 12151 young collections in 14.5 s. npm-perf no-JIT, 40000 rounds, 5
+/// interleaved runs: geomean x1.047 (next x1.09, zod x1.10, ws x0.94); V8-v7 max RSS (rss-exec)
+/// Richards 5436 -> 6208 KiB, DeltaBlue 8312 -> 6864, others +0.1-0.8 MB (x86_64, 2026-11-08).
+const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 14;
 /// The most allocations between young collections under throughput: 2^19, for Score, which
 /// this table serves (memory-first keeps RSS first). V8-v7 fixed work, gc-tuning build,
 /// callgrind main thread, 2^19 young with the full interval at 2^21 against 3 << 14 and 2^18
