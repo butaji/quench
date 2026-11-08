@@ -5176,11 +5176,7 @@ script_handler! {
             let vm = unsafe { vm(cx) };
             let env = unsafe { (*cx).env };
             let code = unsafe { &*(*cx).code };
-            let function = vm
-                .lane_stack
-                .activations
-                .last()
-                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let function = lane_running_function(cx);
             let body = code.function_get(function as usize);
             let shape = vm.current_capture_slots(unsafe { (*cx).frame }).map(|(slots, root)| {
                 (root.is_some(), unsafe { &*slots }.dense().is_some(), unsafe { &*slots }.len())
@@ -5248,18 +5244,6 @@ script_handler! {
     /// (`specialize_register_operands`): the index of `typeof`'s name, which runs no guest code.
     fn lane_typeof_index<>(cx, r, ip, i, view) {
         r.set(i.a, unsafe { vm(cx) }.typeof_index_value(r.get(i.b)));
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `Unary`: logical not and `typeof` of any value, and the numeric operators of a
-    /// Number, run no guest code; any other operand takes the general path.
-    fn lane_unary<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_unary_value(cx, r, i) }) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -8277,7 +8261,11 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
     // A header record the site holds gets its own handler back.
-    lane_loop_release_header(unsafe { ip.byte_offset(site.jump) }, site);
+    let header = unsafe { ip.byte_offset(site.jump) };
+    lane_loop_release_header(header, site);
+    // No site holds the header from now on, so its record, which linked this site alone, takes
+    // field hints again (`holds_loop_site`).
+    if site.hookable { unsafe { (*header).call_link.set(NO_CALL_LINK) }; }
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, lane_jump_always::<H, true>);
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
@@ -12886,7 +12874,7 @@ const LOAD_NAME_TYPEOF: u8 = 2;
 script_handler! {
     /// A `LoadName`'s first run: a name the global object answers whenever no global
     /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function whose
-    /// unresolved names are global (`ProgramStore::unresolved_names_are_global`) and resolve
+    /// unresolved names are global (`ProgramStore::names_are_global`) and resolve
     /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
     /// other always takes the general path. `KIND` is the load's (`LOAD_NAME`): a call's also
     /// writes its receiver, `undefined` for a binding of the global object's environment.
@@ -12908,11 +12896,7 @@ script_handler! {
         // The running function decides the name's scope: a running leaf's is its
         // materialized activation's.
         lane_materialize_running_leaf(cx);
-        let function = vm
-            .lane_stack
-            .activations
-            .last()
-            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        let function = lane_running_function(cx);
         // An internal name is no binding source text can declare, except the internal globals
         // the realm installs on its global object, which a static lookup reads as any other.
         // Static resolution rules out a `with` object, which the general search consults first.
@@ -12920,7 +12904,7 @@ script_handler! {
             .function_get(function as usize)
             .is_some_and(|function| function.names_resolve_statically(code));
         let global = statically
-            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
+            && vm.programs.names_are_global(unsafe { (*cx).program })
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
         // The global object's `undefined` is non-writable and non-configurable, and no global
@@ -12960,28 +12944,31 @@ script_handler! {
     }
 }
 
+/// The function the lane runs: its innermost activation's, or else its frame's.
+#[inline(always)]
+fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
+    let vm = unsafe { vm(cx) };
+    vm.lane_stack.activations.last().map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function)
+}
+
 /// The global value property `lane_load_name_first` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
     /// A `StoreName`'s first run: an assignment to a name the global object answers whenever
     /// no global lexical binding shadows it (as `lane_load_name_first` decides for a read)
-    /// takes `lane_store_global_name`; any other store, an initializing one among them,
+    /// takes `lane_store_global_name`, a `var`'s initializer too, which stores as one: the
+    /// declaration made the property, and a lexical binding is never hinted. Any other store
     /// always takes the general path.
     #[inline(never)]
     fn lane_store_name_first<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let function = vm
-            .lane_stack
-            .activations
-            .last()
-            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-        let global = i.b == 0
-            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+        let function = lane_running_function(cx);
+        let global = !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
             && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
-            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function);
+            && vm.programs.names_are_global(unsafe { (*cx).program });
         if global {
             requicken::<H>(ip, lane_store_global_name::<H>);
             sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
@@ -13667,6 +13654,8 @@ fn lane_native_value<H: Host>(
 }
 
 mod named_keys;
+mod denoted;
+use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod native_calls;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
@@ -13699,15 +13688,10 @@ impl<H: Host> Vm<H> {
 /// its value is never read: what the call writes there is unobservable.
 #[cold]
 fn lane_call_result_dead<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> bool {
-    let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     // A leaf makes no call, so the innermost activation, or else the frame, runs `i`.
-    let function = vm
-        .lane_stack
-        .activations
-        .last()
-        .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+    let function = lane_running_function(cx);
     // SAFETY: `ip` is a record of the running view, which starts at the context's base.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     code.register_root_masks(function)
@@ -19287,7 +19271,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
-        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => Some(lane_binary::<H>),
+        op if denoted_handler::<H>(op).is_some() => denoted_handler::<H>(op),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
@@ -19295,7 +19279,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
         Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
-        Op::Unary => Some(lane_unary::<H>),
         Op::StoreCapture => Some(lane_store_capture::<H>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
@@ -19471,7 +19454,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             }
             layout => !layout.is_register_field() || value < registers,
         });
-    let window_fits = !matches!(op, Op::WasmFillRegisters | Op::MakeObjectLiteral)
+    let window_fits = op.field_layout(InstructionField::B) != FieldLayout::RegisterWindowBase
         || u32::from(instruction.b()) + u32::from(instruction.c()) <= u32::from(registers);
     let pair_fits = op.immediate_layout() != ImmediateLayout::RegisterPair || {
         let (first, second) = ImmediateLayout::register_pair(instruction.imm());
@@ -21097,7 +21080,7 @@ fn specialize_register_operands<H: Host>(
     };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
-    let unary = lane_unary::<H> as Handler as *const ();
+    let unary = unary_handler::<H>() as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
@@ -23105,11 +23088,7 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             // The record's opcode from its packed instruction: the census needs the mix, and
             // the lane record keeps only the handler.
             let vm = unsafe { vm(cx) };
-            let function = vm
-                .lane_stack
-                .activations
-                .last()
-                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let function = lane_running_function(cx);
             let code = unsafe { &*(*cx).code };
             let pc = unsafe { ip.offset_from((*cx).base) as usize };
             if let Some(body) = code.function_get(function as usize)

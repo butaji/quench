@@ -243,7 +243,7 @@ impl<H: Host> Vm<H> {
                 self.typeof_test_value(value, index, negated)
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
-            crate::bytecode::UNARY_TO_STRING => return self.string_of_value(p, value),
+            crate::bytecode::UNARY_TO_STRING_PRIMITIVE => return self.string_primitive(p, value),
             _ => return Err(JsError("unsupported unary operator".into())),
         })
     }

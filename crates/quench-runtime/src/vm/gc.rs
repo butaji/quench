@@ -280,19 +280,11 @@ fn rebuild_shape(
     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
-    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
-    for transition in [
-        function_name.map(|name| ShapeTransition::FunctionName { name }),
-        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
-        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
-        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
-    ].into_iter().flatten() {
+    for transition in provenance::metadata_transitions(old_shapes, old_shape) {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
     }
-    for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
-        .into_iter()
-        .enumerate()
-    {
+    if let Some(shape) = shape_lookup::rebuild_owned_dictionary(old_shapes, old_accessors, old_shape, shapes, accessors, parent) { return shape; }
+    for (slot, entry) in active_shape_attributes(old_shapes, old_shape).into_iter().enumerate() {
         let slot = u32::try_from(slot).expect("object property index exceeds u32");
         let storage_len = slot as usize + 1;
         // Data attributes ride on the add; an accessor's take a descriptor after it.
