@@ -1,4 +1,5 @@
 use super::property_key::PropertyKey;
+use std::ops::ControlFlow;
 use super::*;
 use crate::heap::PrivateBrand;
 mod plain_key_set;
@@ -699,23 +700,6 @@ impl<H: Host> Vm<H> {
         self.prove_symbol_load(object, key, epoch)
     }
 
-    /// The getter a symbol-keyed read of `key` on `object` calls, where a proof records it
-    /// (`SymbolLoadAnswer::Getter`).
-    pub(super) fn proved_symbol_getter(&self, object: Value, key: Value) -> Option<Value> {
-        use super::symbol_load_proof::SymbolLoadAnswer;
-        let data = self.heap.ordinary_object(object)?;
-        let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_load_proofs.answer(data.shape(), PropertyKey::symbol(key), epoch)? {
-            SymbolLoadAnswer::Getter { prototype, holder, slot }
-                if !data.has_side_descriptors() && data.proto() == prototype =>
-            {
-                self.slot_attributes(self.heap.ordinary_object(holder)?, slot as usize)?
-                    .getter
-            }
-            _ => None,
-        }
-    }
-
     /// `plain_symbol_get` past its proofs: the chain walk, recording where it found the key
     /// when every object it passed is an ordinary, non-dictionary record whose shape alone
     /// says what it holds. Every prototype passed becomes a prototype first, so a later change
@@ -858,6 +842,33 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Where a named read of a boolean or number receiver looks (its primitive prototype),
+    /// or the builtin method it answers with directly; any other receiver is its own holder.
+    fn primitive_read_holder(&mut self, object: Value, atom: Atom) -> ControlFlow<Value, Value> {
+        let builtin = if object.as_bool().is_some() {
+            match self.atom_name(atom) {
+                "toString" => Native::BooleanToString,
+                "valueOf" => Native::BooleanValueOf,
+                _ => return ControlFlow::Continue(self.primitive_prototype(object).unwrap_or(self.object_proto)),
+            }
+        } else if object.as_number().is_some() {
+            let prototype = self.primitive_prototype(object).unwrap_or(self.object_proto);
+            match atom {
+                _ if self.lookup_atom("toString") == Some(atom) => Native::NumberString,
+                _ if atom == self.to_fixed_atom => Native::NumberFixed,
+                _ if atom == self.to_precision_atom => Native::NumberPrecision,
+                _ => return ControlFlow::Continue(prototype),
+            }
+        } else {
+            return ControlFlow::Continue(object);
+        };
+        let prototype = self.primitive_prototype(object).unwrap_or(self.object_proto);
+        match self.own_property(prototype, atom) {
+            Some(_) => ControlFlow::Continue(prototype),
+            None => ControlFlow::Break(self.native_value(builtin)),
+        }
+    }
+
     pub(super) fn get_property_with_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -869,6 +880,10 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         let _stack = self.enter_stack()?;
+        // Only plain named reads record proofs, so a proved getter needs no key checks.
+        if let Some(getter) = self.proved_getter(object, PropertyKey::string(atom)) {
+            return self.call_value(p, getter, receiver, &[]);
+        }
         let private_name = self.is_private_name(atom);
         if object.is_null() || object.is_undefined() {
             let property = self.atom_name(atom).to_owned();
@@ -889,48 +904,10 @@ impl<H: Host> Vm<H> {
             };
         }
         let private_target = object;
-        let mut object = object;
-        if object.as_bool().is_some() {
-            match self.atom_name(atom) {
-                "toString" | "valueOf"
-                    if self
-                        .primitive_prototype(object)
-                        .and_then(|prototype| self.own_property(prototype, atom))
-                        .is_none() =>
-                {
-                    return Ok(self.native_value(if self.atom_name(atom) == "toString" {
-                        Native::BooleanToString
-                    } else {
-                        Native::BooleanValueOf
-                    }));
-                }
-                _ => {
-                    object = self
-                        .primitive_prototype(object)
-                        .unwrap_or(self.object_proto)
-                }
-            }
-        } else if object.as_number().is_some() {
-            let prototype = self
-                .primitive_prototype(object)
-                .unwrap_or(self.object_proto);
-            let method = self.own_property(prototype, atom);
-            let builtin = if self.lookup_atom("toString") == Some(atom) {
-                Some(Native::NumberString)
-            } else if atom == self.to_fixed_atom {
-                Some(Native::NumberFixed)
-            } else if atom == self.to_precision_atom {
-                Some(Native::NumberPrecision)
-            } else {
-                None
-            };
-            if method.is_none()
-                && let Some(builtin) = builtin
-            {
-                return Ok(self.native_value(builtin));
-            }
-            object = prototype;
-        }
+        let mut object = match self.primitive_read_holder(object, atom) {
+            ControlFlow::Break(builtin) => return Ok(builtin),
+            ControlFlow::Continue(holder) => holder,
+        };
         self.evaluate_deferred_namespace_for_key(
             p,
             object,
