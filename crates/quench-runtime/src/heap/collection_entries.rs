@@ -66,6 +66,25 @@ pub(crate) fn number_key_hash(number: f64) -> u64 {
     x ^ (x >> 31)
 }
 
+impl super::Heap {
+    /// The SameValueZero hash of a key that is no number: a string by its text hash, a
+    /// BigInt by value, anything else by identity. Kept out of line, so a number key's
+    /// hash stays a few inlined instructions.
+    #[inline(never)]
+    pub(crate) fn non_number_key_hash(&self, key: Value) -> u64 {
+        use std::hash::{Hash, Hasher};
+        if let Some(hash) = self.string_hash(key) {
+            return u64::from(hash);
+        }
+        let mut hasher = rustc_hash::FxHasher::default();
+        match self.get(key) {
+            Some(super::Cell::BigInt(value)) => value.hash(&mut hasher),
+            _ => key.hash(&mut hasher),
+        }
+        hasher.finish()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CollectionEntries<T> {
     slots: Vec<T>,

@@ -109,6 +109,28 @@ impl StackGuard {
     }
 }
 
+/// The transitions a recursion that runs nothing else may still enter, read once at its
+/// entry: level `depth` below it is admitted exactly when `StackGuard::enter` would admit
+/// it there, without the thread-local reads and writes of a guard per level.
+pub struct StackBudget {
+    remaining: usize,
+    origin: usize,
+}
+
+impl StackBudget {
+    pub fn here() -> Self {
+        let active = ACTIVE_TRANSITIONS.with(Cell::get);
+        let origin = if active == 0 { current_stack_pointer() } else { STACK_ORIGIN.with(Cell::get) };
+        Self { remaining: MAX_RECURSIVE_TRANSITIONS.saturating_sub(active), origin }
+    }
+
+    /// Whether a transition `depth` levels below the entry fits.
+    #[inline]
+    pub fn admits(&self, depth: usize) -> bool {
+        depth < self.remaining && current_stack_pointer().abs_diff(self.origin) <= STACK_BUDGET_BYTES
+    }
+}
+
 impl Drop for StackGuard {
     fn drop(&mut self) {
         ACTIVE_TRANSITIONS.with(|depth| {

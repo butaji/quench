@@ -300,7 +300,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<String, JsError> {
         if let Some(text) = immediate_to_string(value) {
-            return Ok(text);
+            return Ok(text.into());
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
@@ -485,13 +485,13 @@ pub(super) fn typeof_text(kind: crate::ValueType) -> &'static str {
 
 /// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
 /// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
-/// may run guest code.
-pub(super) fn immediate_to_string(value: Value) -> Option<String> {
+/// may run guest code. A Number's digits are written straight into the string.
+pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
     match value.as_bool() {
-        _ if value.is_undefined() || value.is_deleted() => Some("undefined".into()),
-        _ if value.is_null() => Some("null".into()),
-        Some(value) => Some(value.to_string()),
-        None => value.as_number().map(crate::number_to_string::format),
+        _ if value.is_undefined() || value.is_deleted() => Some(JsString::from_str("undefined")),
+        _ if value.is_null() => Some(JsString::from_str("null")),
+        Some(value) => Some(JsString::from_str(if value { "true" } else { "false" })),
+        None => value.as_number().map(JsString::from_number),
     }
 }
 

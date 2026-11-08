@@ -454,10 +454,10 @@ impl<H: Host> Vm<H> {
             self.heap.record_vm_gc_phase(0, phase_started);
             phase_started = std::time::Instant::now();
         }
-        // Roots are gathered source by source: a single iterator chain over
-        // every source costs each root a step through every nesting level. The previous
-        // collection's count sizes the vector, which otherwise regrows from empty each time.
-        let mut roots = Vec::with_capacity(self.gc_root_count);
+        // Roots are gathered source by source: a single iterator chain over every source
+        // costs each root a step through every nesting level. They go into the previous
+        // collection's mark stack, which holds as many already.
+        let mut roots = self.heap.take_mark_stack();
         self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         roots.extend(self.wasm_js.roots());
         roots.extend([
@@ -695,7 +695,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.heap.kept_atom_strings().map(|(_, string)| string));
+        roots.extend(self.heap.kept_atom_roots(full));
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -785,7 +785,6 @@ impl<H: Host> Vm<H> {
                 )
         }));
         roots.extend(external_roots);
-        self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
@@ -856,7 +855,7 @@ impl<H: Host> Vm<H> {
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
-        self.prune_function_values();
+        self.prune_function_values(full);
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.

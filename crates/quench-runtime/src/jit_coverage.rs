@@ -1,13 +1,13 @@
 //! `QUENCH_TRACE=jit-coverage`: how much of a run's time compiled code covers.
 //!
-//! A timer samples the JavaScript thread's program counter every `SAMPLE_MICROS`. A sample
+//! A timer per VM thread samples its program counter every `SAMPLE_MICROS`. A sample
 //! whose counter lies in the code zone (`note_code_region`) is compiled code; any other is resolved against the executable's symbol table at exit and
 //! sorted into the interpreter, the shared runtime (object model, builtins, collector) or the
 //! code generator by the module that owns the symbol (`CATEGORIES`). The report is the share
 //! of each, with compiled code's share of the time spent executing bytecode (`jit` over `jit +
 //! interpreter`) as the coverage figure, and the hottest symbols outside compiled code.
 //! With `jit-coverage=PATH` the report is appended to `PATH` as well as written to stderr.
-//! Sampling starts when the first VM is made, on its thread (`sample_this_thread`).
+//! Sampling starts on each thread that makes a VM, when it makes its first (`sample_this_thread`).
 
 use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 
@@ -46,6 +46,17 @@ fn in_code_zone(pc: usize) -> bool {
     })
 }
 
+/// The helpers compiled code calls (`LaneHelper`), whose own frames are runtime services of
+/// compiled code, not the interpreter, though they live beside its handlers.
+static NATIVE_HELPERS: std::sync::OnceLock<Box<[usize]>> = std::sync::OnceLock::new();
+
+/// Records the addresses of the helpers compiled code calls.
+pub(crate) fn note_native_helpers(addresses: &[*const ()]) {
+    if crate::trace::Channel::JitCoverage.on() {
+        NATIVE_HELPERS.get_or_init(|| addresses.iter().map(|&address| address as usize).collect());
+    }
+}
+
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub(crate) use sampler::sample_this_thread;
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
@@ -55,26 +66,36 @@ pub(crate) fn sample_this_thread() {}
 mod sampler {
     use super::*;
 
-    static TIMER: AtomicUsize = AtomicUsize::new(0);
+    static TIMERS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 
-    /// Starts sampling the calling thread, the first to make a VM, if the channel is on.
+    /// Starts sampling the calling thread at its first VM, if the channel is on.
     pub(crate) fn sample_this_thread() {
-        static STARTED: std::sync::Once = std::sync::Once::new();
-        if crate::trace::Channel::JitCoverage.on() {
-            STARTED.call_once(start);
+        static INSTALLED: std::sync::Once = std::sync::Once::new();
+        thread_local! { static SAMPLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+        if crate::trace::Channel::JitCoverage.on() && !SAMPLED.replace(true) {
+            INSTALLED.call_once(install);
+            start();
         }
     }
 
-    fn start() {
+    /// Makes the sample buffer and installs the handler; `report` runs at normal exit.
+    fn install() {
         let samples: Box<[AtomicU64]> = (0..SAMPLE_CAPACITY).map(|_| AtomicU64::new(0)).collect();
         SAMPLES.store(Box::leak(samples).as_mut_ptr(), Ordering::Release);
-        // SAFETY: installs a handler that only reads its context and stores to preallocated
-        // atomics, then arms the sampling timer; `report` runs at normal exit.
+        // SAFETY: a handler that only reads its context and stores to preallocated atomics.
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
             action.sa_sigaction = sample as *const () as usize;
             action.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
             libc::sigaction(signal(), &action, std::ptr::null_mut());
+            libc::atexit(report_at_exit);
+        }
+    }
+
+    /// Arms a sampling timer aimed at the calling thread.
+    fn start() {
+        // SAFETY: creates and arms a timer whose signal the installed handler takes.
+        unsafe {
             // A wall-clock timer aimed at this thread: CPU-time timers expire only at
             // scheduler ticks (4 ms at HZ=250), too coarse for a short run.
             let mut event: libc::sigevent = std::mem::zeroed();
@@ -89,8 +110,7 @@ mod sampler {
             {
                 return;
             }
-            TIMER.store(timer as usize, Ordering::Release);
-            libc::atexit(report_at_exit);
+            TIMERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(timer as usize);
         }
     }
 
@@ -119,8 +139,10 @@ mod sampler {
     }
 
     extern "C" fn report_at_exit() {
-        // SAFETY: stops the timer `start` armed before the report reads the samples.
-        unsafe { libc::timer_delete(TIMER.load(Ordering::Acquire) as libc::timer_t) };
+        for timer in TIMERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).drain(..) {
+            // SAFETY: stops a timer `start` armed before the report reads the samples.
+            unsafe { libc::timer_delete(timer as libc::timer_t) };
+        }
         let samples = SAMPLES.load(Ordering::Acquire);
         let taken = TAKEN.load(Ordering::Relaxed).min(SAMPLE_CAPACITY);
         // SAFETY: the first `taken` entries were written by the stopped handler.
@@ -148,7 +170,6 @@ const CATEGORIES: &[(&str, Category)] = &[
     ("dispatch_fast", Category::Interpreter),
     ("dispatch_frame", Category::Interpreter),
     ("vm::dispatch::", Category::Interpreter),
-    ("lane_", Category::Interpreter),
 ];
 
 fn categorize(symbol: &str) -> Category {
@@ -158,21 +179,32 @@ fn categorize(symbol: &str) -> Category {
         .map_or(Category::Runtime, |&(_, category)| category)
 }
 
-fn report(samples: &[u64]) {
-    let symbols = symbols::Table::load();
-    let mut counts = [0u64; Category::Codegen as usize + 1];
-    let mut by_symbol: rustc_hash::FxHashMap<(Category, &str), u64> = rustc_hash::FxHashMap::default();
+/// Each sample's category, with the counts per category and per symbol.
+struct Tally<'a> {
+    counts: [u64; Category::Codegen as usize + 1],
+    by_symbol: rustc_hash::FxHashMap<(Category, &'a str), u64>,
+}
+
+fn tally<'a>(samples: &[u64], symbols: Option<&'a symbols::Table>) -> Tally<'a> {
+    let mut tally = Tally { counts: [0; Category::Codegen as usize + 1], by_symbol: Default::default() };
     for &sample in samples {
         let pc = sample as usize;
         let (category, name) = if in_code_zone(pc) {
             (Category::Jit, "<compiled code>")
         } else {
-            let name = symbols.as_ref().and_then(|table| table.name(pc)).unwrap_or("<unknown>");
-            (categorize(name), name)
+            let (start, name) = symbols.and_then(|table| table.function(pc)).unwrap_or((0, "<unknown>"));
+            let helper = NATIVE_HELPERS.get().is_some_and(|helpers| helpers.contains(&start));
+            (if helper { Category::Runtime } else { categorize(name) }, name)
         };
-        counts[category as usize] += 1;
-        *by_symbol.entry((category, name)).or_default() += 1;
+        tally.counts[category as usize] += 1;
+        *tally.by_symbol.entry((category, name)).or_default() += 1;
     }
+    tally
+}
+
+fn report(samples: &[u64]) {
+    let symbols = symbols::Table::load();
+    let Tally { counts, by_symbol } = tally(samples, symbols.as_ref());
     let foreground = samples.len() as u64;
     let share = |count: u64| PERCENT * count as f64 / foreground.max(1) as f64;
     let executing = counts[Category::Jit as usize] + counts[Category::Interpreter as usize];
@@ -190,6 +222,10 @@ fn report(samples: &[u64]) {
     for ((category, name), count) in hottest.into_iter().take(REPORTED_SYMBOLS) {
         text += &format!("  {:5.1}% {category:?} {name}\n", share(count));
     }
+    write_report(&text);
+}
+
+fn write_report(text: &str) {
     eprint!("{text}");
     if let Some(path) = crate::trace::Channel::JitCoverage.value() {
         use std::io::Write;
@@ -218,10 +254,11 @@ mod symbols {
             Some(Self { functions })
         }
 
-        pub(super) fn name(&self, pc: usize) -> Option<&str> {
+        /// The start and name of the function holding `pc`.
+        pub(super) fn function(&self, pc: usize) -> Option<(usize, &str)> {
             let index = self.functions.partition_point(|function| function.0 <= pc).checked_sub(1)?;
-            let (_, end, name) = &self.functions[index];
-            (pc < *end).then_some(name.as_str())
+            let (start, end, name) = &self.functions[index];
+            (pc < *end).then_some((*start, name.as_str()))
         }
     }
 
