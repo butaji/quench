@@ -6207,7 +6207,7 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
                         args.push(Value::UNDEFINED);
                     }
                     let roots_before = vm.heap.root_count_for_test();
-                    let outcome = vm.array_reduce_native(&program, native, source, &args);
+                    let outcome = vm.array_callback_native(&program, native, source, &args);
                     assert_eq!(outcome.is_err(), fails);
                     assert_eq!(vm.heap.root_count_for_test(), roots_before);
                     if let Ok(result) = outcome
