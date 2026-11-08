@@ -2076,7 +2076,7 @@ pub(crate) struct Vm<H> {
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
-    for_in_own_keys: Option<object_static::ForInOwnKeys>,
+    for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
     /// payload's text would otherwise regrow from empty on each call, and its member plans
     /// (`json::JsonPlainCache`).
@@ -3099,7 +3099,7 @@ impl<H: Host> Vm<H> {
         self.private_site_homes.clear();
         self.array_iteration_shape = None;
         self.array_species_proof = None;
-        self.for_in_own_keys = None;
+        self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();

@@ -28,10 +28,10 @@ impl<H: Host> Vm<H> {
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
-    /// An array of `keys`. Allocation never collects, so the keys need no roots meanwhile.
-    pub(super) fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
+    /// An array of `elements`. Allocation never collects, so they need no roots meanwhile.
+    pub(super) fn array_of(&mut self, elements: impl Into<crate::heap::ArrayElements>) -> Value {
         self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), keys),
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), elements),
         })
     }
 
@@ -791,12 +791,12 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<Value, JsError> {
         if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
-            let values = self
+            let values: Vec<Value> = self
                 .object_own_key_values(p, object)?
                 .into_iter()
                 .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
                 .collect();
-            return Ok(self.own_keys_array(values));
+            return Ok(self.array_of(values));
         }
         // An ordinary object's symbol keys are its shape's: no string key is made for them.
         let target = self.box_object(object)?;
@@ -806,7 +806,7 @@ impl<H: Host> Vm<H> {
             Some(data) => self.ordinary_own_symbol_keys(target, data.shape()),
             None => Vec::new(),
         };
-        Ok(self.own_keys_array(symbols))
+        Ok(self.array_of(symbols))
     }
 
     pub(super) fn object_own_keys(
@@ -816,13 +816,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
             let keys = self.proxy_own_keys(p, object)?;
-            return Ok(self.own_keys_array(keys));
+            return Ok(self.array_of(keys));
         }
         let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
         self.complete_lazy_keys(p, target)?;
         let values = self.ordinary_own_key_values(target, true);
-        Ok(self.own_keys_array(values))
+        Ok(self.array_of(values))
     }
 }
 
