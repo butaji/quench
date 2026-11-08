@@ -466,8 +466,8 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return self.plain_index_get(object, usize::try_from(index).ok()?);
         }
-        if let Some(atom) = self.lookup_string_atom(key) {
-            return self.plain_named_get(object, atom);
+        if let Some(value) = self.plain_string_keyed_get(object, key) {
+            return Some(value);
         }
         if self.heap.string(key).is_some() {
             return None;

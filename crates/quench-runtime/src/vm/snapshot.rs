@@ -338,7 +338,7 @@ impl<H: Host> Vm<H> {
             private_site_homes: _,
             array_iteration_shape: _,
             array_species_proof: _,
-            for_in_own_keys: _,
+            for_in: _,
             json_plain: _,
             species_slot_proof: _,
             promise_species_proof: _,

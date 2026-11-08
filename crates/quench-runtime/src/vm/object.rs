@@ -1025,7 +1025,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.array_iteration_shape = None;
         self.array_species_proof = None;
-        self.for_in_own_keys = None;
+        self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();

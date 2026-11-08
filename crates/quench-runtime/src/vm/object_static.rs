@@ -4,7 +4,7 @@ use super::object_symbols::PropertyCopyKind;
 use super::property_key::PropertyKey;
 use super::*;
 mod for_in_keys;
-pub(super) use for_in_keys::ForInOwnKeys;
+pub(super) use for_in_keys::ForInMemo;
 
 impl<H: Host> Vm<H> {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
@@ -302,11 +302,11 @@ impl<H: Host> Vm<H> {
     /// along its prototype chain, each once, in EnumerateObjectProperties order.
     pub(super) fn object_for_in_keys(&mut self, p: &ResidualProgram, object: Value) -> Result<Value, JsError> {
         let mut current = object;
-        if let Some(keys) = self.own_for_in_keys(current) {
+        if let Some(keys) = self.list_own_for_in_keys(current) {
             return Ok(keys);
         }
         if let Some(keys) = self.shape_for_in_keys(current) {
-            return Ok(self.internal_array(keys));
+            return Ok(self.array_of(keys));
         }
         let mut visited_objects = FxHashMap::default();
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.

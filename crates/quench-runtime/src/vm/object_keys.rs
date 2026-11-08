@@ -167,11 +167,11 @@ impl<H: Host> Vm<H> {
         if let EnumerableOwnPropertyKind::Key = kind
             && let Some(keys) = self.shape_enumerable_keys(object)
         {
-            let keys = keys
+            let keys: Vec<Value> = keys
                 .into_iter()
                 .map(|atom| self.atom_string(atom))
                 .collect();
-            return Ok(self.own_keys_array(keys));
+            return Ok(self.array_of(keys));
         }
         if let Some(items) = self.shape_enumerable_data_items(object, kind) {
             return Ok(items);

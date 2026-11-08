@@ -119,7 +119,7 @@ impl<H: Host> Vm<H> {
             private_site_homes: Default::default(),
             array_iteration_shape: None,
             array_species_proof: None,
-            for_in_own_keys: None,
+            for_in: Default::default(),
             json_plain: Default::default(),
             species_slot_proof: Default::default(),
             promise_species_proof: Default::default(),
