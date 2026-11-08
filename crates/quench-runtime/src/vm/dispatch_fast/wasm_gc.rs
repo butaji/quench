@@ -11,10 +11,10 @@ lane_handler! {
     fn lane_wasm_gc_step<OP: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the context outlives the lane run.
-        let program = unsafe { (*cx).program };
+        let (program, frame) = unsafe { ((*cx).program, (*cx).frame) };
         let op = const { Op::from_index(OP as usize).expect("a Wasm GC opcode") };
         let instruction = WideInstruction::new(op, i.a, i.b, i.c, i.imm());
-        let Ok(value) = vm.wasm_gc_value_step(program, instruction, |_, register| r.get(register)) else {
+        let Ok(value) = vm.wasm_gc_value_step(program, vm.frames[frame].env, instruction, |_, register| r.get(register)) else {
             return exit(ip);
         };
         if let Some(value) = value {

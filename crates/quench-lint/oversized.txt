@@ -1473,7 +1473,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1944
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23293
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 23192
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3030
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 666
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -3029,7 +3029,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 243
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 251
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 129
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 1141
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 1138
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::direct_callers_subscribe_to_callee_slot_dependencies 58
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::field_pair_census_tests::pair_census_distinguishes_first_and_second_rejection 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::fill_window 55
@@ -3045,7 +3045,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_activate
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 68
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_left 52
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_frame 46
+function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_frame 45
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native_out 56
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_read 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_complete_activation 73
