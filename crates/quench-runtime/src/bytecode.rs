@@ -3072,10 +3072,10 @@ impl LexicalBindingKind {
     }
 }
 
-pub(crate) fn private_identity_label(identity: &str) -> Option<String> {
+pub(crate) fn private_identity_label(identity: &str) -> Option<&str> {
     let identity = identity.strip_prefix("\0quench:private:")?;
     let (_, label) = identity.rsplit_once(':')?;
-    (!label.is_empty()).then(|| label.to_owned())
+    (!label.is_empty()).then_some(label)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -48,7 +48,13 @@ impl Pc for u32 {
 /// The registers live before each instruction of `function` and after its last, under
 /// `transfers` (each instruction's uses and definitions).
 pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(M, M)]) -> Vec<M> {
-    let length = function.code.len();
+    analyze_successors(function, transfers, &crate::bytecode::Successors::of_code(function))
+}
+
+/// `analyze_transfers` over the function's successor table, `successors`.
+pub(crate) fn analyze_successors<M: LiveMask>(
+    function: &Function, transfers: &[(M, M)], successors: &crate::bytecode::Successors,
+) -> Vec<M> {
     // Legacy f.arguments can observe promoted parameters without a bytecode read.
     // Keep them even at terminal/exception PCs; consumers include GC and native recovery.
     // Without binding-name tables, conservatively retain every promoted parameter
@@ -59,9 +65,6 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
         M::narrow(function.local_registers.iter().filter(|entry| entry.local < function.params)
             .fold(0, |mask, entry| mask | register_bit(entry.register)))
     };
-    let instructions = function.instructions().collect::<Vec<_>>();
-    debug_assert_eq!(instructions.len(), length);
-    let successors = crate::bytecode::Successors::of(function, &instructions);
     let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), |_| observable);
     add_suspended_exception_roots(function, &mut live);
     live
@@ -110,15 +113,15 @@ pub(crate) fn add_suspended_exception_roots<M: LiveMask>(function: &Function, li
     if function.handlers.is_empty() {
         return;
     }
-    for (pc, instruction) in function.instructions().enumerate() {
-        if !resumes_into_handler(instruction.op()) {
-            continue;
+    let resumptions = function
+        .instructions()
+        .enumerate()
+        .filter(|(_, instruction)| resumes_into_handler(instruction.op()))
+        .map(|(pc, _)| pc);
+    crate::bytecode::Handler::for_each_covering(&function.handlers, resumptions, |pc, covering| {
+        for index in covering {
+            let handler_live = live[function.handlers[*index].target as usize];
+            live[pc + 1] |= handler_live;
         }
-        for handler in &function.handlers {
-            if pc as u32 >= handler.start && (pc as u32) < handler.end {
-                let handler_live = live[handler.target as usize];
-                live[pc + 1] |= handler_live;
-            }
-        }
-    }
+    });
 }
