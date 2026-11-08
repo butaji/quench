@@ -286,7 +286,7 @@ fn create_entry(c: &mut Context<'_>, prototype: &str, names: &'static [&'static 
     let entry = c.object_rooted()?;
     let prototype = api_member(c, prototype)?;
     c.set_prototype_rooted(entry, prototype)?;
-    let record = c.record_rooted(names, fields)?;
+    let record = c.record_rooted(false, names, fields)?;
     attach_slot(c, entry, api::ENTRY_SLOT, record)?;
     Ok(entry)
 }
@@ -541,7 +541,7 @@ pub(crate) fn mark_constructor(c: &mut Context<'_>, receiver: RootId, args: &[Ro
     };
     let options = argument(c, args, 1);
     let fields = mark_fields(c, name, options)?;
-    let record = c.record_rooted(&ENTRY_FIELDS, &fields)?;
+    let record = c.record_rooted(false, &ENTRY_FIELDS, &fields)?;
     attach_slot(c, receiver, api::ENTRY_SLOT, record)?;
     Ok(c.undefined())
 }
@@ -846,7 +846,7 @@ pub(crate) fn observer_constructor(c: &mut Context<'_>, receiver: RootId, args: 
     let callback = argument(c, args, 0);
     validate_function(c, callback, "callback")?;
     let undefined = c.undefined();
-    let state = c.record_rooted(&OBSERVER_FIELDS, &[callback, undefined])?;
+    let state = c.record_rooted(false, &OBSERVER_FIELDS, &[callback, undefined])?;
     attach_slot(c, receiver, api::OBSERVER_SLOT, state)?;
     Ok(undefined)
 }

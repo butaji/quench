@@ -97,7 +97,7 @@ fn set_entries(c: &mut Context<'_>, state: RootId, entries: &[(RootId, RootId)])
 
 fn initialize(c: &mut Context<'_>, object: RootId) -> Outcome {
     let list = c.array_rooted(&[])?;
-    let state = record(c, &[(ENTRIES, list)])?;
+    let state = record(c, &[ENTRIES], &[list])?;
     private_slot::write(c, object, Slot::FormData, state)?;
     Ok(state)
 }
@@ -147,7 +147,7 @@ fn iterator(c: &mut Context<'_>, this: RootId, kind: f64) -> Outcome {
     c.set_prototype_rooted(object, prototype)?;
     let kind = c.number(kind);
     let index = c.number(0.0);
-    let state = record(c, &[(TARGET, this), (KIND, kind), (INDEX, index)])?;
+    let state = record(c, &[TARGET, KIND, INDEX], &[this, kind, index])?;
     private_slot::write(c, object, Slot::FormDataIterator, state)?;
     Ok(object)
 }
