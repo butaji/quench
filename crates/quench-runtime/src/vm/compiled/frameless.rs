@@ -218,6 +218,21 @@ fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, pc: usize, 
     builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
 }
 
+/// The dense capture slots (values, length) of `callee`'s admission (`emit_entry`), which a
+/// frameless activation of it reads; `declined` where the payload binds no admissions (a lane
+/// run's) or `callee` has none.
+pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value,
+    declined: ir::Block) -> (ir::Value, ir::Value) {
+    let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
+    let bound = builder.create_block();
+    builder.ins().brif(cache, bound, &[], declined, &[]);
+    builder.switch_to_block(bound);
+    let entry = emit_entry(builder, payload, callee, declined);
+    let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
+    (builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
+        builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
+}
+
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
 /// miss; `framed` where it declines.
 fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value, framed: ir::Block) -> ir::Value {
@@ -448,33 +463,6 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     records.into_iter().chain(inlined).collect()
 }
 
-/// The receiver an in-place construction of `callee` allocates (`Vm::inline_construct_receiver`),
-/// in the callee's realm with no collection due; else `Value::DELETED` before any effect.
-///
-/// # Safety
-/// As `general_user_call`.
-pub(super) unsafe extern "C" fn general_construct_receiver<H: Host>(vm: u64, _residual: u64, callee: u64) -> u64 {
-    // SAFETY: as the caller promises.
-    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let callee = Value::from_bits(callee);
-    // A due collection runs at the construction's exact step, never under frameless windows.
-    if vm.heap.should_collect() || vm.construct_target.is_some()
-        || vm.heap.function(callee).is_none_or(|record| record.realm != vm.realm.globals) {
-        return Value::DELETED.to_bits();
-    }
-    vm.inline_construct_receiver(callee).unwrap_or(Value::DELETED).to_bits()
-}
-
-/// [[Construct]]'s result: the body's returned object, otherwise the receiver.
-///
-/// # Safety
-/// As `general_user_call`.
-pub(super) unsafe extern "C" fn general_construct_result<H: Host>(vm: u64, _residual: u64, value: u64, receiver: u64) -> u64 {
-    // SAFETY: as the caller promises.
-    let vm = unsafe { &*(vm as *const Vm<H>) };
-    if vm.is_object_like(Value::from_bits(value)) { value } else { receiver }
-}
-
 /// An exact step inside a frameless activation runs in its frame: the step that made the
 /// chain's frames, which the general loop continues from (`StepResult::ResumeFrames`).
 pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch, pc: usize) -> Option<JsNativeStep> {
@@ -492,9 +480,4 @@ pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
 pub(in crate::vm) struct ChainFrame {
     pub(super) function: u32, pub(super) call_pc: u32, pub(super) source_pc: u32, pub(super) registers: *const Value,
     pub(super) this: Value, pub(super) callee: Value,
-}
-
-/// The construction helpers' addresses, as `JsStepDispatch` holds them.
-pub(super) fn construct_helpers<H: Host>() -> (usize, usize) {
-    (general_construct_receiver::<H> as *const () as usize, general_construct_result::<H> as *const () as usize)
 }
