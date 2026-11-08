@@ -76,7 +76,12 @@ if [[ -n "${RUSTFLAGS:-}" ]]; then
     printf 'unset RUSTFLAGS: it would replace the profile flags and the repository rustflags\n' >&2
     exit 1
 fi
-repo_rustflags="-D warnings -C llvm-args=-align-all-functions=6"
+# The repository's `[build]` rustflags, read from .cargo/config.toml so the two never drift.
+repo_rustflags="$(sed -n '/^\[build\]/,/^\[/s/^rustflags = \[\(.*\)\]$/\1/p' "$root_dir/.cargo/config.toml" | tr -d '",')"
+if [[ -z "$repo_rustflags" ]]; then
+    printf 'no [build] rustflags in .cargo/config.toml\n' >&2
+    exit 1
+fi
 # The static mode's link flags, appended to both builds, and the target directory layout a
 # `--target` build uses.
 target_args=()
