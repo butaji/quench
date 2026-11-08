@@ -96,9 +96,8 @@ pub(super) fn lane_loop_compile<H: Host>(
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     machine.host.before_native_compilation();
-    let track_backedges = machine.programs.js_jit_general_dispatch_enabled();
     let started = observe(machine, r, region, entry, &tier.widened, |observation| {
-        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt, machine.heap.memory_policy(), track_backedges)
+        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt, machine.heap.memory_policy())
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);

@@ -99,6 +99,8 @@ mod general_names;
 mod general_elements;
 #[path = "compiled/frameless.rs"]
 mod frameless;
+#[path = "compiled/constructions.rs"]
+mod constructions;
 mod exact_budget;
 mod general_getter;
 mod general_binary;
@@ -1987,7 +1989,7 @@ lane_helper_inventory! { H;
     /// A fused `typeof` test of a heap value (`lane_typeof_is`).
     TypeofIs => lane_typeof_is::<H>,
     /// A planned construction (`lane_construct`).
-    Construct => lane_construct::<H>,
+    Construct => constructions::lane_construct::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// An object literal's and an array literal's allocation.
@@ -2227,11 +2229,16 @@ impl OnlineFacts<'_> {
     }
 }
 
+/// Whether `atom` of `program` names `length`, which a direct array answers from its record.
+/// The program's own name decides, so code compiled for no particular VM (a static image's)
+/// reads it as natively as a VM's own compile does.
+pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
+    program.atoms.get(atom as usize) == Some("length")
+}
+
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
 #[derive(Clone, Copy)]
 pub(super) struct VmFacts<'a> {
-    /// The VM's `length` name.
-    pub(super) length: Atom,
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
     /// it, loosely only `null` and `undefined` equal `null`.
     pub(super) html_dda: bool,
@@ -2244,15 +2251,14 @@ pub(super) struct VmFacts<'a> {
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
-    /// no `length` name, an IsHTMLDDA object possible, no diagnostics, no known `call`, and
-    /// no Stable facts.
-    pub(super) const STATIC: Self = Self { length: Atom::MAX, html_dda: true, diagnostics: false, online: None };
+    /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { length: self.length_atom, html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
     }
 }
 
@@ -2797,7 +2803,7 @@ pub(super) fn lower_js_general_dispatch(
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
             && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup()
-            && program.atoms.get(atom as usize).is_some_and(|name| name == "length")
+            && names_length(program, atom)
             && let Some(receiver @ JsFieldReceiver::Register(source)) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
@@ -6995,22 +7001,6 @@ unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64
     u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
 }
 
-/// A lane body's `new callee(...)` of the `argc` registers at `arguments`
-/// (`dispatch_fast::lane_body_construction`): the receiver, or `Value::DELETED`, which leaves
-/// the body at the construction. The allocation may have grown the heap's arenas, whose bases
-/// the dispatch then holds again for the body to reload (`JsStepDispatch::refresh_object_bases`).
-unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, arguments: u64, argc: u64) -> u64 {
-    let dispatch = payload as *mut JsStepDispatch;
-    // SAFETY: the body passes its own dispatch and argument registers; the construction runs
-    // no guest code and collects nothing.
-    let built = unsafe {
-        super::dispatch_fast::lane_body_construction::<H>((*dispatch).lane_context as *mut (), Value::from_bits(callee), arguments as *const Value, argc as u16)
-    };
-    // SAFETY: as above; nothing else borrows the VM while the helper runs.
-    unsafe { (*dispatch).refresh_object_bases(&*(vm as *const Vm<H>)) };
-    built.unwrap_or(Value::DELETED).to_bits()
-}
-
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
 /// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
 /// object has (`Vm::primary_own_field_store_hit`, or a polymorphic site's
@@ -7653,7 +7643,7 @@ impl JsStepDispatch {
         self.captures = general_capture::general_capture_slots::<H> as *const () as usize;
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
-        (self.construct_receiver, self.construct_result) = frameless::construct_helpers::<H>();
+        (self.construct_receiver, self.construct_result) = constructions::construct_helpers::<H>();
         self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
             general_elements::general_element_set::<H> as *const () as usize);
@@ -12726,9 +12716,9 @@ impl<H: Host> Vm<H> {
     /// Whether a lane-entered frame must hand control to the general frame
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
-        // A lane that completed the instruction it stopped at (`Vm::lane_returned`) leaves
-        // only that completion: entering the tier there would run the instruction again.
-        if self.lane_returned.is_some() { return false; }
+        // A lane that completed (`Vm::lane_returned`) or raised (`Vm::lane_raised`) at the
+        // instruction it stopped at leaves only that outcome: the tier would run it again.
+        if self.lane_returned.is_some() || self.lane_raised.is_some() { return false; }
         match self.programs.js_tier(id, function) {
             Some(super::program_store::JsTierState::GeneralCompileDue) => true,
             Some(super::program_store::JsTierState::Compiled(compiled)) => {

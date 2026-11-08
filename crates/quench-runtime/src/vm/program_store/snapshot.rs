@@ -38,7 +38,7 @@ impl ProgramStore {
         }
         writer.len(global_eval_programs.len());
         for (source, program) in global_eval_programs {
-            source.write_snapshot(writer);
+            source.text.write_snapshot(writer);
             writer.u32(program.raw());
         }
         writer.u64(*reclaim_passes);
@@ -58,10 +58,12 @@ impl ProgramStore {
         for _ in 0..count {
             programs.push(if reader.bool()? { Some(Box::new(ProgramEntry::read_snapshot(reader, bytes, atoms)?)) } else { None });
         }
-        // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
+        // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the
+        // hash and the units. The hash is derived from the text, so the snapshot keeps the text.
         #[allow(clippy::mutable_key_type)]
         let global_eval_programs = read_list(reader, |reader| {
-            Ok((JsString::read_snapshot(reader)?, ProgramId::from_raw(reader.u32()?)))
+            let text = JsString::read_snapshot(reader)?;
+            Ok((crate::vm::eval::eval_source::EvalSource { hash: text.units().text_hash(), text }, ProgramId::from_raw(reader.u32()?)))
         })?
         .into_iter()
         .collect();

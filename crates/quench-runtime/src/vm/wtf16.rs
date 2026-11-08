@@ -8,7 +8,9 @@ use std::rc::Rc;
 mod append_buffer;
 mod short_ascii;
 mod concat_all;
+mod search;
 pub(super) use concat_all::JsStringBuilder;
+mod split;
 mod text_hash;
 pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
@@ -260,6 +262,11 @@ impl FlatUnits {
         }
     }
 
+    /// The string of these units' `range`, as `JsString::substring`.
+    pub(crate) fn substring(&self, range: Range<usize>) -> JsString {
+        JsString::from_flat(self.run(range))
+    }
+
     /// The units `range` of these, sharing ASCII storage when the run is too long to hold
     /// inline. `range` must lie within the units.
     fn run(&self, range: Range<usize>) -> Self {
@@ -409,29 +416,6 @@ impl<'a> Units<'a> {
         prefix.len() <= self.len() && self.slice(0..prefix.len()) == prefix
     }
 
-    /// The first index at or after `start` where `search` occurs.
-    pub(crate) fn find(self, search: Units<'_>, start: usize) -> Option<usize> {
-        if search.is_empty() {
-            return Some(start.min(self.len()));
-        }
-        if search.len() > self.len() {
-            return None;
-        }
-        let last = self.len() - search.len();
-        if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            if start > last {
-                return None;
-            }
-            if let [unit] = needle {
-                return memchr::memchr(*unit, &haystack[start..]).map(|offset| start + offset);
-            }
-            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
-        }
-        let first = search.at(0);
-        (start..=last).find(|index| {
-            self.at(*index) == first && self.slice(*index..*index + search.len()) == search
-        })
-    }
 }
 
 impl PartialEq for Units<'_> {
@@ -803,7 +787,7 @@ impl JsString {
     /// The units `range` of this string (`String.prototype.slice` and its kin). A long ASCII
     /// result shares this string's storage; any other result is copied.
     pub(crate) fn substring(&self, range: Range<usize>) -> Self {
-        Self::from_flat(self.flat().run(range))
+        self.flat().substring(range)
     }
 
     /// Number::toString(10) of `value`, written on the stack: text this short is held inline.
@@ -1248,33 +1232,6 @@ impl JsString {
     pub(crate) fn find_units(&self, search: Units<'_>, start: usize) -> Option<usize> {
         self.units().find(search, start)
     }
-
-    pub(crate) fn split_units(&self, separator: Units<'_>) -> Vec<Self> {
-        let units = self.units();
-        if separator.is_empty() {
-            return (0..units.len())
-                .map(|index| Self::from_unit_run(units.slice(index..index + 1)))
-                .collect();
-        }
-        let mut parts = Vec::new();
-        let mut cursor = 0;
-        if let (Units::Ascii(haystack), Units::Ascii(needle)) = (units, separator) {
-            // One searcher serves every match; occurrences come back non-overlapping, as split
-            // consumes them.
-            for offset in memchr::memmem::find_iter(haystack, needle) {
-                parts.push(Self::from_unit_run(units.slice(cursor..offset)));
-                cursor = offset + needle.len();
-            }
-            parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
-            return parts;
-        }
-        while let Some(offset) = units.find(separator, cursor) {
-            parts.push(Self::from_unit_run(units.slice(cursor..offset)));
-            cursor = offset + separator.len();
-        }
-        parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
-        parts
-    }
 }
 
 impl PartialEq for JsString {
@@ -1400,7 +1357,8 @@ mod tests {
             value.find_units(super::Units::Wide(&[b'|' as u16]), 0),
             Some(1)
         );
-        let parts = value.split_units(super::Units::Wide(&[b'|' as u16]));
+        let mut parts = Vec::new();
+        value.split_runs(super::Units::Wide(&[b'|' as u16]), usize::MAX, |run| parts.push(JsString::from_unit_run(run)));
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
         assert_eq!(parts[1].units(), &[0xDC00]);

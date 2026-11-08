@@ -3,7 +3,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 use crate::compile::eval_context_source;
-mod eval_source;
+pub(crate) mod eval_source;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
 /// useful fast path for eval's common comment-only inputs: parsing an empty
@@ -232,7 +232,7 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
-        let cache_source = (!self.direct_eval).then(|| source_text.clone());
+        let cache_source = (!self.direct_eval).then(|| eval_source::EvalSource::of(&self.heap, source, &source_text));
         let host_text = source_text.host_string();
         let text = if self.host.allows_natives_syntax() {
             strip_v8_optimization_intrinsics(host_text)
@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
         source: &str,
         strict: bool,
         source_name: &str,
-        cache_source: Option<JsString>,
+        cache_source: Option<eval_source::EvalSource>,
         host_script: bool,
         shared_text: Option<std::rc::Rc<str>>,
     ) -> Result<Value, JsError> {
@@ -378,7 +378,7 @@ impl<H: Host> Vm<H> {
     /// Install the caller/source identity once for either a compiled or native
     /// eval instance, then enter the same global declaration/evaluation path.
     fn run_global_eval_instance(
-        &mut self, p: &ResidualProgram, program_id: ProgramId, cache_source: Option<JsString>,
+        &mut self, p: &ResidualProgram, program_id: ProgramId, cache_source: Option<eval_source::EvalSource>,
     ) -> Result<Value, JsError> {
         let origin = self.capture_eval_origin(p)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });

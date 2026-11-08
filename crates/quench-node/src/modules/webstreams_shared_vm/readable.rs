@@ -139,10 +139,9 @@ pub(crate) mod request {
     pub(crate) use crate::modules::keys::ERROR;
 }
 
-pub(crate) fn new_request(c: &mut Context<'_>, steps: ReadSteps, fields: &[(&str, RootId)]) -> Outcome {
-    let request = record(c, fields)?;
-    put_num(c, request, KIND, steps as usize as f64)?;
-    Ok(request)
+pub(crate) fn new_request(c: &mut Context<'_>, steps: ReadSteps, names: &'static [&'static str], values: &[RootId]) -> Outcome {
+    let kind = c.number(steps as usize as f64);
+    record(c, names, &values.iter().copied().chain([kind]).collect::<Vec<_>>())
 }
 
 pub(crate) fn steps_kind(c: &mut Context<'_>, request: RootId) -> Result<ReadSteps, RootedError> {
@@ -257,12 +256,12 @@ fn set_state(c: &mut Context<'_>, stream: RootId, state: State) -> Done {
 /// `createReadableStreamState()` on `object`, which becomes a ReadableStream.
 fn initialize_stream(c: &mut Context<'_>, object: RootId) -> Outcome {
     let closed = deferred(c)?;
-    let state = record(c, &[(SELF, object), (CLOSED_PROMISE, closed)])?;
+    let state = record(c, &[SELF, CLOSED_PROMISE], &[object, closed])?;
     set_state(c, state, State::Readable)?;
     put_flag(c, state, DISTURBED, false)?;
     attach(c, object, Brand::ReadableStream, state)?;
     // `stream[kIsClosedPromise]`, which the stream utilities' `finished` reads.
-    let holder = literal(c, &[(PROMISE, closed)])?;
+    let holder = literal(c, &[PROMISE], &[closed])?;
     let key = intrinsic(c, key::IS_CLOSED)?;
     c.define_data_property_rooted(object, key, holder, true, true, true)?;
     Ok(state)
@@ -426,7 +425,7 @@ fn initialize_reader(c: &mut Context<'_>, object: RootId, brand: Brand, stream_o
             promise
         }
     };
-    let state = record(c, &[(SELF, object), (STREAM, stream), (CLOSED, closed), (REQUESTS, requests)])?;
+    let state = record(c, &[SELF, STREAM, CLOSED, REQUESTS], &[object, stream, closed, requests])?;
     attach(c, object, brand, state)?;
     put(c, stream, READER, object)?;
     Ok(state)
@@ -529,7 +528,7 @@ pub(crate) fn default_reader_read(c: &mut Context<'_>, reader: RootId, request: 
 /// A host consumer's read on `reader` (a default reader's internal slots): `chunk`,
 /// `close` and `error` are called with the outcome.
 pub(crate) fn read_with(c: &mut Context<'_>, reader: RootId, chunk: RootId, close: RootId, error: RootId) -> Done {
-    let request = new_request(c, ReadSteps::Hook, &[(request::CHUNK, chunk), (request::CLOSE, close), (request::ERROR, error)])?;
+    let request = new_request(c, ReadSteps::Hook, &[request::CHUNK, request::CLOSE, request::ERROR, KIND], &[chunk, close, error])?;
     default_reader_read(c, reader, request)
 }
 
@@ -547,7 +546,7 @@ fn setup_default_controller(
     start: impl FnOnce(&mut Context<'_>, RootId) -> Outcome,
 ) -> Outcome {
     let queue = list::new(c)?;
-    let controller = record(c, &[(STREAM, stream), (QUEUE, queue), (SIZE, size)])?;
+    let controller = record(c, &[STREAM, QUEUE, SIZE], &[stream, queue, size])?;
     for &(name, value) in algorithms {
         put(c, controller, name, value)?;
     }
@@ -644,7 +643,7 @@ pub(crate) fn enqueue_with_size(c: &mut Context<'_>, controller: RootId, value: 
         return Err(throw(c, WebError::ArgValueRange("size", size)));
     }
     let size = c.number(number);
-    let entry = record(c, &[(VALUE, value), (SIZE, size)])?;
+    let entry = record(c, &[VALUE, SIZE], &[value, size])?;
     let queue = get(c, controller, QUEUE)?;
     list::push(c, queue, entry)?;
     let total = num(c, controller, QUEUE_SIZE)?;
@@ -841,7 +840,7 @@ fn inspect(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let controller = get(c, stream, CONTROLLER)?;
     let byob = !is_undefined(c, controller) && flag(c, controller, super::byte::field::BYTE)?;
     let byob = c.boolean(byob);
-    let data = literal(c, &[("locked", locked), ("state", state), ("supportsBYOB", byob)])?;
+    let data = literal(c, &["locked", "state", "supportsBYOB"], &[locked, state, byob])?;
     custom_inspect(c, this, Brand::ReadableStream.name(), data, args)
 }
 
@@ -863,7 +862,7 @@ fn values(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let prevent_cancel = c.truthy_rooted(prevent_cancel)?;
     let reader = default_reader(c, stream)?;
     let reader = slots(c, reader)?;
-    let state = record(c, &[(iteration::READER, reader)])?;
+    let state = record(c, &[iteration::READER], &[reader])?;
     put_flag(c, state, iteration::DONE, false)?;
     put_flag(c, state, iteration::STARTED, false)?;
     put_flag(c, state, iteration::PREVENT_CANCEL, prevent_cancel)?;
@@ -913,7 +912,7 @@ fn next_steps(c: &mut Context<'_>, state: RootId) -> Outcome {
         return rejected_with(c, WebError::InvalidState("The reader is not bound to a ReadableStream"));
     }
     let promise = deferred(c)?;
-    let request = new_request(c, ReadSteps::Iterator, &[(PROMISE, promise), (request::READER, reader), (request::ITERATION, state)])?;
+    let request = new_request(c, ReadSteps::Iterator, &[PROMISE, request::READER, request::ITERATION, KIND], &[promise, reader, state])?;
     default_reader_read(c, reader, request)?;
     Ok(promise)
 }
@@ -1012,7 +1011,7 @@ fn default_tee(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let reader = default_reader(c, stream)?;
     let reader = slots(c, reader)?;
     let cancel_promise = deferred(c)?;
-    let tee = record(c, &[(tee::STREAM, stream), (tee::READER, reader), (tee::CANCEL_PROMISE, cancel_promise)])?;
+    let tee = record(c, &[tee::STREAM, tee::READER, tee::CANCEL_PROMISE], &[stream, reader, cancel_promise])?;
     for name in [tee::READING, tee::CANCELED1, tee::CANCELED2, tee::CANCEL_RESOLVED] {
         put_flag(c, tee, name, false)?;
     }
@@ -1035,7 +1034,7 @@ fn tee_pull(c: &mut Context<'_>, tee: RootId) -> Outcome {
     if !flag(c, tee, tee::READING)? {
         put_flag(c, tee, tee::READING, true)?;
         let reader = get(c, tee, tee::READER)?;
-        let request = new_request(c, ReadSteps::Tee, &[(request::TEE, tee)])?;
+        let request = new_request(c, ReadSteps::Tee, &[request::TEE, KIND], &[tee])?;
         default_reader_read(c, reader, request)?;
     }
     resolved_undefined(c)
@@ -1109,7 +1108,7 @@ mod iterator_record {
 /// `ReadableStream.from(iterable)`.
 pub(crate) fn from(c: &mut Context<'_>, iterable: RootId) -> Outcome {
     let record = get_async_iterator(c, iterable)?;
-    let stream_cell = super::record(c, &[])?;
+    let stream_cell = super::record(c, &[], &[])?;
     let pull = function(c, Member::FromPull, "", &[record, stream_cell])?;
     let cancel = function(c, Member::FromCancel, "", &[record])?;
     let undefined = c.undefined();
@@ -1144,7 +1143,7 @@ fn get_async_iterator(c: &mut Context<'_>, iterable: RootId) -> Outcome {
     }
     let next = get(c, iterator, iterator_record::NEXT)?;
     let sync = c.boolean(sync);
-    record(c, &[(iterator_record::ITERATOR, iterator), (iterator_record::NEXT, next), (iterator_record::SYNC, sync)])
+    record(c, &[iterator_record::ITERATOR, iterator_record::NEXT, iterator_record::SYNC], &[iterator, next, sync])
 }
 
 /// `iteratorNext(record)`: the next result, or for a sync iterator the promise of it with
@@ -1298,7 +1297,7 @@ pub(crate) fn reader_release_lock(c: &mut Context<'_>, this: RootId, brand: Bran
     Ok(c.undefined())
 }
 
-pub(crate) fn reader_inspect(c: &mut Context<'_>, this: RootId, brand: Brand, requests_name: &str, args: &[RootId]) -> Outcome {
+pub(crate) fn reader_inspect(c: &mut Context<'_>, this: RootId, brand: Brand, names: &'static [&'static str], args: &[RootId]) -> Outcome {
     let reader = this_state(c, this, brand)?;
     let stream = get(c, reader, STREAM)?;
     let stream = if is_undefined(c, stream) { stream } else { get(c, stream, SELF)? };
@@ -1306,7 +1305,7 @@ pub(crate) fn reader_inspect(c: &mut Context<'_>, this: RootId, brand: Brand, re
     let count = list::len(c, requests)?;
     let count = c.number(count as f64);
     let closed = get(c, reader, CLOSED)?;
-    let data = literal(c, &[("stream", stream), (requests_name, count), ("close", closed)])?;
+    let data = literal(c, names, &[stream, count, closed])?;
     custom_inspect(c, this, brand.name(), data, args)
 }
 
@@ -1369,7 +1368,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
                 return rejected_with(c, WebError::InvalidState("The reader is not attached to a stream"));
             }
             let promise = deferred(c)?;
-            let request = new_request(c, ReadSteps::Default, &[(PROMISE, promise)])?;
+            let request = new_request(c, ReadSteps::Default, &[PROMISE, KIND], &[promise])?;
             default_reader_read(c, reader, request)?;
             Ok(promise)
         }
@@ -1379,7 +1378,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let reason = arg(c, args, 0);
             reader_cancel(c, this, Brand::DefaultReader, reason)
         }
-        Member::ReaderInspect => reader_inspect(c, this, Brand::DefaultReader, "readRequests", args),
+        Member::ReaderInspect => reader_inspect(c, this, Brand::DefaultReader, &["stream", "readRequests", "close"], args),
         Member::ControllerConstruct => {
             super::require_new(c, Brand::DefaultController.name())?;
             Err(throw(c, WebError::IllegalConstructor))

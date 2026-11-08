@@ -35,7 +35,11 @@ mod stable;
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
+#[path = "lane_region/store_domains.rs"] mod store_domains;
+pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
+#[path = "lane_region/constructions.rs"] mod constructions;
+#[path = "lane_region/dense_elements.rs"] mod dense_elements;
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -2171,19 +2175,11 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
-        // Profiled raw stores preserve their declared field type. Register those possible
-        // writes once per physical slot, independently of cache-row binding availability.
-        let mut domains = BTreeMap::<(u32, u16), Type>::new();
-        for instruction in instructions {
-            if !instruction.op().is_field_store() { continue; }
-            if let Some(fields) = self.fields.get(&instruction.cache_site_index())
-                && let [field] = fields.as_slice()
-                && field.ty != Type::NEVER {
-                let domain = domains.entry((field.shape, field.slot)).or_insert(Type::NEVER);
-                *domain = domain.join(field.ty);
-            }
-        }
-        for ((shape, slot), domain) in domains {
+        // Profiled raw stores preserve their declared field type. An online body's plan
+        // registered those possible writes before it was lowered (`Vm::admit_lane_stores`);
+        // other code registers them here, at each entry.
+        let domains = if self.vm.online.is_some() { Vec::new() } else { store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) };
+        for (shape, slot, domain) in domains {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
             let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
@@ -2495,7 +2491,7 @@ impl Lowering<'_, '_> {
                         Some(array) => self.loop_element_read(array, index, exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
-                            super::emit_dense_element(&mut self.builder, view, index, exit).1
+                            self.dense_element(base, view, index, exit)
                         }
                     };
                     self.set_tagged(state, instruction.result_register(), value);
@@ -2538,7 +2534,7 @@ impl Lowering<'_, '_> {
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
-            Op::Construct if self.completion == Completion::StatusAndPc && !instruction.is_super_construct()
+            Op::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Op::IncDec if plain && instruction.numeric_local_target().is_none() => {
                 let decrement = instruction.boolean_flag();
@@ -2739,50 +2735,6 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
     }
 
-    /// `new callee(...)` by the callee's construct plan (`compiled::lane_construct`): the
-    /// arguments pass in the body's registers, written back for the helper to read; a
-    /// construction the plan does not make leaves at the record, before any effect. The
-    /// allocation may move the property arena (`allocated`). A construction a previous body
-    /// left at runs as a call does (`dispatch_fast::lane_body_construct`): the callee's plan,
-    /// else its activation.
-    fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        if self.generic.contains(&pc)
-            && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
-            && window.base + window.count <= self.unit.caller_registers
-            && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
-            return Some(self.call(state, pc, instruction, LaneHelper::ConstructCall));
-        }
-        let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
-            (false, _) if instruction.result_flags() == 0 => None,
-            (true, Some(super::lane_unit::Origin::Caller(record))) if instruction.result_flags() == crate::bytecode::RETURN_REGISTER => Some(record),
-            _ => return None,
-        };
-        // The body's register memory holds the caller's registers alone (`Lowering::call`).
-        if window.base + window.count > self.unit.caller_registers {
-            return None;
-        }
-        let exit = self.guard_exit(state, pc as u32);
-        let base = self.registers_base;
-        for register in window.base..window.base + window.count {
-            let bits = self.tagged(state, register);
-            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
-        }
-        let callee = self.tagged(state, instruction.register_b());
-        let arguments = self.ins().iadd_imm_u(base, i64::from(register_offset(window.base)));
-        let argc = self.ins().iconst(types::I64, i64::from(window.count));
-        let payload = self.payload;
-        let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
-        let built = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, built, exit);
-        self.reshaped(state);
-        if let Some(record) = completes {
-            self.return_value(record, this);
-            return Some(false);
-        }
-        self.set_tagged(state, instruction.result_register(), this);
-        Some(true)
-    }
 
     /// A fused `typeof value === name` (`bytecode::typeof_test`): an immediate value's tag
     /// decides it, as `Vm::typeof_test_value` would, and a heap value's cell the VM reads
@@ -3669,7 +3621,7 @@ impl Lowering<'_, '_> {
                 let receiver = !self.native_calls
                     && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 // A `length` read is made once, natively where its base is a direct array.
-                match register.filter(|_| atom == self.vm.length) {
+                match register.filter(|_| super::names_length(self.program, atom)) {
                     Some(register) => {
                         let length = self.array_length(state, register, (atom, cache_site), exit);
                         (int_tagged(&mut self.builder, length), true)
@@ -4115,7 +4067,7 @@ impl Lowering<'_, '_> {
         let (first, rest) = parts.split_first()?;
         // A direct array's `length` is its record's, an int32.
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
-            && first.0 == self.vm.length
+            && super::names_length(self.program, first.0)
         {
             let length = self.array_length(state, register, *first, exit);
             self.set_int(state, destination, length);

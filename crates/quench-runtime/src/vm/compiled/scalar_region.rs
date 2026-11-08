@@ -133,7 +133,7 @@ pub(crate) fn lower_regions(
             // an entry-record transfer. Keep its existing numeric region;
             // field binding needs shared inputs or a longer arithmetic chain.
             && (region.fields.len() != 1 || arithmetic > 1)
-            && let Some((native, _)) = osr_loop::lower(&region, &observation, isa, None, false)
+            && let Some((native, _)) = osr_loop::lower(&region, &observation, isa, None)
         {
             Some(ScalarRegion {
                 frame: region.entry_registers().collect(),

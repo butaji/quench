@@ -1317,25 +1317,24 @@ impl<H: Host> Vm<H> {
             )))
     }
 
-    /// The ordinary object `{ [names[0]]: values[0], ... }` of the realm's
-    /// `Object.prototype`, whose own data properties are writable, enumerable and
-    /// configurable in `names` order, as a literal makes it: allocated at its final shape,
+    /// The ordinary object `{ [names[0]]: values[0], ... }` of the realm's `Object.prototype`
+    /// (or of none, under `null_prototype`), with writable, enumerable, configurable own data
+    /// properties in `names` order, as a literal makes it: allocated at its final shape,
     /// which the VM derives once per `names` list (`embedding_record_shapes`). `names` hold
     /// neither an index name nor a duplicate.
     pub(crate) fn create_embedding_record(
         &mut self,
+        null_prototype: bool,
         names: &'static [&'static str],
         values: &[RootId],
     ) -> Result<Value, JsError> {
         debug_assert_eq!(names.len(), values.len());
         let shape = self.embedding_record_shape(names);
-        let values = values
-            .iter()
-            .map(|root| self.embedding_value(*root))
+        let values = values.iter().map(|root| self.embedding_value(*root))
             .collect::<Result<smallvec::SmallVec<[Value; crate::value_vec::INLINE_PROPERTY_COUNT]>, _>>()?;
         let (storage, inline) = self.heap.initial_object_storage(shape, &values, true);
-        let object = crate::heap::Object::with_property_storage(self.object_proto, storage, inline);
-        Ok(self.heap.alloc_object(object))
+        let prototype = if null_prototype { Value::NULL } else { self.object_proto };
+        Ok(self.heap.alloc_object(crate::heap::Object::with_property_storage(prototype, storage, inline)))
     }
 
     /// The shape adding `names` in order to an empty ordinary object reaches, memoized by
