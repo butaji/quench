@@ -203,6 +203,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
+    /// The lane's own global-name read (`LaneHelper::GlobalGet`).
+    #[inline(always)]
+    fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -261,6 +265,9 @@ pub(crate) enum Operation<W, P> {
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
+    /// The global-name read of `atom` through cache `site`, defined into `destination`; a
+    /// miss leaves at the proof's edge.
+    GlobalRead { destination: Register, atom: u32, site: u16, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.

@@ -49,3 +49,20 @@ pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
+
+/// The lane's own global-name read (`LaneHelper::GlobalGet`): a DELETED answer leaves at the
+/// miss edge, otherwise the value is the destination's tagged word.
+pub(super) fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+    atom: u32, site: u16, proof: EmitProof) -> Option<()> {
+    let EmitProof::GlobalRead { miss } = proof else { return None };
+    let payload = frame.payload;
+    let atom = stage.builder.ins().iconst(types::I64, i64::from(atom));
+    let site = stage.builder.ins().iconst(types::I64, i64::from(site));
+    let get = frame.helpers.address(stage.builder.ins(), LaneHelper::GlobalGet);
+    let value = emit_lane_helper_call(stage.builder, payload, get, &[atom, site]);
+    let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    emit_js_guard(stage.builder, hit, miss);
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
+        RegisterFact::definition(Type::ANY, Representation::Tagged));
+    Some(())
+}

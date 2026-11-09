@@ -437,3 +437,14 @@ fn the_element_store_helper_is_the_host_callout_boundary() {
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () });
     assert!(matches!(step, Step::Unresolved));
 }
+
+#[test]
+fn a_global_name_read_is_the_host_callout_boundary() {
+    // The interpreter reads globals through its own loop; the lane's helper call is the
+    // callout boundary, so the frame declines it.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}
