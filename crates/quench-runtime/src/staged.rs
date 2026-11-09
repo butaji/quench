@@ -232,26 +232,24 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Step::Value(value)
         }
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => match frame.truthiness(stage, register) {
-            Some(condition) => {
-                let condition = if taken { condition } else { stage.not(condition) };
-                Step::Control(frame.branch(stage, condition))
-            }
-            None => Step::Unresolved,
-        },
+        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
-            Some((value, _)) => Step::Value(value),
-            None => Step::Unresolved,
-        },
+        Operation::ReadField { base, slot, ty, proof } =>
+            frame.field_read(stage, base, slot, ty, proof).map_or(Step::Unresolved, |(value, _)| Step::Value(value)),
         Operation::WriteField { base, slot, ty, value, proof } =>
-            match frame.field_write(stage, base, slot, ty, value, proof) {
-                Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
+            frame.field_write(stage, base, slot, ty, value, proof).map_or(Step::Unresolved, |()| Step::Value(value)),
     }
+}
+
+/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
+/// the stage cannot tell its truthiness.
+fn jump_if<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool)
+    -> Step<S::Word, F::Control> {
+    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
+    let condition = if taken { condition } else { stage.not(condition) };
+    Step::Control(frame.branch(stage, condition))
 }
 
 /// The activation's `this` into `destination`, where the activation holds it.

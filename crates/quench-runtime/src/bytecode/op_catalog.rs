@@ -2,6 +2,8 @@
 //! (`Class`, `class_of!`) and its orthogonal tier traits (`Traits`, `traits_of!`), which the
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
 
+use super::Op;
+
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -286,6 +288,46 @@ macro_rules! traits_of {
     ($other:ident) => { Traits::NONE };
 }
 
+/// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
+/// table load (unlike `Op::class()`), for per-instruction loops.
+macro_rules! op_predicates {
+    ($($method:ident => $($op:ident)|+),+ $(,)?) => {
+        #[allow(dead_code)]
+        impl Op { $(
+            pub(crate) const fn $method(self) -> bool { matches!(self, $(Op::$op)|+) }
+        )+ }
+    };
+}
+op_predicates! {
+    is_return => Return,
+    is_yield => Yield,
+    is_await => Await,
+    is_get_field => GetField,
+    is_jump_true => JumpTrue,
+    is_binary => Binary,
+    is_move => Move,
+    is_get_index => GetIndex,
+    is_set_index => SetIndex,
+    is_unary => Unary,
+    is_numeric_add => NumericAdd,
+    is_numeric_multiply => NumericMultiply,
+    is_load_const => LoadConst,
+    is_load_capture => LoadCapture,
+    is_jump_binary_false => JumpBinaryFalse,
+    is_jump_false => JumpFalse,
+    is_jump => Jump,
+    is_inc_dec => IncDec,
+    is_to_numeric => ToNumeric,
+    is_load_this => LoadThis,
+    is_nop => Nop,
+    is_call => Call,
+    is_set_field => SetField,
+    is_set_this_field => SetThisField,
+    is_require_object_coercible => RequireObjectCoercible,
+    is_define_array_element => DefineArrayElement,
+    is_string_case_index => StringCaseIndex,
+}
+
 /// The guarded JavaScript denotation available to the shared compiled region
 /// analyzer. This describes an instruction operation, never a source pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -309,4 +351,22 @@ pub(crate) enum JsDenotation {
     ObjectAllocation,
     /// A literal's own data property definition, by name, through its cache site.
     FieldDefinition,
+}
+
+#[cfg(test)]
+mod class_table_tests {
+    use crate::bytecode::{Class, Op, Traits};
+
+    #[test]
+    fn catalog_tables_are_compact_and_the_runtime_uses_direct_predicates() {
+        // One byte per opcode's class and four per traits: ~2 KiB for the whole catalog,
+        // read only by planning code; the per-instruction loop calls the generated
+        // `is_*` predicates, which compile to direct enum comparisons.
+        assert_eq!(core::mem::size_of::<Class>(), 1);
+        assert_eq!(core::mem::size_of::<Traits>(), 4);
+        let bytes = Op::COUNT * (core::mem::size_of::<Class>() + core::mem::size_of::<Traits>());
+        assert!(bytes <= 4096, "catalog tables take {bytes} bytes");
+        assert!(Op::Call.class().eq(Class::Call) && !Op::Return.class().eq(Class::Call));
+        assert!(Op::Return.class().eq(Class::Return) && !Op::Call.class().eq(Class::Return));
+    }
 }

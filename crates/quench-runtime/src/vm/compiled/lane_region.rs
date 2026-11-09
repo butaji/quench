@@ -4042,25 +4042,7 @@ impl Lowering<'_, '_> {
             return self.holder_read(state, object, holder, *field, exit);
         }
         if let [field] = shapes {
-            let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
-            let projection = match known {
-                Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
-                _ => {
-                    self.prove_shape(state, owner, shape, field.shape, exit);
-                    let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                        *field, PackedAccess::Reload, exit)?;
-                    if let Some(owner) = owner {
-                        state.proofs.layouts.insert((owner, field.shape), projection);
-                    }
-                    projection
-                }
-            };
-            let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
-                base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: projection });
-            return match step {
-                crate::staged::Step::Value(value) => Some(value),
-                _ => None,
-            };
+            return self.own_shape_read(state, owner, (object, shape, inline, properties), *field, exit);
         }
         // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
@@ -4072,9 +4054,43 @@ impl Lowering<'_, '_> {
                 *family, PackedAccess::Reload, exit)?;
             return Some(projection.read(&mut self.builder, family.slot));
         }
+        self.family_switch_read(state, (object, shape, inline, properties), &groups, exit)
+    }
+
+    /// One own field of one shape: the owner's proved layout where it holds the slot, else the
+    /// shape's guard and layout proof, which the owner keeps; then the staged read.
+    fn own_shape_read(&mut self, state: &mut State, owner: Option<Option<Register>>,
+        (object, shape, inline, properties): (ir::Value, ir::Value, ir::Value, ir::Value), field: NativeFieldLoad,
+        exit: ir::Block) -> Option<ir::Value> {
+        let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
+        let projection = match known {
+            Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
+            _ => {
+                self.prove_shape(state, owner, shape, field.shape, exit);
+                let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
+                    field, PackedAccess::Reload, exit)?;
+                if let Some(owner) = owner {
+                    state.proofs.layouts.insert((owner, field.shape), projection);
+                }
+                projection
+            }
+        };
+        let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
+            base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: projection });
+        match step {
+            crate::staged::Step::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Layout families each tested by their shape set and read at their slot, joined; a shape
+    /// in none exits.
+    fn family_switch_read(&mut self, state: &mut State,
+        (object, shape, inline, properties): (ir::Value, ir::Value, ir::Value, ir::Value),
+        groups: &[(NativeFieldLoad, Vec<u32>)], exit: ir::Block) -> Option<ir::Value> {
         let join = self.builder.create_block();
         let value = self.builder.append_block_param(join, types::I64);
-        for (field, members) in &groups {
+        for (field, members) in groups {
             let matched = self.builder.create_block();
             let next = self.builder.create_block();
             let same = super::object_slots::shape_in_set(&mut self.builder, shape, members);

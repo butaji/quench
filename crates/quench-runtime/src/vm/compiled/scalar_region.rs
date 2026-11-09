@@ -2,6 +2,7 @@
 
 use super::*;
 
+/// The namespace of a region's own IR name, by which its caller's body inlines it (`emit_entry`).
 const SCALAR_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QSCR");
 
 pub(crate) struct ScalarRegion {
@@ -136,7 +137,6 @@ pub(crate) fn lower_regions(
             && (region.fields.len() != 1 || arithmetic > 1)
             && let Some((mut native, _)) = osr_loop::lower(&region, &observation, isa, None)
         {
-            // Its own name, by which the caller's body inlines it (`emit_entry`).
             native.name = ir::UserFuncName::user(SCALAR_REGION_NAMESPACE, header);
             Some(ScalarRegion {
                 range,
