@@ -1243,13 +1243,13 @@ pub(super) fn inline_region<'a>(
             None => frame.base + register,
         };
         // A callee's live registers there, in the region, with the caller's live past the call.
-        let after = mask(pc + 1)? & !(1 << site.result);
+        let after = mask(pc + 1)? & !RegisterSet::bit(usize::from(site.result));
         let frame_mask = |callee_pc: usize| -> Option<RegisterSet> {
             let own = site.callee.live.get(callee_pc)?;
             let mut set = after;
             for callee_register in 0..site.callee.registers {
                 if crate::compile::liveness::register_in(own, usize::from(callee_register)) {
-                    set |= 1 << register(callee_register);
+                    set |= RegisterSet::bit(usize::from(register(callee_register)));
                 }
             }
             Some(set)
@@ -7180,8 +7180,8 @@ mod tests {
                 WideInstruction::new(Op::LoadConst, 0, 0, 0, 0),
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 1, &[Value::number(number)], &[],
-                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![0, 1]))),
-                Some(0), 0, &Default::default())
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64)]))),
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default())
                 .unwrap_or_else(|failure| panic!("constant admission: {failure:?}"));
             let verified = verify_unprofiled(&region).unwrap();
             let definition = verified.webs.defined(&region, 0);
@@ -7228,8 +7228,8 @@ mod tests {
             WideInstruction::new(Op::ToNumeric, 1, 3, 0, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 4]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("nested probe admission: {failure:?}"));
         // Exercise the callout projection rather than an entry-pinned or direct
         // native array view. Its receiver still needs the same SSA proof.
@@ -7256,8 +7256,8 @@ mod tests {
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 3, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![3, 7, 3, 3]))),
-            Some(3), 0, &Default::default())
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(7_u64), crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(3_u64)]))),
+            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default())
             .unwrap_or_else(|failure| panic!("comparison admission: {failure:?}"));
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
@@ -7289,8 +7289,8 @@ mod tests {
                 WideInstruction::new(Op::Unary, 1, 0, 0, crate::bytecode::UNARY_TYPEOF_INDEX),
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 2, &[constant], &[],
-                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![0, 1, 0]))),
-                Some(0), 0, &Default::default()).unwrap();
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64), crate::compile::liveness::RegisterSet::default()]))),
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default()).unwrap();
             let widened = Default::default();
             let observation = Observation {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
@@ -7325,8 +7325,8 @@ mod tests {
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ];
         let region = admit_region(instructions, 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 4]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
@@ -7343,8 +7343,8 @@ mod tests {
             WideInstruction::new(Op::SetIndex, 2, 1, 3, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 3]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 3]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
         // The element read defines the receiver, so the store reads its array from the record at
         // each access (`Lowering::dynamic_array`) instead of pinning an entry identity.
@@ -7363,8 +7363,8 @@ mod tests {
                 WideInstruction::new(Op::IncDec, 3, 3, 0, 0),
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 5]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 5]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("lifetime admission failed: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
@@ -7399,8 +7399,8 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ];
             let admitted = admit_region(instructions, 5, &[], &[],
-                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![31; 7]))),
-                Some(31), 0, &Default::default(),
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(31_u64); 7]))),
+                Some(crate::compile::liveness::RegisterSet::from(31_u64)), 0, &Default::default(),
             ).is_ok();
             assert_eq!(admitted, alternative == 0);
         }
@@ -7413,8 +7413,8 @@ mod tests {
             WideInstruction::new(Op::ToNumeric, 1, 0, 0, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 2, &[Value::NULL], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![3; 3]))),
-            Some(3), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64); 3]))),
+            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(),
         ).is_err());
     }
 

@@ -63,7 +63,7 @@ pub(crate) fn analyze_successors<M: LiveMask>(
         M::default()
     } else {
         M::narrow(function.local_registers.iter().filter(|entry| entry.local < function.params)
-            .fold(0, |mask, entry| mask | register_bit(entry.register)))
+            .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register)))
     };
     let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), |_| observable);
     add_suspended_exception_roots(function, &mut live);
