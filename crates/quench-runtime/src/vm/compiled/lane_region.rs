@@ -1517,7 +1517,7 @@ pub(super) fn lower(
     // Field admissions establish the actual counterpart types used to select
     // capture views. Callee reads/bindings must precede their inlined captures.
     for reads in lowering.hoists.values_mut() {
-        reads.sort_by_key(|read| (instructions[read.pc].op() == Op::LoadCapture,
+        reads.sort_by_key(|read| (instructions[read.pc].op().is_load_capture(),
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
@@ -2433,7 +2433,7 @@ impl Lowering<'_, '_> {
             Op::MakeObject | Op::MakeArray if plain && self.completion == Completion::StatusAndPc => {
                 let exit = self.guard_exit(state, pc32);
                 let payload = self.payload;
-                let value = if instruction.op() == Op::MakeObject {
+                let value = if instruction.op().is_make_object() {
                     self.helper_call(LaneHelper::NewObject, &[payload])
                 } else {
                     let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
@@ -3297,7 +3297,7 @@ impl Lowering<'_, '_> {
     fn require_object_latches(&mut self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
         loops: &[(usize, usize)]) {
         for &(header, back) in loops {
-            if instructions[back].op() != Op::Jump
+            if !instructions[back].op().is_jump()
                 || self.unit.markers.iter().any(|pc| (header..=back).contains(pc)) { continue; }
             let first = instructions[header];
             if !first.op().class().eq(Class::GetField) || first.result_flags() != 0 { continue; }
@@ -4646,7 +4646,7 @@ impl Lowering<'_, '_> {
         // A static typed region's activation completes in its canonical code, at the
         // function's terminal `Return`, whose register takes the value.
         let terminal = self.unit.instructions.len().checked_sub(1)
-            .filter(|terminal| self.unit.instructions[*terminal].op() == Op::Return
+            .filter(|terminal| self.unit.instructions[*terminal].op().is_return()
                 && self.unit.instructions[*terminal].result_flags() == 0);
         if returns && (!matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
             || (self.completion == Completion::SourcePc && terminal.is_none())) {
@@ -4814,7 +4814,7 @@ impl Lowering<'_, '_> {
             // The completion names the function's terminal `Return` where it has one, whose
             // register the lane reads it from, else the binary's own record.
             let terminal = self.unit.instructions.len().checked_sub(1)
-                .filter(|terminal| self.unit.instructions[*terminal].op() == Op::Return)
+                .filter(|terminal| self.unit.instructions[*terminal].op().is_return())
                 .and_then(|terminal| match self.unit.origins.get(terminal) {
                     Some(super::lane_unit::Origin::Caller(record)) => Some((*record, self.unit.instructions[terminal].register_a())),
                     _ => None,
@@ -4951,7 +4951,7 @@ mod tests {
             let loops = local_loops(&unit, &program.constants, header);
             let reads = invariant_reads(&unit, &loops);
             let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
-                unit.instructions[pc].op() == Op::LoadCapture
+                unit.instructions[pc].op().is_load_capture()
                     && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
             assert_eq!(captures.len(), if polymorphic { 0 } else { 2 }, "{source}\n{}", program.disassemble());
             if polymorphic { continue; }
@@ -5150,7 +5150,7 @@ mod tests {
             assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
             let reads = invariant_reads(&unit, &loops);
             assert!(!reads.values().flatten().any(|read|
-                unit.instructions[read.pc].op() == Op::LoadCapture
+                unit.instructions[read.pc].op().is_load_capture()
                     && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
                 "a skipped copy cannot prove the closure environment: {name}\n{}", program.disassemble());
         }

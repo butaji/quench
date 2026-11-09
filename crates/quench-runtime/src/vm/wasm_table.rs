@@ -977,7 +977,7 @@ mod element_owner_tests {
         let target = function
             .code
             .iter()
-            .position(|instruction| instruction.op() == Op::WasmRefCast)
+            .position(|instruction| instruction.op().is_wasm_ref_cast())
             .unwrap();
         let original = function.code[target].as_wide();
         function.code[target] = Instr::wide(function.wide.len()).unwrap();

@@ -600,7 +600,7 @@ fn tagged_registers_with_failure(
                 return Vec::new();
             }
             let base = ImmediateLayout::call_window_base(instruction.imm());
-            let count = if instruction.op() == Op::CallArray {
+            let count = if instruction.op().is_call_array() {
                 1
             } else {
                 usize::from(ImmediateLayout::argument_count(instruction.imm()))
@@ -1125,7 +1125,7 @@ pub(super) fn inline_region<'a>(
             body().all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
             let argument = window + parameter;
             let moved = (read_offset + 1..offset).rev().find(|index| caller[*index].defined_register() == Some(argument))?;
-            (caller[moved].op() == Op::Move && !defines(caller[moved].register_b())).then_some(())?;
+            (caller[moved].op().is_move() && !defines(caller[moved].register_b())).then_some(())?;
             bound[usize::from(parameter)] = Some(caller[moved].register_b());
             dropped.insert(header + moved as u32);
         }
@@ -5845,7 +5845,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         // GetIndex can produce another array used by this region. Its backing view was
         // pinned at entry, so a different receiver must leave before replaying this pure
         // dense-element read. Otherwise subsequent stores would target the old array.
-        if self.region.instructions[(self.pc - self.region.header) as usize].op() == Op::GetIndex
+        if self.region.instructions[(self.pc - self.region.header) as usize].op().is_get_index()
             && let Some(array) = self.arrays.get(&register).copied()
         {
             let bits = self.boxed(value);

@@ -8,7 +8,7 @@
 //! operations on it (`Vm::initialized_frame_binding`, `Vm::store_initialized_frame_binding`),
 //! and a closure (`MakeClosure`) `general_closure`, the lane's (`lane_closure_value_of`).
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ResidualProgram, Vm};
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::WideInstruction;
 use crate::value::ValueLayout;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
@@ -23,8 +23,8 @@ pub(super) fn lower_capture(
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> bool {
-    let store = instruction.op() == Op::StoreCapture;
-    if !store && instruction.op() != Op::LoadCapture { return false; }
+    let store = instruction.op().is_store_capture();
+    if !store && !instruction.op().is_load_capture() { return false; }
     if instruction.capture_depth() != 0 || instruction.result_flags() != 0 || instruction.returns_from_frame()
         || instruction.writes_current_this() || instruction.numeric_local_target().is_some() {
         return false;

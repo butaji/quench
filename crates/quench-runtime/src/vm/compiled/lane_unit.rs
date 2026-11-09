@@ -179,7 +179,7 @@ impl Unit {
         // A returning instruction continues at the function's terminal `Return` where it has
         // one, whose register then holds its value; otherwise it completes the activation.
         let terminal = self.instructions.len().checked_sub(1)
-            .filter(|terminal| self.instructions[*terminal].op() == Op::Return);
+            .filter(|terminal| self.instructions[*terminal].op().is_return());
         let mut starts = Vec::with_capacity(self.instructions.len() + 1);
         let mut successors = Vec::new();
         for (pc, instruction) in self.instructions.iter().enumerate() {
@@ -280,7 +280,7 @@ fn call_length(alternatives: &[InlinedPlan]) -> u32 {
 /// The canonical caller completion a terminal call may use without replaying the call.
 fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
     code.len().checked_sub(1).filter(|pc|
-        code[*pc].op() == Op::Return && code[*pc].result_flags() == 0)
+        code[*pc].op().is_return() && code[*pc].result_flags() == 0)
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers

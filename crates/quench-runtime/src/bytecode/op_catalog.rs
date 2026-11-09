@@ -370,6 +370,13 @@ op_predicates! {
     is_wasm_memory_size => WasmMemorySize,
     is_wasm_memory_copy => WasmMemoryCopy,
     is_wasm_memory_fill => WasmMemoryFill,
+    is_call_array => CallArray,
+    is_call_known => CallKnown,
+    is_load_name_call => LoadNameCall,
+    is_make_object => MakeObject,
+    is_store_capture => StoreCapture,
+    is_wasm_ref_cast => WasmRefCast,
+    is_yield_star => YieldStar,
 }
 
 #[cfg(test)]
