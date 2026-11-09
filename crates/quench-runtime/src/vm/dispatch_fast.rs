@@ -18465,13 +18465,13 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     };
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
-    let form = match test.op() {
-        Op::JumpFalse => ForOfTest::Emitted,
-        Op::JumpTrue => ForOfTest::Threaded,
+    let form = match test.op().class() {
+        Class::JumpFalse => ForOfTest::Emitted,
+        Class::JumpTrue => ForOfTest::Threaded,
         _ => return None,
     };
     let exit = record(form.exit())?;
-    let leaves = exit.op() == if form == ForOfTest::Emitted { Op::Jump } else { Op::JumpTrue }
+    let leaves = exit.op().class().eq(if form == ForOfTest::Emitted { Class::Jump } else { Class::JumpTrue })
         && exit.jump_target() as usize > pc + form.value_read();
     let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
     (leaves && enters && reads_result(form.value_read())).then_some(form)
@@ -18498,8 +18498,8 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let direct = instructions().filter_map(|instruction| match instruction.op() {
         op if MemoryLoad::from_direct_op(op).is_some()
             || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
-        Op::WasmMemorySize => Some(instruction.b()),
-        Op::WasmMemoryFill => Some(instruction.a()),
+        op if op.is_wasm_memory_size() => Some(instruction.b()),
+        op if op.is_wasm_memory_fill() => Some(instruction.a()),
         _ => None,
     });
     single_register(direct).or_else(|| {
@@ -18665,7 +18665,7 @@ fn derive_lane_view<'live, H: Host>(
                             [usize::from(arith)][usize::from(acc)],
                     )
                 })
-            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::ArgumentsLength | Op::ArgumentGet)
+            } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain | Class::ArgumentsLength | Class::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
@@ -18674,9 +18674,9 @@ fn derive_lane_view<'live, H: Host>(
                         && next.call_window().last() == Some(instruction.result_register())
                 });
                 Some(LaneHandler {
-                    handler: match op {
-                        Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
-                        Op::ArgumentGet => lane_argument_get::<H> as Handler,
+                    handler: match op.class() {
+                        Class::ArgumentsLength => lane_arguments_length::<H> as Handler,
+                        Class::ArgumentGet => lane_argument_get::<H> as Handler,
                         _ if kept == crate::bytecode::KeptArguments::Passes && !forwards => {
                             lane_load_kept_arguments_object::<H> as Handler
                         }
@@ -18686,7 +18686,7 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op.reads_arguments() {
                 Some(LaneHandler {
-                    handler: if op == Op::ArgumentsLength {
+                    handler: if op.class().eq(Class::ArgumentsLength) {
                         lane_frame_arguments::<H, false> as Handler
                     } else {
                         lane_frame_arguments::<H, true> as Handler
@@ -20917,8 +20917,8 @@ fn may_loop(function: &Function) -> bool {
 /// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
 /// without the general loop (`Vm::lane_stop_awaits`), so a short run to it repays its entry.
 fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
-    let next = |pc: usize| match decoded[pc].op() {
-        Op::Jump if follows_jumps => decoded[pc].imm() as usize,
+    let next = |pc: usize| match decoded[pc].op().class() {
+        Class::Jump if follows_jumps => decoded[pc].imm() as usize,
         _ => pc + 1,
     };
     let mut runs = vec![0usize; exits.len()];
@@ -20950,9 +20950,9 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
         if exits.get(pc).is_none_or(|exits| *exits) {
             return false;
         }
-        match decoded[pc].op() {
-            Op::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
-            Op::Jump => pc = decoded[pc].imm() as usize,
+        match decoded[pc].op().class() {
+            Class::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
+            Class::Jump => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
     }

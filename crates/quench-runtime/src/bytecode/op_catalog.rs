@@ -46,6 +46,8 @@ pub(crate) enum Class {
     RequireObjectCoercible,
     ToNumeric,
     CallKnown,
+    ArgumentsLength,
+    ArgumentGet,
     Throw,
     Await,
     Yield,
@@ -149,6 +151,8 @@ macro_rules! class_of {
     (RequireObjectCoercible) => { Class::RequireObjectCoercible };
     (ToNumeric) => { Class::ToNumeric };
     (CallKnown) => { Class::CallKnown };
+    (ArgumentsLength) => { Class::ArgumentsLength };
+    (ArgumentGet) => { Class::ArgumentGet };
     (Throw) => { Class::Throw };
     (Await) => { Class::Await };
     (Yield) => { Class::Yield };
