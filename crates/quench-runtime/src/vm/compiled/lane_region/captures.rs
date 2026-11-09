@@ -76,6 +76,18 @@ impl Lowering<'_, '_> {
         read
     }
 
+    /// The read-site guard of a frozen capture read at `pc`: compare the value the read
+    /// loaded with the closed program's value, then use that constant. A binding changed
+    /// elsewhere (or read before its declaration) fails the guard and leaves to the shared
+    /// body, so the fold is sound without an invalidation word.
+    pub(super) fn frozen_capture(&mut self, pc: usize, value: ir::Value, exit: ir::Block) -> ir::Value {
+        let Some(crate::vm::global_facts::GlobalRead::Frozen { value: expected, .. }) =
+            self.global_reads.get(&pc).copied() else { return value };
+        let same = self.ins().icmp_imm_u(IntCC::Equal, value, expected.to_bits() as i64);
+        emit_js_guard(&mut self.builder, same, exit);
+        self.ins().iconst(types::I64, expected.to_bits() as i64)
+    }
+
     /// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.
     pub(super) fn capture_get(&mut self, instruction: WideInstruction, exit: ir::Block) -> ir::Value {
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));

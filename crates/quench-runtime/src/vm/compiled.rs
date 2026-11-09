@@ -6690,17 +6690,41 @@ pub(super) fn frozen_fields(program: &ResidualProgram) -> std::collections::BTre
     root_immediate_fields(program, &counts)
 }
 
-/// Each by-name load of a frozen global, with the closure's whole-program value.
+/// Each by-name load or capture read of a frozen global, with the closure's whole-program
+/// value. A capture read names the binding through the environment slot it closes over, so
+/// its owner's local atom decides whether it reads a frozen global; the value it actually
+/// loads is compared with the frozen one at the read site, which keeps the fold sound even
+/// for a read before the declaration.
 #[cfg(feature = "aot")]
-pub(super) fn frozen_global_reads(function: &Function,
+pub(super) fn frozen_global_reads(program: &ResidualProgram, function: &Function,
     globals: &std::collections::BTreeMap<Atom, Value>,
 ) -> std::collections::BTreeMap<usize, crate::vm::global_facts::GlobalRead> {
+    let frozen = |atom: Atom| globals.get(&atom).map(|&value|
+        crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
     function.code.iter().enumerate().filter_map(|(pc, &packed)| {
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-        if !instruction.op().loads_name() { return None; }
-        globals.get(&instruction.atom_index()).map(|&value|
-            (pc, crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) }))
+        let read = if instruction.op().loads_name() {
+            frozen(instruction.atom_index())
+        } else if instruction.op().addresses_capture() {
+            capture_binding_atom(program, function, instruction).and_then(frozen)
+        } else {
+            None
+        };
+        read.map(|read| (pc, read))
     }).collect()
+}
+
+/// The atom a capture read names: the local atom of the slot its environment closes over.
+#[cfg(feature = "aot")]
+fn capture_binding_atom(program: &ResidualProgram, function: &Function,
+    instruction: crate::bytecode::WideInstruction,
+) -> Option<Atom> {
+    let mut owner = function.parent?;
+    for _ in 0..crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) {
+        owner = program.function(owner as usize).parent?;
+    }
+    let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+    program.function(owner as usize).local_atoms.get(slot).copied()
 }
 
 /// Eager publication has no code-cache admission budget: all requested bodies
@@ -6742,7 +6766,7 @@ pub(super) fn compile_eager_native<H: Host>(
         globals: globals.keys().copied().collect(),
         fields: frozen_field_facts.keys().copied().collect(),
         constants: constant_block,
-        watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation.clone())),
+        watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation)),
         last_tier,
     };
     // SAFETY: every entry was lowered from its exact function for host H.
@@ -6945,7 +6969,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[],
         }), ..VmFacts::STATIC };
         let function = program.function(function_id as usize);
-        let reads = frozen_global_reads(function, self.globals);
+        let reads = frozen_global_reads(program, function, self.globals);
         let units = lower_static_typed_regions_process::<H>(program, function_id, &self.targets, isa, facts, &reads);
         for unit in &units {
             self.owners.frozen_atoms.extend(unit.stable.atoms.iter().copied());

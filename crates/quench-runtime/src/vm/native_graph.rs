@@ -140,12 +140,22 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         });
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
         let inline_targets = super::compiled::static_call_targets(program);
+        // Whole-program facts the closed image can fold with a read-site guard. The
+        // expected value is embedded in the code and checked against the live cell or
+        // prototype, so no invalidation word or serialized assumption is needed.
+        let frozen_globals = super::compiled::frozen_globals(program);
+        let frozen_fields = super::compiled::frozen_fields(program);
+        let frozen_facts = super::compiled::VmFacts {
+            frozen_fields: Some(&frozen_fields),
+            ..super::compiled::VmFacts::STATIC
+        };
         let typed_units: Vec<_> = (0..program.function_count()).map(|id|
             if options.regions(program.function(id).code.len()).is_none() {
+                let reads = super::compiled::frozen_global_reads(program, program.function(id), &frozen_globals);
                 super::compiled::lower_static_typed_regions(program, id as u32, &inline_targets, &*isa,
                     super::compiled::LaneHelpers::Linked(lane_helpers,
                         u32::try_from(program.function_count()).expect("validated native namespace")),
-                    super::compiled::VmFacts::STATIC, &std::collections::BTreeMap::new())
+                    frozen_facts, &reads)
             } else { Vec::new() }).collect();
         if typed_units.iter().any(|units| !units.is_empty()) {
             functions.push(NativeFunction::Import {
@@ -772,6 +782,45 @@ pub(super) fn lower_region_dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The linked image folds a whole-program global with a read-site guard: the expected
+    /// value is embedded and compared with the live global cell at each read.
+    #[test]
+    fn linked_image_folds_a_whole_program_global() {
+        let program = crate::Engine::specialize(
+            "var SCALE = 3; function scale(x) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + x * SCALE) | 0; } return s; } globalThis.answer = scale(2); globalThis.SCALE = 5; globalThis.answer2 = scale(2);",
+            "frozen-global-lower.js").unwrap();
+        let module = lower_native_js_module(&program, "frozen_global").unwrap();
+        let ir = module.functions.iter().filter_map(|function| match function {
+            NativeFunction::Definition { function, .. } => Some(function.display().to_string()),
+            NativeFunction::Import { .. } => None,
+        }).collect::<Vec<_>>().join("\n");
+        // 3 is a tagged Number (`0x7ffd_0000_0000_0003`); the read-site guard compares the
+        // live global cell with exactly that word.
+        assert!(ir.contains("0x7ffd_0000_0000_0003"),
+            "the expected global value is embedded:\n{ir}");
+        assert!(ir.contains("icmp eq"), "the read-site guard compares the live cell:\n{ir}");
+    }
+
+    /// The linked image folds a whole-program prototype value with a read-site guard: the
+    /// expected value is embedded and compared with the live slot, so a changed prototype
+    /// fails the guard and the shared body computes the guest answer.
+    #[test]
+    fn linked_image_folds_a_whole_program_field() {
+        let program = crate::Engine::specialize(
+            "function C(){} C.prototype.k = 7; function f(a){ let s = 0; for (let i = 0; i < 8; i++) { s = (s + a[i & 1].k) | 0; } return s; } f([new C(), new C()]);",
+            "frozen-field-lower.js").unwrap();
+        let module = lower_native_js_module(&program, "frozen_field").unwrap();
+        let ir = module.functions.iter().filter_map(|function| match function {
+            NativeFunction::Definition { function, .. } => Some(function.display().to_string()),
+            NativeFunction::Import { .. } => None,
+        }).collect::<Vec<_>>().join("\n");
+        // 7 is a tagged Number (`0x7ffd_0000_0000_0007`); the read-site guard compares the
+        // live slot with exactly that word.
+        assert!(ir.contains("0x7ffd_0000_0000_0007"),
+            "the expected field value is embedded:\n{ir}");
+        assert!(ir.contains("icmp eq"), "the read-site guard compares the live slot:\n{ir}");
+    }
 
     #[test]
     fn native_objects_include_entry_and_deferred_functions_in_js_and_ts() {

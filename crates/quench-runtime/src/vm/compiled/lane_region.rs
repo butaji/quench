@@ -2448,6 +2448,7 @@ impl Lowering<'_, '_> {
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
                 let value = self.load_capture(state, pc, instruction, exit, None, true);
+                let value = self.frozen_capture(pc, value, exit);
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
@@ -2456,6 +2457,7 @@ impl Lowering<'_, '_> {
                 && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
                 let exit = self.guard_exit(state, pc32);
                 let value = self.capture_get(instruction, exit);
+                let value = self.frozen_capture(pc, value, exit);
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
@@ -3569,6 +3571,7 @@ impl Lowering<'_, '_> {
                     Some(self.builder.use_var(read.value))
                 } else { None };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee, rooted);
+                let value = self.frozen_capture(pc, value, exit);
                 let int32 = self.capture_int32_use(pc, &boundaries);
                 (value, int32)
             } else {
