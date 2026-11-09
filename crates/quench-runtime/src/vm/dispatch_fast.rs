@@ -8072,6 +8072,7 @@ script_handler! {
             LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
             LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
             LoopAttempt::Leave(next) => next,
+            LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
         }
     }
 }
@@ -8100,6 +8101,8 @@ enum LoopAttempt {
     At(Ip),
     /// Return this from the handler: an exit, or a safepoint's continuation.
     Leave(Ip),
+    /// Continue in the activation this completion resumes.
+    Resumed(Resumed),
 }
 
 /// Runs `site`'s region on `r` from its `header` record, reached at `record` (the backward
@@ -8140,6 +8143,8 @@ fn lane_loop_native<H: Host>(
             None => exit(at(pc)),
         }),
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
+        LoopContinuation::Completed(pc, value) =>
+            LoopAttempt::Resumed(lane_return_value_general::<H>(cx, at(pc), value)),
     }
 }
 
@@ -8185,6 +8190,7 @@ script_handler! {
                 LoopAttempt::Declined => {}
                 LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
                 LoopAttempt::Leave(next) => return next,
+                LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
             }
         }
         lane_at_header!(cx, r, ip, site)
@@ -8281,6 +8287,8 @@ enum LoopContinuation {
     Safepoint,
     /// The region's code compiles: take the jump, which declines nothing.
     Compiling,
+    /// The region completed its activation with this value at this record.
+    Completed(u32, Value),
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -8301,7 +8309,7 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        lane_loop_compile(cx, r, site, region, entry, &mut tier);
+        lane_loop_compile(cx, site, region, &mut tier);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -8339,7 +8347,7 @@ fn lane_loop_run<H: Host>(
                 site.entry_guard_misses
                     .set(site.entry_guard_misses.get().saturating_add(1));
             }
-            LoopOutcome::Resume(_) => {
+            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
@@ -8435,7 +8443,7 @@ fn lane_loop_run<H: Host>(
                 publication.retire();
                 return LoopContinuation::Exit(pc);
             }
-            LoopOutcome::NotEntered(_) | LoopOutcome::Terminated => {}
+            LoopOutcome::NotEntered(_) | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
     }
     match outcome {
@@ -8456,6 +8464,10 @@ fn lane_loop_run<H: Host>(
             }
             publication.retire();
             LoopContinuation::Exit(pc)
+        }
+        LoopOutcome::Returned { pc, value } => {
+            site.note_run(entry.backedge_count());
+            LoopContinuation::Completed(pc, value)
         }
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }

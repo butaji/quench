@@ -27,7 +27,6 @@
 //! array element storage, refreshing all aliased entry views before native code continues.
 //! Collection debt exits with live values restored before the VM can collect. Other effect
 //! boundaries exit before their effects.
-#![allow(dead_code)]
 
 use crate::bytecode::{
     Class, FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
@@ -36,15 +35,9 @@ use crate::bytecode::{
 use crate::compile::liveness::RegisterSet;
 use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
-use cranelift_codegen::ir;
-use super::typed_ir::{Representation, Type};
+use super::typed_ir::Type;
 use super::NativeFieldLoad;
-use oxc_ast::ast::{BinaryOperator, UnaryOperator};
-
-/// The most iterations an innermost nested counted loop's proved copy runs between its
-/// enclosing loop's polls (`Lowering::polls_skipped`): at a few dozen instructions each,
-/// a termination request waits on the order of a millisecond.
-const POLL_FREE_TRIPS: i64 = 1 << 16;
+use oxc_ast::ast::UnaryOperator;
 
 /// The most instructions a region spans. Native code polls termination only at backward
 /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
@@ -76,6 +69,10 @@ pub(crate) enum LoopOutcome {
     /// As `Exit`, at an append whose reserve needs the VM, including collection debt
     /// (`RegionExit::Grow`).
     Grow(u32),
+    /// The region completed its activation with `value` at the record `pc`: a `Return`
+    /// inside the loop, or a returning call. The lane completes the activation as its own
+    /// body would (`lane_return_value_general`), which is not an exit.
+    Returned { pc: u32, value: Value },
     /// Termination was requested while the code ran: its poll faulted, so registers may
     /// hold values of an unfinished iteration, which nothing reads before the request ends
     /// the execution.
@@ -117,21 +114,6 @@ const WIDENINGS: [fn(u16) -> Widening; 7] = [
 const _: () = assert!(1_u64 << (u16::BITS as usize + WIDENINGS.len() - 1) <= u32::MAX as u64);
 
 impl Widening {
-    /// The not-entered word of an entry guard's widening.
-    fn code(self) -> u32 {
-        let (kind, payload) = match self {
-            Self::Register(payload) => (0, payload),
-            Self::Capture(payload) => (1, payload),
-            Self::Unit(payload) => (2, payload),
-            Self::Field(payload) => (3, payload),
-            Self::Elements(payload) => (4, payload),
-            Self::Kind(payload) => (5, payload),
-            Self::Bounded(payload) => (6, payload),
-        };
-        debug_assert!(WIDENINGS[kind](payload) == self);
-        ((1_u64 << (u16::BITS as usize + kind)) | u64::from(payload)) as u32
-    }
-
     fn decode(word: u64) -> Option<Self> {
         let kind = (word >> u16::BITS).checked_ilog2()? as usize;
         WIDENINGS.get(kind).map(|widening| widening((word & WIDEN_PAYLOAD) as u16))
@@ -169,9 +151,6 @@ pub(crate) struct LoopRegion {
     numbers: Vec<Register>,
     /// Registers with a tagged value lifetime; each web owns its representation.
     tagged: Vec<Register>,
-    /// Per-value roles when an overwritten physical slot carries unrelated types.
-    /// The original slots and PCs remain the authority for entry and recovery.
-    lifetime_roles: Option<LifetimeRoles>,
     /// The arrays, in entry-record order. Entry admits one the region writes only when it is
     /// dense (`Vm::dense_array_length`), owns its backing alone, and no prototype of it holds
     /// an index (`Vm::prototypes_hold_no_index`).
@@ -208,19 +187,12 @@ pub(crate) struct LoopRegion {
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
     constants: std::collections::BTreeMap<usize, f64>,
-    /// Tagged constants the region moves, by constant index.
-    tagged_constants: std::collections::BTreeMap<usize, Value>,
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it; for an inlining region, by its own PCs (`Inlining`). A plain
     /// region shares its function's masks (`ResidualProgram::shared_register_root_masks`).
     live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub(crate) inlining: Option<Box<Inlining>>,
-}
-
-struct LifetimeRoles {
-    tagged_entries: std::collections::BTreeSet<Register>,
-    tagged_definitions: std::collections::BTreeSet<u32>,
 }
 
 impl LoopRegion {
@@ -230,37 +202,10 @@ impl LoopRegion {
     /// The cached field reads, by offset from the header: the lane specializer's field
     /// sites, mapped from the observation's descriptors.
     pub(crate) fn field_reads(&self) -> &std::collections::BTreeMap<u32, usize> { &self.field_reads }
-    fn tagged_entry(&self, register: Register) -> bool {
-        self.lifetime_roles.as_ref().map_or_else(
-            || self.tagged.contains(&register),
-            |roles| roles.tagged_entries.contains(&register),
-        )
-    }
-
-    fn tagged_definition(&self, offset: u32) -> bool {
-        self.lifetime_roles.as_ref().map_or_else(
-            || self.instructions[offset as usize].defined_register()
-                .is_some_and(|register| self.tagged.contains(&register) || self.dynamic_arrays.contains(&register)),
-            |roles| roles.tagged_definitions.contains(&offset),
-        )
-    }
-
     /// Whether native code reads the heap itself, through the entry's heap views
     /// (`LoopEntry::push_native_heap`): a dynamic field read or a dynamic array.
     pub(crate) fn reads_heap_natively(&self) -> bool {
         !self.dynamic_field_reads.is_empty() || !self.dynamic_arrays.is_empty()
-    }
-
-    /// The entry word the heap views start at: after the captures, fields, arrays and field
-    /// store slots.
-    fn native_heap_word(&self) -> usize {
-        ENTRY_CAPTURES + self.captures.len() + self.fields.len() + ARRAY_WORDS * self.arrays.len() + self.field_store_sites.len()
-    }
-
-    /// The entry word of an inlining region's scratch registers' address: after the heap
-    /// views, where native code reads the heap.
-    fn scratch_word(&self) -> usize {
-        self.native_heap_word() + if self.reads_heap_natively() { NATIVE_HEAP_WORDS } else { 0 }
     }
 
     pub(crate) fn is_dynamic_field(&self, index: usize) -> bool {
@@ -280,11 +225,6 @@ impl LoopRegion {
     /// An entry-pinned own Number field whose writes update its SSA cell. A field every read
     /// of which loads from the heap (`dynamic_field_reads`) needs none: its reads see its stores
     /// there, under the type its slots have held (`NativeFieldLoad::ty`).
-    fn is_field_cell(&self, index: usize) -> bool {
-        self.field_store_sites.iter().any(|store| store.matches(&self.fields[index]))
-            && self.field_reads.iter().any(|(offset, field)| *field == index && !self.dynamic_field_reads.contains_key(offset))
-    }
-
     pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
         self.instructions
             .iter()
@@ -506,9 +446,6 @@ impl FieldStore {
 #[derive(Clone, Copy)]
 struct IdentityBranch {
     register: Register,
-    constant: Value,
-    negated: bool,
-    loose_nullish: bool,
 }
 
 /// A nullish comparison branch that can be emitted from the tagged value word. Strict
@@ -518,7 +455,7 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     if !instruction.op().is_jump_binary_false() {
         return None;
     }
-    let (strict, negated) =
+    let (strict, _) =
         super::super::operations::equality_operator(instruction.binary_operator_field())?;
     let (register, constant) = match (instruction.operand_b().kind()?, instruction.operand_c().kind()?) {
         (OperandKind::Register, OperandKind::Constant) => (
@@ -532,25 +469,8 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
         _ => return None,
     };
     let nullish_constant = constant.is_null() || constant.is_undefined();
-    nullish_constant.then_some(IdentityBranch {
-        register,
-        constant,
-        negated,
-        loose_nullish: !strict,
-    })
-}
-
-/// Registers whose bytecode definitions must stay tagged because a nullish comparison
-/// branch observes them. Propagate that fact along moves and through constants; other
-/// definitions need a general value denotation before they can be admitted.
-#[cfg(test)]
-fn tagged_registers(
-    instructions: &[WideInstruction],
-    constants: &[Value],
-    held: &std::collections::BTreeSet<Register>,
-    header: u32,
-) -> Option<std::collections::BTreeSet<Register>> {
-    tagged_registers_with_failure(instructions, constants, held, &std::collections::BTreeSet::new(), header).ok()
+    let _ = strict;
+    nullish_constant.then_some(IdentityBranch { register })
 }
 
 fn tagged_registers_with_failure(
@@ -748,11 +668,11 @@ fn tagged_registers_with_failure(
 /// from, its receiver the caller's.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum InlineGuard {
-    Field(usize),
+    Field,
     /// The callee's read at this region offset, kept in the region because its receiver
     /// changes in the loop: native code compares its value with the callee right after it,
     /// leaving before the read where it differs (`Lowering::instruction`).
-    AtRead(u32),
+    AtRead,
     /// A depth-zero plain capture, checked by the VM at every native entry.
     Capture(u16),
 }
@@ -793,6 +713,7 @@ pub(crate) enum Origin {
     /// The instruction at `pc` of `frame`'s callee.
     Inlined { frame: u16, pc: u32 },
     /// No instruction: a jump leaving the region, which the caller continues at this PC.
+    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Leave(u32),
 }
 
@@ -1161,7 +1082,7 @@ pub(super) fn inline_region<'a>(
                     window,
                     arguments: argc,
                     result: instruction.result_register(),
-                    guard: capture.map_or(InlineGuard::Field(usize::MAX), InlineGuard::Capture),
+                    guard: capture.map_or(InlineGuard::Field, InlineGuard::Capture),
                     receiver,
                     base,
                     registers: callee.registers,
@@ -1374,8 +1295,8 @@ pub(super) fn inline_region<'a>(
     let mut frames = Vec::with_capacity(calls.len());
     for (call_pc, site) in calls.into_iter() {
         let mut frame = site.frame;
-        if let Some(read) = checked_reads.get(&call_pc) {
-            frame.guard = InlineGuard::AtRead(caller_flat[(*read - header) as usize] - header);
+        if checked_reads.contains_key(&call_pc) {
+            frame.guard = InlineGuard::AtRead;
             frames.push(frame);
             continue;
         }
@@ -1396,7 +1317,7 @@ pub(super) fn inline_region<'a>(
         if let FieldReceiver::Register(register) = path.root {
             (!defines(register)).then_some(())?;
         }
-        frame.guard = InlineGuard::Field(intern_field(&mut region.fields, &path, true));
+        frame.guard = InlineGuard::Field;
         frames.push(frame);
     }
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
@@ -1429,18 +1350,6 @@ impl LoopRegion {
         // An inlining region's liveness is by its own PCs, from the header.
         let index = if self.inlining.is_some() { (pc - self.header) as usize } else { pc as usize };
         live.is_live(index, register)
-    }
-
-    /// The PC native code reports for leaving at region PC `pc`: the caller's, or an inlined
-    /// callee instruction's region PC marked `INLINED_EXIT`.
-    fn exit_pc(&self, pc: u32) -> u32 {
-        let Some(inlining) = &self.inlining else {
-            return pc;
-        };
-        match inlining.origins[(pc - self.header) as usize] {
-            Origin::Caller(caller) | Origin::Leave(caller) => caller,
-            Origin::Inlined { .. } => pc | INLINED_EXIT,
-        }
     }
 
     /// The field whose value `register` holds at every read, when it is one the region
@@ -1484,7 +1393,6 @@ pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
 pub(super) const ENTRY_CAPTURES: usize = 1;
-const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
 pub(super) const ARRAY_WORDS: usize = 3;
@@ -1492,8 +1400,6 @@ const FIELD_STORE_WORDS: usize = 1;
 /// The heap views native reads use (`LoopEntry::push_native_heap`): the object records'
 /// base, the property values' base and count, and the array records' base.
 const NATIVE_HEAP_WORDS: usize = 4;
-/// The heap view word of the array records' base, from the first heap view word.
-const NATIVE_HEAP_ARRAYS: usize = 3;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
@@ -1629,14 +1535,6 @@ impl LoopEntry {
     }
 }
 
-/// How an instruction of the region names a value it reads.
-#[derive(Clone, Copy)]
-enum Source {
-    Register(Register),
-    Number(f64),
-    Tagged(Value),
-}
-
 /// The arithmetic and comparison a region lowers, by the operator's tag.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arithmetic {
@@ -1767,13 +1665,10 @@ impl Admission<'_> {
     }
 
     /// A Number operand: a register, noted as one, or a Number constant.
-    fn source(&mut self, operand: Operand) -> Option<Source> {
+    fn source(&mut self, operand: Operand) -> Option<()> {
         match operand.kind()? {
-            OperandKind::Register => {
-                self.number(operand.payload())?;
-                Some(Source::Register(operand.payload()))
-            }
-            OperandKind::Constant => Some(Source::Number(self.constant(usize::from(operand.payload()))?)),
+            OperandKind::Register => self.number(operand.payload()).map(|_| ()),
+            OperandKind::Constant => self.constant(usize::from(operand.payload())).map(|_| ()),
             OperandKind::Field | OperandKind::Local => None,
         }
     }
@@ -1885,12 +1780,12 @@ fn admit_lifetime_roles(
     let mut flow = LoopRegion {
         header, backedge: header + instructions.len() as u32 - 1,
         numbers: (0..registers).map(|register| register as Register).collect(),
-        tagged: Vec::new(), lifetime_roles: None, arrays: Vec::new(), captures: Vec::new(),
+        tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
         dynamic_arrays: BTreeSet::new(),
         field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
         identity_branches: BTreeMap::new(), instructions, constants: BTreeMap::new(),
-        tagged_constants: BTreeMap::new(), live, inlining: None,
+        live, inlining: None,
     };
     let values = webs(&flow);
     // A temporary receiver may be copied from an entry array, but its backing view
@@ -2001,16 +1896,6 @@ fn admit_lifetime_roles(
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
             }
         }).ok()?;
-    let tagged_entries = (0..flow.entry_count()).filter_map(|entry| {
-        region.tagged.contains(identities.get(&values.find(entry))?)
-            .then(|| flow.entry_register(entry)).flatten()
-    }).collect();
-    let tagged_definitions = region.instructions.iter().enumerate().filter_map(|(offset, instruction)| {
-        // A dynamic array's values are tagged too (`LoopRegion::dynamic_arrays`).
-        instruction.defined_register()
-            .filter(|register| region.tagged.contains(register) || region.dynamic_arrays.contains(register))
-            .map(|_| offset as u32)
-    }).collect();
     let tagged: BTreeSet<Register> = region.tagged.iter().map(|register| original[usize::from(*register)]).collect();
     region.numbers = region.numbers.iter().map(|register| original[usize::from(*register)])
         .filter(|register| !tagged.contains(register)).collect::<BTreeSet<_>>().into_iter().collect();
@@ -2037,7 +1922,6 @@ fn admit_lifetime_roles(
         }).collect();
     region.instructions = canonical;
     region.live = flow.live.take();
-    region.lifetime_roles = Some(LifetimeRoles { tagged_entries, tagged_definitions });
     Some(region)
 }
 
@@ -2394,7 +2278,6 @@ fn admit_register_roles(
         backedge,
         numbers,
         tagged,
-        lifetime_roles: None,
         arrays,
         captures: admission.captures,
         fields: admission.fields,
@@ -2408,7 +2291,6 @@ fn admit_register_roles(
         identity_branches,
         instructions,
         constants: admission.numbers,
-        tagged_constants: admission.values,
         live,
         inlining: None,
     })
@@ -2621,26 +2503,8 @@ fn admit(
 /// The values a compilation starts from: what the region's registers and captures held when
 /// it compiled, and what earlier compilations found was no `i32` (`Widening`).
 pub(crate) struct Observation<'a> {
-    /// JIT observations refine representation; AOT has no execution to observe.
-    /// Absence retains the full Number domain and cannot prove a constant value.
-    pub(crate) register: Option<&'a dyn Fn(Register) -> Value>,
-    /// Whether the array in a register looks to hold `i32` elements.
-    pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
-    /// Whether the array in a register holds only int32s now, so that entry may prove it
-    /// with one load (`Lowering::prove_int32_kinds`).
-    pub(crate) only_int32: &'a dyn Fn(Register) -> bool,
-    pub(crate) captures: &'a [Value],
-    /// The fields' values at the entry the compilation follows, in the region's order.
-    pub(crate) fields: &'a [Value],
     /// Holderless out-of-line own-data shapes the native OSR field reader may load directly.
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
-    pub(crate) widened: &'a std::collections::BTreeSet<Widening>,
-}
-
-/// How native code holds the values the entry record carries, by their record order.
-struct EntryRepresentations {
-    captures: Vec<Representation>,
-    fields: Vec<Representation>,
 }
 
 /// A definition of a tracked register: its value at entry, by its index in
@@ -2688,12 +2552,6 @@ impl Webs {
             .and_then(|definitions| definitions.first().copied())
             .unwrap_or_else(entry);
         self.find(definition)
-    }
-
-    fn checked_read(&self, region: &LoopRegion, pc: u32, register: Register) -> Option<Definition> {
-        let definition = *self.reaching.get((pc - region.header) as usize)?
-            .get(&register)?.first()?;
-        Some(self.find(definition))
     }
 
     /// The register a web's definitions write: every definition reaching a common read
@@ -2916,1023 +2774,7 @@ fn webs(region: &LoopRegion) -> Webs {
 /// operands) and no widening names it; the least fixpoint from that start, widening a web
 /// any definition gives an `f64`. Webs are indexed by definition, meaningful at each web's
 /// root.
-fn representations(
-    region: &LoopRegion,
-    webs: &Webs,
-    observation: &Observation<'_>,
-) -> (Vec<Representation>, EntryRepresentations) {
-    let of = |value: Value, widening: Widening| {
-        if value.as_int().is_some() && !observation.widened.contains(&widening) {
-            Representation::Int32
-        } else {
-            Representation::Float64
-        }
-    };
-    let captures: Vec<Representation> = (0..region.captures.len())
-        .map(|index| {
-            // A slot shared with a numeric load retains its Number guard; boxing that
-            // number for a tagged load is safe, but unboxing an arbitrary capture is not.
-            let slot = region.captures[index];
-            if region.instructions.iter()
-                .enumerate()
-                .filter(|(_, instruction)| instruction.op().is_load_capture() && instruction.capture_slot() == slot)
-                .all(|(offset, _)| region.tagged_definition(offset as u32))
-            {
-                return Representation::Tagged;
-            }
-            let value = observation.captures.get(index).copied().unwrap_or(Value::UNDEFINED);
-            of(value, Widening::Capture(index as u16))
-        })
-        .collect();
-    let fields: Vec<Representation> = region
-        .fields
-        .iter()
-        .enumerate()
-        .map(|(index, field)| {
-            if field.tagged {
-                return Representation::Tagged;
-            }
-            // Entry observations do not bound future stores. Keep the full
-            // Number domain until a field-cell range analysis proves otherwise.
-            if region.is_field_cell(index) {
-                return Representation::Float64;
-            }
-            // A field read through the heap holds what every value its slots have held does
-            // (`NativeFieldLoad::representation`); the entry word observes only one.
-            let widening = Widening::Field(index as u16);
-            if let Some(loads) = observation.native_field_loads.get(index).filter(|loads| !loads.is_empty()) {
-                let int32 = loads.iter().all(|load| load.ty.is_subtype(Type::INT32));
-                return if int32 && !observation.widened.contains(&widening) { Representation::Int32 } else { Representation::Float64 };
-            }
-            let value = observation.fields.get(index).copied().unwrap_or(Value::UNDEFINED);
-            of(value, widening)
-        })
-        .collect();
-    let entry = EntryRepresentations { captures, fields };
-    let mut webs_representation = vec![Representation::Int32; webs.parent.len()];
-    for (entry, register) in region.entry_registers().enumerate() {
-        let representation = if region.tagged_entry(register) {
-            Representation::Tagged
-        } else {
-            observation.register.map_or(Representation::Float64, |read| {
-                of(read(register), Widening::Register(register))
-            })
-        };
-        if webs.entry_read[entry] {
-            webs_representation[webs.find(entry)] = representation;
-        }
-    }
-    // A region-defined receiver of a field read holds an object (`Lowering::dynamic_field`),
-    // as a dynamic array does (`Lowering::dynamic_array`), and so does each value moved into
-    // one.
-    for (offset, instruction) in region.instructions.iter().enumerate() {
-        let pc = region.header + offset as u32;
-        let Some(object) = object_reads(*instruction) else {
-            continue;
-        };
-        let dynamic = match instruction.op() {
-            Op::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
-            _ => region.dynamic_arrays.contains(&object),
-        };
-        if dynamic {
-            webs_representation[webs.read(region, pc, object)] = Representation::Tagged;
-        }
-    }
-    loop {
-        let mut changed = false;
-        for (offset, instruction) in region.instructions.iter().enumerate() {
-            let pc = region.header + offset as u32;
-            if !instruction.op().is_move() || webs_representation[webs.defined(region, pc)] != Representation::Tagged {
-                continue;
-            }
-            let source = webs.read(region, pc, instruction.register_b());
-            if webs_representation[source] != Representation::Tagged {
-                webs_representation[source] = Representation::Tagged;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    loop {
-        let mut changed = false;
-        for (offset, instruction) in region.instructions.iter().enumerate() {
-            if !webs.reachable[offset] {
-                continue;
-            }
-            let pc = region.header + offset as u32;
-            let read = |register: Register| webs_representation[webs.read(region, pc, register)];
-            let Some((register, representation)) =
-                definition(region, offset as u32, instruction, &read, &entry, observation)
-            else {
-                continue;
-            };
-            let representation = if representation != Representation::Tagged
-                && observation.widened.contains(&Widening::Register(register)) {
-                Representation::Float64
-            } else {
-                representation
-            };
-            let web = webs.defined(region, pc);
-            if representation == Representation::Tagged
-                && webs_representation[web] != Representation::Tagged
-            {
-                webs_representation[web] = Representation::Tagged;
-                changed = true;
-            } else if representation == Representation::Float64
-                && webs_representation[web] == Representation::Int32
-            {
-                webs_representation[web] = Representation::Float64;
-                changed = true;
-            }
-        }
-        if !changed {
-            return (webs_representation, entry);
-        }
-    }
-}
-
-/// The shared typed SSA certificate. Only verification constructs it, and every
-/// lowering of this shared region IR consumes it before choosing machine code.
-fn definition(
-    region: &LoopRegion,
-    offset: u32,
-    instruction: &WideInstruction,
-    registers: &dyn Fn(Register) -> Representation,
-    entry: &EntryRepresentations,
-    observation: &Observation<'_>,
-) -> Option<(Register, Representation)> {
-    if let Some(result) = instruction.defined_register()
-        && region.tagged_definition(offset)
-    {
-        return Some((result, Representation::Tagged));
-    }
-    let source = |operand: Operand| match operand.kind() {
-        Some(OperandKind::Register) => registers(operand.payload()),
-        _ => match region.constants.get(&usize::from(operand.payload())) {
-            Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
-            _ => Representation::Float64,
-        },
-    };
-    let both = |left: Representation, right: Representation| {
-        if left == Representation::Int32 && right == Representation::Int32 {
-            Representation::Int32
-        } else {
-            Representation::Float64
-        }
-    };
-    let representation = match instruction.op() {
-        Op::LoadConst => {
-            let index = instruction.constant_index();
-            match region.constants.get(&index) {
-                Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
-                _ => Representation::Float64,
-            }
-        }
-        Op::Move | Op::IncDec | Op::ToNumeric => registers(instruction.register_b()),
-        Op::LoadCapture => {
-            let slot = instruction.capture_slot();
-            let index = region.captures.iter().position(|capture| *capture == slot)?;
-            entry.captures[index]
-        }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-            match arithmetic(instruction.op(), instruction.binary_operator())? {
-                Arithmetic::Float(NumberArithmetic::Divide) | Arithmetic::Remainder => Representation::Float64,
-                Arithmetic::Float(_) => {
-                    both(source(instruction.operand_b()), source(instruction.operand_c()))
-                }
-                Arithmetic::Int32(NumberBitwise::ShiftRightUnsigned) => Representation::Float64,
-                Arithmetic::Int32(_) => Representation::Int32,
-            }
-        }
-        Op::Unary => match unary(instruction.op(), instruction.unary_operator())? {
-            Unary::Number(_) => registers(instruction.register_b()),
-            Unary::BitwiseNot => Representation::Int32,
-        },
-        Op::GetIndex => element_representation(instruction, observation),
-        Op::GetField => entry.fields[*region.field_reads.get(&offset)?],
-        // Environment loads are dynamically checked at the exact instruction. Keep a
-        // numeric web in Float64 form so a changed/non-Number local falls back before use.
-        Op::LoadEnvLocal => Representation::Float64,
-        _ => return None,
-    };
-    Some((instruction.result_register(), representation))
-}
-
-/// The representation of what `GetIndex` reads: an `i32` from an array that looks to hold
-/// them and no earlier compilation widened.
-fn element_representation(instruction: &WideInstruction, observation: &Observation<'_>) -> Representation {
-    match instruction.operand_b().register_index() {
-        Some(base)
-            if (observation.int32_elements)(base)
-                && !observation.widened.contains(&Widening::Elements(base)) =>
-        {
-            Representation::Int32
-        }
-        _ => Representation::Float64,
-    }
-}
-
-/// The largest step and offset a counted loop's proof takes (`Affine`). Entry values are
-/// `i32`s and trip counts stay below 2^34, so with terms this small a value's own part
-/// stays below 2^60; an invariant addend (`Term`) is an `i32` sum or a product of two such
-/// values, below 2^62.1, so every `i64` the proof computes (`Lowering::proof`) stays below
-/// 2^63.
-const MAX_AFFINE_TERM: i64 = 1 << 24;
-
-/// What an affine value of a counted loop's body counts from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Base {
-    /// Zero: the value is its offset.
-    Constant,
-    /// A capture, by its index in the region's capture order; no region instruction writes
-    /// one.
-    Capture(usize),
-    /// The register's value where the iteration starts, at the loop's header.
-    Start(Register),
-    /// A loop-invariant sum or product (`CountedLoop::terms`), by its index.
-    Term(usize),
-}
-
-/// A value every iteration of a counted loop computes alike from values the body never
-/// writes: the sum or the product of two invariant values, none of them a product, so the
-/// proof evaluates it once, exactly, from the values arriving at the header.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Term {
-    multiply: bool,
-    left: Affine,
-    right: Affine,
-}
-
-/// A value of a counted loop's body: its base's value in the iteration plus `offset`,
-/// plus the value of an invariant `addend` (a capture, a register the body never writes,
-/// or a `Term`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Affine {
-    base: Base,
-    offset: i64,
-    addend: Option<Base>,
-}
-
-impl Affine {
-    fn of(base: Base) -> Self {
-        Self { base, offset: 0, addend: None }
-    }
-
-    fn plus(self, amount: i64) -> Option<Self> {
-        let offset = self.offset.checked_add(amount)?;
-        (offset.abs() <= MAX_AFFINE_TERM).then_some(Self { offset, ..self })
-    }
-}
-
-/// A counted loop continues while its tested value is at most, or at least, its bound.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Continue {
-    AtMost,
-    AtLeast,
-}
-
-/// What a fact proves of the value an instruction of a counted loop computes, over every
-/// iteration that executes it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Bound {
-    /// The key of an access lies within the length of the array in this register, so the
-    /// access needs no bounds guard.
-    Index(Register),
-    /// The `i32` sum is exact, so the arithmetic needs no overflow guard.
-    Int32,
-    /// The invariant product (`Term`) is an `i32` and no -0, so the multiplication needs no
-    /// guard.
-    Product,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Fact {
-    pc: u32,
-    value: Affine,
-    bound: Bound,
-}
-
-/// An array as native code indexes it: its element pointer and how its length is known.
-#[derive(Clone, Copy)]
-struct ArrayView {
-    identity: ir::Value,
-    elements: ir::Value,
-    /// An entry array's first entry word, which a backing relocation refreshes
-    /// (`LoopEntry::refresh_array_backing`); `None` for a dynamic array, read from its record.
-    entry_index: Option<usize>,
-    access: ArrayAccess,
-}
-
-#[derive(Clone, Copy)]
-enum ArrayAccess {
-    /// A read array keeps the length the entry read: only a written array's appends extend
-    /// a length, so one aliasing a written array reads the elements it read at entry or
-    /// exits for the general path.
-    Read { length: ir::Value },
-    /// A written array's length is its backing's, which an append within `capacity`
-    /// advances (`Lowering::store_index`): every array of one backing reads it alike.
-    Written,
-    /// A dynamic array a store writes (`Lowering::dynamic_array`): the backing's length as
-    /// the access read it, below which a store replaces a present element and appends
-    /// nothing.
-    InBounds { length: ir::Value },
-}
-
-/// An element index as an access uses it: a 64-bit index scaled by the element size, plus a
-/// constant byte displacement.
-#[derive(Clone, Copy)]
-struct ElementIndex {
-    wide: ir::Value,
-    displacement: i32,
-}
-
-/// A counted loop of a region: a loop whose body, header to backward jump, reaches the test
-/// that leaves it on every path and otherwise branches only forward within itself, and
-/// whose test compares an induction variable with a bound the body leaves unchanged on
-/// every path. Every arrival at its header from outside it runs the proof of
-/// its facts (`Lowering::proof`), which selects the copy of the body without their guards
-/// or the copy with them.
-#[derive(Clone, Debug)]
-struct CountedLoop {
-    header: u32,
-    backedge: u32,
-    test: u32,
-    /// The test continues while `induction` is `relation` to `bound`.
-    induction: Affine,
-    relation: Continue,
-    bound: Affine,
-    /// Each register's change per iteration, for each register the body changes by a
-    /// constant; a register the body never writes changes by zero.
-    steps: std::collections::BTreeMap<Register, i64>,
-    /// The invariant sums and products `Base::Term` names.
-    terms: Vec<Term>,
-    facts: Vec<Fact>,
-}
-
-impl CountedLoop {
-    fn contains(&self, pc: u32) -> bool {
-        (self.header..=self.backedge).contains(&pc)
-    }
-
-    /// How much a fact's base changes per iteration (`counted_loop` keeps only facts whose
-    /// bases change by a constant).
-    fn base_step(&self, base: Base) -> i64 {
-        match base {
-            Base::Start(register) => self.steps.get(&register).copied().unwrap_or(0),
-            Base::Constant | Base::Capture(_) | Base::Term(_) => 0,
-        }
-    }
-
-    /// Whether the proved copy drops the guard of the instruction at `pc`.
-    fn proves(&self, pc: u32) -> bool {
-        self.facts.iter().any(|fact| fact.pc == pc)
-    }
-}
-
-/// The counted loops of `region`, each with the facts its proof can establish under the
-/// compilation's representations: a fact needs every value it names held as an `i32`.
-/// The values an `i32` may take, both bounds included.
-type Range = (i64, i64);
-/// Every `i32`.
-const INT32_RANGE: Range = (i32::MIN as i64, i32::MAX as i64);
-/// How often a web's range may grow before it is taken to be every `i32`: a loop-carried
-/// value that keeps growing (a sum of itself) would otherwise grow by one step per pass.
-const MAX_RANGE_GROWTH: u8 = 4;
-
-/// What the region knows of its `i32` arithmetic before lowering it (`int32_facts`).
-#[derive(Default)]
-struct Int32Facts {
-    /// The PCs whose sum, difference or product of `i32`s is an `i32` for every value its
-    /// operands can hold, so it needs no overflow guard.
-    exact: std::collections::BTreeSet<u32>,
-    /// The PCs of products whose zero needs no sign: no factor is ever negative, or every
-    /// read of the product treats -0 as +0 and no leave writes it back.
-    signless_zero: std::collections::BTreeSet<u32>,
-    /// The PCs of sums, differences and exact products every read of which takes ToInt32 of them (a
-    /// bitwise operand, or an operand of another such sum) and no leave writes back: the
-    /// wrapped `i32` is the exact result modulo 2^32, which is all any read observes, so it
-    /// needs no overflow guard. An exit's write-back gives the interpreter that `i32`, which
-    /// its same reads observe alike.
-    truncated: std::collections::BTreeSet<u32>,
-    /// Each web's range, which the facts above are drawn from (`entry_bounds` reads them).
-    ranges: Vec<Option<Range>>,
-    /// The entry registers whose bound the ranges assume, which the entry checks
-    /// (`entry_bounds`, `Lowering::enter`).
-    bounds: std::collections::BTreeMap<Register, i64>,
-}
-
-/// The range of an operation's exact result from its operands' ranges; `None` while an
-/// operand's range is not known yet. An operation it does not bound may give any `i32`.
-fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option<Range>, register: &dyn Fn(Register) -> Option<Range>, constants: &std::collections::BTreeMap<usize, f64>) -> Option<Range> {
-    use super::super::operations::NumberBitwise as Bitwise;
-    let constant = |operand: Operand| match operand.kind() {
-        Some(OperandKind::Constant) => constants.get(&usize::from(operand.payload())).copied().filter(|number| crate::vm::compiled::facts::is_int32_number(*number)).map(|number| number as i64),
-        _ => None,
-    };
-    let corners = |(a, b): Range, (c, d): Range, f: fn(i64, i64) -> i64| {
-        let values = [f(a, c), f(a, d), f(b, c), f(b, d)];
-        (*values.iter().min().expect("four corners"), *values.iter().max().expect("four corners"))
-    };
-    Some(match instruction.op() {
-        Op::LoadConst => {
-            match constants.get(&instruction.constant_index()) {
-                Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => (*number as i64, *number as i64),
-                _ => INT32_RANGE,
-            }
-        }
-        Op::Move | Op::ToNumeric => register(instruction.register_b())?,
-        Op::IncDec => {
-            let (low, high) = register(instruction.register_b())?;
-            let step = if instruction.boolean_flag() == Some(true) { -1 } else { 1 };
-            (low + step, high + step)
-        }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-            let (left, right) = (operand(instruction.operand_b())?, operand(instruction.operand_c())?);
-            match arithmetic(instruction.op(), instruction.binary_operator()) {
-                Some(Arithmetic::Float(NumberArithmetic::Add)) => (left.0 + right.0, left.1 + right.1),
-                Some(Arithmetic::Float(NumberArithmetic::Subtract)) => (left.0 - right.1, left.1 - right.0),
-                Some(Arithmetic::Float(NumberArithmetic::Multiply)) => corners(left, right, |a, b| a * b),
-                Some(Arithmetic::Int32(Bitwise::And)) if left.0 >= 0 || right.0 >= 0 => {
-                    let high = [left, right].iter().filter(|range| range.0 >= 0).map(|range| range.1).min().expect("a nonnegative side");
-                    (0, high)
-                }
-                Some(Arithmetic::Int32(Bitwise::Or | Bitwise::Xor)) if left.0 >= 0 && right.0 >= 0 => {
-                    let high = left.1.max(right.1);
-                    (0, ((high + 1) as u64).next_power_of_two() as i64 - 1)
-                }
-                Some(Arithmetic::Int32(shift @ (Bitwise::ShiftLeft | Bitwise::ShiftRight))) => match constant(instruction.operand_c()) {
-                    // ToInt32 of a value in `left`, an `i32` range, is itself.
-                    Some(count) if left.0 >= INT32_RANGE.0 && left.1 <= INT32_RANGE.1 => {
-                        let count = (count & 31) as u32;
-                        match shift {
-                            Bitwise::ShiftRight => (left.0 >> count, left.1 >> count),
-                            _ => {
-                                let shifted = (left.0 << count, left.1 << count);
-                                // Left shift wraps modulo 2^32. A mathematical interval
-                                // crossing that boundary cannot be intersected with i32:
-                                // wrapped negatives (and their zero-product signs) survive.
-                                if shifted.0 >= INT32_RANGE.0 && shifted.1 <= INT32_RANGE.1 {
-                                    shifted
-                                } else {
-                                    INT32_RANGE
-                                }
-                            },
-                        }
-                    }
-                    _ => INT32_RANGE,
-                },
-                _ => INT32_RANGE,
-            }
-        }
-        _ => INT32_RANGE,
-    })
-}
-
-/// The range a read of `register` at `pc` sees: a non-`i32` web's ToInt32 may be any `i32`.
-fn register_range(
-    region: &LoopRegion,
-    webs: &Webs,
-    representations: &[Representation],
-    ranges: &[Option<Range>],
-    pc: u32,
-    register: Register,
-) -> Option<Range> {
-    let web = webs.read(region, pc, register);
-    if representations[web] == Representation::Int32 { ranges[web] } else { Some(INT32_RANGE) }
-}
-
-/// The range a read of `operand` at `pc` sees (`register_range`, or the constant's).
-fn operand_range(
-    region: &LoopRegion,
-    webs: &Webs,
-    representations: &[Representation],
-    ranges: &[Option<Range>],
-    pc: u32,
-    operand: Operand,
-) -> Option<Range> {
-    match operand.kind()? {
-        OperandKind::Register => register_range(region, webs, representations, ranges, pc, operand.payload()),
-        OperandKind::Constant => match region.constants.get(&usize::from(operand.payload())) {
-            Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Some((*number as i64, *number as i64)),
-            _ => Some(INT32_RANGE),
-        },
-        OperandKind::Field | OperandKind::Local => Some(INT32_RANGE),
-    }
-}
-
-/// The `i32` entry registers the region never writes that it checks once, at entry, within
-/// a bound: for each, the largest bound under which every product it is a factor of, with a
-/// factor of bounded range (`facts`, computed without bounds), is an `i32`, where the value
-/// it held when the region compiled lies within it and no earlier entry found it beyond. A
-/// product's range only narrows as its factors' do, so the facts drawn with the bounds hold.
-fn entry_bounds(
-    region: &LoopRegion,
-    webs: &Webs,
-    representations: &[Representation],
-    observation: &Observation<'_>,
-    facts: &Int32Facts,
-) -> std::collections::BTreeMap<Register, i64> {
-    let written: std::collections::BTreeSet<Register> =
-        region.instructions.iter().filter_map(|instruction| number_definition(*instruction)).collect();
-    let candidates: std::collections::BTreeMap<Register, Definition> = (0..region.entry_count())
-        .filter(|entry| webs.entry_read[*entry])
-        .filter_map(|entry| Some((region.entry_register(entry)?, webs.find(entry))))
-        .filter(|(register, web)| {
-            representations[*web] == Representation::Int32
-                && !written.contains(register)
-                && !observation.widened.contains(&Widening::Bounded(*register))
-        })
-        .collect();
-    let mut bounds: std::collections::BTreeMap<Register, i64> = std::collections::BTreeMap::new();
-    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
-        let pc = region.header + offset as u32;
-        if !webs.reachable[offset]
-            || facts.exact.contains(&pc)
-            || !instruction.op().is_binary_arithmetic()
-            || arithmetic(instruction.op(), instruction.binary_operator()) != Some(Arithmetic::Float(NumberArithmetic::Multiply))
-        {
-            continue;
-        }
-        let sides = [(instruction.operand_b(), instruction.operand_c()), (instruction.operand_c(), instruction.operand_b())];
-        for (factor, other) in sides {
-            let Some(register) = factor.register_index() else { continue };
-            if candidates.get(&register) != Some(&webs.read(region, pc, register)) {
-                continue;
-            }
-            let Some((low, high)) = operand_range(region, webs, representations, &facts.ranges, pc, other)
-                .filter(|range| *range != INT32_RANGE)
-            else {
-                continue;
-            };
-            let magnitude = low.abs().max(high.abs()).max(1);
-            let bound = i64::from(i32::MAX) / magnitude;
-            bounds.entry(register).and_modify(|existing| *existing = (*existing).min(bound)).or_insert(bound);
-        }
-    }
-    bounds.retain(|register, bound| {
-        observation.register.is_some_and(|read| read(*register).as_int()
-            .is_some_and(|value| i64::from(value).abs() <= *bound))
-    });
-    bounds
-}
-
-/// Each `i32` web's range and the arithmetic that needs no guard (`Int32Facts`): the least
-/// fixpoint of each definition's `exact_range`, clamped to the `i32`s its web holds, from the
-/// entry values, which may be any. A web whose range keeps growing takes every `i32`.
-fn int32_facts(
-    region: &LoopRegion,
-    webs: &Webs,
-    representations: &[Representation],
-    bounds: &std::collections::BTreeMap<Register, i64>,
-) -> Int32Facts {
-    let int32 = |web: Definition| representations[web] == Representation::Int32;
-    let mut ranges: Vec<Option<Range>> = vec![None; webs.parent.len()];
-    let mut growth = vec![0u8; webs.parent.len()];
-    for entry in 0..region.entry_count() {
-        if webs.entry_read[entry] {
-            // An entry the region checks within its bound holds no other value (`entry_bounds`).
-            let bound = region.entry_register(entry).and_then(|register| bounds.get(&register));
-            ranges[webs.find(entry)] = Some(bound.map_or(INT32_RANGE, |bound| (-bound, *bound)));
-        }
-    }
-    let register_range = |ranges: &[Option<Range>], pc: u32, register: Register| {
-        register_range(region, webs, representations, ranges, pc, register)
-    };
-    let operand_range = |ranges: &[Option<Range>], pc: u32, operand: Operand| {
-        operand_range(region, webs, representations, ranges, pc, operand)
-    };
-    loop {
-        let mut changed = false;
-        for (offset, instruction) in region.instructions.iter().copied().enumerate() {
-            if !webs.reachable[offset] {
-                continue;
-            }
-            let pc = region.header + offset as u32;
-            if number_definition(instruction).is_none() || !int32(webs.defined(region, pc)) {
-                continue;
-            }
-            let Some((low, high)) = exact_range(
-                instruction,
-                &|operand| operand_range(&ranges, pc, operand),
-                &|register| register_range(&ranges, pc, register),
-                &region.constants,
-            ) else {
-                continue;
-            };
-            // The web holds the result only where it is an `i32`; any other leaves.
-            let held = (low.max(INT32_RANGE.0), high.min(INT32_RANGE.1));
-            let held = if held.0 <= held.1 { held } else { INT32_RANGE };
-            let web = webs.defined(region, pc);
-            let joined = match ranges[web] {
-                Some((low, high)) => (low.min(held.0), high.max(held.1)),
-                None => held,
-            };
-            if ranges[web] != Some(joined) {
-                growth[web] += 1;
-                ranges[web] = Some(if growth[web] > MAX_RANGE_GROWTH { INT32_RANGE } else { joined });
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    // A web no definition reached holds nothing; it is taken to hold any `i32`.
-    let ranges: Vec<Option<Range>> = ranges.into_iter().map(|range| Some(range.unwrap_or(INT32_RANGE))).collect();
-    let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
-    let written_back: std::collections::BTreeSet<Definition> = webs
-        .leaves
-        .iter()
-        .filter(|((pc, _), _)| !inside(*pc))
-        .map(|(_, definition)| webs.find(*definition))
-        .collect();
-    // Whether every read of `web` treats its -0 as +0: a bitwise operand (ToInt32), a
-    // comparison, or a sum with an `i32`, which is never -0 itself.
-    // The PC offsets of each web's reads, once.
-    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); webs.parent.len()];
-    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
-        if !webs.reachable[offset] {
-            continue;
-        }
-        let pc = region.header + offset as u32;
-        for register in number_reads(instruction) {
-            let web = webs.read(region, pc, register);
-            if readers[web].last() != Some(&offset) {
-                readers[web].push(offset);
-            }
-        }
-    }
-    let signless_reads = |web: Definition| {
-        readers[web].iter().all(|offset| {
-            let instruction = region.instructions[*offset];
-            let pc = region.header + *offset as u32;
-            let reads = |register: Register| webs.read(region, pc, register) == web;
-            match instruction.op() {
-                Op::JumpBinaryFalse => true,
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                    let reads_operand = |operand: Operand| operand.register_index().is_some_and(reads);
-                    match arithmetic(instruction.op(), instruction.binary_operator()) {
-                        Some(Arithmetic::Int32(_)) => true,
-                        Some(Arithmetic::Float(NumberArithmetic::Add)) => {
-                            !(reads_operand(instruction.operand_b()) && reads_operand(instruction.operand_c()))
-                                && int32(webs.defined(region, pc))
-                        }
-                        Some(Arithmetic::Float(NumberArithmetic::Subtract)) => {
-                            !reads_operand(instruction.operand_b()) && int32(webs.defined(region, pc))
-                        }
-                        _ => false,
-                    }
-                }
-                _ => false,
-            }
-        })
-    };
-    let truncated = truncation::truncated_webs(region, webs, &readers, (0..webs.parent.len())
-        .filter(|definition| webs.find(*definition) == *definition && int32(*definition) && !written_back.contains(definition)));
-    let mut facts = Int32Facts { ranges: ranges.clone(), bounds: bounds.clone(), ..Int32Facts::default() };
-    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
-        if !webs.reachable[offset] {
-            continue;
-        }
-        let pc = region.header + offset as u32;
-        let Some(Arithmetic::Float(operator @ (NumberArithmetic::Add | NumberArithmetic::Subtract | NumberArithmetic::Multiply))) =
-            instruction.op().is_binary_arithmetic()
-                .then(|| arithmetic(instruction.op(), instruction.binary_operator()))
-                .flatten()
-        else {
-            continue;
-        };
-        let web = webs.defined(region, pc);
-        if !int32(web) {
-            continue;
-        }
-        let operand = |operand: Operand| operand_range(&ranges, pc, operand);
-        let range = exact_range(instruction, &operand, &|register| register_range(&ranges, pc, register), &region.constants);
-        if truncated.contains(&web) && truncation::wraps_exactly(operator, range) {
-            facts.truncated.insert(pc);
-        }
-        if let Some((low, high)) = range
-            && low >= INT32_RANGE.0
-            && high <= INT32_RANGE.1
-        {
-            facts.exact.insert(pc);
-        }
-        if operator == NumberArithmetic::Multiply {
-            let nonnegative = [instruction.operand_b(), instruction.operand_c()]
-                .into_iter()
-                .all(|side| operand(side).is_some_and(|range| range.0 >= 0));
-            if nonnegative || (signless_reads(web) && !written_back.contains(&web)) {
-                facts.signless_zero.insert(pc);
-            }
-        }
-    }
-    facts
-}
-
-fn counted_loops(
-    region: &LoopRegion,
-    webs: &Webs,
-    representations: &[Representation],
-    captures: &[Representation],
-) -> Vec<CountedLoop> {
-    (region.header..=region.backedge)
-        .filter_map(|backedge| {
-            let instruction = region.instructions[(backedge - region.header) as usize];
-            (instruction.op().is_jump()).then_some(())?;
-            let header = instruction.jump_target();
-            (region.header..backedge).contains(&header).then_some(())?;
-            (header..=backedge).all(|pc| webs.reachable[(pc - region.header) as usize]).then_some(())?;
-            counted_loop(region, webs, representations, captures, header, backedge)
-        })
-        .collect()
-}
-
-fn counted_loop(
-    region: &LoopRegion,
-    webs: &Webs,
-    representations: &[Representation],
-    captures: &[Representation],
-    header: u32,
-    backedge: u32,
-) -> Option<CountedLoop> {
-    use std::collections::{BTreeMap, BTreeSet};
-    let at = |pc: u32| region.instructions[(pc - region.header) as usize];
-    let body = header..backedge;
-    let jumps = |instruction: WideInstruction| {
-        instruction.op().is_js_jump()
-    };
-    // The test leaves the loop, and every path of the body reaches it: before it, the body
-    // branches nowhere. Every other branch of the body jumps forward within it.
-    let mut test = None;
-    let mut branched = false;
-    for pc in body.clone() {
-        let instruction = at(pc);
-        if !jumps(instruction) {
-            continue;
-        }
-        let target = instruction.jump_target();
-        if (pc + 1..=backedge).contains(&target) {
-            branched = true;
-        } else if instruction.op().is_jump_binary_false() && test.is_none() && !branched && !(header..=backedge).contains(&target) {
-            test = Some(pc);
-        } else {
-            return None;
-        }
-    }
-    let test = test?;
-    // Control enters only at the header.
-    let enters_inside = (region.header..=region.backedge).any(|pc| {
-        let instruction = at(pc);
-        !(header..=backedge).contains(&pc) && jumps(instruction) && (header + 1..=backedge).contains(&instruction.jump_target())
-    });
-    if enters_inside {
-        return None;
-    }
-    let int32 = |web: Definition| representations[web] == Representation::Int32;
-    // The registers the body writes; any other register is invariant in it.
-    let written: BTreeSet<Register> = body.clone().filter_map(|pc| number_definition(at(pc))).collect();
-    let invariant = |value: &Affine| {
-        let base = |base: Base| match base {
-            Base::Start(register) => !written.contains(&register),
-            Base::Constant | Base::Capture(_) | Base::Term(_) => true,
-        };
-        base(value.base) && value.addend.is_none_or(base)
-    };
-    let mut terms: Vec<Term> = Vec::new();
-    let constant = |number: f64| crate::vm::compiled::facts::is_int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
-    let mut state: BTreeMap<Register, Option<Affine>> = BTreeMap::new();
-    let value = |state: &BTreeMap<Register, Option<Affine>>, register: Register| {
-        state
-            .get(&register)
-            .copied()
-            .unwrap_or_else(|| Some(Affine::of(Base::Start(register))))
-    };
-    // Whether a source the instruction at `pc` reads is held as an `i32`, and its value.
-    let source = |state: &BTreeMap<Register, Option<Affine>>, pc: u32, operand: Operand| match operand.kind()? {
-        OperandKind::Register => {
-            let register = operand.payload();
-            Some((int32(webs.read(region, pc, register)), value(state, register)))
-        }
-        OperandKind::Constant => {
-            let number = *region.constants.get(&usize::from(operand.payload()))?;
-            Some((crate::vm::compiled::facts::is_int32_number(number), constant(number)))
-        }
-        OperandKind::Field | OperandKind::Local => None,
-    };
-    let mut candidates: Vec<Fact> = Vec::new();
-    let mut tested = None;
-    // The states forward branches carry to their targets, merged where paths join: a
-    // register keeps a value all its paths agree on.
-    let mut pending: BTreeMap<u32, Vec<BTreeMap<Register, Option<Affine>>>> = BTreeMap::new();
-    let mut reached = true;
-    let merge = |state: &mut BTreeMap<Register, Option<Affine>>, reached: bool, others: Vec<BTreeMap<Register, Option<Affine>>>| {
-        let mut states: Vec<BTreeMap<Register, Option<Affine>>> = others;
-        if reached {
-            states.push(std::mem::take(state));
-        }
-        let registers: BTreeSet<Register> = states.iter().flat_map(|state| state.keys().copied()).collect();
-        *state = registers
-            .into_iter()
-            .map(|register| {
-                let mut values = states.iter().map(|state| value(state, register));
-                let first = values.next().flatten();
-                (register, first.filter(|first| values.all(|other| other == Some(*first))))
-            })
-            .collect();
-    };
-    for pc in body {
-        if let Some(others) = pending.remove(&pc) {
-            merge(&mut state, reached, others);
-            reached = true;
-        }
-        if !reached {
-            continue;
-        }
-        let instruction = at(pc);
-        let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
-        let defined = || int32(webs.defined(region, pc));
-        let result = match instruction.op() {
-            Op::LoadConst => {
-                let index = instruction.constant_index();
-                constant(*region.constants.get(&index)?)
-            }
-            Op::LoadCapture => {
-                let slot = instruction.capture_slot();
-                let index = region.captures.iter().position(|capture| *capture == slot)?;
-                (captures[index] == Representation::Int32).then_some(Affine::of(Base::Capture(index)))
-            }
-            Op::Move | Op::ToNumeric => register(instruction.register_b()).1,
-            Op::IncDec => {
-                let (held, operand) = register(instruction.register_b());
-                let step = if instruction.boolean_flag()? { -1 } else { 1 };
-                let sum = operand.and_then(|operand| operand.plus(step));
-                if let Some(value) = sum.filter(|_| held && defined()) {
-                    candidates.push(Fact { pc, value, bound: Bound::Int32 });
-                }
-                sum
-            }
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                let left = source(&state, pc, instruction.operand_b())?;
-                let right = source(&state, pc, instruction.operand_c())?;
-                let held = left.0 && right.0 && defined();
-                // A product of invariant values that are no products is a term.
-                let factor = |value: &Affine| {
-                    invariant(value)
-                        && ![Some(value.base), value.addend].into_iter().flatten().any(|base| {
-                            matches!(base, Base::Term(term) if terms[term].multiply)
-                        })
-                };
-                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
-                let sum = match (operator, left.1, right.1) {
-                    (Arithmetic::Float(NumberArithmetic::Add), Some(left), Some(right)) => match (left, right) {
-                        (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
-                        (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
-                        // An invariant value folds into the other's addend.
-                        (_, Affine { base, addend: None, offset }) if left.addend.is_none() && invariant(&right) => {
-                            Affine { addend: Some(base), ..left }.plus(offset)
-                        }
-                        (Affine { base, addend: None, offset }, _) if right.addend.is_none() && invariant(&left) => {
-                            Affine { addend: Some(base), ..right }.plus(offset)
-                        }
-                        _ => None,
-                    },
-                    (Arithmetic::Float(NumberArithmetic::Subtract), Some(left), Some(right))
-                        if right.base == Base::Constant && right.addend.is_none() =>
-                    {
-                        left.plus(-right.offset)
-                    }
-                    (Arithmetic::Float(NumberArithmetic::Multiply), Some(left), Some(right))
-                        if held && factor(&left) && factor(&right) =>
-                    {
-                        terms.push(Term { multiply: true, left, right });
-                        let value = Affine::of(Base::Term(terms.len() - 1));
-                        candidates.push(Fact { pc, value, bound: Bound::Product });
-                        Some(value)
-                    }
-                    _ => None,
-                };
-                if operator != Arithmetic::Float(NumberArithmetic::Multiply)
-                    && let Some(value) = sum.filter(|_| held)
-                {
-                    candidates.push(Fact { pc, value, bound: Bound::Int32 });
-                }
-                sum
-            }
-            // A dynamic array's length is the record's at each access, which no entry proof
-            // reads (`LoopRegion::dynamic_arrays`).
-            Op::GetIndex => {
-                let array = instruction.operand_b().register_index()?;
-                if region.arrays.iter().any(|entry| entry.register == array)
-                    && let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
-                    candidates.push(Fact { pc, value, bound: Bound::Index(array) });
-                }
-                None
-            }
-            Op::SetIndex => {
-                if !region.dynamic_arrays.contains(&instruction.register_b())
-                    && let (true, Some(value)) = register(instruction.register_c())
-                {
-                    candidates.push(Fact { pc, value, bound: Bound::Index(instruction.register_b()) });
-                }
-                None
-            }
-            Op::JumpBinaryFalse if pc == test => {
-                let left = source(&state, pc, instruction.operand_b())?;
-                let right = source(&state, pc, instruction.operand_c())?;
-                tested = Some((instruction.binary_operator_field(), left, right));
-                None
-            }
-            _ => None,
-        };
-        if let Some(register) = number_definition(instruction) {
-            state.insert(register, result);
-        }
-        if jumps(instruction) && (pc + 1..=backedge).contains(&instruction.jump_target()) {
-            pending.entry(instruction.jump_target()).or_default().push(state.clone());
-            reached = !instruction.op().is_jump();
-        }
-    }
-    if let Some(others) = pending.remove(&backedge) {
-        merge(&mut state, reached, others);
-    }
-    let steps: BTreeMap<Register, i64> = state
-        .iter()
-        .filter_map(|(register, value)| match value {
-            Some(Affine { base: Base::Start(base), offset, addend: None }) if base == register => {
-                Some((*register, *offset))
-            }
-            _ => None,
-        })
-        .collect();
-    // How much a base changes per iteration, when it changes by a constant: a register the
-    // body never writes does not change.
-    let step = |base: Base| match base {
-        Base::Constant | Base::Capture(_) | Base::Term(_) => Some(0),
-        Base::Start(register) if !written.contains(&register) => Some(0),
-        Base::Start(register) => steps.get(&register).copied().filter(|step| step.abs() <= MAX_AFFINE_TERM),
-    };
-    // A base the proof reads at the header is an `i32` there; a term's values are, and its
-    // own values were found invariant when it was made.
-    fn held_base(base: Base, terms: &[Term], read: &dyn Fn(Register) -> bool) -> bool {
-        match base {
-            Base::Start(register) => read(register),
-            Base::Constant | Base::Capture(_) => true,
-            Base::Term(term) => [terms[term].left, terms[term].right].iter().all(|value| {
-                held_base(value.base, terms, read) && value.addend.is_none_or(|addend| held_base(addend, terms, read))
-            }),
-        }
-    }
-    let read = |register: Register| int32(webs.read(region, header, register));
-    let held = |base: Base| held_base(base, &terms, &read);
-    // An addend must not change across iterations.
-    let fixed = |value: &Affine| value.addend.is_none_or(|addend| step(addend) == Some(0) && held(addend));
-    let (operator, (left_held, left), (right_held, right)) = tested?;
-    let (left, right) = (left?, right?);
-    (left_held && right_held && held(left.base) && held(right.base) && fixed(&left) && fixed(&right)).then_some(())?;
-    // The induction variable is the side that moves; a relation with it on the right
-    // reads mirrored.
-    let (induction, bound, mirrored) = match (step(left.base)?, step(right.base)?) {
-        (moving, 0) if moving != 0 => (left, right, false),
-        (0, moving) if moving != 0 => (right, left, true),
-        _ => return None,
-    };
-    use BinaryOperator as B;
-    let operator = match operator {
-        op if op == B::LessThan as u32 => (Continue::AtMost, -1),
-        op if op == B::LessEqualThan as u32 => (Continue::AtMost, 0),
-        op if op == B::GreaterThan as u32 => (Continue::AtLeast, 1),
-        op if op == B::GreaterEqualThan as u32 => (Continue::AtLeast, 0),
-        _ => return None,
-    };
-    // `b < x` is `x > b`: the relation flips, and so does the strict bound's adjustment.
-    let (relation, adjustment) = match (operator, mirrored) {
-        (relation, false) => relation,
-        ((Continue::AtMost, adjustment), true) => (Continue::AtLeast, -adjustment),
-        ((Continue::AtLeast, adjustment), true) => (Continue::AtMost, -adjustment),
-    };
-    let facts: Vec<Fact> = candidates
-        .into_iter()
-        .filter(|fact| held(fact.value.base) && step(fact.value.base).is_some() && fixed(&fact.value))
-        .collect();
-    (!facts.is_empty()).then_some(())?;
-    Some(CountedLoop {
-        header,
-        backedge,
-        test,
-        induction,
-        relation,
-        bound: bound.plus(adjustment)?,
-        steps,
-        terms,
-        facts,
-    })
-}
-
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
-#[path = "osr_loop/truncation.rs"]
-mod truncation;
 #[path = "osr_loop/receivers.rs"]
 mod receivers;

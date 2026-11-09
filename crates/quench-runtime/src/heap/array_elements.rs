@@ -296,6 +296,7 @@ impl ArrayElements {
     }
 
     /// Whether every value is an int32 (so none is a hole).
+    #[cfg(test)]
     pub(crate) fn holds_only_int32(&self) -> bool {
         self.header().others == 0
     }

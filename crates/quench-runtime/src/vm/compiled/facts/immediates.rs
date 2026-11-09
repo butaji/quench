@@ -27,12 +27,6 @@ pub(in crate::vm) fn is_int32(value: Value) -> bool {
     Type::immediate(value).is_subtype(Type::INT32)
 }
 
-/// Whether a Number is an int32 (never `-0`): the one test every tier uses, so a value one
-/// tier holds as an `i32` is one every other tier would.
-pub(in crate::vm) fn is_int32_number(number: f64) -> bool {
-    is_int32(Value::number(number))
-}
-
 /// A constant's type: an immediate's, a string's or a BigInt's.
 pub(in crate::vm) fn constant_type(constant: &Constant) -> Type {
     match constant {

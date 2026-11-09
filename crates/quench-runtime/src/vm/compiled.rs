@@ -119,7 +119,7 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
+    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
@@ -6471,6 +6471,12 @@ impl CompiledOsrRegion {
             }
             outcome = if i64::from(status) == TERMINATED_STATUS {
                 LoopOutcome::Terminated
+            } else if status == LANE_BODY_RETURNED {
+                // The region's Return completed the activation: the lane completes it as
+                // its own body would, with the value in the result word and the record
+                // that completes it in the payload. This is not an exit.
+                LoopOutcome::Returned { pc: native.dispatch.returned_pc as u32,
+                    value: crate::Value::from_bits(word) }
             } else {
                 match LaneExit::decode(word) {
                     LaneExit::At(pc) => LoopOutcome::Exit(pc as u32),
