@@ -110,9 +110,7 @@ pub(in crate::vm) fn start_osr_region(
     // The lane unit models the loop's registers and locals; its captures, fields and
     // arrays still come from the loop entry record, so those regions keep the private
     // lowering until the lane unit carries them too.
-    let simple = region.inlining.is_none()
-        && region.field_store_sites.is_empty()
-        && !region.reads_heap_natively();
+    let simple = region.inlining.is_none();
     let lane = simple.then(|| super::lane_region::RegionSpecializer {
         function_id, unit: &unit, helpers, fields: &fields,
         global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
@@ -292,5 +290,25 @@ mod tests {
         vm.programs.disable_js_entry_specializations();
         let error = vm.execute(&program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
+    }
+    /// A loop that stores a field either lowers through the lane specializer or stays in
+    /// the interpreter; it never takes the private lowering.
+    #[test]
+    fn a_field_store_loop_keeps_its_result() {
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ o.x=(o.x+i)|0; s=(s+o.x)|0; } } return s; } throw helper({x:1});",
+            "lane-osr-field-store.js").unwrap();
+        let run = |mode| {
+            let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(mode);
+            vm.programs.enable_js_jit_diagnostics();
+            vm.programs.enable_js_lane_methods();
+            vm.programs.disable_js_entry_specializations();
+            vm.execute(&program).unwrap_err().thrown_value()
+        };
+        let interpreted = run(crate::ExecutionMode::Interpreted);
+        let compiled = run(crate::ExecutionMode::Compiled);
+        assert_eq!(interpreted, compiled);
     }
 }
