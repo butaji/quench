@@ -168,6 +168,12 @@ impl EnvView {
         let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(frame.env) else { return Self::EMPTY };
         slots.native_dense_view().map_or(Self::EMPTY, |(values, len)| Self { values, len, stores: 0 })
     }
+
+    /// This view with `previous`'s admitted writes where it names the same slots and `kept`
+    /// says its barrier still holds.
+    pub(super) fn kept(self, previous: Self, kept: usize) -> Self {
+        Self { stores: previous.stores & kept & usize::from(previous.values == self.values), ..self }
+    }
 }
 
 /// Lowers the `LoadEnvLocal` or `StoreEnvLocal` at the exact fallback's PC: the binding's own

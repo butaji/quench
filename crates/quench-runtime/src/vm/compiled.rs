@@ -7510,6 +7510,7 @@ impl JsStepDispatch {
 
     /// Refresh the additional frame and array views read by the general tier.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>, program: &ResidualProgram) {
+        let (epoch, captures, view) = (self.epoch, self.capture_values, self.env_view);
         self.refresh_object_bases(vm);
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
@@ -7523,7 +7524,11 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
-        (self.capture_stores, self.env_view) = (0, general_capture::EnvView::of(vm, self));
+        // Admitted writes outlive the refresh while their slots and collection epoch do: the
+        // barrier they took holds until a collection.
+        let kept = |same: bool| usize::from(same && epoch == self.epoch);
+        self.capture_stores &= kept(captures == self.capture_values);
+        self.env_view = general_capture::EnvView::of(vm, self).kept(view, kept(true));
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
