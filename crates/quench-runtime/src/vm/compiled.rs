@@ -7433,11 +7433,13 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     // A receiver of another shape the site met stores through its polymorphic entries, as
     // long as the store keeps the record's layout, which the caller's proofs rely on.
     let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), crate::heap::PropertyStoreLayout::PreserveNative);
-    let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout)
+    // Only the primary entry's hit proves its slot's representation (`general_store`).
+    let primary = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
+    if primary { general_store::record_store_class(vm, site as u16, value); }
+    let hit = primary
         || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
-    if hit { general_store::record_store_class(vm, site as u16, Value::from_bits(value)); }
     u64::from(hit)
 }
 
