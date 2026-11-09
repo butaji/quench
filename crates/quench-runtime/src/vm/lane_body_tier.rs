@@ -67,8 +67,11 @@ impl LaneView {
             Verdict::Settle => return *recompiles = TIERS.lane_body.max_recompiles,
             Verdict::Retire => LaneBody::Declined,
             Verdict::Recompile(stuck) => {
-                // A body no run of which completed was a wasted compile, whatever comes next.
-                if !completed.get() { self.note_wasted_compile(); }
+                // A body no run of which completed was a wasted compile, whatever comes next,
+                // but one whose runs all left at its entry contract proved only that: its
+                // replan drops the contract (`LaneExit::Entry`).
+                let entry_only = leaves_at.get().exits().all(|exit| exit == LaneExit::Entry);
+                if !completed.get() && !entry_only { self.note_wasted_compile(); }
                 LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck }
             }
         };
