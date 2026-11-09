@@ -16,7 +16,6 @@ pub(crate) enum Class {
     WasmFloatUnary32,
     WasmFloatUnary64,
     WasmI32AddRegister,
-    WasmI32Add,
     WasmI32AddImmediate,
     WasmI32SubtractImmediate,
     WasmI32AddJump,
@@ -63,6 +62,12 @@ pub(crate) enum Class {
     LoadName,
     WasmFillRegisters,
     WasmMemoryAddress,
+    WasmMemorySize,
+    WasmMemoryFill,
+    WasmMemoryCopy,
+    WasmIndirectTarget,
+    WasmRefFunc,
+    WasmUnreachable,
     WasmMemoryLoad,
     WasmMemoryStore,
     CallArray,
@@ -123,7 +128,6 @@ macro_rules! class_of {
     (WasmF32Unary) => { Class::WasmFloatUnary32 };
     (WasmF64Unary) => { Class::WasmFloatUnary64 };
     (WasmI32Add) => { Class::WasmI32AddRegister };
-    (WasmI32Add) => { Class::WasmI32Add };
     (WasmI32AddImmediate) => { Class::WasmI32AddImmediate };
     (WasmI32SubtractImmediate) => { Class::WasmI32SubtractImmediate };
     (WasmI32AddImmediateJumpNonZero) => { Class::WasmI32AddJump };
@@ -170,6 +174,12 @@ macro_rules! class_of {
     (LoadName) => { Class::LoadName };
     (WasmFillRegisters) => { Class::WasmFillRegisters };
     (WasmMemoryAddress) => { Class::WasmMemoryAddress };
+    (WasmMemorySize) => { Class::WasmMemorySize };
+    (WasmMemoryFill) => { Class::WasmMemoryFill };
+    (WasmMemoryCopy) => { Class::WasmMemoryCopy };
+    (WasmIndirectTarget) => { Class::WasmIndirectTarget };
+    (WasmRefFunc) => { Class::WasmRefFunc };
+    (WasmUnreachable) => { Class::WasmUnreachable };
     (WasmMemoryLoad) => { Class::WasmMemoryLoad };
     (WasmMemoryStore) => { Class::WasmMemoryStore };
     (CallArray) => { Class::CallArray };
@@ -265,6 +275,8 @@ impl Traits {
     pub(crate) const CALL_LINK: Self = Self(1 << 26);
     /// A by-name load or store access.
     pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 27);
+    /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
+    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 28);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -312,8 +324,8 @@ macro_rules! traits_of {
     (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
-    (WasmMemoryFill) => { Traits::WASM_MEMORY };
-    (WasmMemoryCopy) => { Traits::WASM_MEMORY };
+    (WasmMemoryFill) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
+    (WasmMemoryCopy) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
@@ -348,6 +360,16 @@ macro_rules! traits_of {
     (CallMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
     (CallSpread) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
     (CallThisMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (WasmMemoryGrow) => { Traits::UNROLL_EXCLUDED };
+    (WasmMemoryInit) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableGet) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableSet) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableGrow) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableFill) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableCopy) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableInit) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableSize) => { Traits::UNROLL_EXCLUDED };
+    (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
 

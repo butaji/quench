@@ -19536,7 +19536,7 @@ fn derive_lane_view<'live, H: Host>(
             else {
                 continue;
             };
-            if !matches!(first.op().class(), Class::WasmI32Add | Class::WasmI32AddImmediate) {
+            if !matches!(first.op().class(), Class::WasmI32AddRegister | Class::WasmI32AddImmediate) {
                 continue;
             }
             let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op(), &[ACC_NONE, ACC_B, ACC_C])

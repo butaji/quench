@@ -3987,23 +3987,23 @@ fn widen_unary(operator: I32UnaryOperator) -> I64UnaryOperator {
 /// A float operator and its operand type; both widths share one declaration
 /// (`crate::wasm::float`), so tags agree.
 fn float_binary_operator(op: Op, tag: u32) -> Option<(F64BinaryOperator, crate::WasmType)> {
-    match op {
-        Op::WasmF32Binary => Some((
+    match op.class() {
+        Class::WasmFloatBinary32 => Some((
             F64BinaryOperator::from_tag(F32BinaryOperator::from_tag(tag)? as u32)?,
             crate::WasmType::F32,
         )),
-        Op::WasmF64Binary => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
+        Class::WasmFloatBinary64 => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
         _ => None,
     }
 }
 
 fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::WasmType)> {
-    match op {
-        Op::WasmF32Unary => Some((
+    match op.class() {
+        Class::WasmFloatUnary32 => Some((
             F64UnaryOperator::from_tag(F32UnaryOperator::from_tag(tag)? as u32)?,
             crate::WasmType::F32,
         )),
-        Op::WasmF64Unary => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
+        Class::WasmFloatUnary64 => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
         _ => None,
     }
 }
@@ -8805,28 +8805,28 @@ impl<H: Host> Analysis<'_, H> {
             (value(state, instruction.b())? == kind).then_some(())?;
             return set(state, instruction.a(), Slot::Value(kind));
         }
-        match op {
-            Op::WasmI64Binary => {
+        match op.class() {
+            Class::WasmI64Binary => {
                 let operator = I64BinaryOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::I64).then_some(())?;
                 (value(state, instruction.c())? == Kind::I64).then_some(())?;
                 let result = Kind::of(operator.apply(1, 1).ok()?.ty())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::WasmI64Unary => {
+            Class::WasmI64Unary => {
                 let operator = I64UnaryOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::I64).then_some(())?;
                 let result = Kind::of(operator.apply(0).ty())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::WasmScalarConvert => {
+            Class::WasmScalarConvert => {
                 let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::of(operator.source_type())?)
                     .then_some(())?;
                 let result = Kind::of(operator.result_type())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::Move => match state.get(instruction.b(), function.registers)? {
+            Class::Move => match state.get(instruction.b(), function.registers)? {
                 slot @ (Slot::Vector | Slot::Memory32Address) => {
                     set(state, instruction.a(), slot)
                 }
@@ -8835,11 +8835,11 @@ impl<H: Host> Analysis<'_, H> {
                     set(state, instruction.a(), Slot::Value(kind))
                 }
             },
-            Op::LoadConst => {
+            Class::LoadConst => {
                 let constant = self.constant(instruction.constant_index())?;
                 set(state, instruction.a(), self.constant_slot(constant))
             }
-            Op::WasmFillRegisters => {
+            Class::WasmFillRegisters => {
                 let constant = self.constant(instruction.constant_index())?;
                 let slot = self.constant_slot(constant);
                 let window = instruction.register_window();
@@ -8850,13 +8850,13 @@ impl<H: Host> Analysis<'_, H> {
             }
             // A vector access's effective address: a 32-bit address plus the access's offset,
             // as 64 bits, so the sum cannot wrap.
-            Op::WasmMemoryAddress => {
+            Class::WasmMemoryAddress => {
                 self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
                 self.memory_offset(instruction.constant_index())?;
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Memory32Address)
             }
-            Op::WasmMemoryLoad | Op::WasmMemoryStore => {
+            Class::WasmMemoryLoad | Class::WasmMemoryStore => {
                 self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
                 if value(state, instruction.c())? != Kind::I64 {
                     return None;
@@ -8873,7 +8873,7 @@ impl<H: Host> Analysis<'_, H> {
                     (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
                 }
             }
-            Op::WasmSimd => {
+            Class::WasmSimd => {
                 let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
                 let operand = |register: u16, ty: crate::WasmType| match ty {
                     crate::WasmType::V128 => {
@@ -8891,43 +8891,43 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.a(), result)
             }
-            Op::WasmSimdShuffle => {
+            Class::WasmSimdShuffle => {
                 self.shuffle_lanes(instruction.constant_index())?;
                 for register in [instruction.b(), instruction.c()] {
                     (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
                 }
                 set(state, instruction.a(), Slot::Vector)
             }
-            Op::WasmI32Unary => {
+            Class::WasmI32Unary => {
                 I32UnaryOperator::from_tag(instruction.imm())?;
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+            Class::WasmI32ShiftRightUnsignedAnd => {
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmI32AddImmediateJumpNonZero => {
+            Class::WasmI32AddJump => {
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => i32_value(state, instruction.a()),
-            Op::Jump => Some(()),
-            Op::WasmBranchTable => {
+            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => i32_value(state, instruction.a()),
+            Class::Jump => Some(()),
+            Class::WasmBranchTable => {
                 i32_value(state, instruction.a())?;
                 
                 // Entries are `Jump`s; validation guarantees it for
                 // reachable tables.
                 (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
             }
-            Op::WasmSelect => {
+            Class::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
                 i32_value(state, condition)?;
                 let kind = value(state, instruction.b())?;
                 (value(state, instruction.c())? == kind).then_some(())?;
                 set(state, instruction.a(), Slot::Value(kind))
             }
-            Op::WasmMemorySize => {
+            Class::WasmMemorySize => {
                 let memory = instruction.b();
                 if Some(memory) != memory_register
                     || state.get(memory, function.registers) != Some(Slot::Memory)
@@ -8937,7 +8937,7 @@ impl<H: Host> Analysis<'_, H> {
                 }
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmMemoryFill => {
+            Class::WasmMemoryFill => {
                 let memory = instruction.a();
                 let (destination, _) = instruction.register_pair();
                 if Some(memory) != memory_register
@@ -8951,7 +8951,7 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, destination)
             }
             // A copy within the function's one memory: both memory operands name it.
-            Op::WasmMemoryCopy => {
+            Class::WasmMemoryCopy => {
                 let (destination, source) = instruction.register_pair();
                 if Some(instruction.a()) != memory_register
                     || Some(instruction.b()) != memory_register
@@ -8964,7 +8964,7 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, source)?;
                 i32_value(state, instruction.c())
             }
-            Op::WasmIndirectTarget if self.callouts => {
+            Class::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
@@ -8982,7 +8982,7 @@ impl<H: Host> Analysis<'_, H> {
                     },
                 )
             }
-            Op::CallKnown => {
+            Class::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
                 if !callable.contains(callee as usize)
                     && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
@@ -9011,12 +9011,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmRefFunc if self.callouts => {
+            Class::WasmRefFunc if self.callouts => {
                 let function = instruction.imm();
                 self.import_signature(function)?;
                 set(state, instruction.a(), Slot::Import(function))
             }
-            Op::Call => {
+            Class::Call => {
                 let slot = state.get(instruction.b(), function.registers)?;
                 let signature = match slot {
                     Slot::Import(function) => self.import_signature(function)?,
@@ -9040,16 +9040,16 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable
+            Class::WasmUnreachable
                 if self.experimental_root_compilation || eager_unreachable_admitted() =>
             {
                 Some(())
             }
-            Op::Return => match result {
+            Class::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
             },
-            Op::WasmInstanceBinding => {
+            Class::WasmInstanceBinding => {
                 let slot = instruction.imm();
                 if Some(instruction.a()) == memory_register {
                     if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
@@ -9063,14 +9063,14 @@ impl<H: Host> Analysis<'_, H> {
             // Compiled code reads and writes a 32-bit global's encoded value
             // in place; a 64-bit global's value is a box, so it stays
             // interpreted.
-            Op::WasmGlobalGet => {
+            Class::WasmGlobalGet => {
                 let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
                 (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmGlobalSet => {
+            Class::WasmGlobalSet => {
                 let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
@@ -9262,21 +9262,7 @@ struct UnrolledLoop {
 /// Whether `op` may sit in an unrolled body: no call, and no operation that calls out to the
 /// VM or ends the body other than by a branch out of the loop.
 fn unrollable_op(op: Op) -> bool {
-    !matches!(
-        op,
-        Op::WasmMemoryGrow
-            | Op::WasmMemoryFill
-            | Op::WasmMemoryCopy
-            | Op::WasmMemoryInit
-            | Op::WasmTableGet
-            | Op::WasmTableSet
-            | Op::WasmTableGrow
-            | Op::WasmTableFill
-            | Op::WasmTableCopy
-            | Op::WasmTableInit
-            | Op::WasmTableSize
-            | Op::WasmIndirectTarget
-    )
+    !op.traits().has(crate::bytecode::Traits::UNROLL_EXCLUDED)
 }
 
 /// The innermost loops to unroll, by latch: a back edge from `latch` to `header` whose body
