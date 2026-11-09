@@ -235,12 +235,22 @@ impl Traits {
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
     /// A Wasm memory access through the function's memory register.
     pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
+    /// A general step that reads and writes only the frame, its registers and heap values.
+    pub(crate) const LANE_IN_PLACE: Self = Self(1 << 17);
+    /// A frame-local step that runs beside frameless activations.
+    pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 18);
+    /// An op whose result may return from the frame instead of the register file.
+    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 19);
+    /// An op that reads and writes only registers and control, no heap value.
+    pub(crate) const FRAME_ONLY: Self = Self(1 << 20);
+    /// An op the lifetime-role loop admission can rename a register through.
+    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 21);
     /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
-    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17);
+    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 22);
     /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
-    pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
+    pub(crate) const SCALAR_REGION: Self = Self(1 << 23);
     /// An indexed element read or write, which a loop region views its arrays for.
-    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
+    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 24);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -248,19 +258,19 @@ impl Traits {
 
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
-    (Nop) => { Traits::LEAF_VALUE.union(Traits::SCALAR_REGION) };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
-    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::SCALAR_REGION) };
+    (Nop) => { Traits::LEAF_VALUE.union(Traits::FRAME_ONLY).union(Traits::SCALAR_REGION) };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE) };
+    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE).union(Traits::SCALAR_REGION) };
     (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -275,24 +285,46 @@ macro_rules! traits_of {
     (InitializeThis) => { Traits::NAME_OPERATION };
     (SuperCallCheck) => { Traits::NAME_OPERATION };
     (MakeClosure) => { Traits::MAKES_CLOSURE };
-    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (MakeObject2) => { Traits::RETURNING_OBJECT };
-    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL };
-    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL };
-    (Call) => { Traits::INLINABLE };
+    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
+    (MakeObject2) => { Traits::RETURNING_OBJECT.union(Traits::FRAME_RETURNABLE) };
+    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL.union(Traits::FRAME_RETURNABLE) };
+    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL.union(Traits::FRAME_RETURNABLE) };
+    (Call) => { Traits::INLINABLE.union(Traits::FRAME_RETURNABLE) };
     (SetField) => { Traits::INLINABLE };
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
-    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::ELEMENT_ACCESS) };
-    (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS) };
-    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE).union(Traits::ELEMENT_ACCESS) };
+    (SetIndex) => { Traits::INLINABLE.union(Traits::LIFETIME_SAFE).union(Traits::ELEMENT_ACCESS) };
+    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
     (WasmMemoryFill) => { Traits::WASM_MEMORY };
     (WasmMemoryCopy) => { Traits::WASM_MEMORY };
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
+    (DefineField) => { Traits::LANE_IN_PLACE };
+    (DefineComputedField) => { Traits::LANE_IN_PLACE };
+    (DefinePrivateField) => { Traits::LANE_IN_PLACE };
+    (CheckPrivate) => { Traits::LANE_IN_PLACE };
+    (PrivateIn) => { Traits::LANE_IN_PLACE };
+    (MarkPrivateName) => { Traits::LANE_IN_PLACE };
+    (SetFunctionName) => { Traits::LANE_IN_PLACE };
+    (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
+    (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };
+    (DefineArrayElement) => { Traits::LANE_IN_PLACE };
+    (AppendArray) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ToPropertyKey) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (CopyDataProperties) => { Traits::LANE_IN_PLACE };
+    (GetIterator) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ForInStart) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ForInNext) => { Traits::LANE_IN_PLACE };
+    (RequireIteratorResult) => { Traits::LANE_IN_PLACE };
+    (IteratorClose) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (IteratorCleanupPush) => { Traits::LANE_IN_PLACE };
+    (IteratorCleanupPop) => { Traits::LANE_IN_PLACE };
+    (CallForwardingArguments) => { Traits::FRAME_RETURNABLE };
+    (Construct) => { Traits::FRAME_RETURNABLE };
     (LoadLocal) => { Traits::ACTIVATION_FREE };
     (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
     (StoreLocal) => { Traits::ACTIVATION_FREE };
@@ -378,6 +410,19 @@ op_predicates! {
     is_wasm_f64_load => WasmF64Load,
     is_wasm_f64_store => WasmF64Store,
     is_wasm_f64_binary => WasmF64Binary,
+    is_throw => Throw,
+    is_wasm_simd => WasmSimd,
+    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
+    is_wasm_memory_size => WasmMemorySize,
+    is_wasm_memory_copy => WasmMemoryCopy,
+    is_wasm_memory_fill => WasmMemoryFill,
+    is_call_array => CallArray,
+    is_call_known => CallKnown,
+    is_load_name_call => LoadNameCall,
+    is_make_object => MakeObject,
+    is_store_capture => StoreCapture,
+    is_wasm_ref_cast => WasmRefCast,
+    is_yield_star => YieldStar,
 }
 
 #[cfg(test)]

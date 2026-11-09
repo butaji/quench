@@ -2727,14 +2727,10 @@ impl Heap {
                 self.gc_profile.survivors_min = live as u64;
                 self.gc_profile.survivors_max = live as u64;
             } else {
-                self.gc_profile.allocations_between_collections_min = self
-                    .gc_profile
-                    .allocations_between_collections_min
-                    .min(allocations_between_collections);
-                self.gc_profile.allocations_between_collections_max = self
-                    .gc_profile
-                    .allocations_between_collections_max
-                    .max(allocations_between_collections);
+                self.gc_profile.allocations_between_collections_min =
+                    self.gc_profile.allocations_between_collections_min.min(allocations_between_collections);
+                self.gc_profile.allocations_between_collections_max =
+                    self.gc_profile.allocations_between_collections_max.max(allocations_between_collections);
                 self.gc_profile.survivors_min = self.gc_profile.survivors_min.min(live as u64);
                 self.gc_profile.survivors_max = self.gc_profile.survivors_max.max(live as u64);
             }
@@ -4628,9 +4624,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
                 widen_inline_storage(data, properties, data.shape(), length, slot, value);
             }
         }
-        // A prototype's store of the value its slot holds changes nothing its readers took, as
-        // three.js's constructors store `Vector3.prototype.isVector3 = true` for each instance.
-        // SAFETY: as above.
+        // A prototype's store of the value it holds changes nothing its readers took. SAFETY: as above.
         ExactStorage::Extended { .. } if data.was_used_as_prototype() && unsafe { read_exact_slot(data, properties, slot) } == value => {}
         ExactStorage::Extended { inline } => {
             data.note_value_write(slot);

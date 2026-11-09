@@ -98,7 +98,7 @@ fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
 fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[Option<DirectCallee>])
     -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
     let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op() == Op::Call)
+        .filter(|(_, instruction)| instruction.op().is_call())
         .filter_map(|(pc, _)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
             lane_unit::Origin::Inlined { .. } => None,
@@ -364,7 +364,7 @@ impl LanePlan {
         let unit = &self.unit;
         let amortizes = amortizes_entry(unit);
         let closed = unit.instructions.iter().enumerate()
-            .all(|(pc, instruction)| instruction.op() != Op::Call || self.direct_sites.contains_key(&pc));
+            .all(|(pc, instruction)| !instruction.op().is_call() || self.direct_sites.contains_key(&pc));
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();

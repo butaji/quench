@@ -3303,7 +3303,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::ForInStart | Op::IteratorClose | Op::AppendArray) {
+    if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) {
         return Resumed::Exit(exit(ip));
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
@@ -3364,29 +3364,7 @@ fn lane_in_place<H: Host, T>(
 /// values, runs guest code only through nested calls, and continues (a backward jump in the
 /// general path) or throws: no call, return, `this` binding or environment change the lane caches.
 const fn lane_steps_in_place(op: Op) -> bool {
-    matches!(
-        op,
-        Op::DefineField
-            | Op::DefineComputedField
-            | Op::DefinePrivateField
-            | Op::CheckPrivate
-            | Op::PrivateIn
-            | Op::MarkPrivateName
-            | Op::SetFunctionName
-            | Op::SetFunctionNameKey
-            | Op::SetFunctionDebugName
-            | Op::DefineArrayElement
-            | Op::AppendArray
-            | Op::ToPropertyKey
-            | Op::CopyDataProperties
-            | Op::GetIterator
-            | Op::ForInStart
-            | Op::ForInNext
-            | Op::RequireIteratorResult
-            | Op::IteratorClose
-            | Op::IteratorCleanupPush
-            | Op::IteratorCleanupPop
-    )
+    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE)
 }
 
 script_handler! {
@@ -16198,7 +16176,7 @@ const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 /// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
-    match op { Op::Call => Some(Some(call)), Op::StoreCapture => Some(None), _ => None }
+    match op.class() { Class::Call => Some(Some(call)), Class::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
@@ -18282,17 +18260,8 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             // A lane call reads its return flag from the field (`lane_call_fits`).
             FieldLayout::ResultRegister
                 if field == InstructionField::A
-                    && (matches!(
-                        op,
-                        Op::Call
-                            | Op::CallForwardingArguments
-                            | Op::Construct
-                            | Op::GetField
-                            | Op::Unary
-                            | Op::MakeObject2
-                            | Op::MakeObjectLiteral
-                            | Op::SuperConstArrayObject2
-                    ) || (op == Op::Binary && instruction.returns_from_frame())) =>
+                    && (op.traits().has(crate::bytecode::Traits::FRAME_RETURNABLE)
+                        || (op.is_binary() && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
             }
@@ -18362,23 +18331,23 @@ fn lane_operand(
 /// result from the frame (`lane_returns`, `lane_returning`); a returning record runs no
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        Op::Call | Op::CallArray | Op::CallSpread => {
+    match instruction.op().class() {
+        Class::Call | Class::CallArray | Class::CallSpread => {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
         }
-        Op::CallForwardingArguments => lane_returns(instruction),
-        Op::Construct => {
+        Class::CallForwardingArguments => lane_returns(instruction),
+        Class::Construct => {
             lane_returns(instruction)
                 && !instruction.is_super_construct()
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
-        Op::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
-        Op::Unary | Op::MakeObject2 | Op::SuperConstArrayObject2 | Op::MakeObjectLiteral => {
+        Class::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
+        Class::Unary | Class::MakeObject2 | Class::SuperConstArrayObject2 | Class::MakeObjectLiteral => {
             lane_returns(instruction)
         }
-        Op::Binary if instruction.returns_from_frame() => lane_returns(instruction),
+        Class::Binary if instruction.returns_from_frame() => lane_returns(instruction),
         _ => true,
     }
 }
@@ -20611,11 +20580,11 @@ fn specialize_environment_window<H: Host>(
     let mut replacements = Vec::new();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let op = instruction.op();
-        let own = match op {
-            Op::MakeClosure => instruction.imm(),
-            Op::CloneEnv => 0,
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
-            | Op::StoreEnvLocal | Op::InitializeTdz => instruction.local_slot() as u32,
+        let own = match op.class() {
+            Class::MakeClosure => instruction.imm(),
+            Class::CloneEnv => 0,
+            Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
+            | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
             _ => continue,
         };
         if own > ENVIRONMENT_WINDOW_FIELD

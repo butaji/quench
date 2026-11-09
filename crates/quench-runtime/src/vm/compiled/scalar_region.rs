@@ -103,7 +103,7 @@ pub(crate) fn lower_regions(
         let mut produced = std::collections::BTreeSet::new();
         let mut removes_roundtrip = false;
         for instruction in &decoded[range.clone()] {
-            removes_roundtrip |= instruction.op() == Op::IncDec
+            removes_roundtrip |= instruction.op().is_inc_dec()
                 || osr_loop::number_reads(*instruction)
                     .iter()
                     .any(|register| produced.contains(register));
@@ -165,7 +165,7 @@ pub(crate) fn lower_regions(
             // letting an inadmissible heap projection erase numeric coverage.
             let mut scalar_start = start;
             for (pc, instruction) in decoded.iter().enumerate().take(end).skip(start) {
-                if instruction.op() == Op::GetField {
+                if instruction.op().is_get_field() {
                     if scalar_start < pc
                         && let Some(region) = lower(scalar_start..pc)
                     {

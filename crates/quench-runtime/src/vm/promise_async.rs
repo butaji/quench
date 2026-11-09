@@ -38,10 +38,8 @@ impl<H: Host> Vm<H> {
     /// Clears the registers dead at `frame`'s suspension and returns the live ones, when
     /// liveness covers its function.
     fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<crate::compile::liveness::RegisterSet> {
-        let mask = self
-            .programs
-            .residual(frame.program)
-            .and_then(|program| program.register_root_mask(frame.function, frame.pc))?;
+        let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
+        if masks.is_windowed() { return None; } let mask = masks.get(frame.pc)?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         type RegisterSet = crate::compile::liveness::RegisterSet;
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);

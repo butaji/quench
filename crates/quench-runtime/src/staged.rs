@@ -17,7 +17,9 @@
 use crate::bytecode::Register;
 use crate::typed_ir::Type;
 
+mod concrete;
 pub(crate) mod numeric;
+pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
@@ -177,6 +179,23 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
+    /// The typed array element at `index`, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store the Number `value` at typed array element `index`.
+    #[inline(always)]
+    fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The object literal `destination`, written with the frame's fact; `None` where the
+    /// frame has no heap allocator.
+    #[inline(always)]
+    fn allocate_object(&mut self, _stage: &mut S, _destination: Register, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// The array literal `destination`, of `length` holes or `elements` values.
+    #[inline(always)]
+    fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -221,6 +240,15 @@ pub(crate) enum Operation<W, P> {
     IndexRead { index: W, proof: P },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
+    /// A typed array element at `index`, as a Number word, under `proof`.
+    TypedIndexRead { index: W, proof: P },
+    /// Store the Number `value` at typed array element `index`, under `proof`.
+    TypedIndexWrite { index: W, value: W, proof: P },
+    /// The object literal `destination`, allocated by the frame's heap; a due collection
+    /// leaves at the frame's miss edge.
+    MakeObject { destination: Register, proof: P },
+    /// The array literal `destination`: `length` holes, or `elements` values.
+    MakeArray { destination: Register, length: W, elements: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -268,6 +296,19 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
+        field @ (Operation::ReadField { .. } | Operation::WriteField { .. }) =>
+            field_step(stage, frame, field),
+        literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. }) =>
+            allocation_step(stage, frame, literal),
+        index => index_step(stage, frame, index),
+    }
+}
+
+/// A field read or write over a frame's object proof.
+#[inline(always)]
+fn field_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
         Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
             Some((value, _)) => Step::Value(value),
             None => Step::Unresolved,
@@ -277,11 +318,45 @@ fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                 Some(()) => Step::Value(value),
                 None => Step::Unresolved,
             },
+        _ => Step::Unresolved,
+    }
+}
+
+/// An object or array literal allocation over a frame's heap.
+#[inline(always)]
+fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    let value = match operation {
+        Operation::MakeObject { destination, proof } =>
+            frame.allocate_object(stage, destination, proof),
+        Operation::MakeArray { destination, length, elements, proof } =>
+            frame.allocate_array(stage, destination, length, elements, proof),
+        _ => None,
+    };
+    match value {
+        Some(value) => Step::Value(value),
+        None => Step::Unresolved,
+    }
+}
+
+/// A dense or typed element read or write over a frame's view proof.
+#[inline(always)]
+fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
         Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
             Some(value) => Step::Value(value),
             None => Step::Unresolved,
         },
         Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
+            Some(()) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::TypedIndexRead { index, proof } => match frame.typed_index_read(stage, index, proof) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::TypedIndexWrite { index, value, proof } => match frame.typed_index_write(stage, index, value, proof) {
             Some(()) => Step::Value(value),
             None => Step::Unresolved,
         },
@@ -328,104 +403,6 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
         Some(()) => Step::Value(value),
         None => Step::Unresolved,
     }
-}
-
-/// The interpreter's stage: machine words, read from live memory. It knows every condition,
-/// so a guard never fails and each `choose` runs one arm.
-#[derive(Clone, Copy)]
-pub(crate) struct Concrete {
-    tables: [u64; Table::COUNT],
-}
-
-impl Concrete {
-    #[inline(always)]
-    pub(crate) fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64] }
-    }
-}
-
-impl Stage for Concrete {
-    type Word = u64;
-    type Proof = ();
-    type Cond = bool;
-    type Miss = ();
-
-    #[inline(always)]
-    fn constant(&mut self, bits: u64) -> u64 { bits }
-    #[inline(always)]
-    fn load_u32(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: a staged operation loads only from a live record or table at a layout offset.
-        u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u32).read() })
-    }
-    #[inline(always)]
-    fn load_u64(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: as `load_u32`; records and arena values are 8-byte aligned.
-        unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
-    }
-    #[inline(always)]
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
-    #[inline(always)]
-    fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
-    #[inline(always)]
-    fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
-    #[inline(always)]
-    fn add_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_add(imm) }
-    #[inline(always)]
-    fn mul_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_mul(imm) }
-    #[inline(always)]
-    fn and_imm(&mut self, a: u64, imm: u64) -> u64 { a & imm }
-    #[inline(always)]
-    fn or_imm(&mut self, a: u64, imm: u64) -> u64 { a | imm }
-    #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: u32) -> u64 { a >> shift }
-    #[inline(always)]
-    fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
-    #[inline(always)]
-    fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
-    #[inline(always)]
-    fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
-    #[inline(always)]
-    fn ugt_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
-    #[inline(always)]
-    fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
-    #[inline(always)]
-    fn uextend32(&mut self, a: u64) -> u64 { a }
-    #[inline(always)]
-    fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
-    #[inline(always)]
-    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
-        // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
-        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u32).write(value as u32) }
-    }
-    #[inline(always)]
-    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
-        // SAFETY: as `store_u32`; values and backings are 8-byte aligned.
-        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
-    }
-    #[inline(always)]
-    fn not(&mut self, cond: bool) -> bool { !cond }
-    #[inline(always)]
-    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
-    #[inline(always)]
-    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
-    #[inline(always)]
-    fn shape_in(&mut self, shape: u64, shapes: &[u32]) -> bool {
-        u32::try_from(shape).is_ok_and(|shape| shapes.binary_search(&shape).is_ok())
-    }
-    #[inline(always)]
-    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
-        if cond { then(self) } else { otherwise(self) }
-    }
-    #[inline(always)]
-    fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
-    #[inline(always)]
-    fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
-    #[inline(always)]
-    fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
 }
 
 #[cfg(test)]
