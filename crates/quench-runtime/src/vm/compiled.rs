@@ -6425,7 +6425,9 @@ impl CompiledOsrRegion {
         let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
-            native.dispatch.loop_entry = entry as *mut LoopEntry as usize;
+            // The counter is the `words` field's first word, not the struct's offset 0:
+            // `LoopEntry` is not `repr(C)`.
+            native.dispatch.loop_entry = entry.words_mut() as usize;
             // The loop entry's captures in the dense slot view the lane capture reads use.
             let captures = if region.captures.is_empty() { Vec::new() } else {
                 let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);

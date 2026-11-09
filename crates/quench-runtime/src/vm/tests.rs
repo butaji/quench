@@ -14138,10 +14138,10 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
             .and_then(super::program_store::derived_lane_view)
             .expect("hot fill lane view")
             .osr_diagnostics();
-        // The lane path enters the loop once per call and completes it without exits;
-        // the old lowering re-entered at each capacity growth.
+        // The lane path enters the loop once per call and leaves only where a reserve or
+        // collection debt needs the VM; the old lowering re-entered at each capacity growth.
         assert!(osr.native_region_runs > 0, "fill left native code under {policy:?}: {osr:?}");
-        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+        assert!(osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
     }
 }
 

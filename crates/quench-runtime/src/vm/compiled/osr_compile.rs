@@ -192,10 +192,9 @@ pub(in crate::vm) fn start_osr_region(
     // its coverage matches (float unary, appends, inlining, return accounting, widening).
     let verified = || osr_loop::verify_region(region, observation).ok()
         .and_then(|verified| osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt)));
-    #[cfg(test)]
-    let prefer_lane = FORCE_LANE_OSR.with(|force| force.get());
-    #[cfg(not(test))]
-    let prefer_lane = false;
+    // The lane specializer is the production OSR plan; the verified lowering remains the
+    // fallback for a nested inlined loop the lane unit does not model yet.
+    let prefer_lane = true;
     let lane_plan = |lane: Option<super::lane_region::LoweredRegion>| lane.map(|region|
         (region.function, BTreeMap::new(), true));
     let (function, widenings, lane) = if prefer_lane {
