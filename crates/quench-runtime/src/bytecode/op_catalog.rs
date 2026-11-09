@@ -27,6 +27,9 @@ pub(crate) enum Class {
     WasmSelect,
     WasmI32Load,
     WasmI32Load8U,
+    WasmI32Load16U,
+    WasmI32Load16S,
+    WasmI32Load8S,
     WasmJumpI32EqualImmediate,
     WasmJumpI32NotEqualImmediate,
     GetField,
@@ -150,6 +153,9 @@ macro_rules! class_of {
     (WasmSelect) => { Class::WasmSelect };
     (WasmI32Load) => { Class::WasmI32Load };
     (WasmI32Load8U) => { Class::WasmI32Load8U };
+    (WasmI32Load16U) => { Class::WasmI32Load16U };
+    (WasmI32Load16S) => { Class::WasmI32Load16S };
+    (WasmI32Load8S) => { Class::WasmI32Load8S };
     (WasmJumpI32EqualImmediate) => { Class::WasmJumpI32EqualImmediate };
     (WasmJumpI32NotEqualImmediate) => { Class::WasmJumpI32NotEqualImmediate };
     (GetField) => { Class::GetField };

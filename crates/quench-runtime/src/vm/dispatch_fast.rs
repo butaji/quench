@@ -18944,8 +18944,8 @@ fn derive_lane_view<'live, H: Host>(
         let op = decoded[pc].op();
         [ACC_NONE, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)).filter(|_| {
             matches!(
-                op,
-                Op::WasmI32Load | Op::WasmI32Load8S | Op::WasmI32Load8U | Op::WasmI32Load16S | Op::WasmI32Load16U
+                op.class(),
+                Class::WasmI32Load | Class::WasmI32Load8S | Class::WasmI32Load8U | Class::WasmI32Load16S | Class::WasmI32Load16U
             )
         })
     };
@@ -19107,16 +19107,16 @@ fn derive_lane_view<'live, H: Host>(
             continue;
         }
         let absorbed = decoded[target];
-        let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op as u16, ACC_NONE);
+        let plain = |op: u16| absorbed.op() as u16 == op && serves(records[target].handler, op, ACC_NONE);
         let backward = target <= pc;
         // In compiled mode an OSR site's backedge must remain a standalone jump record.
         // The lane's `THROUGH` fusion would replace both its handler and jump distance.
         if loop_tier && backward {
             continue;
         }
-        let (handler, c) = if plain(Op::Move) {
+        let (handler, c) = if plain(opc::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
-        } else if plain(Op::WasmI32AddImmediate)
+        } else if plain(opc::WasmI32AddImmediate)
             && let Ok(step) = i16::try_from(absorbed.imm() as i32)
         {
             (
@@ -19161,10 +19161,10 @@ fn derive_lane_view<'live, H: Host>(
     // A plain move or add of a constant whose next record jumps runs with
     // that jump as one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let plain = |op: Op| serves(records[pc].handler, op as u16, ACC_NONE);
-        let add = if plain(Op::Move) {
+        let plain = |op: u16| serves(records[pc].handler, op, ACC_NONE);
+        let add = if plain(opc::Move) {
             false
-        } else if plain(Op::WasmI32AddImmediate) {
+        } else if plain(opc::WasmI32AddImmediate) {
             true
         } else {
             continue;

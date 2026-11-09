@@ -2469,22 +2469,22 @@ impl ProgramStore {
                 if let Some(function) = function_code {
                     for instruction in &function.code {
                         let instruction = instruction.as_wide();
-                        match instruction.op() {
-                            crate::bytecode::Op::JumpFalse
-                            | crate::bytecode::Op::JumpTrue
-                            | crate::bytecode::Op::JumpBinaryFalse => {
+                        match instruction.op().class() {
+                            crate::bytecode::Class::JumpFalse
+                            | crate::bytecode::Class::JumpTrue
+                            | crate::bytecode::Class::JumpBinaryFalse => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
-                                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
+                                if instruction.op().is_jump_binary_false() {
                                     count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                                 }
                             }
-                            crate::bytecode::Op::Unary
+                            crate::bytecode::Class::Unary
                                 if instruction.unary_operator()
                                     == oxc_ast::ast::UnaryOperator::Typeof as u32 =>
                             {
                                 guard_census.1 = guard_census.1.saturating_add(1);
                             }
-                            crate::bytecode::Op::Binary => {
+                            crate::bytecode::Class::Binary => {
                                 count_comparison_guard(&mut guard_census, instruction.binary_operator())
                             }
                             _ => {}
