@@ -27,6 +27,7 @@ use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
+use crate::bytecode::index as opc;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
@@ -9008,7 +9009,7 @@ lane_handler! {
     fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
-        let value = if const { matches!(opcode(OP), Op::WasmF64Binary) } {
+        let value = if const { opcode(OP) as u16 == opc::WasmF64Binary } {
             let (Some(left), Some(right), Some(operator)) = (
                 left.bits64(),
                 right.bits64(),
@@ -9052,8 +9053,8 @@ const FLOAT_ARITHMETIC: usize = 10;
 
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
-    Some(match op {
-        Op::WasmF64Binary => match F64BinaryOperator::from_tag(selector)? {
+    Some(match op as u16 {
+        opc::WasmF64Binary => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -9066,7 +9067,7 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
             F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
             _ => return None,
         },
-        Op::WasmF32Binary => match F32BinaryOperator::from_tag(selector)? {
+        opc::WasmF32Binary => match F32BinaryOperator::from_tag(selector)? {
             F32BinaryOperator::Add => FLOAT_ADD,
             F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -10314,16 +10315,11 @@ lane_handler! {
     /// records run here, the extraction written before the operator reads its operands.
     fn lane_bit_field_then<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
         let (operator, immediate) = const {
-            match opcode(SECOND) {
-                Op::WasmI32ShiftRightUnsignedAndImmediate => (None, true),
-                op => match I32BinaryOperator::from_register_op(op) {
-                    Some(operator) => (Some(operator), false),
-                    None => match I32BinaryOperator::from_immediate_op(op) {
-                        Some(operator) => (Some(operator), true),
-                        None => panic!("not an i32 operator"),
-                    },
-                },
-            }
+            let second = opcode(SECOND);
+            if second as u16 == opc::WasmI32ShiftRightUnsignedAndImmediate { (None, true) }
+            else if let Some(operator) = I32BinaryOperator::from_register_op(second) { (Some(operator), false) }
+            else if let Some(operator) = I32BinaryOperator::from_immediate_op(second) { (Some(operator), true) }
+            else { panic!("not an i32 operator") }
         };
         let field = crate::wasm::integer::shift_right_unsigned_and(
             read_i32::<ACC, ACC_B>(r, i.b, view),
@@ -10357,10 +10353,10 @@ lane_handler! {
 fn bit_field_then_handler<H: Host>(second: Op, acc: u8) -> Option<Handler> {
     macro_rules! seconds {
         ($($second:ident),+) => {
-            match (second, acc) {
+            match (second as u16, acc) {
                 $(
-                    (Op::$second, ACC_NONE) => Some(lane_bit_field_then::<H, { Op::$second as u16 }, ACC_NONE> as Handler),
-                    (Op::$second, ACC_B) => Some(lane_bit_field_then::<H, { Op::$second as u16 }, ACC_B> as Handler),
+                    (opc::$second, ACC_NONE) => Some(lane_bit_field_then::<H, { opc::$second }, ACC_NONE> as Handler),
+                    (opc::$second, ACC_B) => Some(lane_bit_field_then::<H, { opc::$second }, ACC_B> as Handler),
                 )+
                 _ => None,
             }
@@ -10407,26 +10403,26 @@ fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u
     macro_rules! accs {
         ($jump:ident, $load:ident) => {
             match (backward, acc) {
-                (false, ACC_NONE) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, false, ACC_NONE> as Handler),
-                (true, ACC_NONE) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, true, ACC_NONE> as Handler),
-                (false, ACC_A) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, false, ACC_A> as Handler),
-                (true, ACC_A) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, true, ACC_A> as Handler),
+                (false, ACC_NONE) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, false, ACC_NONE> as Handler),
+                (true, ACC_NONE) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, true, ACC_NONE> as Handler),
+                (false, ACC_A) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, false, ACC_A> as Handler),
+                (true, ACC_A) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, true, ACC_A> as Handler),
                 _ => None,
             }
         };
     }
     macro_rules! loads {
         ($jump:ident) => {
-            match load {
-                Op::WasmI32Load => accs!($jump, WasmI32Load),
-                Op::WasmI32Load8U => accs!($jump, WasmI32Load8U),
+            match load as u16 {
+                opc::WasmI32Load => accs!($jump, WasmI32Load),
+                opc::WasmI32Load8U => accs!($jump, WasmI32Load8U),
                 _ => None,
             }
         };
     }
-    match jump {
-        Op::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
-        Op::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
+    match jump as u16 {
+        opc::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
+        opc::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
         _ => None,
     }
 }
@@ -10438,9 +10434,9 @@ lane_handler! {
     /// first result is written before the second reads its operands, as two records do.
     fn lane_add_pair<FIRST: u16, SECOND: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         let first_immediate = const {
-            match opcode(FIRST) {
-                Op::WasmI32Add => false,
-                Op::WasmI32AddImmediate => true,
+            match opcode(FIRST) as u16 {
+                opc::WasmI32Add => false,
+                opc::WasmI32AddImmediate => true,
                 _ => panic!("not an i32 add"),
             }
         };
@@ -10451,8 +10447,8 @@ lane_handler! {
         // SAFETY: the view fuses an add only with a following add or loop step.
         let second = unsafe { &*second_ip };
         let view = Carried { acc: Slot::of(first), ..view };
-        match const { opcode(SECOND) } {
-            Op::WasmI32AddImmediateJumpNonZero => {
+        match const { opcode(SECOND) as u16 } {
+            opc::WasmI32AddImmediateJumpNonZero => {
                 let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
                 let encoded = view.integers.encode(sum);
                 if sum != 0 {
@@ -10460,7 +10456,7 @@ lane_handler! {
                 }
                 produce!(cx, r, second_ip, second.a, encoded, view)
             }
-            Op::WasmI32AddImmediate => {
+            opc::WasmI32AddImmediate => {
                 let sum = r.i32(second.b).wrapping_add(second.imm() as i32);
                 produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
             }
@@ -10486,18 +10482,18 @@ fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> 
     }
     macro_rules! seconds {
         ($first:ident) => {
-            match (second, backward) {
-                (Op::WasmI32Add, _) => accs!($first, WasmI32Add, false),
-                (Op::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
-                (Op::WasmI32AddImmediateJumpNonZero, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
-                (Op::WasmI32AddImmediateJumpNonZero, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
+            match (second as u16, backward) {
+                (opc::WasmI32Add, _) => accs!($first, WasmI32Add, false),
+                (opc::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
+                (opc::WasmI32AddImmediateJumpNonZero, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
+                (opc::WasmI32AddImmediateJumpNonZero, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
                 _ => None,
             }
         };
     }
-    match first {
-        Op::WasmI32Add => seconds!(WasmI32Add),
-        Op::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
+    match first as u16 {
+        opc::WasmI32Add => seconds!(WasmI32Add),
+        opc::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
         _ => None,
     }
 }
@@ -10544,10 +10540,10 @@ lane_handler! {
 fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) -> Option<Handler> {
     macro_rules! jumps {
         ($first:ident; $($jump:ident),+) => {
-            match (jump, backward) {
+            match (jump as u16, backward) {
                 $(
-                    (Op::$jump, false) => Some(lane_immediate_compare_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false> as Handler),
-                    (Op::$jump, true) => Some(lane_immediate_compare_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true> as Handler),
+                    (opc::$jump, false) => Some(lane_immediate_compare_jump::<H, { opc::$first }, { opc::$jump }, false> as Handler),
+                    (opc::$jump, true) => Some(lane_immediate_compare_jump::<H, { opc::$first }, { opc::$jump }, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10559,8 +10555,8 @@ fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) 
         };
     }
     // Masked tag tests; each further pairing is another family of handler copies.
-    match first {
-        Op::WasmI32AndImmediate => tested!(WasmI32AndImmediate),
+    match first as u16 {
+        opc::WasmI32AndImmediate => tested!(WasmI32AndImmediate),
         _ => None,
     }
 }

@@ -738,6 +738,12 @@ macro_rules! opcodes {
         #[quench_macros::native_operation_exports(19, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
+        /// The catalog's opcode indices, generated here so tiers never spell an opcode name.
+        #[allow(non_upper_case_globals, dead_code)]
+        pub(crate) mod index {
+            $(pub(crate) const $name: u16 = super::Op::$name as u16;)+
+        }
+
 
         #[allow(dead_code)]
         impl Op {
