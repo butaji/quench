@@ -13468,25 +13468,10 @@ fn lane_call_native<H: Host>(
     if !native.runs_from_lane() {
         return None;
     }
-    // A Math function of Numbers runs no guest code and observes no frame, so it runs from
-    // any activation (`number::math_inline_call`, and `math_numbers` past two arguments).
-    if native.is_math_function() {
-        if let Some(value) = super::number::math_inline_call(native, args) {
-            return Some(value);
-        }
-        if let Some(numbers) = args
-            .iter()
-            .map(|value| value.as_number())
-            .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
-            && let Some(result) = super::number::math_numbers(native, &numbers)
-        {
-            return Some(Value::number(result));
-        }
-    }
     lane_call_native_out(cx, ip, native, callee, receiver, args)
 }
 
-/// `lane_call_native` past its in-place Math shortcuts: the native's call out of the lane,
+/// `lane_call_native` past its admission: the native's call out of the lane,
 /// beside its activations where the native admits it, else from its frame
 /// (`lane_call_from_frame`), as `lane_call_array_callback` calls an array's callback method,
 /// which no shortcut answers.

@@ -5,17 +5,31 @@ use super::*;
 
 impl<H: Host> Vm<H> {
     /// A native call's value where its common case completes in place: the steady cases
-    /// first (`Vm::steady_native_value`), then the pure string methods, objects, collections
+    /// first (`Vm::steady_native_value`), then Math, the pure string methods, objects, collections
     /// and arrays, and primitives. `None` leaves the call to the native itself.
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
         self.steady_native_value(native, receiver, args)
+            .or_else(|| math_value(native, args))
             .or_else(|| self.pure_string_method_call(code, native, receiver, args))
             .or_else(|| object_value(self, code, native, receiver, args))
             .or_else(|| collection_value(self, code, native, receiver, args))
             .or_else(|| array_value(self, code, native, callee, receiver, args))
             .or_else(|| primitive_value(self, native, receiver, args))
     }
+}
+
+/// A Math function of Numbers, which runs no guest code and observes no frame
+/// (`number::math_inline_call`, and `math_numbers` past two arguments).
+fn math_value(native: Native, args: &[Value]) -> Option<Value> {
+    if !native.is_math_function() {
+        return None;
+    }
+    super::super::number::math_inline_call(native, args).or_else(|| {
+        let numbers = args.iter().map(|value| value.as_number())
+            .collect::<Option<smallvec::SmallVec<[f64; super::super::number::MATH_INLINE_ARGUMENTS]>>>()?;
+        super::super::number::math_numbers(native, &numbers).map(Value::number)
+    })
 }
 
 /// Object queries whose steps observe nothing: `Object.create` without properties, an own
