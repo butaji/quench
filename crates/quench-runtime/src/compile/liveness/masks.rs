@@ -1,7 +1,7 @@
 //! A function's register masks: its live registers before each instruction, at the narrowest
 //! width the register file needs, and the windowed form for bodies past one set's width.
 
-use super::{live_masks, register_dead, register_in, windows, RegisterSet, ROOT_MAP_REGISTERS};
+use super::{live_masks, register_dead, windows, RegisterSet, ROOT_MAP_REGISTERS};
 use crate::bytecode::{FieldSite, Function, Superinstruction};
 use std::mem::size_of_val;
 
@@ -56,10 +56,12 @@ impl RegisterMasks {
     /// the mask has no per-pc entry there (a collection then scans it conservatively).
     pub(crate) fn live_at(&self, pc: usize, register: usize) -> Option<bool> {
         match self {
+            Self::Narrow(masks) => masks.get(pc).map(|&mask| register < u64::BITS as usize && mask & (1 << register) != 0),
+            Self::Half(masks) => masks.get(pc).map(|&mask| register < u128::BITS as usize && mask & (1 << register) != 0),
+            Self::Wide(masks) => masks.get(pc).map(|set| set.contains(register)),
             Self::Windowed { windows, masks } => masks
                 .get(pc * usize::from(*windows) + register / RegisterSet::BITS as usize)
                 .map(|set| set.contains(register % RegisterSet::BITS as usize)),
-            _ => self.get(pc).map(|mask| register_in(mask, register)),
         }
     }
 
