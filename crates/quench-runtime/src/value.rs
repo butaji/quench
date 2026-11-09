@@ -127,7 +127,7 @@ impl NarrowLayout {
     }
 
     /// The address of the upper words by code, which lives as long as the process.
-    pub(crate) fn upper_words() -> *const u64 {
+    #[inline(always)] pub(crate) fn upper_words() -> *const u64 {
         NARROW_UPPER_WORD_TABLE.as_ptr()
     }
 }
@@ -161,8 +161,7 @@ const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == 
 
 impl Value {
     /// This value as a narrow value, when it has one.
-    #[inline(always)]
-    pub(crate) fn to_narrow(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn to_narrow(self) -> Option<u32> {
         let upper = self.0 & !LOWER_WORD;
         let lower = self.0 as u32;
         if upper == TAG_INT {
@@ -178,8 +177,7 @@ impl Value {
     }
 
     /// The narrow form of the integer `integer`, when it has one (`to_narrow`).
-    #[inline(always)]
-    pub(crate) fn narrow_integer(integer: i32) -> Option<u32> {
+    #[inline(always)] pub(crate) fn narrow_integer(integer: i32) -> Option<u32> {
         let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
         (-limit..limit)
             .contains(&integer)
@@ -189,8 +187,7 @@ impl Value {
     /// `to_narrow`, testing a direct object handle first: a new object's values
     /// (`Object::pack_inline`) are mostly references, where field stores, which test an
     /// integer first, keep `to_narrow`.
-    #[inline(always)]
-    pub(crate) fn to_narrow_reference(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn to_narrow_reference(self) -> Option<u32> {
         if self.0 & !LOWER_WORD != DIRECT_OBJECT_UPPER {
             return self.to_narrow();
         }
@@ -199,8 +196,7 @@ impl Value {
     }
 
     /// The value `narrow` packs (`to_narrow`).
-    #[inline(always)]
-    pub(crate) fn from_narrow(narrow: u32) -> Self {
+    #[inline(always)] pub(crate) fn from_narrow(narrow: u32) -> Self {
         if narrow & NARROW_INTEGER_FLAG != 0 {
             return Self::integer((narrow as i32) >> NARROW_CODE_SHIFT);
         }
@@ -307,8 +303,7 @@ impl ValueLayout {
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
 
-    #[inline(always)]
-    pub(crate) fn encode(self, value: i32) -> Value {
+    #[inline(always)] pub(crate) fn encode(self, value: i32) -> Value {
         Value(self.0 | u64::from(value as u32))
     }
 }
@@ -350,22 +345,19 @@ impl Value {
     /// How the `environment_index` word `self` orders against the number `index`: the
     /// number fills the low payload bits under one fixed tag, so the words order as their
     /// numbers do and a search needs no decoding.
-    #[inline(always)]
-    pub(crate) fn cmp_environment_index(self, index: u32) -> std::cmp::Ordering {
+    #[inline(always)] pub(crate) fn cmp_environment_index(self, index: u32) -> std::cmp::Ordering {
         debug_assert!(self.as_environment_index().is_some());
         self.0.cmp(&Self::environment_index(index).0)
     }
 
     /// The number of an `environment_index`.
-    #[inline(always)]
-    pub(crate) fn as_environment_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn as_environment_index(self) -> Option<u32> {
         (self.0 & (TAG_MASK | ENVIRONMENT_INDEX_BIT) == TAG_DELETED | ENVIRONMENT_INDEX_BIT)
             .then_some(self.0 as u32)
     }
 
     /// The owner environment of a `shared_environment_slot`.
-    #[inline(always)]
-    pub(crate) fn shared_environment_owner(self) -> Option<Self> {
+    #[inline(always)] pub(crate) fn shared_environment_owner(self) -> Option<Self> {
         (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
             .then_some(Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
     }
@@ -387,21 +379,18 @@ impl Value {
 
     /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
     /// never NaN, so `number` stores its bits as they are; inline, where `number` is a call.
-    #[inline(always)]
-    pub(crate) fn overflowed_integer(value: f64) -> Self {
+    #[inline(always)] pub(crate) fn overflowed_integer(value: f64) -> Self {
         debug_assert_eq!(Self::number(value).0, value.to_bits());
         Self(value.to_bits())
     }
 
-    #[inline(always)]
-    pub(crate) fn integer(value: i32) -> Self {
+    #[inline(always)] pub(crate) fn integer(value: i32) -> Self {
         IntegerEncoding::TAG.encode(value)
     }
 
     /// A count or index as a Number, as `number` stores it: an integer within `i32`, without
     /// the float round trip `number` makes to find that out.
-    #[inline(always)]
-    pub(crate) fn length(value: usize) -> Self {
+    #[inline(always)] pub(crate) fn length(value: usize) -> Self {
         i32::try_from(value).map_or_else(|_| Self::number(value as f64), Self::integer)
     }
 
@@ -409,29 +398,24 @@ impl Value {
     /// space already reads as an untagged value, so only tag-space payloads
     /// need a heap box (`Cell::WasmBits64`); a static Wasm type tells the
     /// two encodings of a slot apart from its 32-bit integer encoding.
-    #[inline(always)]
-    pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
+    #[inline(always)] pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
         let value = Self(bits);
         (!value.is_tagged()).then_some(value)
     }
 
     /// The value's encoding, which a snapshot writes as is: it restores every heap index the
     /// value names at the same index (`crate::snapshot`).
-    #[inline(always)]
-    pub(crate) fn to_bits(self) -> u64 { self.0 }
+    #[inline(always)] pub(crate) fn to_bits(self) -> u64 { self.0 }
 
     /// A value `to_bits` gave, read back from a snapshot of the same heap layout.
-    #[inline(always)]
-    pub(crate) fn from_bits(bits: u64) -> Self { Self(bits) }
+    #[inline(always)] pub(crate) fn from_bits(bits: u64) -> Self { Self(bits) }
 
     /// The 64-bit Wasm payload a value holds in place.
-    #[inline(always)]
-    pub(crate) fn bits64(self) -> Option<u64> {
+    #[inline(always)] pub(crate) fn bits64(self) -> Option<u64> {
         (!self.is_tagged()).then_some(self.0)
     }
 
-    #[inline(always)]
-    pub(crate) fn as_int(self) -> Option<i32> {
+    #[inline(always)] pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
 
@@ -439,16 +423,14 @@ impl Value {
     /// whose result depends on a NaN operand only through being a NaN (float
     /// arithmetic and comparison). A boxed payload's bits are a quiet NaN, so
     /// such an operator sees a NaN exactly where the payload is one.
-    #[inline(always)]
-    pub(crate) const fn float_bits64(self) -> u64 {
+    #[inline(always)] pub(crate) const fn float_bits64(self) -> u64 {
         self.0
     }
 
     /// A float arithmetic result held in place. A NaN whose bits fall in the
     /// tag space becomes the canonical NaN: arithmetic may produce any
     /// arithmetic NaN, and the canonical one is.
-    #[inline(always)]
-    pub(crate) fn from_float_bits64(bits: u64) -> Self {
+    #[inline(always)] pub(crate) fn from_float_bits64(bits: u64) -> Self {
         let value = Self(bits);
         if value.is_tagged() {
             // Only a NaN whose payload collides with a tag: a predicted
@@ -462,13 +444,11 @@ impl Value {
     }
 
     /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
-    #[inline(always)]
-    pub(crate) const fn wasm_bits32(self) -> u32 {
+    #[inline(always)] pub(crate) const fn wasm_bits32(self) -> u32 {
         self.0 as u32
     }
 
-    #[inline(always)]
-    pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
+    #[inline(always)] pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
         let tags = (left.0 ^ TAG_INT) | (right.0 ^ TAG_INT);
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
     }
@@ -477,43 +457,35 @@ impl Value {
         Self(TAG_HEAP | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_object(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_object(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_array(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_array(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_function(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_function(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_iterator(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_iterator(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_string(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_string(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_STRING_HANDLE_BITS | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_await(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_await(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_v128(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_v128(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_V128_HANDLE_BIT | u64::from(index))
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_promise(index: u32) -> Self {
+    #[inline(always)] pub(crate) fn direct_promise(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
 
@@ -529,8 +501,7 @@ impl Value {
     }
 
     /// Both operands as Numbers.
-    #[inline(always)]
-    pub(crate) fn number_pair(left: Self, right: Self) -> Option<(f64, f64)> {
+    #[inline(always)] pub(crate) fn number_pair(left: Self, right: Self) -> Option<(f64, f64)> {
         Some((left.as_number()?, right.as_number()?))
     }
 
@@ -538,13 +509,11 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
 
-    #[inline(always)]
-    pub(crate) fn heap_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn heap_index(self) -> Option<u32> {
         ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn heap_reference(self) -> Option<HeapReference> {
+    #[inline(always)] pub(crate) fn heap_reference(self) -> Option<HeapReference> {
         if self.0 & TAG_MASK != TAG_HEAP {
             return None;
         }
@@ -565,8 +534,7 @@ impl Value {
         )
     }
 
-    #[inline(always)]
-    pub(crate) fn legacy_heap_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn legacy_heap_index(self) -> Option<u32> {
         match self.heap_reference()? {
             HeapReference::LegacySlot(index) => Some(index),
             HeapReference::ObjectRecord(_)
@@ -580,52 +548,43 @@ impl Value {
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_v128_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_v128_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_V128_HANDLE_BIT).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_object_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_object_index(self) -> Option<u32> {
         // `heap_reference` as one family test: hot reads ask for this family alone.
         crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_array_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_array_index(self) -> Option<u32> {
         crate::staged::value::is_direct_array(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_iterator_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_iterator_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_string_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_string_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_STRING_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_await_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_await_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_promise_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_promise_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT).then_some(self.0 as u32)
     }
 
-    #[inline(always)]
-    pub(crate) fn direct_function_index(self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn direct_function_index(self) -> Option<u32> {
         crate::staged::value::is_direct_function(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
 
     /// Whether the value names a direct record of an object family: an ordinary object,
     /// array, function, promise or iterator. Every such value is an object; strings and
     /// await states, the other direct families, are not.
-    #[inline(always)]
-    pub(crate) fn is_direct_object_family(self) -> bool {
+    #[inline(always)] pub(crate) fn is_direct_object_family(self) -> bool {
         self.direct_object_index().is_some()
             || self.direct_array_index().is_some()
             || self.direct_function_index().is_some()
@@ -643,8 +602,7 @@ impl Value {
 
     /// Whether the value names an object or array record, which holds only an ordinary
     /// object or an array: never a string, a BigInt or a function.
-    #[inline(always)]
-    pub(crate) fn is_record(self) -> bool {
+    #[inline(always)] pub(crate) fn is_record(self) -> bool {
         self.is_heap()
             && matches!(
                 self.0 & HEAP_FAMILY_BITS,
@@ -655,8 +613,7 @@ impl Value {
     /// ToNumber where the value alone decides it: a Number, a Boolean, `null` or `undefined`
     /// (the deleted marker reads as `undefined`). `None` for a heap value, whose conversion
     /// reads its cell and may run guest code.
-    #[inline(always)]
-    pub(crate) fn immediate_number(self) -> Option<f64> {
+    #[inline(always)] pub(crate) fn immediate_number(self) -> Option<f64> {
         if let Some(number) = self.as_number() {
             return Some(number);
         }
@@ -672,8 +629,7 @@ impl Value {
     /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
     /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
-    #[inline(always)]
-    pub(crate) fn truthiness(self) -> Option<bool> {
+    #[inline(always)] pub(crate) fn truthiness(self) -> Option<bool> {
         // A boolean first, in one test: conditions mostly test comparison results.
         if self.0 & !(Self::TRUE.0 ^ Self::FALSE.0) == Self::FALSE.0 {
             return Some(self == Self::TRUE);
@@ -693,8 +649,7 @@ impl Value {
 
     /// Appends the heap values of `values` to `out`, in order: a branch-free compaction that
     /// writes every value into reserved space and advances past the heap ones only.
-    #[inline(always)]
-    pub(crate) fn extend_heap_values(out: &mut Vec<Value>, values: &[Value]) {
+    #[inline(always)] pub(crate) fn extend_heap_values(out: &mut Vec<Value>, values: &[Value]) {
         out.reserve(values.len());
         let start = out.len();
         let mut kept = 0;
@@ -714,8 +669,7 @@ impl Value {
 
     /// Whether this is any `TAG_DELETED` marker: `DELETED`, a shared environment slot, an
     /// environment index or unmaterialized arguments. None is a value a program observes.
-    #[inline(always)]
-    pub(crate) fn is_internal_marker(self) -> bool {
+    #[inline(always)] pub(crate) fn is_internal_marker(self) -> bool {
         self.0 & TAG_MASK == TAG_DELETED
     }
 

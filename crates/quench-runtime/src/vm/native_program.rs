@@ -59,8 +59,8 @@ pub struct NativeJsPublicationCounts {
     pub frozen_globals: usize,
     /// Whole-program prototype values the image folds, each guarded at its read site.
     pub frozen_fields: usize,
-    /// Functions whose register file exceeds the stack-map width (`ROOT_MAP_REGISTERS`):
-    /// their native frames have no register root map, so a collection materializes them.
+    /// Functions whose windowed root map would exceed `MAX_MASK_BYTES`: their frames carry
+    /// one conservative all-live map.
     pub wide_frame_functions: usize,
 }
 

@@ -762,10 +762,10 @@ impl<H: Host> Vm<H> {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
             // conservative scan for that activation.
-            let register_mask = self
+            let register_masks = self
                 .programs
                 .residual(frame.program)
-                .and_then(|program| program.register_root_mask(frame.function, frame.pc));
+                .and_then(|program| program.register_root_masks(frame.function));
             [frame.env, frame.this]
                 .into_iter()
                 .chain(frame.context.callee())
@@ -778,9 +778,9 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .enumerate()
                         .filter_map(move |(register, value)| {
-                            register_mask
-                                .is_none_or(|mask| crate::compile::liveness::register_in(mask, register))
-                                .then_some(*value)
+                            register_masks
+                                .and_then(|masks| masks.live_at(frame.pc, register))
+                                .unwrap_or(true).then_some(*value)
                         }),
                 )
         }));

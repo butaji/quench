@@ -5222,7 +5222,7 @@ mod tests {
                     packed.as_wide()
                 }
             })
-            .find(|instruction| instruction.op() == Op::WasmMemoryAddress)
+            .find(|instruction| instruction.op().is_wasm_memory_address())
             .unwrap();
         invalid.constants[address.constant_index()] = crate::bytecode::Constant::Number(0.0);
         assert!(invalid.validate().is_err());
@@ -5826,7 +5826,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             root_instructions.iter().any(|instruction| {
-                instruction.op() == Op::CallKnown && instruction.known_function_index() == 1
+                instruction.op().is_call_known() && instruction.known_function_index() == 1
             }),
             "root instructions: {root_instructions:?}"
         );
@@ -6228,7 +6228,7 @@ mod tests {
         assert!(
             root_instructions
                 .iter()
-                .any(|instruction| instruction.op() == Op::CallKnown
+                .any(|instruction| instruction.op().is_call_known()
                     && instruction.known_function_index() == 1),
             "root instructions: {root_instructions:?}"
         );

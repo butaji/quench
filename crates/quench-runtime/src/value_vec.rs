@@ -102,8 +102,7 @@ pub(crate) struct YoungRuns {
 
 impl YoungRuns {
     /// Whether `vector` holds one of these runs.
-    #[inline(always)]
-    pub(crate) fn hold(self, vector: ValueVec) -> bool {
+    #[inline(always)] pub(crate) fn hold(self, vector: ValueVec) -> bool {
         !vector.is_dictionary() && vector.start().wrapping_sub(self.floor) < self.top - self.floor
     }
 }
@@ -129,7 +128,7 @@ impl ValueVec {
         (self.start, self.auxiliary)
     }
 
-    pub(crate) const fn from_parts(start: u32, auxiliary: u32) -> Self {
+    #[inline(always)] pub(crate) const fn from_parts(start: u32, auxiliary: u32) -> Self {
         Self { start, auxiliary }
     }
 
@@ -154,7 +153,7 @@ impl ValueVec {
     /// The auxiliary word with its dictionary and exotic bits: equal to `auxiliary` exactly
     /// when the vector is neither in dictionary storage nor an exotic object's, so one
     /// comparison with a recorded shape proves all three.
-    pub(crate) const fn exact_auxiliary(self) -> u32 {
+    #[inline(always)] pub(crate) const fn exact_auxiliary(self) -> u32 {
         self.auxiliary
     }
 
@@ -434,8 +433,7 @@ impl ValueArena {
 
     /// Observes a write of `value` to `slot` of an object of `shape`, where the
     /// shape holds the slot (an ordinary shape's; a dictionary's holds none of its own).
-    #[inline(always)]
-    pub(crate) fn note_shape_value(&mut self, shape: u32, slot: usize, value: Value) {
+    #[inline(always)] pub(crate) fn note_shape_value(&mut self, shape: u32, slot: usize, value: Value) {
         if self.tracking && slot < self.shape_length(shape) && !value.is_deleted() {
             self.note_slot_value(shape, slot, value);
         }
@@ -467,14 +465,12 @@ impl ValueArena {
     }
 
     /// The shape that added `slot` of `shape`'s objects, whose representation it shares.
-    #[inline(always)]
-    pub(crate) fn slot_owner(&self, shape: u32, slot: usize) -> u32 {
+    #[inline(always)] pub(crate) fn slot_owner(&self, shape: u32, slot: usize) -> u32 {
         self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
     }
 
     /// The recorded type of `slot` of `shape`, not a write-maintained invariant.
-    #[inline(always)]
-    pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
+    #[inline(always)] pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
         self.owner_types[self.slot_owner(shape, slot) as usize]
     }
 
@@ -486,8 +482,7 @@ impl ValueArena {
         self.shape_readers.subscribe(shape, code)
     }
 
-    #[inline(always)]
-    pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
+    #[inline(always)] pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
         if previous != next {
             self.shape_readers.retire(previous);
         }
@@ -496,8 +491,7 @@ impl ValueArena {
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. The
     /// untracked case, every store of a runtime without lane bodies, is the test alone: the
     /// join is out of line (`note_tracked_slot_value`).
-    #[inline(always)]
-    pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+    #[inline(always)] pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
         self.tracking && self.note_tracked_slot_value(shape, slot, value)
     }
 
@@ -667,8 +661,7 @@ impl ValueArena {
 
     /// Append `value` past `vector`'s values, which an add of one property makes. Inline:
     /// an append that fits its range is the store alone; growing is out of line.
-    #[inline(always)]
-    pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
+    #[inline(always)] pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
         let len = self.len(*vector);
         if vector.is_dictionary() {
@@ -711,8 +704,7 @@ impl ValueArena {
     /// The start of a new arena run holding `values`, of the capacity their count derives
     /// (`ordered_capacity`); `None` once the arena's positions are spent, where storage takes
     /// a dictionary.
-    #[inline(always)]
-    pub(crate) fn run_of(&mut self, values: &[Value]) -> Option<u32> {
+    #[inline(always)] pub(crate) fn run_of(&mut self, values: &[Value]) -> Option<u32> {
         let start = self.allocate(capacity_class(values.len()), MAX_ARENA_START)?;
         self.values[start..start + values.len()].copy_from_slice(values);
         Some(start as u32)
@@ -724,8 +716,7 @@ impl ValueArena {
     /// the sweep shows. The run's whole capacity is copied, as the smallest class and then the
     /// pairs of values each larger class adds (`capacity_class`), moves of fixed size rather
     /// than a copy of variable length, which is a call.
-    #[inline(always)]
-    pub(crate) fn young_run_padded<const N: usize>(&mut self, values: &[Value; N], len: usize) -> Option<u32> {
+    #[inline(always)] pub(crate) fn young_run_padded<const N: usize>(&mut self, values: &[Value; N], len: usize) -> Option<u32> {
         let capacity = capacity_class(len);
         debug_assert!(len <= N && capacity <= N && values[len..].iter().all(|value| *value == Value::UNDEFINED));
         let start = self.young_run(capacity)?;
@@ -759,8 +750,7 @@ impl ValueArena {
     /// would move the run beneath its array. Never an ordinary run: a young array's death
     /// releases nothing, and the collection it survives copies its elements out
     /// (`ArrayElements::leave_nursery`).
-    #[inline(always)]
-    pub(crate) fn young_elements(&mut self, len: usize) -> Option<std::ptr::NonNull<Value>> {
+    #[inline(always)] pub(crate) fn young_elements(&mut self, len: usize) -> Option<std::ptr::NonNull<Value>> {
         // An empty array holds the shared empty header.
         if len.wrapping_sub(1) >= YOUNG_ELEMENTS_MAX || !self.values.keeps_addresses() {
             return None;
@@ -815,14 +805,12 @@ impl ValueArena {
 
     /// The young runs taken since the last collection, as a sweep reads them beside its
     /// releases.
-    #[inline(always)]
-    pub(crate) fn young_runs(&self) -> YoungRuns {
+    #[inline(always)] pub(crate) fn young_runs(&self) -> YoungRuns {
         YoungRuns { floor: self.nursery.floor, top: self.nursery.top }
     }
 
     /// Whether `vector` holds a young run (`Nursery`).
-    #[inline(always)]
-    pub(crate) fn holds_young_run(&self, vector: ValueVec) -> bool {
+    #[inline(always)] pub(crate) fn holds_young_run(&self, vector: ValueVec) -> bool {
         self.young_runs().hold(vector)
     }
 
@@ -914,8 +902,7 @@ impl ValueArena {
 
     /// Frees `vector`'s storage. A young run (`Nursery`) returns with the rest of the young
     /// range when its collection ends, so its release is the range test alone.
-    #[inline(always)]
-    pub(crate) fn release(&mut self, vector: ValueVec) {
+    #[inline(always)] pub(crate) fn release(&mut self, vector: ValueVec) {
         if !self.young_runs().hold(vector) {
             self.release_ordinary(vector);
         }
@@ -926,8 +913,7 @@ impl ValueArena {
     /// arena words, as most arrays' and functions' does, is the inlined test alone, where the
     /// call cost a dead array 20 Ir (array-callback); a range or dictionary takes the call
     /// (`release_held`).
-    #[inline(always)]
-    pub(crate) fn release_ordinary(&mut self, vector: ValueVec) {
+    #[inline(always)] pub(crate) fn release_ordinary(&mut self, vector: ValueVec) {
         debug_assert!(!self.holds_young_run(vector));
         // Inline storage and an empty vector without a range hold no arena words.
         if vector.has_inline_property_storage() || (vector.start == EMPTY_START && !vector.is_dictionary()) {
@@ -1071,8 +1057,7 @@ impl ValueArena {
 
     /// The address of the first arena value, which a flat run's position offsets
     /// (`staged::Table::PropertyValues`). Valid until the arena grows or compacts.
-    #[inline(always)]
-    pub(crate) fn values_base(&self) -> *const Value {
+    #[inline(always)] pub(crate) fn values_base(&self) -> *const Value {
         self.values.as_ptr()
     }
 
@@ -1118,8 +1103,7 @@ impl ValueArena {
 
     /// Whether `vector`, an arena vector outside dictionary storage of `len` values, has room
     /// for one more value without moving its range (`push`'s `grow`).
-    #[inline(always)]
-    pub(crate) fn appends_in_place(vector: ValueVec, len: usize) -> bool {
+    #[inline(always)] pub(crate) fn appends_in_place(vector: ValueVec, len: usize) -> bool {
         len < Self::ordered_capacity(vector, len)
     }
 

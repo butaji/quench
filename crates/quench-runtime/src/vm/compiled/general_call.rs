@@ -6,7 +6,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
-use crate::bytecode::{ConstructArguments, ControlFlowLayout, JsDenotation, Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::{ConstructArguments, ControlFlowLayout, JsDenotation, WideInstruction, RETURN_REGISTER};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -84,7 +84,7 @@ fn lower_call(
     exact: &JsExactFallback,
 ) -> bool {
     let returns = instruction.returns_from_frame();
-    if instruction.op() != Op::Call || instruction.result_flags() != if returns { RETURN_REGISTER } else { 0 }
+    if !instruction.op().is_call() || instruction.result_flags() != if returns { RETURN_REGISTER } else { 0 }
         || instruction.direct_eval() || instruction.parameter_eval() {
         return false;
     }
@@ -144,7 +144,7 @@ fn lower_construct(
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> bool {
-    if instruction.op() != Op::Construct || instruction.result_flags() != 0 || instruction.returns_from_frame() {
+    if !instruction.op().is_construct() || instruction.result_flags() != 0 || instruction.returns_from_frame() {
         return false;
     }
     let Some(destination) = register_offset(instruction.result_register()) else { return false };
