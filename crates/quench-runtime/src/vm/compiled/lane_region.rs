@@ -4269,8 +4269,7 @@ impl Lowering<'_, '_> {
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
         emit_js_guard(&mut self.builder, same, exit);
         // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
-        let holder_meta = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.meta_offset as i32);
-        let inline = self.ins().band_imm_u(holder_meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = super::object_slots::inline_storage(&mut self.builder, prototype);
         let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
         emit_js_guard(&mut self.builder, arena, exit);
         let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
@@ -4503,8 +4502,7 @@ impl Lowering<'_, '_> {
         self.ins().brif(present, found, &[], done, &[]);
         self.builder.switch_to_block(found);
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.auxiliary_offset as i32);
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.meta_offset as i32);
-        let inline = self.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = super::object_slots::inline_storage(&mut self.builder, object);
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);
         self.ins().jump(done, &[]);

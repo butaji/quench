@@ -101,9 +101,7 @@ impl ObjectRecord {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
             None => builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32),
         };
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
-        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        ObjectHeader { record: self, shape, inline }
+        ObjectHeader { record: self, shape, inline: inline_storage(builder, address) }
     }
 }
 
@@ -145,10 +143,13 @@ impl ObjectHeader {
         builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
         builder.switch_to_block(join);
         let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
-        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        Self { record: ObjectRecord::Address(record), shape, inline }
+        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record) }
     }
+}
+
+/// `staged::object::inline_storage`'s residual for the record at `record`.
+pub(super) fn inline_storage(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
+    crate::staged::object::inline_storage(&mut Emit { builder, property_values: None }, record)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

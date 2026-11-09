@@ -1445,11 +1445,7 @@ fn emit_js_cached_field_slot(
         );
         let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
         emit_js_guard(builder, same_holder, fallback);
-        let proto_meta = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
-        );
-        let inline = builder.ins().band_imm_u(proto_meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = object_slots::inline_storage(builder, prototype);
         let proto_storage = builder.ins().load(
             types::I64, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
@@ -1893,17 +1889,17 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
-        inline: builder.declare_var(types::I32),
+        inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
     let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
-    let zero = builder.ins().iconst(types::I32, 0);
     let null = builder.ins().iconst(types::I64, 0);
     builder.def_var(receiver.shape, none);
-    builder.def_var(receiver.inline, zero);
+    let outside = builder.ins().iconst(types::I8, 0);
+    builder.def_var(receiver.inline, outside);
     builder.def_var(receiver.object, null);
     let found = builder.create_block();
     let done = builder.create_block();
@@ -1923,8 +1919,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let address = builder.ins().iadd(records, offset);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
     let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
-    let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
-    let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+    let inline = object_slots::inline_storage(builder, address);
     builder.def_var(receiver.object, address);
     builder.def_var(receiver.shape, shape);
     builder.def_var(receiver.inline, inline);
