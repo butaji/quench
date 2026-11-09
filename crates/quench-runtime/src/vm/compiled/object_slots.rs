@@ -170,6 +170,9 @@ pub(crate) struct NativeFieldLoad {
     /// prototype is that one; a change of the value retires the code that took it
     /// (`heap::subscribe_prototype_values`).
     pub(crate) inherited: Option<InheritedConstant>,
+    /// Whether a live function record had the receiver shape when the plan was made: a read
+    /// then proves a readable record (an object or a function's), never a direct object.
+    pub(crate) function_shape: bool,
 }
 
 /// The most shape-guarded load groups one field read lowers before it calls the field cache
@@ -286,6 +289,12 @@ impl InheritedConstant {
 }
 
 impl NativeFieldLoad {
+    /// Whether a read of it proves its receiver a direct object of its shape: an own slot of
+    /// a shape no function record held.
+    pub(crate) fn own_direct(self) -> bool {
+        self.holder.is_none() && !self.function_shape
+    }
+
     pub(super) fn slot_dependency(self) -> Option<crate::code_dependencies::SlotDependency> {
         use crate::typed_ir::Type;
         (self.ty != Type::ANY && self.ty != Type::NEVER).then_some(crate::code_dependencies::SlotDependency {
@@ -317,7 +326,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, target_shape: None, inherited: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, target_shape: None, inherited: None, function_shape: false };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

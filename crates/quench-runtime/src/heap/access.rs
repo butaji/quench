@@ -7,7 +7,7 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
-mod subscribe;
+mod subscribe; mod function_shapes;
 
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
