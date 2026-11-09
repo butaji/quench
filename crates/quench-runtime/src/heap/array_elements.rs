@@ -51,9 +51,6 @@ const _: () = assert!(HEADER_VALUES * size_of::<Value>() == VALUES_OFFSET);
 const _: () = assert!(align_of::<Header>() <= align_of::<Value>());
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
-/// The byte offset from a backing's first value to its `u32` length: native code that
-/// appends within capacity advances the length there.
-pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
 /// The byte offset from a backing's first value to its `u32` count of other values
 /// (`Header::others`), which native code reads at entry, and sets to `OTHERS_UNKNOWN` where
 /// it may store uncounted values.
@@ -279,11 +276,12 @@ impl ArrayElements {
         }
     }
 
+
     /// Whether every value is an int32 (so none is a hole).
+    #[cfg(test)]
     pub(crate) fn holds_only_int32(&self) -> bool {
         self.header().others == 0
     }
-
 
     /// Whether this array alone owns its backing, so writes reach no other array.
     #[inline(always)]

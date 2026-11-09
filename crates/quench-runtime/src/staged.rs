@@ -14,10 +14,11 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::Register;
+use crate::bytecode::{Op, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 pub(crate) mod numeric;
+mod heap;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
@@ -196,6 +197,22 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
+    #[inline(always)]
+    fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
+
+    /// The element store's host helper; `None` where the frame has no helper table.
+    #[inline(always)]
+    fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The lane's own global-name read (`LaneHelper::GlobalGet`).
+    #[inline(always)]
+    fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
+
+    /// The VM's field-store hit (`LaneHelper::FieldSet`).
+    #[inline(always)]
+    fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -209,6 +226,20 @@ pub(crate) trait Frame<S: Stage> {
 
     /// Continue at the jump target.
     fn jump(&mut self, stage: &mut S) -> Self::Control;
+
+    /// The canonical boolean `condition`, with the fact this stage keeps of it.
+    fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
+
+    /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
+    /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
+    #[inline(always)]
+    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: Option<S::Miss>)
+        -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Write `value` to local slot `slot`; `false` where this frame cannot write them.
+    #[inline(always)]
+    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: Option<S::Miss>)
+        -> bool { false }
 }
 
 /// An instruction `step` runs, with the operands a tier decoded.
@@ -218,6 +249,10 @@ pub(crate) enum Operation<W, P> {
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
     LoadConst { destination: Register, constant: Constant },
+    /// Define `destination` from local slot `slot`.
+    LoadLocalPlain { destination: Register, slot: u16 },
+    /// Write `source` to local slot `slot`, and to `result` where the instruction has one.
+    StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
     /// Continue at the jump target.
     Jump,
     /// Continue at the jump target when register `register` is truthy, or when it is falsy
@@ -232,6 +267,8 @@ pub(crate) enum Operation<W, P> {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
+    /// Define `destination` with the logical negation of register `source`'s truthiness.
+    LogicalNot { destination: Register, source: Register },
     /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
@@ -249,6 +286,54 @@ pub(crate) enum Operation<W, P> {
     MakeObject { destination: Register, proof: P },
     /// The array literal `destination`: `length` holes, or `elements` values.
     MakeArray { destination: Register, length: W, elements: W, proof: P },
+    /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
+    Safepoint { proof: P },
+    /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
+    /// miss edge takes a failed store.
+    IndexSetHelper { base: W, key: W, value: W, proof: P },
+    /// The global-name read of `atom` through cache `site`, defined into `destination`; a
+    /// miss leaves at the proof's edge.
+    GlobalRead { destination: Register, atom: u32, site: u16, proof: P },
+    /// The VM field-store helper for `object.atom = value` through cache `site`.
+    FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+}
+impl<W, P> Operation<W, P> {
+    /// The staged operation `instruction` denotes, with the operands the catalog fixes.
+    /// `None` where the opcode has no staged operation, or where its constant is not
+    /// available to this tier: the caller then takes its own exact path. The heap
+    /// operations are the frame's (`Frame::field_read`); a tier decodes those itself.
+    pub(crate) fn decode(instruction: WideInstruction,
+        constant: impl FnOnce(usize) -> Option<Constant>) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::Move => Self::Move {
+                destination: instruction.result_register(), source: instruction.register_b() },
+            Op::LoadConst => Self::LoadConst {
+                destination: instruction.result_register(),
+                constant: constant(instruction.constant_index())? },
+            Op::LoadLocalPlain => Self::LoadLocalPlain {
+                destination: instruction.result_register(),
+                slot: u16::try_from(instruction.local_slot()).ok()? },
+            Op::StoreLocalPlain => Self::StoreLocalPlain {
+                source: instruction.register_a(),
+                slot: u16::try_from(instruction.local_slot()).ok()?,
+                result: instruction.optional_register_b() },
+            Op::Jump => Self::Jump,
+            Op::JumpFalse => Self::JumpIf {
+                register: instruction.register_a(), taken: false },
+            Op::JumpTrue => Self::JumpIf {
+                register: instruction.register_a(), taken: true },
+            Op::LoadThis => Self::LoadThis {
+                destination: instruction.result_register() },
+            Op::RequireObjectCoercible => Self::RequireObjectCoercible {
+                register: instruction.register_b() },
+            Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
+                destination: instruction.result_register(), source: instruction.register_b() }),
+            Op::Unary if instruction.unary_operator()
+                == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
+                    destination: instruction.result_register(), source: instruction.register_b() },
+            _ => return None,
+        })
+    }
 }
 
 /// Which of an instruction's two control edges it takes.

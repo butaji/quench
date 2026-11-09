@@ -248,7 +248,7 @@ mod tests {
         }
         assert_eq!(RegisterSet::bit(200).checked_shl(400).map(|set| set.contains(600)), None);
         assert!(RegisterSet::bit(8).checked_shl(300).is_some_and(|set| set.contains(308)));
-        assert_eq!((RegisterSet::MAX >> 4).contains(507), true);
+        assert!((RegisterSet::MAX >> 4).contains(507));
         assert_eq!(u64::try_from(RegisterSet::bit(63)).map(|word| word.count_ones()), Ok(1));
         assert!(u64::try_from(RegisterSet::bit(64)).is_err());
         assert_eq!(RegisterSet::from(u128::MAX).as_u128(), Some(u128::MAX));

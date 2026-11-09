@@ -2,7 +2,7 @@
 //! per-PC call targets (`static_call_targets`). A hint is never a proof: replacement and
 //! aliasing are handled by call-edge admission, which tries each target a site names behind
 //! its own body guard.
-use crate::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, Op, PropertyDefinitionMode, StoreReceiver, WideInstruction};
+use crate::bytecode::{Atom, Class, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, Op, PropertyDefinitionMode, StoreReceiver, WideInstruction};
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
@@ -123,12 +123,12 @@ impl Hints {
 
     /// What `instruction` of function `id` defines its result as.
     fn definition(&self, id: usize, instruction: WideInstruction, definitions: &[Option<Definition>]) -> Option<Definition> {
-        match instruction.op() {
-            Op::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
-            Op::LoadConst => self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
-            Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
-            op if op.loads_name() => single(self.named.get(instruction.atom_index() as usize)),
-            op if op.addresses_capture() => single(self.captured(id, instruction)),
+        match instruction.op().class() {
+            Class::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
+            Class::LoadConst => self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
+            Class::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
+            _ if instruction.op().loads_name() => single(self.named.get(instruction.atom_index() as usize)),
+            _ if instruction.op().addresses_capture() => single(self.captured(id, instruction)),
             _ => None,
         }
     }
@@ -151,14 +151,14 @@ impl Hints {
         function.instructions().map(|instruction| {
             let target = (instruction.op().is_call()).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
                 .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
-            let method = match instruction.op() {
-                Op::GetField => match instruction.field_lookup() {
+            let method = match instruction.op().class() {
+                Class::GetField => match instruction.field_lookup() {
                     Some(FieldLookup::Atom { atom, .. }) => self.methods.get(atom as usize).cloned(),
                     _ => None,
                 },
-                Op::MakeClosure => Some(vec![instruction.closure_function_index()]),
-                Op::LoadCapture => self.captured(id, instruction).cloned(),
-                Op::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
+                Class::MakeClosure => Some(vec![instruction.closure_function_index()]),
+                Class::LoadCapture => self.captured(id, instruction).cloned(),
+                Class::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
                 _ => None,
             };
             clear_written_hints(&mut methods_by_register, instruction);
