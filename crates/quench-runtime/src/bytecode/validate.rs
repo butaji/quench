@@ -1,3 +1,4 @@
+#[path = "activation_layout.rs"] mod activation_layout;
 use super::control_flow::instruction_at;
 use super::{
     FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
@@ -1105,9 +1106,7 @@ fn selective_capture_layout_is_eligible(
     activation_splits
         && !function.is_async
         && !function.is_generator
-        && !function.is_class_constructor
-        && !function.derived_constructor
-        && !function.class_initializer
+        && function.construction_is_private()
         // The compiler splits a rest list that binds directly and a list binding its names
         // apart too (`selective_layout_is_safe`).
         && function.arguments_own_their_slots(|atom| atoms.get(atom))
