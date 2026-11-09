@@ -223,7 +223,7 @@ fn remove_dead_moves(
         .local_registers
         .iter()
         .filter(|entry| entry.local < function.params)
-        .fold(0, |mask, entry| mask | register_bit(entry.register));
+        .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
     for (pc, is_protected) in (0..function.code.len()).map(|pc| (pc, protected.contains(pc))) {
         let mov = function.code[pc];
@@ -521,7 +521,7 @@ fn coalesce_distant_producer_moves(
     let storage = function
         .local_registers
         .iter()
-        .fold(0, |mask, entry| mask | register_bit(entry.register));
+        .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
     // A move of a register onto itself may have kept the register live upstream, so after
     // one is dropped the live sets are derived anew and no span is coalesced on stale ones.

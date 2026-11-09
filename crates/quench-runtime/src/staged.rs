@@ -166,6 +166,15 @@ pub(crate) trait Frame<S: Stage> {
         None
     }
 
+    /// The dense array element at `index`, under the proof; a hole, a miss or an index past
+    /// the view leaves `None` to the caller's cold path.
+    #[inline(always)]
+    fn index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store `value` at the dense array element `index`, under the proof.
+    #[inline(always)]
+    fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -206,6 +215,10 @@ pub(crate) enum Operation<W, P> {
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
     WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
+    /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
+    IndexRead { index: W, proof: P },
+    /// Store `value` at dense array element `index`, under `proof`.
+    IndexWrite { index: W, value: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -243,10 +256,34 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        Operation::ReadField { base, slot, ty, proof } =>
-            frame.field_read(stage, base, slot, ty, proof).map_or(Step::Unresolved, |(value, _)| Step::Value(value)),
+        heap => heap_step(stage, frame, heap),
+    }
+}
+
+/// The heap operations: a field read or write. A frame with no heap for the operation leaves
+/// it `Unresolved` for its host path.
+#[inline(always)]
+fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
+            Some((value, _)) => Step::Value(value),
+            None => Step::Unresolved,
+        },
         Operation::WriteField { base, slot, ty, value, proof } =>
-            frame.field_write(stage, base, slot, ty, value, proof).map_or(Step::Unresolved, |()| Step::Value(value)),
+            match frame.field_write(stage, base, slot, ty, value, proof) {
+                Some(()) => Step::Value(value),
+                None => Step::Unresolved,
+            },
+        Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
+            Some(()) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        _ => Step::Unresolved,
     }
 }
 

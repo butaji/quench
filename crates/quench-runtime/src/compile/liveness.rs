@@ -5,7 +5,7 @@ use crate::bytecode::{
 
 /// A set of registers, one bit each: the uses, definitions and live registers liveness
 /// derives, and the root masks a collection reads.
-pub(crate) type RegisterSet = u128;
+pub(crate) use set::RegisterSet; mod set;
 
 mod solve;
 pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_successors, analyze_transfers};
@@ -17,14 +17,16 @@ use solve::LiveMask;
 #[derive(Clone, Debug)]
 pub(crate) enum RegisterMasks {
     Narrow(Box<[u64]>),
+    Half(Box<[u128]>),
     Wide(Box<[RegisterSet]>),
 }
 
 impl RegisterMasks {
     /// `masks` at the narrowest width that holds every one of them.
     pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
-        let narrow: Option<Box<[u64]>> = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect();
-        narrow.map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Narrow)
+        if let Some(narrow) = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect::<Option<Box<[u64]>>>() { return Self::Narrow(narrow); }
+        masks.iter().map(|&mask| mask.as_u128()).collect::<Option<Box<[u128]>>>()
+            .map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Half)
     }
 
     /// `function`'s masks (`analyze`), solved at the width its registers need, when liveness
@@ -42,6 +44,7 @@ impl RegisterMasks {
     pub(crate) fn get(&self, pc: usize) -> Option<RegisterSet> {
         match self {
             Self::Narrow(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
+            Self::Half(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
             Self::Wide(masks) => masks.get(pc).copied(),
         }
     }
@@ -63,6 +66,7 @@ impl RegisterMasks {
     pub(crate) fn bytes(&self) -> usize {
         match self {
             Self::Narrow(masks) => size_of_val::<[u64]>(masks),
+            Self::Half(masks) => size_of_val::<[u128]>(masks),
             Self::Wide(masks) => size_of_val::<[RegisterSet]>(masks),
         }
     }
@@ -79,7 +83,7 @@ pub(crate) const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
 /// Whether `register` is in `set`; a register past the set's width never is.
 #[inline(always)]
 pub(crate) fn register_in(set: RegisterSet, register: usize) -> bool {
-    register < RegisterSet::BITS as usize && set & (1 << register) != 0
+    register < RegisterSet::BITS as usize && set.contains(register)
 }
 
 /// Whether `set`, a live set, proves `register` dead: it covers the register and leaves it
@@ -99,7 +103,7 @@ pub(crate) trait MethodArguments {
 
 impl MethodArguments for [MethodSite] {
     fn arguments(&self, site: usize) -> RegisterSet {
-        self[site].2.iter().copied().fold(0, |mask, register| mask | register_bit(register))
+        self[site].2.iter().copied().fold(RegisterSet::default(), |mask, register| mask | register_bit(register))
     }
 }
 
@@ -116,7 +120,7 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
         self.method_arguments[start..start + usize::from(site.argument_count)]
             .iter()
             .copied()
-            .fold(0, |mask, register| mask | register_bit(register))
+            .fold(RegisterSet::default(), |mask, register| mask | register_bit(register))
     }
 }
 
@@ -218,7 +222,7 @@ pub(crate) fn transfer(
 
 /// The registers live after the instruction at `pc`: those live before any of its successors.
 pub(super) fn live_out(successors: &crate::bytecode::Successors, live: &[RegisterSet], pc: usize) -> RegisterSet {
-    successors.at(pc).fold(0, |output, (successor, _)| output | live.get(successor).copied().unwrap_or(0))
+    successors.at(pc).fold(RegisterSet::default(), |output, (successor, _)| output | live.get(successor).copied().unwrap_or_default())
 }
 
 /// The transfer of an op whose field layout alone decides it: each of A, B and C a register
@@ -279,7 +283,7 @@ impl FixedTransfer {
     /// The registers of `instruction`'s fields that `flags` marks.
     #[inline(always)]
     fn registers(instruction: WideInstruction, flags: [bool; 3]) -> RegisterSet {
-        let mut set = 0;
+        let mut set = RegisterSet::default();
         let mut index = 0;
         while index < flags.len() {
             if flags[index] {
@@ -292,7 +296,7 @@ impl FixedTransfer {
 
     #[inline(always)]
     fn uses(self, instruction: WideInstruction) -> RegisterSet {
-        let result = if self.reads_result { register_bit(instruction.result_register()) } else { 0 };
+        let result = if self.reads_result { register_bit(instruction.result_register()) } else { RegisterSet::default() };
         Self::registers(instruction, self.reads) | result
     }
 
@@ -301,7 +305,7 @@ impl FixedTransfer {
         let result = if self.has_result && !instruction.returns_from_frame() && !instruction.writes_numeric_local() {
             register_bit(instruction.result_register())
         } else {
-            0
+            RegisterSet::default()
         };
         Self::registers(instruction, self.writes) | result
     }
@@ -342,13 +346,13 @@ fn general_uses(
     let field_reads = InstructionField::ALL
         .iter()
         .copied()
-        .fold(0, |mask, field| {
+        .fold(RegisterSet::default(), |mask, field| {
             mask | field_uses(instruction, field, fields)
         });
     let result = if instruction.op().result_layout().reads_result_register() {
         register_bit(instruction.result_register())
     } else {
-        0
+        RegisterSet::default()
     };
     let packed_uses = match instruction.op().immediate_layout() {
         ImmediateLayout::CallWindow
@@ -361,7 +365,7 @@ fn general_uses(
             let (first, second) = instruction.register_pair();
             register_bit(first) | register_bit(second)
         }
-        _ => 0,
+        _ => RegisterSet::default(),
     };
     let indexed_uses = match instruction.op().immediate_role() {
         ImmediateRole::MethodSiteIndex => method_arguments(instruction, methods),
@@ -369,12 +373,12 @@ fn general_uses(
             [instruction.superinstruction_index()]
         .code
         .iter()
-        .fold(0, |mask, nested| {
+        .fold(RegisterSet::default(), |mask, nested| {
             mask | nested_member(*nested).map_or(RegisterSet::MAX, |nested| {
                 uses(nested, methods, fields, superinstructions)
             })
         }),
-        _ => 0,
+        _ => RegisterSet::default(),
     };
     field_reads | result | packed_uses | indexed_uses
 }
@@ -391,19 +395,19 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
             let input_operand = match field {
                 InstructionField::B => instruction.operand_b(),
                 InstructionField::C => instruction.operand_c(),
-                InstructionField::A => return 0,
+                InstructionField::A => return RegisterSet::default(),
             };
             operand(input_operand.0, fields)
         }
         FieldLayout::FieldBase => field_base(instruction, fields),
-        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(0, register_bit),
+        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or_else(RegisterSet::default, register_bit),
         FieldLayout::ConstructArguments => match instruction.construct_arguments() {
             crate::bytecode::ConstructArguments::Registers(window) => {
                 range(window.base, window.count)
             }
             crate::bytecode::ConstructArguments::Array(register) => register_bit(register),
         },
-        _ => 0,
+        _ => RegisterSet::default(),
     }
 }
 
@@ -428,12 +432,12 @@ fn general_definitions(
     {
         register_bit(instruction.result_register())
     } else {
-        0
+        RegisterSet::default()
     };
     let field_writes = InstructionField::ALL
         .iter()
         .copied()
-        .fold(0, |mask, field| {
+        .fold(RegisterSet::default(), |mask, field| {
             mask | field_definitions(instruction, field)
         });
     let packed_definitions = match instruction.op().immediate_layout() {
@@ -441,17 +445,17 @@ fn general_definitions(
             let (first, second) = instruction.register_pair();
             register_bit(first) | register_bit(second)
         }
-        _ => 0,
+        _ => RegisterSet::default(),
     };
     let indexed_definitions = match instruction.op().immediate_role() {
         ImmediateRole::SuperinstructionIndex => superinstructions
             [instruction.superinstruction_index()]
         .code
         .iter()
-        .fold(0, |mask, nested| {
-            mask | nested_member(*nested).map_or(0, |nested| definitions(nested, superinstructions))
+        .fold(RegisterSet::default(), |mask, nested| {
+            mask | nested_member(*nested).map_or_else(RegisterSet::default, |nested| definitions(nested, superinstructions))
         }),
-        _ => 0,
+        _ => RegisterSet::default(),
     };
     result | field_writes | packed_definitions | indexed_definitions
 }
@@ -460,11 +464,11 @@ fn field_definitions(instruction: WideInstruction, field: InstructionField) -> R
     let layout = instruction.op().field_layout(field);
     match layout {
         layout if layout.writes_register() => register_bit(field_register(instruction, field)),
-        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or(0, register_bit),
+        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or_else(RegisterSet::default, register_bit),
         FieldLayout::NumericLocalTarget => instruction
             .numeric_local_store_target()
-            .map_or(0, |target| register_bit(target.register)),
-        _ => 0,
+            .map_or_else(RegisterSet::default, |target| register_bit(target.register)),
+        _ => RegisterSet::default(),
     }
 }
 
@@ -474,12 +478,12 @@ fn field_register(instruction: WideInstruction, field: InstructionField) -> Regi
 
 fn field_base(instruction: WideInstruction, fields: &[FieldSite]) -> RegisterSet {
     match instruction.field_lookup() {
-        None => 0,
+        None => RegisterSet::default(),
         Some(FieldLookup::Site(index)) => fields
             .get(index)
             .and_then(|site| site.base.register_index())
-            .map_or(0, register_bit),
-        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or(0, register_bit),
+            .map_or_else(RegisterSet::default, register_bit),
+        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or_else(RegisterSet::default, register_bit),
     }
 }
 
@@ -492,9 +496,9 @@ fn operand(value: u16, fields: &[FieldSite]) -> RegisterSet {
         return fields
             .get(operand.payload() as usize)
             .and_then(|site| site.base.register_index())
-            .map_or(0, register_bit);
+            .map_or_else(RegisterSet::default, register_bit);
     }
-    0
+    RegisterSet::default()
 }
 
 fn method_arguments(instruction: WideInstruction, methods: &(impl MethodArguments + ?Sized)) -> RegisterSet {
@@ -513,18 +517,14 @@ fn range(base: u16, count: u16) -> RegisterSet {
     let start = u32::from(base).min(RegisterSet::BITS);
     let end = (u32::from(base) + u32::from(count)).min(RegisterSet::BITS);
     match end - start {
-        0 => 0,
+        0 => RegisterSet::default(),
         span => (RegisterSet::MAX >> (RegisterSet::BITS - span)) << start,
     }
 }
 
 /// The set of `register` alone; empty past the set's width.
 pub(crate) fn register_bit(register: u16) -> RegisterSet {
-    if u32::from(register) < RegisterSet::BITS {
-        1 << register
-    } else {
-        0
-    }
+    RegisterSet::bit(usize::from(register))
 }
 
 #[cfg(test)]
@@ -564,7 +564,7 @@ mod tests {
             for count in (0..width + 4).chain([u16::MAX - base]) {
                 let expected = (0..count)
                     .filter_map(|offset| base.checked_add(offset))
-                    .fold(0, |mask, register| mask | register_bit(register));
+                    .fold(RegisterSet::default(), |mask, register| mask | register_bit(register));
                 assert_eq!(range(base, count), expected, "base {base} count {count}");
             }
         }

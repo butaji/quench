@@ -1,12 +1,12 @@
 //! The opcode catalog's tier facts, each declared once per opcode: its operation family
 //! (`Class`, `class_of!`) and its orthogonal tier traits (`Traits`, `traits_of!`), which the
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
-
 use super::Op;
 
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(dead_code)]
 pub(crate) enum Class {
     Other,
     Move,
@@ -203,8 +203,8 @@ macro_rules! class_of {
     (WasmJumpI32NonZero) => { Class::WasmJumpI32NonZero };
     (WasmJumpI32Zero) => { Class::WasmJumpI32Zero };
     (WasmSimd) => { Class::WasmSimd };
-    (WasmSimdShuffle) => { Class::WasmSimdShuffle };    ($other:ident) => { Class::Other };
-
+    (WasmSimdShuffle) => { Class::WasmSimdShuffle };
+    ($other:ident) => { Class::Other };
 }
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
@@ -298,6 +298,32 @@ macro_rules! traits_of {
     ($other:ident) => { Traits::NONE };
 }
 
+
+/// The guarded JavaScript denotation available to the shared compiled region
+/// analyzer. This describes an instruction operation, never a source pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsDenotation {
+    Unsupported,
+    Noop,
+    Jump,
+    LoadConst,
+    Move,
+    GetField,
+    FieldStore,
+    NumericBinary,
+    NumericUnary,
+    /// ToString of each register of a window, concatenated in order.
+    StringConcatenation,
+    CapturedValue,
+    PlainLocalLoad,
+    PlainLocalStore,
+    Return,
+    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
+    ObjectAllocation,
+    /// A literal's own data property definition, by name, through its cache site.
+    FieldDefinition,
+}
+
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
 /// table load (unlike `Op::class()`), for per-instruction loops.
 macro_rules! op_predicates {
@@ -336,36 +362,25 @@ op_predicates! {
     is_require_object_coercible => RequireObjectCoercible,
     is_define_array_element => DefineArrayElement,
     is_string_case_index => StringCaseIndex,
-}
-
-/// The guarded JavaScript denotation available to the shared compiled region
-/// analyzer. This describes an instruction operation, never a source pattern.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsDenotation {
-    Unsupported,
-    Noop,
-    Jump,
-    LoadConst,
-    Move,
-    GetField,
-    FieldStore,
-    NumericBinary,
-    NumericUnary,
-    /// ToString of each register of a window, concatenated in order.
-    StringConcatenation,
-    CapturedValue,
-    PlainLocalLoad,
-    PlainLocalStore,
-    Return,
-    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
-    ObjectAllocation,
-    /// A literal's own data property definition, by name, through its cache site.
-    FieldDefinition,
+    is_construct => Construct,
+    is_require_iterator_result => RequireIteratorResult,
+    is_call_forwarding_arguments => CallForwardingArguments,
+    is_wasm_memory_address => WasmMemoryAddress,
+    is_wasm_instance_binding => WasmInstanceBinding,
+    is_wasm_branch_table => WasmBranchTable,
+    is_wasm_i32_add_immediate => WasmI32AddImmediate,
+    is_wasm_i32_and_immediate => WasmI32AndImmediate,
+    is_wasm_i32_shift_right_unsigned_and_immediate => WasmI32ShiftRightUnsignedAndImmediate,
+    is_wasm_i32_load => WasmI32Load,
+    is_wasm_i32_store => WasmI32Store,
+    is_wasm_f64_load => WasmF64Load,
+    is_wasm_f64_store => WasmF64Store,
+    is_wasm_f64_binary => WasmF64Binary,
 }
 
 #[cfg(test)]
 mod class_table_tests {
-    use crate::bytecode::{Class, Op, Traits};
+    use super::{Class, Op, Traits};
 
     #[test]
     fn catalog_tables_are_compact_and_the_runtime_uses_direct_predicates() {

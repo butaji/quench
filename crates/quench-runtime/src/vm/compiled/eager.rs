@@ -104,6 +104,8 @@ impl<'p, H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExt
         let isa = &*isa;
         let sites = sites.into_boxed_slice();
         self.counts.functions += 1;
+        self.counts.wide_frame_functions += usize::from(self.program.function_get(function_id as usize)
+            .is_some_and(|function| function.registers > crate::compile::liveness::ROOT_MAP_REGISTERS));
         self.counts.semantic_entry_sites += sites.iter().filter(|site| site.calls_semantic_entry()).count();
         self.counts.static_transfers += sites.iter().filter(|site| !site.calls_semantic_entry()).count();
         let code = self.lower_function(function_id, &sites, isa)?;

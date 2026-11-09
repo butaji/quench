@@ -364,17 +364,17 @@ impl Builder<'_> {
         if !register_in(self.bank, usize::from(register)) {
             let leave = self.leave(pc);
             self.steps.push(Step::Unbox { register, at: self.at(pc), leave });
-            self.bank |= 1 << register;
+            self.bank |= RegisterSet::bit(usize::from(register));
         }
     }
 
     /// Read `register`'s slot as a scalar: settle its constant first.
     fn scalar(&mut self, register: u16) {
-        self.settle(1 << register);
+        self.settle(RegisterSet::bit(usize::from(register)));
     }
 
     fn write(&mut self, register: u16, vector: bool, constant: Option<Value>) {
-        let bit: RegisterSet = 1 << register;
+        let bit = RegisterSet::bit(usize::from(register));
         self.pending &= !bit;
         if vector {
             self.bank |= bit;
@@ -535,7 +535,7 @@ impl Builder<'_> {
                 } else if register_in(self.pending, usize::from(b)) {
                     // The copy is the constant, pending as its source is.
                     self.write(a, false, constant);
-                    self.pending |= 1 << a;
+                    self.pending |= RegisterSet::bit(usize::from(a));
                 } else {
                     self.steps.push(Step::Move { a, b });
                     self.write(a, false, constant);
@@ -543,7 +543,7 @@ impl Builder<'_> {
             }
             Admitted::Constant(value) => {
                 self.write(a, false, Some(value));
-                self.pending |= 1 << a;
+                self.pending |= RegisterSet::bit(usize::from(a));
             }
             Admitted::VectorConstant(bits) => {
                 self.steps.push(Step::VectorConstant { a, bits });
@@ -610,9 +610,9 @@ pub(super) fn vector_regions(
             start: pc,
             steps: Vec::new(),
             spills: Vec::new(),
-            bank: 0,
+            bank: RegisterSet::default(),
             constants: [None; BANK_REGISTERS],
-            pending: 0,
+            pending: RegisterSet::default(),
             vectors: 0,
             last_leave: None,
         };
