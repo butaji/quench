@@ -143,11 +143,11 @@ impl Lowering<'_, '_> {
     /// reads natively or leaves (`reads_only`, here also where it returns from an inlined frame),
     /// or reads the global scope (`global_read`); calls, stores and constructions do not qualify.
     pub(super) fn keeps_stable_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
-        match instruction.op() {
-            Op::LoadName | Op::LoadNameCall => self.global_reads.contains_key(&pc),
-            Op::GetField => !instruction.writes_current_this(),
-            Op::GetIndex => true,
-            op if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
+        match instruction.op().class() {
+            Class::LoadName | Class::LoadNameCall => self.global_reads.contains_key(&pc),
+            Class::GetField => !instruction.writes_current_this(),
+            Class::GetIndex => true,
+            _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),
         }
     }

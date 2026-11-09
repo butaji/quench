@@ -4,6 +4,18 @@
 # semantic entry, an opcode-table fact). Entries may only shrink or disappear
 # (`staged::tests::tiers_derive_opcode_meaning_from_the_interpreter`).
 #
+# Completion criteria (P4/P5/P6):
+# P4: no site outside the three categories below. The categories are binding-time facts, not
+#     debt: the hot loop's direct compares avoid a class-table load per instruction; a
+#     value-dependent use needs the opcode *value* (a const generic, handler-table key or
+#     `NAMES` lookup); a per-op body does operation-specific work, not family dispatch.
+# P5: every host/VM callout crossing a lane body (allocation, element get/set helpers, global
+#     read, field-store helper, interrupt/collection safepoint) is an `Operation` with an
+#     `EmitFrame` implementation and a `Concrete` decline test in `staged::tests`.
+# P6: a body gets per-pc precise windowed masks whenever its tables fit `MAX_MASK_BYTES`
+#     (4 MiB); beyond that it gets a sound all-live map (tested: no per-pc entry, so every
+#     consumer treats every register as live), never a missing map.
+#
 #
 # category: hot general loop — direct enum compares; a class-table load per instruction
 # would regress the interpreter, so these stay by design.
@@ -39,7 +51,6 @@ vm/dispatch_frame.rs ToNumeric 1
 # handler index (Wasm lowering), not a family decision.
 #
 vm/compiled.rs COUNT 1
-vm/compiled.rs WasmMemoryAddress 1
 vm/compiled/exact_budget.rs NAMES 1
 vm/lane_exits.rs COUNT 6
 vm/lane_exits.rs NAMES 6
@@ -52,15 +63,10 @@ vm/program_store.rs NAMES 5
 #
 # category: per-op bodies — operation-specific work, not family dispatch.
 #
-vm/compiled.rs Call 1
 vm/compiled/exact_budget.rs Binary 1
 vm/compiled/general_binary.rs Binary 1
 vm/compiled/general_names.rs LoadNameCall 1
 vm/compiled/lane_region.rs LoadConst 1
-vm/compiled/lane_region/stable.rs GetField 1
-vm/compiled/lane_region/stable.rs GetIndex 1
-vm/compiled/lane_region/stable.rs LoadName 1
-vm/compiled/lane_region/stable.rs LoadNameCall 1
 vm/compiled/lane_unit/static_hints.rs DefineField 1
 vm/compiled/lane_unit/static_hints.rs DefinePropertyRecord 1
 vm/compiled/osr_loop.rs Call 1
@@ -68,19 +74,10 @@ vm/compiled/osr_loop.rs GetField 1
 vm/compiled/osr_loop.rs JumpFalse 1
 vm/compiled/osr_loop.rs JumpTrue 1
 vm/compiled/osr_loop.rs Move 1
-vm/compiled/scalar_region.rs GetField 1
-vm/compiled/scalar_region.rs LoadConst 1
-vm/compiled/scalar_region.rs Move 1
-vm/compiled/scalar_region.rs ToNumeric 1
-vm/first_call_chunk.rs CallFirstChunk 2
-vm/object_static/for_in_keys.rs ForInNext 2
 vm/operations.rs Binary 5
 vm/operations.rs NumericAdd 3
 vm/operations.rs NumericMultiply 2
 vm/operations.rs Return 1
 vm/operations.rs Unary 3
 vm/specialize.rs Jump 1
-vm/superinstruction.rs Binary 2
-vm/superinstruction.rs MakeConstArray 1
-vm/superinstruction.rs MakeObject2 1
 vm/wasm_js.rs LoadCapture 1

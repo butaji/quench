@@ -1,4 +1,4 @@
-//! Functions whose load deferred their compilation (`Op::CallFirstChunk`): the load
+//! Functions whose load deferred their compilation (`CallFirstChunk`): the load
 //! compiled a stub in their place, and the first call compiles the function's source as a
 //! program of its own, a chunk, whose function then stands for it. Every closure of the
 //! stub shares the chunk, compiled once.
@@ -10,7 +10,7 @@ use std::rc::{Rc, Weak};
 pub(super) type FirstChunks = FxHashMap<(ProgramId, u32), (Weak<ResidualProgram>, Weak<ResidualProgram>, FunctionKind)>;
 
 impl<H: Host> Vm<H> {
-    /// `i`, at `pc`, the stub body of frame `f`'s callee (`Op::CallFirstChunk`): points the
+    /// `i`, at `pc`, the stub body of frame `f`'s callee (`CallFirstChunk`): points the
     /// callee at its chunk's function, compiling the chunk if the callee still runs the stub,
     /// then calls or constructs it as the stub was, with the arguments array of register B.
     pub(super) fn call_first_chunk(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> Result<(), JsError> {

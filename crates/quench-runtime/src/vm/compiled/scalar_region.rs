@@ -95,8 +95,8 @@ pub(crate) fn lower_regions(
             .iter()
             .filter(|instruction| {
                 !matches!(
-                    instruction.op(),
-                    Op::Move | Op::LoadConst | Op::ToNumeric | Op::GetField
+                    instruction.op().class(),
+                    Class::Move | Class::LoadConst | Class::ToNumeric | Class::GetField
                 )
             })
             .count();

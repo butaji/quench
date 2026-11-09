@@ -5407,7 +5407,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
 }
 
 /// Make imported call `function` for compiled code, as the interpreter's
-/// `Op::Call` does.
+/// `Call` does.
 unsafe extern "C" fn import_callout<H: Host>(
     context: *mut CallContext,
     function: u64,
@@ -8474,7 +8474,7 @@ impl<H: Host> Analysis<'_, H> {
         memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot)).then_some(())
     }
 
-    /// The byte offset a vector access adds to its address (`Op::WasmMemoryAddress`).
+    /// The byte offset a vector access adds to its address (`WasmMemoryAddress`).
     fn memory_offset(&self, index: usize) -> Option<u64> {
         let offset = self.vm.decode_bits64(self.constant(index)?)?;
         u32::try_from(offset).ok().map(u64::from)
