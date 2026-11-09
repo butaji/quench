@@ -42,6 +42,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
+#[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
 #[cfg(test)]
@@ -4426,12 +4427,7 @@ impl Lowering<'_, '_> {
         // again.
         if self.generic.contains(&pc) && self.completion == Completion::StatusAndPc {
             let object = self.owner_bits(state, register);
-            let write = self.ins().iconst(types::I64, (u64::from(instruction.atom_index()) << u16::BITS
-                | u64::from(instruction.cache_site_index())) as i64);
-            let payload = self.payload;
-            let stored = self.helper_call(LaneHelper::FieldAdd, &[payload, object, write, value]);
-            let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-            emit_js_guard(&mut self.builder, hit, exit);
+            self.field_add(object, instruction.atom_index(), instruction.cache_site_index(), value, exit);
             self.reshaped(state);
             self.reload_receiver();
             return Some(true);
@@ -4545,7 +4541,7 @@ impl Lowering<'_, '_> {
                     self.builder.switch_to_block(next);
                 }
                 self.ins().jump(general, &[]);
-                self.finish_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general, &widens, done);
+                self.finish_shape_switch_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general, &widens, done);
                 return Some(());
             }
         };
