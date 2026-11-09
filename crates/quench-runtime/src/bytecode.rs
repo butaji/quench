@@ -784,6 +784,10 @@ pub(crate) enum Class {
     JumpFalse,
     CloneEnv,
     LoadName,
+    WasmFillRegisters,
+    WasmMemoryAddress,
+    WasmMemoryLoad,
+    WasmMemoryStore,
 }
 
 impl Class {
@@ -841,12 +845,16 @@ macro_rules! class_of {
     (JumpFalse) => { Class::JumpFalse };
     (CloneEnv) => { Class::CloneEnv };
     (LoadName) => { Class::LoadName };
+    (WasmFillRegisters) => { Class::WasmFillRegisters };
+    (WasmMemoryAddress) => { Class::WasmMemoryAddress };
+    (WasmMemoryLoad) => { Class::WasmMemoryLoad };
+    (WasmMemoryStore) => { Class::WasmMemoryStore };
     ($other:ident) => { Class::Other };
 }
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(u16);
+pub(crate) struct Traits(u32);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0);
@@ -868,6 +876,8 @@ impl Traits {
     pub(crate) const INLINABLE: Self = Self(1 << 14);
     /// An op a call's argument setup may run with no repeatable effect.
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
+    /// A Wasm memory access through the function's memory register.
+    pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -914,6 +924,12 @@ macro_rules! traits_of {
     (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
     (SetIndex) => { Traits::INLINABLE };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (WasmMemorySize) => { Traits::WASM_MEMORY };
+    (WasmMemoryFill) => { Traits::WASM_MEMORY };
+    (WasmMemoryCopy) => { Traits::WASM_MEMORY };
+    (WasmMemoryAddress) => { Traits::WASM_MEMORY };
+    (WasmMemoryLoad) => { Traits::WASM_MEMORY };
+    (WasmMemoryStore) => { Traits::WASM_MEMORY };
     ($other:ident) => { Traits::NONE };
 }
 

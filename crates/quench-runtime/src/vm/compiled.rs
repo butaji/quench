@@ -25,7 +25,7 @@
 
 use tier_policy::TIERS;
 use super::*;
-use crate::bytecode::{Class, 
+use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
@@ -9410,16 +9410,7 @@ impl<H: Host> Analysis<'_, H> {
         };
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
-            !direct_access(op)
-                && !matches!(
-                    op,
-                    Op::WasmMemorySize
-                        | Op::WasmMemoryFill
-                        | Op::WasmMemoryCopy
-                        | Op::WasmMemoryAddress
-                        | Op::WasmMemoryLoad
-                        | Op::WasmMemoryStore
-                )
+            !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
                 && op != Op::WasmInstanceBinding
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
@@ -9538,7 +9529,7 @@ impl<H: Host> Analysis<'_, H> {
                 if value(state, instruction.c())? != Kind::I64 {
                     return None;
                 }
-                if op == Op::WasmMemoryLoad {
+                if op.class().eq(Class::WasmMemoryLoad) {
                     (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
                         == crate::wasm::memory::MemoryLoad::V128Load)
                         .then_some(())?;
