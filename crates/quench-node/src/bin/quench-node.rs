@@ -93,11 +93,14 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     let arguments: Vec<_> = std::env::args().skip(1).collect();
-    let result = if arguments.first().is_some_and(|argument| argument == "compile") {
+    // `compile` is the builder's own command; `--build-aot` is the same closed-world build
+    // reached through the Node-compatible command line.
+    let build_aot = arguments.first().is_some_and(|argument| argument == "compile" || argument == "--build-aot");
+    let result = if build_aot {
         #[cfg(feature = "aot")]
         { quench_node::aot::cli::run(arguments.into_iter().skip(1).collect()) }
         #[cfg(not(feature = "aot"))]
-        { Err("compile requires an aot-enabled quench-node compiler build".into()) }
+        { Err("an AOT build requires an aot-enabled quench-node compiler build".into()) }
     } else {
         quench_node::shared_run::run_shared_cli(arguments)
     };
