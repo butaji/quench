@@ -3737,6 +3737,9 @@ unsafe fn lane_binary_value<H: Host>(
     let operator = i.imm();
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
+        // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
+        // element or an emulator's `flag & mask`.
+        None if let Some(value) = unsafe { vm(cx) }.immediate_binary(operator, left, right) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
         // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
@@ -6884,7 +6887,7 @@ fn lane_set_field_in_place<H: Host>(
 /// The brand of private name `atom` at the record `ip`, whose home follows the running
 /// function and the environment its frame would capture from: the lane's frame, or a
 /// frameless activation's function and closure environment (`Vm::site_private_brand`).
-#[inline(never)]
+#[inline(always)]
 fn lane_private_brand<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
@@ -6984,6 +6987,24 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         if let Err(error) = vm.initialize_private_field(code, r.get(i.b), r.get(i.c), i.imm(), r.get(i.a)) {
+            return lane_raise(cx, ip, error);
+        }
+        // Adding a private element can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `MarkPrivateName` (`Vm::mark_private_name`) of the object in `b` under the home in `c`,
+    /// which runs no guest code: a constructor's private methods, branded in place where a
+    /// general step would materialize the activations it runs beside.
+    #[inline(never)]
+    fn lane_mark_private_name<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        if let Err(error) = vm.mark_private_name(code, r.get(i.b), r.get(i.c), i.imm()) {
             return lane_raise(cx, ip, error);
         }
         // Adding a private element can allocate.
@@ -18034,6 +18055,18 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
     }
 }
 
+/// The handlers of a class's private elements, none of which runs guest code: a field's
+/// definition, a method's brand, and the brand checks of a read and of `#x in`.
+const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
+    match opcode.class() {
+        Class::DefinePrivateField => Some(lane_define_private_field::<H>),
+        Class::MarkPrivateName => Some(lane_mark_private_name::<H>),
+        Class::CheckPrivate => Some(lane_check_private::<H>),
+        Class::PrivateIn => Some(lane_private_in::<H>),
+        _ => None,
+    }
+}
+
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
@@ -18057,9 +18090,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
         Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Class::DefineField => Some(lane_define_field::<H>),
-        Class::DefinePrivateField => Some(lane_define_private_field::<H>),
-        Class::CheckPrivate => Some(lane_check_private::<H>),
-        Class::PrivateIn => Some(lane_private_in::<H>),
+        _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         _ if lane_steps_in_place(opcode) => Some(lane_general_step::<H>),
         Class::IncDec => Some(lane_inc_dec::<H, false>),

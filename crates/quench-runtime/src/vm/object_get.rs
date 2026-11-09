@@ -991,7 +991,7 @@ impl<H: Host> Vm<H> {
     /// binding its static name binding reads from `environment` (`direct_capture`'s read), as
     /// an arrow field's closure of each new instance finds its class's. `None` leaves the
     /// access to the general path, which finds the home.
-    fn memoized_private_brand(
+    pub(super) fn memoized_private_brand(
         &self,
         p: &ResidualProgram,
         environment: Value,
@@ -1012,34 +1012,6 @@ impl<H: Host> Vm<H> {
         };
         let (slots, root) = self.environment_capture_slots(environment, false, depth)?;
         Some(PrivateBrand { home: self.owned_capture(slots, root, slot)?, name: atom })
-    }
-
-    /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
-    /// from `environment`: the home the site found last for that environment
-    /// (`PrivateSiteHomes`), else the running frame's home (`private_name_home`) when `frame`
-    /// is set, or the memoized one (`memoized_private_brand`) for a frameless activation.
-    /// `None` leaves the access to the general path.
-    pub(super) fn site_private_brand(
-        &mut self,
-        p: &ResidualProgram,
-        site: usize,
-        environment: Value,
-        function: u32,
-        frame: bool,
-        atom: Atom,
-    ) -> Option<PrivateBrand> {
-        if let Some(home) = self.private_site_homes.home(site, environment) {
-            return Some(PrivateBrand { home, name: atom });
-        }
-        let brand = if frame {
-            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
-        } else {
-            self.memoized_private_brand(p, environment, function, atom)?
-        };
-        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
-            self.private_site_homes.record(site, environment, brand.home);
-        }
-        Some(brand)
     }
 
     /// The private method or accessor that `object`, which carries `brand`, reads at lane site
@@ -1121,6 +1093,28 @@ impl<H: Host> Vm<H> {
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }
 
+    /// `MarkPrivateName`: brands `object` with private method name `atom` of the class home
+    /// `home` (PrivateMethodOrAccessorAdd), which raises for a non-extensible object or one
+    /// already branded; the class itself, as its own home, takes its static methods' brand.
+    pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
+        let brand = PrivateBrand { home, name: atom };
+        if object != home {
+            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), data.has_private_name(brand))) else {
+                return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
+            };
+            if !addable {
+                return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
+            }
+            if branded {
+                return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
+            }
+        }
+        if let Some(object) = self.object_data_mut(object) {
+            object.add_private_name(brand);
+        }
+        Ok(())
+    }
+
     pub(super) fn check_private_brand(
         &mut self,
         p: &ResidualProgram,
@@ -1191,7 +1185,7 @@ impl<H: Host> Vm<H> {
     /// eval-introduced private binding, otherwise the first visible class home declaring the
     /// name. It depends on the frame's function and environment chain, never on the target,
     /// so a found home is memoized while that environment lives.
-    fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+    pub(super) fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
         let start = self.captured_parent_environment(frame_index);
         let key = PrivateHomeKey {

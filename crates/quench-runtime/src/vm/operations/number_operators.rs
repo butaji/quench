@@ -70,3 +70,31 @@ pub(crate) fn static_number_binary(op: u32, left: f64, right: f64) -> Option<Con
     }
     Some(Constant::Number(numeric_number_result(numeric_binary_operator(op)?, left, right)))
 }
+
+/// Both operands' ToNumeric where each is a Number or an immediate primitive (`undefined`,
+/// `null`, a Boolean), whose ToPrimitive is itself, so no guest code runs: the operands a
+/// numeric operator computes as Numbers. The deleted marker is no value but a hole whose
+/// read continues on the prototype chain, so it declines.
+#[inline(always)]
+pub(in crate::vm) fn immediate_number_pair(left: Value, right: Value) -> Option<(f64, f64)> {
+    // A heap operand, a string's above all, is the common miss: one tag test declines it.
+    if left.is_heap() || right.is_heap() || left.is_deleted() || right.is_deleted() {
+        return None;
+    }
+    Some((left.immediate_number()?, right.immediate_number()?))
+}
+
+impl<H: Host> Vm<H> {
+    /// A numeric operator or a relational comparison of operands that are Numbers or
+    /// immediate primitives (`undefined`, `null`, a Boolean): their ToPrimitive is themselves
+    /// and their ToNumeric is `Value::immediate_number`, which runs no guest code, so they
+    /// compute as those Numbers. Equality compares types first, and a heap operand may convert
+    /// through guest code: `None` leaves both to the caller.
+    pub(in crate::vm) fn immediate_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        let (left, right) = immediate_number_pair(left, right)?;
+        match RelationalOperator::from_immediate(op) {
+            Some(relation) => Some(Value::boolean(relation.compare_numbers(left, right))),
+            None => self.number_binary(op, Value::number(left), Value::number(right)),
+        }
+    }
+}
