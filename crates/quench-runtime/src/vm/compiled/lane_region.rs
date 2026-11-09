@@ -525,7 +525,7 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
         match instruction.op() {
             Op::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
-            Op::Nop | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return => true,
+            op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
             op => op.js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
@@ -2306,7 +2306,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             op if op.is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
+            op if op.is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
                 let exit = self.guard_exit(state, pc32);
@@ -2317,7 +2317,7 @@ impl Lowering<'_, '_> {
                         Some(array) => self.loop_element_read(array, index, exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
-                            self.dense_element(base, view, index, exit)
+                            self.dense_element(state, base, view, index, exit)
                         }
                     };
                     self.set_tagged(state, instruction.result_register(), value);
@@ -2627,7 +2627,7 @@ impl Lowering<'_, '_> {
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
-    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, CheckedObject>)
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
@@ -3634,8 +3634,7 @@ impl Lowering<'_, '_> {
             self.builder.set_cold_block(slow);
             let done = self.builder.create_block();
             let view = self.array_view(state, base, true, slow);
-            let (address, old) = super::emit_dense_element(&mut self.builder, view, index, slow);
-            super::emit_dense_element_replace(&mut self.builder, view, address, old, value);
+            self.index_write(state, index, value, view, slow);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
@@ -3765,8 +3764,7 @@ impl Lowering<'_, '_> {
             self.builder.set_cold_block(slow);
             let view = super::DenseArrayView { values, length, writable: true };
             // The view's backing counts no values (`hoist_arrays`): the store writes the element.
-            let (address, _) = super::emit_dense_element(&mut self.builder, view, index, slow);
-            self.ins().store(MemFlagsData::trusted(), value, address, 0);
+            self.index_write(state, index, value, view, slow);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
@@ -4042,45 +4040,30 @@ impl Lowering<'_, '_> {
             return self.holder_read(state, object, holder, *field, exit);
         }
         if let [field] = shapes {
-            return self.own_shape_read(state, owner, (object, shape, inline, properties), *field, exit);
+            return self.single_shape_read(state, owner, object, shape, inline, properties, *field, exit);
         }
         // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
         let groups = super::object_slots::field_load_groups(shapes)?;
         if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
-            let member = super::object_slots::shape_in_set(&mut self.builder, shape, members);
-            emit_js_guard(&mut self.builder, member, exit);
-            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                *family, PackedAccess::Reload, exit)?;
-            return Some(projection.read(&mut self.builder, family.slot));
+            let at = crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) };
+            return self.own_slot_read_guarded(*family, Some(members), at, properties, exit);
         }
         self.family_switch_read(state, (object, shape, inline, properties), &groups, exit)
     }
 
-    /// One own field of one shape: the owner's proved layout where it holds the slot, else the
-    /// shape's guard and layout proof, which the owner keeps; then the staged read.
-    fn own_shape_read(&mut self, state: &mut State, owner: Option<Option<Register>>,
-        (object, shape, inline, properties): (ir::Value, ir::Value, ir::Value, ir::Value), field: NativeFieldLoad,
-        exit: ir::Block) -> Option<ir::Value> {
-        let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
-        let projection = match known {
-            Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
-            _ => {
-                self.prove_shape(state, owner, shape, field.shape, exit);
-                let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    field, PackedAccess::Reload, exit)?;
-                if let Some(owner) = owner {
-                    state.proofs.layouts.insert((owner, field.shape), projection);
-                }
-                projection
-            }
-        };
-        let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
-            base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: projection });
-        match step {
-            crate::staged::Step::Value(value) => Some(value),
-            _ => None,
-        }
+    /// `field`'s own slot of the object `at` reached, through the arena at `properties`, as the
+    /// staged op list `[GuardShapes(members), LoadSlot]` (`staged::ic`); with no members, the
+    /// caller has matched the shape. `None` for a plan no layout proof admits.
+    fn own_slot_read_guarded(&mut self, field: NativeFieldLoad, members: Option<&[u32]>,
+        at: crate::staged::ic::Reached<ir::Value, ir::Value>, properties: ir::Value, exit: ir::Block) -> Option<ir::Value> {
+        use crate::staged::ic::IcOp;
+        if !field.valid() { return None; }
+        let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
+            storage_len: field.storage_len };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
+        crate::staged::ic::run(&mut stage, ops, at, None, exit)
     }
 
     /// Layout families each tested by their shape set and read at their slot, joined; a shape
@@ -4097,8 +4080,8 @@ impl Lowering<'_, '_> {
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
             let read = match field.holder {
-                None => CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
+                None => self.own_slot_read_guarded(*field, None,
+                    crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) }, properties, exit)?,
                 Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
             };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
@@ -4107,6 +4090,33 @@ impl Lowering<'_, '_> {
         self.ins().jump(exit, &[]);
         self.builder.switch_to_block(join);
         Some(value)
+    }
+
+    /// One proven shape's slot read: the owner's kept layout proof where it still holds the
+    /// slot, otherwise the proof this shape test establishes, read by the staged operation.
+    #[allow(clippy::too_many_arguments)]
+    fn single_shape_read(&mut self, state: &mut State, owner: Option<Option<Register>>,
+        object: ir::Value, shape: ir::Value, inline: ir::Value, properties: ir::Value,
+        field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
+        let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
+        let projection = match known {
+            Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
+            _ => {
+                self.prove_shape(state, owner, shape, field.shape, exit);
+                let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
+                    field, PackedAccess::Reload, exit)?;
+                if let Some(owner) = owner {
+                    state.proofs.layouts.insert((owner, field.shape), projection);
+                }
+                projection
+            }
+        };
+        let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
+            base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: EmitProof::Field(projection) });
+        match step {
+            crate::staged::Step::Value(value) => Some(value),
+            _ => None,
+        }
     }
 
     /// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's
@@ -4126,7 +4136,6 @@ impl Lowering<'_, '_> {
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         let proto = crate::staged::object::proto_link(&mut super::object_slots::emit(&mut self.builder), record);
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
@@ -4149,32 +4158,13 @@ impl Lowering<'_, '_> {
             ObjectTable::Checked(table) => table.base(),
             ObjectTable::Unchecked(base) => base,
         };
-        let mut stage = super::object_slots::emit(&mut self.builder);
-        let id = crate::staged::object::proto_object_record_id(&mut stage, proto, exit).expect("an emitted guard continues");
-        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
-        emit_js_guard(&mut self.builder, same, exit);
-        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
-        let inline = super::object_slots::inline_storage(&mut self.builder, prototype);
-        let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(&mut self.builder, arena, exit);
-        let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let tagged = crate::staged::object::has_extras(&mut super::object_slots::emit(&mut self.builder), storage);
-        emit_js_guard(&mut self.builder, tagged, exit);
-        let extras = crate::staged::object::extras_pointer(&mut super::object_slots::emit(&mut self.builder), storage);
-        let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
-        emit_js_guard(&mut self.builder, present, exit);
-        let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
-        let start = self.ins().uextend(types::I64, start);
         // The prototype's run lies inside the arena, as every live flat object's does
         // (`object_slots::arena_range`).
-        let entry = self.entry.as_ref().expect("entry facts");
-        let properties = self.builder.use_var(entry.receiver.properties);
-        let index = self.ins().iadd_imm_u(start, i64::from(field.slot));
-        let offset = self.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = self.ins().iadd(properties, offset);
-        Some(self.ins().load(types::I64, MemFlagsData::trusted(), address, 0))
+        let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        use crate::staged::ic::IcOp;
+        crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
+            crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
     }
 
     /// A dominating proof of `owner`'s object (a register's, or `this`'s), for its lifetime
@@ -4508,7 +4498,7 @@ impl Lowering<'_, '_> {
             }
         };
         let step = self.step(state, frame::Edges::ValueGuarded { miss: general },
-            crate::staged::Operation::WriteField { base: 0, slot: field.slot, ty: direct_ty, value, proof: projection });
+            crate::staged::Operation::WriteField { base: 0, slot: field.slot, ty: direct_ty, value, proof: EmitProof::Field(projection) });
         if !matches!(step, crate::staged::Step::Value(_)) { return None; }
         self.ins().jump(done, &[]);
         Some(widen)

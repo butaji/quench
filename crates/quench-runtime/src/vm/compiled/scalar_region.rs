@@ -79,8 +79,7 @@ pub(crate) fn lower_regions(
     let Some(live) = program.shared_register_root_masks(function_id) else {
         return Vec::new();
     };
-    let no_int32_elements = |_: u16| false;
-    let widened = std::collections::BTreeSet::new();
+    let (no_int32_elements, widened) = (|_: u16| false, std::collections::BTreeSet::new());
     let observation = Observation {
         register: None,
         int32_elements: &no_int32_elements,

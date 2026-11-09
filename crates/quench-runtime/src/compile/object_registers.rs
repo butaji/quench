@@ -67,7 +67,7 @@ fn replacement(
         .any(|pc| successors.at(pc).any(|(target, _)| target <= allocation));
     if repeated_allocation { return None; }
     let mut incoming = vec![None; instructions.len()];
-    incoming[0] = Some(Aliases { may: 0, must: 0 });
+    incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
     loop {
         let mut changed = false;
         for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -96,9 +96,9 @@ fn replacement(
     }
     // Legacy arguments reflection can observe promoted parameter registers even
     // without an explicit bytecode use of the assigned object.
-    let observable = if function.has_restricted_legacy_caller_access() { 0 } else {
+    let observable = if function.has_restricted_legacy_caller_access() { RegisterSet::default() } else {
         function.local_registers.iter().filter(|local| local.local < function.params)
-            .fold(0, |mask, local| mask | register_bit(local.register))
+            .fold(RegisterSet::default(), |mask, local| mask | register_bit(local.register))
     };
     incoming[allocation]?;
     let mut replacements = vec![None; instructions.len()];

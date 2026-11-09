@@ -579,11 +579,8 @@ fn tagged_registers_with_failure(
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
-        .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
-            Op::GetIndex => instruction.operand_b().register_index(),
-            Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
-            _ => None,
-        }).filter(|register| !dynamic_arrays.contains(register)))
+        .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
+            .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
@@ -663,15 +660,13 @@ fn tagged_registers_with_failure(
         // A field receiver the region's field reads give holds an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(receiver)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(receiver)
+            field_reads_alone_define(instructions, receiver).then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged
         // (`Lowering::tagged_truthiness`): a field may hold an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
             let value = instruction.register_a();
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
+            field_reads_alone_define(instructions, value).then_some(value)
         }))
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
@@ -682,8 +677,7 @@ fn tagged_registers_with_failure(
         // which the entry's barrier on the receiver covers (`lane_loop_entry`).
         .chain(instructions.iter().filter(|instruction| admitted_store(instruction.op())).filter_map(|instruction| {
             let value = instruction.register_a();
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
+            field_reads_alone_define(instructions, value).then_some(value)
         }))
         .collect();
     loop {
@@ -928,9 +922,23 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
+        _ if let Some(array) = array_read(instruction) => Some(array),
+        _ => instruction.field_store_register(),
+    }
+}
+
+/// Whether `register` has definitions in `instructions` and every one is a field read, which
+/// may give an object.
+fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+    let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
+    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
+}
+
+/// The register an indexed access, or the coercibility check before one, reads as its array.
+fn array_read(instruction: WideInstruction) -> Option<Register> {
+    match instruction.op() {
         Op::GetIndex => instruction.operand_b().register_index(),
         Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
-        _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
         _ => None,
     }
 }
@@ -1243,13 +1251,13 @@ pub(super) fn inline_region<'a>(
             None => frame.base + register,
         };
         // A callee's live registers there, in the region, with the caller's live past the call.
-        let after = mask(pc + 1)? & !(1 << site.result);
+        let after = mask(pc + 1)? & !RegisterSet::bit(usize::from(site.result));
         let frame_mask = |callee_pc: usize| -> Option<RegisterSet> {
             let own = site.callee.live.get(callee_pc)?;
             let mut set = after;
             for callee_register in 0..site.callee.registers {
                 if crate::compile::liveness::register_in(own, usize::from(callee_register)) {
-                    set |= 1 << register(callee_register);
+                    set |= RegisterSet::bit(usize::from(register(callee_register)));
                 }
             }
             Some(set)
@@ -6075,35 +6083,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// it is `null`, `undefined`, the hole or `false`. Any other heap value (a string, or a
     /// function that may be the IsHTMLDDA object) exits at `pc`.
     fn tagged_truthiness(&mut self, pc: u32, bits: ir::Value) -> ir::Value {
-        let builder = &mut self.body.builder;
-        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-        let heap = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-        let record = builder.ins().bor(object, array);
-        let not_record = builder.ins().icmp_imm_u(IntCC::Equal, record, 0);
-        let undecided = builder.ins().band(heap, not_record);
+        let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut super::object_slots::emit(&mut self.body.builder), bits);
         self.guard(pc, undecided);
-        let builder = &mut self.body.builder;
-        let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
-        let payload = builder.ins().ireduce(types::I32, bits);
-        let integer_truthy = builder.ins().icmp_imm_u(IntCC::NotEqual, payload, 0);
-        let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
-        let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-        let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-        let mut falsy = builder.ins().iconst(types::I8, 0);
-        for value in [Value::NULL, Value::UNDEFINED, Value::DELETED, Value::FALSE] {
-            let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, value.to_bits() as i64);
-            falsy = builder.ins().bor(falsy, equal);
-        }
-        let immediate_truthy = builder.ins().icmp_imm_u(IntCC::Equal, falsy, 0);
-        let double = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
-        let double_truthy = super::emit_number_truthiness(builder, double);
-        let one = builder.ins().iconst(types::I8, 1);
-        let tagged_truthy = builder.ins().select(integer, integer_truthy, immediate_truthy);
-        let unheaped = builder.ins().select(tagged, tagged_truthy, double_truthy);
-        builder.ins().select(heap, one, unheaped)
+        truthy
     }
 
     /// A capacity helper may relocate a backing shared by several entry views. Reload
@@ -7180,8 +7162,8 @@ mod tests {
                 WideInstruction::new(Op::LoadConst, 0, 0, 0, 0),
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 1, &[Value::number(number)], &[],
-                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![0, 1]))),
-                Some(0), 0, &Default::default())
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64)]))),
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default())
                 .unwrap_or_else(|failure| panic!("constant admission: {failure:?}"));
             let verified = verify_unprofiled(&region).unwrap();
             let definition = verified.webs.defined(&region, 0);
@@ -7228,8 +7210,8 @@ mod tests {
             WideInstruction::new(Op::ToNumeric, 1, 3, 0, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 4]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("nested probe admission: {failure:?}"));
         // Exercise the callout projection rather than an entry-pinned or direct
         // native array view. Its receiver still needs the same SSA proof.
@@ -7256,8 +7238,8 @@ mod tests {
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 3, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![3, 7, 3, 3]))),
-            Some(3), 0, &Default::default())
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(7_u64), crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(3_u64)]))),
+            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default())
             .unwrap_or_else(|failure| panic!("comparison admission: {failure:?}"));
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
@@ -7289,8 +7271,8 @@ mod tests {
                 WideInstruction::new(Op::Unary, 1, 0, 0, crate::bytecode::UNARY_TYPEOF_INDEX),
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 2, &[constant], &[],
-                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![0, 1, 0]))),
-                Some(0), 0, &Default::default()).unwrap();
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64), crate::compile::liveness::RegisterSet::default()]))),
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default()).unwrap();
             let widened = Default::default();
             let observation = Observation {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
@@ -7325,8 +7307,8 @@ mod tests {
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ];
         let region = admit_region(instructions, 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 4]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
@@ -7343,8 +7325,8 @@ mod tests {
             WideInstruction::new(Op::SetIndex, 2, 1, 3, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 3]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 3]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
         // The element read defines the receiver, so the store reads its array from the record at
         // each access (`Lowering::dynamic_array`) instead of pinning an entry identity.
@@ -7363,8 +7345,8 @@ mod tests {
                 WideInstruction::new(Op::IncDec, 3, 3, 0, 0),
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 4, &[], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 5]))),
-            Some(15), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 5]))),
+            Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
         ).unwrap_or_else(|failure| panic!("lifetime admission failed: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
@@ -7399,8 +7381,8 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ];
             let admitted = admit_region(instructions, 5, &[], &[],
-                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![31; 7]))),
-                Some(31), 0, &Default::default(),
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(31_u64); 7]))),
+                Some(crate::compile::liveness::RegisterSet::from(31_u64)), 0, &Default::default(),
             ).is_ok();
             assert_eq!(admitted, alternative == 0);
         }
@@ -7413,8 +7395,8 @@ mod tests {
             WideInstruction::new(Op::ToNumeric, 1, 0, 0, 0),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 2, &[Value::NULL], &[],
-            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![3; 3]))),
-            Some(3), 0, &Default::default(),
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64); 3]))),
+            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(),
         ).is_err());
     }
 
