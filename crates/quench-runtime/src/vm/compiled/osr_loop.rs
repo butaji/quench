@@ -853,33 +853,9 @@ pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
 /// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
 /// none that names its function's own state (captures, frame, calls).
 fn inlinable(op: Op) -> bool {
-    matches!(
-        op,
-        // A call the callee makes leaves native code before its effects, with the callee's
-        // activation made (`INLINED_EXIT`); the lane makes the call.
-        Op::Call
-            | Op::SetField
-            | Op::SetThisField
-            | Op::LoadCapture
-            | Op::LoadConst
-            | Op::Move
-            | Op::Binary
-            | Op::NumericAdd
-            | Op::NumericMultiply
-            | Op::IncDec
-            | Op::ToNumeric
-            | Op::Unary
-            | Op::GetIndex
-            | Op::SetIndex
-            | Op::GetField
-            | Op::RequireObjectCoercible
-            | Op::Jump
-            | Op::JumpBinaryFalse
-            | Op::JumpFalse
-            | Op::JumpTrue
-            | Op::Return
-    )
+    op.traits().has(crate::bytecode::Traits::INLINABLE)
 }
+
 
 /// `instruction` with each register `register` renames, a `this` field base made the
 /// `this` register, and a jump target `target` renames; `None` for a field it cannot
@@ -984,21 +960,9 @@ fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite
 /// The ops a call's argument setup may run between reading its callee and the call: none
 /// has an effect a second run could repeat, so leaving among them resumes at the read.
 fn pure_setup(op: Op) -> bool {
-    matches!(
-        op,
-        Op::LoadConst
-            | Op::Move
-            | Op::Binary
-            | Op::NumericAdd
-            | Op::NumericMultiply
-            | Op::IncDec
-            | Op::ToNumeric
-            | Op::Unary
-            | Op::GetIndex
-            | Op::GetField
-            | Op::RequireObjectCoercible
-    )
+    op.traits().has(crate::bytecode::Traits::PURE_SETUP)
 }
+
 
 /// The region of the loop from `header` to `backedge` with each `Call` in it inlined: the
 /// call's callee (`resolve` of the cached field it is read from) runs in place, its registers

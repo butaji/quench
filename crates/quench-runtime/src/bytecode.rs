@@ -806,6 +806,10 @@ impl Traits {
     pub(crate) const RETURNING_OBJECT: Self = Self(1 << 11);
     pub(crate) const RETURNING_OBJECT_LITERAL: Self = Self(1 << 12);
     pub(crate) const RETURNING_LITERAL: Self = Self(1 << 13);
+    /// An op an inlined OSR callee may hold.
+    pub(crate) const INLINABLE: Self = Self(1 << 14);
+    /// An op a call's argument setup may run with no repeatable effect.
+    pub(crate) const PURE_SETUP: Self = Self(1 << 15);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -814,18 +818,18 @@ impl Traits {
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
     (Nop) => { Traits::LEAF_VALUE };
-    (LoadConst) => { Traits::LEAF_VALUE };
-    (Move) => { Traits::LEAF_VALUE };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY) };
-    (IncDec) => { Traits::LEAF_VALUE };
-    (Return) => { Traits::LEAF_VALUE };
-    (Jump) => { Traits::LEAF_JUMP };
-    (JumpFalse) => { Traits::LEAF_JUMP };
-    (JumpTrue) => { Traits::LEAF_JUMP };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY) };
-    (NumericAdd) => { Traits::LEAF_BINARY };
-    (NumericMultiply) => { Traits::LEAF_BINARY };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -840,10 +844,18 @@ macro_rules! traits_of {
     (InitializeThis) => { Traits::NAME_OPERATION };
     (SuperCallCheck) => { Traits::NAME_OPERATION };
     (MakeClosure) => { Traits::MAKES_CLOSURE };
-    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD) };
+    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
     (MakeObject2) => { Traits::RETURNING_OBJECT };
     (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL };
     (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL };
+    (Call) => { Traits::INLINABLE };
+    (SetField) => { Traits::INLINABLE };
+    (SetThisField) => { Traits::INLINABLE };
+    (LoadCapture) => { Traits::INLINABLE };
+    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (SetIndex) => { Traits::INLINABLE };
+    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
     ($other:ident) => { Traits::NONE };
 }
 
