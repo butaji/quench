@@ -9787,10 +9787,10 @@ impl<H: Host> AddLoadF64<H> {
 fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> {
     macro_rules! copies {
         ($(($load:ident, $store:ident)),+) => {
-            match (load, store, acc) {
+            match (load as u16, store as u16, acc) {
                 $(
-                    (Op::$load, Op::$store, ACC_NONE) => Some(lane_load_store::<H, { Op::$load as u16 }, { Op::$store as u16 }, ACC_NONE> as Handler),
-                    (Op::$load, Op::$store, ACC_C) => Some(lane_load_store::<H, { Op::$load as u16 }, { Op::$store as u16 }, ACC_C> as Handler),
+                    (opc::$load, opc::$store, ACC_NONE) => Some(lane_load_store::<H, { opc::$load }, { opc::$store }, ACC_NONE> as Handler),
+                    (opc::$load, opc::$store, ACC_C) => Some(lane_load_store::<H, { opc::$load }, { opc::$store }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -9809,12 +9809,12 @@ fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> 
 fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc, add) {
+            match (op as u16, acc, add) {
                 $(
-                    (Op::$load, ACC_NONE, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, false> as Handler),
-                    (Op::$load, ACC_C, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, false> as Handler),
-                    (Op::$load, ACC_NONE, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, true> as Handler),
-                    (Op::$load, ACC_C, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, true> as Handler),
+                    (opc::$load, ACC_NONE, false) => Some(lane_load_table::<H, { opc::$load }, ACC_NONE, false> as Handler),
+                    (opc::$load, ACC_C, false) => Some(lane_load_table::<H, { opc::$load }, ACC_C, false> as Handler),
+                    (opc::$load, ACC_NONE, true) => Some(lane_load_table::<H, { opc::$load }, ACC_NONE, true> as Handler),
+                    (opc::$load, ACC_C, true) => Some(lane_load_table::<H, { opc::$load }, ACC_C, true> as Handler),
                 )+
                 _ => None,
             }
@@ -9832,8 +9832,8 @@ fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
 const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match op {
-                $(Op::$load => Some(lane_add_load::<H, { Op::$load as u16 }> as Handler),)+
+            match op as u16 {
+                $(opc::$load => Some(lane_add_load::<H, { opc::$load }> as Handler),)+
                 _ => None,
             }
         };
@@ -9907,7 +9907,7 @@ lane_handler! {
     /// here, each value written as its own record writes it. An access the general path must
     /// run exits at its record.
     fn lane_load_load<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
-        let first = const { direct_load(Op::WasmI32Load as u16) };
+        let first = const { direct_load(opc::WasmI32Load) };
         let second = const { direct_load(SECOND) };
         // SAFETY: as for `lane_load`.
         let Some(crate::WasmValue::I32(pointer)) =
@@ -10048,10 +10048,10 @@ lane_handler! {
 fn load_pair_binary_handler<H: Host>(load: Op, op: Op, first_left: bool) -> Option<Handler> {
     macro_rules! pairs {
         ($(($load:ident, $op:ident)),+) => {
-            match (load, op, first_left) {
+            match (load as u16, op as u16, first_left) {
                 $(
-                    (Op::$load, Op::$op, false) => Some(lane_load_pair_binary::<H, { Op::$load as u16 }, { Op::$op as u16 }, false> as Handler),
-                    (Op::$load, Op::$op, true) => Some(lane_load_pair_binary::<H, { Op::$load as u16 }, { Op::$op as u16 }, true> as Handler),
+                    (opc::$load, opc::$op, false) => Some(lane_load_pair_binary::<H, { opc::$load }, { opc::$op }, false> as Handler),
+                    (opc::$load, opc::$op, true) => Some(lane_load_pair_binary::<H, { opc::$load }, { opc::$op }, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10112,12 +10112,12 @@ lane_handler! {
 fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u8) -> Option<Handler> {
     macro_rules! jumps {
         ($first:ident; $($jump:ident),+) => {
-            match (jump, backward, acc) {
+            match (jump as u16, backward, acc) {
                 $(
-                    (Op::$jump, false, ACC_NONE) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false, ACC_NONE> as Handler),
-                    (Op::$jump, true, ACC_NONE) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true, ACC_NONE> as Handler),
-                    (Op::$jump, false, ACC_B) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false, ACC_B> as Handler),
-                    (Op::$jump, true, ACC_B) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true, ACC_B> as Handler),
+                    (opc::$jump, false, ACC_NONE) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, false, ACC_NONE> as Handler),
+                    (opc::$jump, true, ACC_NONE) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, true, ACC_NONE> as Handler),
+                    (opc::$jump, false, ACC_B) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, false, ACC_B> as Handler),
+                    (opc::$jump, true, ACC_B) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, true, ACC_B> as Handler),
                 )+
                 _ => None,
             }
@@ -10307,9 +10307,9 @@ fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> 
     macro_rules! accs {
         ($first:ident, $second:ident, $backward:literal) => {
             match acc {
-                ACC_NONE => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_NONE> as Handler),
-                ACC_B => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_B> as Handler),
-                ACC_C => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_C> as Handler),
+                ACC_NONE => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_NONE> as Handler),
+                ACC_B => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_B> as Handler),
+                ACC_C => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_C> as Handler),
                 _ => None,
             }
         };
@@ -10448,11 +10448,11 @@ lane_handler! {
 fn operator_constant_select_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! operators {
         ($($op:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$op, ACC_NONE) => Some(lane_operator_constant_select::<H, { Op::$op as u16 }, ACC_NONE> as Handler),
-                    (Op::$op, ACC_B) => Some(lane_operator_constant_select::<H, { Op::$op as u16 }, ACC_B> as Handler),
-                    (Op::$op, ACC_C) => Some(lane_operator_constant_select::<H, { Op::$op as u16 }, ACC_C> as Handler),
+                    (opc::$op, ACC_NONE) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_NONE> as Handler),
+                    (opc::$op, ACC_B) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_B> as Handler),
+                    (opc::$op, ACC_C) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10482,10 +10482,10 @@ macro_rules! i32_loads {
 fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$load, ACC_NONE) => Some(lane_load_load::<H, { Op::$load as u16 }, ACC_NONE> as Handler),
-                    (Op::$load, ACC_C) => Some(lane_load_load::<H, { Op::$load as u16 }, ACC_C> as Handler),
+                    (opc::$load, ACC_NONE) => Some(lane_load_load::<H, { opc::$load }, ACC_NONE> as Handler),
+                    (opc::$load, ACC_C) => Some(lane_load_load::<H, { opc::$load }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10499,16 +10499,16 @@ fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
 fn load_jump_handler<H: Host>(op: Op, acc: u8, zero: bool, backward: bool) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc, zero, backward) {
+            match (op as u16, acc, zero, backward) {
                 $(
-                    (Op::$load, ACC_NONE, false, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, false, false> as Handler),
-                    (Op::$load, ACC_NONE, false, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, false, true> as Handler),
-                    (Op::$load, ACC_NONE, true, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, true, false> as Handler),
-                    (Op::$load, ACC_NONE, true, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, true, true> as Handler),
-                    (Op::$load, ACC_C, false, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, false, false> as Handler),
-                    (Op::$load, ACC_C, false, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, false, true> as Handler),
-                    (Op::$load, ACC_C, true, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, true, false> as Handler),
-                    (Op::$load, ACC_C, true, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, true, true> as Handler),
+                    (opc::$load, ACC_NONE, false, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, false, false> as Handler),
+                    (opc::$load, ACC_NONE, false, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, false, true> as Handler),
+                    (opc::$load, ACC_NONE, true, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, true, false> as Handler),
+                    (opc::$load, ACC_NONE, true, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, true, true> as Handler),
+                    (opc::$load, ACC_C, false, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, false, false> as Handler),
+                    (opc::$load, ACC_C, false, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, false, true> as Handler),
+                    (opc::$load, ACC_C, true, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, true, false> as Handler),
+                    (opc::$load, ACC_C, true, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, true, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10521,10 +10521,10 @@ fn load_jump_handler<H: Host>(op: Op, acc: u8, zero: bool, backward: bool) -> Op
 fn move_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$load, ACC_NONE) => Some(lane_move_load::<H, { Op::$load as u16 }, ACC_NONE> as Handler),
-                    (Op::$load, ACC_B) => Some(lane_move_load::<H, { Op::$load as u16 }, ACC_B> as Handler),
+                    (opc::$load, ACC_NONE) => Some(lane_move_load::<H, { opc::$load }, ACC_NONE> as Handler),
+                    (opc::$load, ACC_B) => Some(lane_move_load::<H, { opc::$load }, ACC_B> as Handler),
                 )+
                 _ => None,
             }
@@ -10573,12 +10573,12 @@ lane_handler! {
 fn store_move_jump_handler<H: Host>(op: Op, zero: bool, backward: bool) -> Option<Handler> {
     macro_rules! stores {
         ($($store:ident),+) => {
-            match (op, zero, backward) {
+            match (op as u16, zero, backward) {
                 $(
-                    (Op::$store, false, false) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, false, false> as Handler),
-                    (Op::$store, false, true) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, false, true> as Handler),
-                    (Op::$store, true, false) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, true, false> as Handler),
-                    (Op::$store, true, true) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, true, true> as Handler),
+                    (opc::$store, false, false) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, false, false> as Handler),
+                    (opc::$store, false, true) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, false, true> as Handler),
+                    (opc::$store, true, false) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, true, false> as Handler),
+                    (opc::$store, true, true) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, true, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10591,11 +10591,11 @@ fn store_move_jump_handler<H: Host>(op: Op, zero: bool, backward: bool) -> Optio
 fn store_move_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! stores {
         ($($store:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$store, ACC_NONE) => Some(lane_store_move::<H, { Op::$store as u16 }, ACC_NONE> as Handler),
-                    (Op::$store, ACC_A) => Some(lane_store_move::<H, { Op::$store as u16 }, ACC_A> as Handler),
-                    (Op::$store, ACC_C) => Some(lane_store_move::<H, { Op::$store as u16 }, ACC_C> as Handler),
+                    (opc::$store, ACC_NONE) => Some(lane_store_move::<H, { opc::$store }, ACC_NONE> as Handler),
+                    (opc::$store, ACC_A) => Some(lane_store_move::<H, { opc::$store }, ACC_A> as Handler),
+                    (opc::$store, ACC_C) => Some(lane_store_move::<H, { opc::$store }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10692,12 +10692,12 @@ lane_handler! {
 fn i32_update_handler<H: Host>(op: Op, left: bool, acc: u8) -> Option<Handler> {
     macro_rules! updates {
         ($($op:ident),+) => {
-            match (op, left, acc) {
+            match (op as u16, left, acc) {
                 $(
-                    (Op::$op, false, ACC_NONE) => Some(lane_i32_update::<H, { Op::$op as u16 }, false, ACC_NONE> as Handler),
-                    (Op::$op, true, ACC_NONE) => Some(lane_i32_update::<H, { Op::$op as u16 }, true, ACC_NONE> as Handler),
-                    (Op::$op, false, ACC_C) => Some(lane_i32_update::<H, { Op::$op as u16 }, false, ACC_C> as Handler),
-                    (Op::$op, true, ACC_C) => Some(lane_i32_update::<H, { Op::$op as u16 }, true, ACC_C> as Handler),
+                    (opc::$op, false, ACC_NONE) => Some(lane_i32_update::<H, { opc::$op }, false, ACC_NONE> as Handler),
+                    (opc::$op, true, ACC_NONE) => Some(lane_i32_update::<H, { opc::$op }, true, ACC_NONE> as Handler),
+                    (opc::$op, false, ACC_C) => Some(lane_i32_update::<H, { opc::$op }, false, ACC_C> as Handler),
+                    (opc::$op, true, ACC_C) => Some(lane_i32_update::<H, { opc::$op }, true, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10753,8 +10753,8 @@ lane_handler! {
 const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
     macro_rules! stores {
         ($($store:ident),+) => {
-            match op {
-                $(Op::$store => Some(lane_constant_store::<H, { Op::$store as u16 }> as Handler),)+
+            match op as u16 {
+                $(opc::$store => Some(lane_constant_store::<H, { opc::$store }> as Handler),)+
                 _ => None,
             }
         };
@@ -18753,20 +18753,20 @@ fn derive_lane_view<'live, H: Host>(
     // runs only its own instruction.
     let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
-    let serves = |handler: *const (), op: Op, acc: u8| {
+    let serves = |handler: *const (), op: u16, acc: u8| {
         tables[0][usize::from(acc)]
-            .get(op as usize)
+            .get(usize::from(op))
             .copied()
             .flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`
     // that `handler` is, for an instruction whose handler depends on its jump's direction.
-    let plain_served = |handler: *const (), op: Op, accs: &[u8]| {
+    let plain_served = |handler: *const (), op: u16, accs: &[u8]| {
         [false, true].into_iter().find_map(|backward| {
             accs.iter().copied().find(|&acc| {
                 tables[usize::from(backward)][usize::from(acc)]
-                    .get(op as usize)
+                    .get(usize::from(op))
                     .copied()
                     .flatten()
                     .is_some_and(|served| handler == served.handler as *const ())
@@ -18816,8 +18816,8 @@ fn derive_lane_view<'live, H: Host>(
         for pc in 0..records.len().saturating_sub(1) {
             let instruction = decoded[pc];
             let next = decoded[pc + 1];
-            let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
-            let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
+            let plain_add = serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE);
+            let carried_load = serves(records[pc + 1].handler, next.op() as u16, ACC_C);
             if instruction.op().is_wasm_i32_add_immediate()
                 && plain_add
                 && carried_load
@@ -18846,10 +18846,10 @@ fn derive_lane_view<'live, H: Host>(
             let next = decoded[pc + 1];
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
+                .find(|acc| serves(records[pc].handler, instruction.op() as u16, *acc));
             if let Some(field) = field
                 && next.a() == instruction.a()
-                && serves(records[pc + 1].handler, Op::WasmBranchTable, ACC_NONE)
+                && serves(records[pc + 1].handler, opc::WasmBranchTable, ACC_NONE)
                 && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
             {
                 records[pc].handler = fused as *const ();
@@ -18857,7 +18857,7 @@ fn derive_lane_view<'live, H: Host>(
                 // field joins as well.
                 if pc > 0
                     && field == ACC_NONE
-                    && serves(records[pc - 1].handler, Op::WasmI32AddImmediate, ACC_NONE)
+                    && serves(records[pc - 1].handler, opc::WasmI32AddImmediate, ACC_NONE)
                     && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
                 {
                     records[pc - 1].handler = fused as *const ();
@@ -18867,13 +18867,13 @@ fn derive_lane_view<'live, H: Host>(
         // A shift left by a constant whose result the next record adds runs
         // with that add as one record.
         for pc in 0..records.len().saturating_sub(1) {
-            let variant = |op: Op, acc: u8, at: usize| serves(records[at].handler, op, acc);
+            let variant = |op: u16, acc: u8, at: usize| serves(records[at].handler, op as u16, acc);
             let field = [ACC_NONE, ACC_B]
                 .into_iter()
-                .position(|acc| variant(Op::WasmI32ShiftLeftImmediate, acc, pc));
+                .position(|acc| variant(opc::WasmI32ShiftLeftImmediate, acc, pc));
             let left = [ACC_C, ACC_B]
                 .into_iter()
-                .position(|acc| variant(Op::WasmI32Add, acc, pc + 1));
+                .position(|acc| variant(opc::WasmI32Add, acc, pc + 1));
             if let (Some(field), Some(left)) = (field, left) {
                 records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
             }
@@ -18889,13 +18889,13 @@ fn derive_lane_view<'live, H: Host>(
             }
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|&acc| serves(records[pc].handler, Op::WasmI32Load, acc));
+                .find(|&acc| serves(records[pc].handler, opc::WasmI32Load, acc));
             let left = [ACC_C, ACC_B]
                 .into_iter()
-                .position(|acc| serves(records[pc + 1].handler, combine.op(), acc));
+                .position(|acc| serves(records[pc + 1].handler, combine.op() as u16, acc));
             if let (Some(field), Some(left)) = (field, left)
                 && store.a() == combine.a()
-                && serves(records[pc + 2].handler, Op::WasmI32Store, ACC_A)
+                && serves(records[pc + 2].handler, opc::WasmI32Store, ACC_A)
                 && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
             {
                 records[pc].handler = fused as *const ();
@@ -18905,8 +18905,8 @@ fn derive_lane_view<'live, H: Host>(
         // record.
         for pc in 0..records.len().saturating_sub(1) {
             let next = decoded[pc + 1];
-            if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
-                && serves(records[pc + 1].handler, next.op(), ACC_A)
+            if serves(records[pc].handler, opc::LoadConst, ACC_NONE)
+                && serves(records[pc + 1].handler, next.op() as u16, ACC_A)
                 && let Some(fused) = constant_store_handler::<H>(next.op())
             {
                 records[pc].handler = fused as *const ();
@@ -18919,8 +18919,8 @@ fn derive_lane_view<'live, H: Host>(
             let next = decoded[pc + 1];
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
-            let carried_store = serves(records[pc + 1].handler, next.op(), ACC_A);
+                .find(|acc| serves(records[pc].handler, instruction.op() as u16, *acc));
+            let carried_store = serves(records[pc + 1].handler, next.op() as u16, ACC_A);
             if let Some(field) = field
                 && carried_store
                 && let Some(fused) = load_store_handler::<H>(instruction.op(), next.op(), field)
@@ -18942,7 +18942,7 @@ fn derive_lane_view<'live, H: Host>(
     // Each record's i32 load with its address field, if it is a plain one.
     let i32_load = |records: &[LaneInstruction], pc: usize| {
         let op = decoded[pc].op();
-        [ACC_NONE, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op, acc)).filter(|_| {
+        [ACC_NONE, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)).filter(|_| {
             matches!(
                 op,
                 Op::WasmI32Load | Op::WasmI32Load8S | Op::WasmI32Load8U | Op::WasmI32Load16S | Op::WasmI32Load16U
@@ -18954,7 +18954,7 @@ fn derive_lane_view<'live, H: Host>(
         // immediate comparison jump testing that run as one record.
         for pc in 0..records.len().saturating_sub(2) {
             let (first, mask, jump) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
-            let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op() as u16, acc))
             else {
                 continue;
             };
@@ -18962,11 +18962,11 @@ fn derive_lane_view<'live, H: Host>(
                 || !mask.op().is_wasm_i32_and_immediate()
                 || mask.b() != first.a()
                 || jump.a() != mask.a()
-                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::WasmI32AndImmediate, acc))
+                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::WasmI32AndImmediate, acc))
             {
                 continue;
             }
-            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op(), &[ACC_NONE, ACC_A])
+            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op() as u16, &[ACC_NONE, ACC_A])
             else {
                 continue;
             };
@@ -18978,13 +18978,13 @@ fn derive_lane_view<'live, H: Host>(
         // one record.
         for pc in 0..records.len().saturating_sub(1) {
             let (first, jump) = (decoded[pc], decoded[pc + 1]);
-            if !serves(records[pc].handler, first.op(), ACC_NONE)
+            if !serves(records[pc].handler, first.op() as u16, ACC_NONE)
                 || I32BinaryOperator::from_jump_op(jump.op()).is_none()
                 || (jump.a() != first.a() && jump.b() != first.a())
             {
                 continue;
             }
-            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op(), &[ACC_NONE, ACC_A, ACC_B])
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op() as u16, &[ACC_NONE, ACC_A, ACC_B])
             else {
                 continue;
             };
@@ -19024,7 +19024,7 @@ fn derive_lane_view<'live, H: Host>(
                 || i32_load(&records, pc + 1) != Some(ACC_NONE)
                 || first.a() == second.a()
                 || second.c() == first.a()
-                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 2].handler, combine.op(), acc))
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 2].handler, combine.op() as u16, acc))
             {
                 continue;
             }
@@ -19042,14 +19042,14 @@ fn derive_lane_view<'live, H: Host>(
         // An i32 operator, a constant load and a select reading them run as one record.
         for pc in 0..records.len().saturating_sub(2) {
             let (operator, constant) = (decoded[pc], decoded[pc + 1]);
-            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op(), acc))
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op() as u16, acc))
             else {
                 continue;
             };
-            if !serves(records[pc + 1].handler, Op::LoadConst, ACC_NONE)
+            if !serves(records[pc + 1].handler, opc::LoadConst, ACC_NONE)
                 || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 2].handler, Op::WasmSelect, acc))
+                    .any(|acc| serves(records[pc + 2].handler, opc::WasmSelect, acc))
                 || !constant.op().is_load_const()
             {
                 continue;
@@ -19061,7 +19061,7 @@ fn derive_lane_view<'live, H: Host>(
         // A plain move whose value the next record's i32 load takes as its address runs with it
         // as one record.
         for pc in 0..records.len().saturating_sub(1) {
-            if serves(records[pc].handler, Op::Move, ACC_NONE)
+            if serves(records[pc].handler, opc::Move, ACC_NONE)
                 && i32_load(&records, pc + 1).is_some()
                 && decoded[pc + 1].c() == decoded[pc].a()
                 && let Some(fused) = move_load_handler::<H>(decoded[pc + 1].op(), ACC_NONE)
@@ -19072,10 +19072,10 @@ fn derive_lane_view<'live, H: Host>(
         // A plain i32 store followed by a move runs with it as one record.
         for pc in 0..records.len().saturating_sub(1) {
             let op = decoded[pc].op();
-            let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op, acc)) else {
+            let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)) else {
                 continue;
             };
-            if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::Move, acc))
+            if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::Move, acc))
                 && let Some(fused) = store_move_handler::<H>(op, acc)
             {
                 records[pc].handler = fused as *const ();
@@ -19085,7 +19085,7 @@ fn derive_lane_view<'live, H: Host>(
     // A record's plain jump, with its direction.
     let jump_direction = |handler: *const ()| {
         [false, true].into_iter().find(|&backward| {
-            tables[usize::from(backward)][usize::from(ACC_NONE)][Op::Jump as usize]
+            tables[usize::from(backward)][usize::from(ACC_NONE)][opc::Jump as usize]
                 .is_some_and(|jump| handler == jump.handler as *const ())
         })
     };
@@ -19107,7 +19107,7 @@ fn derive_lane_view<'live, H: Host>(
             continue;
         }
         let absorbed = decoded[target];
-        let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
+        let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op as u16, ACC_NONE);
         let backward = target <= pc;
         // In compiled mode an OSR site's backedge must remain a standalone jump record.
         // The lane's `THROUGH` fusion would replace both its handler and jump distance.
@@ -19140,8 +19140,8 @@ fn derive_lane_view<'live, H: Host>(
     // Two plain moves in a row run as one record.
     let mut pc = 0;
     while pc + 1 < records.len() {
-        if serves(records[pc].handler, Op::Move, ACC_NONE)
-            && serves(records[pc + 1].handler, Op::Move, ACC_NONE)
+        if serves(records[pc].handler, opc::Move, ACC_NONE)
+            && serves(records[pc + 1].handler, opc::Move, ACC_NONE)
         {
             // A jump after the pair joins it.
             let jump = records
@@ -19161,7 +19161,7 @@ fn derive_lane_view<'live, H: Host>(
     // A plain move or add of a constant whose next record jumps runs with
     // that jump as one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let plain = |op: Op| serves(records[pc].handler, op, ACC_NONE);
+        let plain = |op: Op| serves(records[pc].handler, op as u16, ACC_NONE);
         let add = if plain(Op::Move) {
             false
         } else if plain(Op::WasmI32AddImmediate) {
@@ -19184,7 +19184,7 @@ fn derive_lane_view<'live, H: Host>(
         for pc in 0..records.len().saturating_sub(1) {
             let Some(move_acc) = [ACC_NONE, ACC_B]
                 .into_iter()
-                .position(|acc| serves(records[pc].handler, Op::Move, acc))
+                .position(|acc| serves(records[pc].handler, opc::Move, acc))
             else {
                 continue;
             };
@@ -19217,7 +19217,7 @@ fn derive_lane_view<'live, H: Host>(
                         .map(|acc| acc == ACC_B)
                 };
                 if instruction.op().is_wasm_f64_load() {
-                    let plain = tables[0][usize::from(ACC_NONE)][Op::WasmF64Load as usize]?;
+                    let plain = tables[0][usize::from(ACC_NONE)][opc::WasmF64Load as usize]?;
                     if records[pc].handler != plain.handler as *const () {
                         return None;
                     }
@@ -19231,7 +19231,7 @@ fn derive_lane_view<'live, H: Host>(
                                 && store.a() == next.a()
                                 && [ACC_NONE, ACC_A]
                                     .into_iter()
-                                    .any(|acc| serves(records[pc + 2].handler, Op::WasmF64Store, acc))
+                                    .any(|acc| serves(records[pc + 2].handler, opc::WasmF64Store, acc))
                         };
                     if updates {
                         return Some((
@@ -19271,7 +19271,7 @@ fn derive_lane_view<'live, H: Host>(
                 // store may read it plainly or through the accumulator.
                 let store_runs = [ACC_NONE, ACC_A]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
+                    .any(|acc| serves(records[pc + 1].handler, opc::WasmF64Store, acc));
                 if !instruction.op().is_wasm_f64_binary()
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
                     || !next.op().is_wasm_f64_store()
@@ -19498,12 +19498,12 @@ fn derive_lane_view<'live, H: Host>(
             let second = decoded[pc + 1];
             let Some(acc) = [ACC_NONE, ACC_B]
                 .into_iter()
-                .find(|&acc| serves(records[pc].handler, Op::WasmI32ShiftRightUnsignedAndImmediate, acc))
+                .find(|&acc| serves(records[pc].handler, opc::WasmI32ShiftRightUnsignedAndImmediate, acc))
             else {
                 continue;
             };
             if !decoded[pc].op().is_wasm_i32_shift_right_unsigned_and_immediate()
-                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op(), acc))
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op() as u16, acc))
             {
                 continue;
             }
@@ -19521,7 +19521,7 @@ fn derive_lane_view<'live, H: Host>(
             {
                 continue;
             }
-            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op(), &[ACC_NONE, ACC_A]) else {
+            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op() as u16, &[ACC_NONE, ACC_A]) else {
                 continue;
             };
             if let Some(fused) = compare_jump_load_handler::<H>(jump.op(), decoded[pc + 1].op(), backward, acc) {
@@ -19532,14 +19532,14 @@ fn derive_lane_view<'live, H: Host>(
         // fusions take their records first.
         for pc in 0..records.len().saturating_sub(1) {
             let (first, second) = (decoded[pc], decoded[pc + 1]);
-            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op() as u16, acc))
             else {
                 continue;
             };
             if !matches!(first.op().class(), Class::WasmI32AddRegister | Class::WasmI32AddImmediate) {
                 continue;
             }
-            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op(), &[ACC_NONE, ACC_B, ACC_C])
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op() as u16, &[ACC_NONE, ACC_B, ACC_C])
             else {
                 continue;
             };
@@ -20570,13 +20570,13 @@ fn specialize_environment_window<H: Host>(
             return None;
         }
         let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
-        let handler: Handler = match (op, environment) {
-            (Op::MakeClosure, _) => lane_make_window_closure::<H>,
-            (Op::CloneEnv, _) => lane_clone_window_env::<H>,
-            (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
-            (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
-            (Op::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
-            (Op::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
+        let handler: Handler = match (op.class(), environment) {
+            (Class::MakeClosure, _) => lane_make_window_closure::<H>,
+            (Class::CloneEnv, _) => lane_clone_window_env::<H>,
+            (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
+            (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
+            (Class::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
+            (Class::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
             (_, true) => lane_store_window_local::<H, true>,
             (_, false) => lane_store_window_local::<H, false>,
         };

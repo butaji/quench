@@ -9367,9 +9367,9 @@ fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Op
         let right = i32::from(instruction.b() as i16);
         return operator.evaluate(value, right).ok().map(|holds| holds != 0);
     }
-    match op {
-        Op::WasmJumpI32Zero => Some(value == 0),
-        Op::WasmJumpI32NonZero => Some(value != 0),
+    match op.class() {
+        Class::WasmJumpI32Zero => Some(value == 0),
+        Class::WasmJumpI32NonZero => Some(value != 0),
         _ => None,
     }
 }
@@ -11299,8 +11299,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.write_typed(a, ty, value);
             return true;
         }
-        match op {
-            Op::WasmI64Binary => {
+        match op.class() {
+            Class::WasmI64Binary => {
                 let operator = I64BinaryOperator::from_tag(instruction.imm()).expect("planned");
                 let left = self.read(b, Kind::I64);
                 let right = self.read(c, Kind::I64);
@@ -11308,26 +11308,26 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
                 self.write(a, kind, value);
             }
-            Op::WasmI64Unary => {
+            Class::WasmI64Unary => {
                 let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read(b, Kind::I64);
                 let value = self.integer_unary(operator, input);
                 let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
                 self.write(a, kind, value);
             }
-            Op::WasmScalarConvert => {
+            Class::WasmScalarConvert => {
                 let operator =
                     ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read_typed(b, operator.source_type());
                 let value = self.convert(operator, input);
                 self.write_typed(a, operator.result_type(), value);
             }
-            Op::Move => {
+            Class::Move => {
                 let kind = self.operand_kind(pc);
                 let value = self.read(b, kind);
                 self.write(a, kind, value);
             }
-            Op::LoadConst | Op::WasmFillRegisters => {
+            Class::LoadConst | Class::WasmFillRegisters => {
                 let constant = self
                     .analysis
                     .constant(instruction.constant_index())
@@ -11343,13 +11343,13 @@ impl<H: Host> Emitter<'_, '_, H> {
                     }
                 }
             }
-            Op::WasmI32Unary => {
+            Class::WasmI32Unary => {
                 let operator = I32UnaryOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read(b, Kind::I32);
                 let value = self.integer_unary(widen_unary(operator), input);
                 self.write(a, Kind::I32, value);
             }
-            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+            Class::WasmI32ShiftRightUnsignedAnd => {
                 let input = self.read(b, Kind::I32);
                 let shift = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let shifted =
@@ -11361,7 +11361,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
                 self.write(a, Kind::I32, value);
             }
-            Op::WasmI32AddImmediateJumpNonZero => {
+            Class::WasmI32AddJump => {
                 let input = self.read(b, Kind::I32);
                 let addend = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let sum = self.body.core.builder.ins().iadd(input, addend);
@@ -11369,7 +11369,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
                 return false;
             }
-            Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => {
+            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => {
                 let value = self.read(a, Kind::I32);
                 let (taken, other) = (instruction.jump_target() as usize, pc + 1);
                 if op.is_wasm_jump_i32_non_zero() {
@@ -11379,12 +11379,12 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
                 return false;
             }
-            Op::Jump => {
+            Class::Jump => {
                 let target = instruction.jump_target() as usize;
                 self.jump(target, self.polls(pc, target));
                 return false;
             }
-            Op::WasmBranchTable => {
+            Class::WasmBranchTable => {
                 let selector = self.read(a, Kind::I32);
                 let entries: Vec<usize> = crate::bytecode::branch_table_entries(pc, instruction)
                     .map(|entry| {
@@ -11412,7 +11412,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.body.core.builder.ins().br_table(selector, table);
                 return false;
             }
-            Op::WasmSelect => {
+            Class::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
                 let kind = self.operand_kind(pc);
                 let condition = self.read(condition, Kind::I32);
@@ -11421,7 +11421,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.body.core.builder.ins().select(condition, taken, other);
                 self.write(a, kind, value);
             }
-            Op::CallKnown => {
+            Class::CallKnown => {
                 let callee = usize::from(instruction.known_function_index());
                 let Some(callee_plan) = self.plans[callee].as_ref() else {
                     self.callout_known_fallback(callee as u32, instruction);
@@ -11475,19 +11475,19 @@ impl<H: Host> Emitter<'_, '_, H> {
                     }
                 }
             }
-            Op::WasmRefFunc => {}
-            Op::WasmIndirectTarget => self.indirect_target(pc, instruction),
-            Op::Call => match self.plan.operand(pc) {
+            Class::WasmRefFunc => {}
+            Class::WasmIndirectTarget => self.indirect_target(pc, instruction),
+            Class::Call => match self.plan.operand(pc) {
                 Slot::Import(_) => self.callout(pc, instruction),
                 Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
                 _ => unreachable!("planned calls hold a supported callable"),
             },
-            Op::WasmUnreachable => {
+            Class::WasmUnreachable => {
                 let trap = self.trap_block(crate::WasmTrap::Unreachable);
                 self.body.core.builder.ins().jump(trap, &[]);
                 return false;
             }
-            Op::Return => {
+            Class::Return => {
                 let status = self.body.core.builder.ins().iconst(types::I64, 0);
                 let mut values = vec![status];
                 if let Some(ty) = self.plan.result {
@@ -11498,15 +11498,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             // A binding is known statically per instruction; the globals it
             // names are reached through the context.
-            Op::WasmInstanceBinding => {}
-            Op::WasmGlobalGet => {
+            Class::WasmInstanceBinding => {}
+            Class::WasmGlobalGet => {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let flags = self.flags(Region::Globals);
                 let value = self.body.core.builder.ins().load(types::I32, flags, address, 0);
                 self.write(a, Kind::I32, value);
             }
-            Op::WasmGlobalSet => {
+            Class::WasmGlobalSet => {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let value = self.read(a, Kind::I32);
