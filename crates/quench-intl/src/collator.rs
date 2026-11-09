@@ -28,28 +28,45 @@ pub fn compare_collator(
     locale: &str,
     options: &CollatorOptions<'_>,
 ) -> f64 {
-    icu_ordering(left, right, locale, options).unwrap_or_else(|| {
-        lexical_compare(left, right, options.ignore_punctuation, options.sensitivity)
-    })
+    resolve_collator(locale, options).compare(left, right)
 }
 
-fn icu_ordering(
-    left: &str,
-    right: &str,
-    locale: &str,
-    options: &CollatorOptions<'_>,
-) -> Option<f64> {
-    if !options.ignore_punctuation
-        && ((left.is_empty() && punctuation_only(right))
-            || (right.is_empty() && punctuation_only(left)))
-    {
-        return None;
+/// A collator resolved for one locale and set of options, which its comparisons reuse
+/// without looking it up again (`recent_collator`).
+pub struct ResolvedCollator {
+    collator: Option<std::rc::Rc<RecentCollator>>,
+    ignore_punctuation: bool,
+    sensitivity: String,
+}
+
+/// The collator `compare_collator` compares by under `locale` and `options`.
+pub fn resolve_collator(locale: &str, options: &CollatorOptions<'_>) -> ResolvedCollator {
+    ResolvedCollator {
+        collator: recent_collator(locale, options),
+        ignore_punctuation: options.ignore_punctuation,
+        sensitivity: options.sensitivity.to_owned(),
     }
-    let collator = recent_collator(locale, options)?;
-    if let Some(order) = collator.ascii.as_ref().and_then(|weights| weights.compare(left.as_bytes(), right.as_bytes())) {
-        return Some(ordering_number(order));
+}
+
+impl ResolvedCollator {
+    /// The order of `left` and `right`: ICU's, or the lexical order where it gives none.
+    pub fn compare(&self, left: &str, right: &str) -> f64 {
+        self.icu_ordering(left, right)
+            .unwrap_or_else(|| lexical_compare(left, right, self.ignore_punctuation, &self.sensitivity))
     }
-    Some(ordering_number(collator.icu.compare(left, right)))
+
+    fn icu_ordering(&self, left: &str, right: &str) -> Option<f64> {
+        if !self.ignore_punctuation
+            && ((left.is_empty() && punctuation_only(right)) || (right.is_empty() && punctuation_only(left)))
+        {
+            return None;
+        }
+        let collator = self.collator.as_ref()?;
+        if let Some(order) = collator.ascii.as_ref().and_then(|weights| weights.compare(left.as_bytes(), right.as_bytes())) {
+            return Some(ordering_number(order));
+        }
+        Some(ordering_number(collator.icu.compare(left, right)))
+    }
 }
 
 /// A collator with its printable-ASCII weights where they decide its comparisons
@@ -118,8 +135,8 @@ impl AsciiWeights {
         }
         let primaries = left.iter().map(|unit| self.primary[usize::from(*unit)]);
         let order = primaries.cmp(right.iter().map(|unit| self.primary[usize::from(*unit)]));
-        let full = |text: &[u8]| text.iter().map(|unit| self.full[usize::from(*unit)]).collect::<Vec<_>>();
-        Some(order.then_with(|| full(left).cmp(&full(right))))
+        let full = |unit: &u8| self.full[usize::from(*unit)];
+        Some(order.then_with(|| left.iter().map(full).cmp(right.iter().map(full))))
     }
 }
 
