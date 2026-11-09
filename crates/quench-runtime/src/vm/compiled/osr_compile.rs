@@ -343,6 +343,33 @@ mod tests {
             "the lane OSR path ran");
     }
 
+    /// A loop appending to a fresh array runs natively through the lane unit: the append
+    /// helper grows the backing and the loop's normal continuation is a resume, not an exit.
+    #[test]
+    fn an_append_growth_loop_runs_through_the_lane_unit() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function fill(n) { var a = []; for (var i = 0; i < n; i++) a[i] = (i * 7 + 3) & 255; return a; }
+             var sum = 0;
+             for (var k = 0; k < 3000; k++) { var a = fill(40 + (k & 7)); sum = (sum * 31 + a[a.length - 1] + a.length) | 0; }
+             print(sum);",
+            "lane-osr-append.js").unwrap();
+        let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
+            .execute(&program).unwrap();
+        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        vm.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), *expected.borrow());
+        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+            "the lane OSR path ran");
+    }
+
     /// A loop negating a Number runs through the lane unit's shared Number unary denotation,
     /// keeping `-0` and widening an overflowing int32 negation.
     #[test]

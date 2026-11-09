@@ -1546,8 +1546,12 @@ pub(super) fn lower(
         lowering.entry_conform(&mut state, pc, coverage);
         // A region whose sole entry is this loop header has no earlier source
         // edge on which to hoist its invariant reads. Admit them on the native
-        // entry edge, before the header and every possible loop effect.
+        // entry edge, before the header and every possible loop effect. A failed
+        // entry proof declines the region (the lane runs the header itself), not
+        // an exit: the old lowering's entry admission declines the same arrays.
+        lowering.proving_entry = true;
         lowering.hoist_reads(&mut state, pc);
+        lowering.proving_entry = false;
         lowering.builder.ins().jump(target, &[]);
     }
     let mut state = State::canonical(count);

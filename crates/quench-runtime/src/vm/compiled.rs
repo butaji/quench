@@ -6479,7 +6479,19 @@ impl CompiledOsrRegion {
                     value: crate::Value::from_bits(word) }
             } else {
                 match LaneExit::decode(word) {
-                    LaneExit::At(pc) => LoopOutcome::Exit(pc as u32),
+                    // A leave outside the loop is the loop's normal continuation, which the
+                    // lane resumes at that PC; a guard inside the loop is an exit. An
+                    // inlining region's unit PCs are not the original loop's.
+                    LaneExit::At(pc) => {
+                        let pc = pc as u32;
+                        if region.inlining.is_none()
+                            && !(region.header..=region.backedge).contains(&pc)
+                        {
+                            LoopOutcome::Resume(pc)
+                        } else {
+                            LoopOutcome::Exit(pc)
+                        }
+                    }
                     LaneExit::Entry => LoopOutcome::NotEntered(None),
                     LaneExit::Terminated => LoopOutcome::Terminated,
                     LaneExit::Callee | LaneExit::Inlined { .. } | LaneExit::Returned { .. } =>
