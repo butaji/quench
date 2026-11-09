@@ -68,6 +68,10 @@ impl Stage for Emit<'_, '_> {
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.builder.ins().select(cond, then, otherwise)
     }
+    fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
+        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.builder.ins().ireduce(types::I32, shape) };
+        super::shape_in_set(self.builder, word, shapes)
+    }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
         let number = self.builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
         super::super::emit_number_truthiness(self.builder, number)

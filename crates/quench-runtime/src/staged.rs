@@ -72,6 +72,8 @@ pub(crate) trait Stage {
     fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
     /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
+    /// Whether the shape word `shape` is one of `shapes`, sorted.
+    fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
@@ -410,6 +412,10 @@ impl Stage for Concrete {
     fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
     #[inline(always)]
     fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
+    #[inline(always)]
+    fn shape_in(&mut self, shape: u64, shapes: &[u32]) -> bool {
+        u32::try_from(shape).is_ok_and(|shape| shapes.binary_search(&shape).is_ok())
+    }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }

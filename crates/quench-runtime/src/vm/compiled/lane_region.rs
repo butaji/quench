@@ -4046,11 +4046,13 @@ impl Lowering<'_, '_> {
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
         let groups = super::object_slots::field_load_groups(shapes)?;
         if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
-            let member = super::object_slots::shape_in_set(&mut self.builder, shape, members);
-            emit_js_guard(&mut self.builder, member, exit);
-            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                *family, PackedAccess::Reload, exit)?;
-            return Some(projection.read(&mut self.builder, family.slot));
+            if !family.valid() { return None; }
+            use crate::staged::ic::{IcOp, Reached};
+            let load = IcOp::LoadSlot { slot: family.slot, form: crate::staged::Form::of(family.storage, family.storage_len),
+                storage_len: family.storage_len };
+            let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+            return crate::staged::ic::run(&mut stage, &[IcOp::GuardShapes(members), load],
+                Reached { record: object, shape: Some(shape), inline: Some(inline) }, None, exit);
         }
         self.family_switch_read(state, (object, shape, inline, properties), &groups, exit)
     }
@@ -4153,7 +4155,7 @@ impl Lowering<'_, '_> {
         let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
         use crate::staged::ic::IcOp;
         crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
-            record, records, exit)
+            crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
     }
 
     /// A dominating proof of `owner`'s object (a register's, or `this`'s), for its lifetime
