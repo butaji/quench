@@ -579,11 +579,8 @@ fn tagged_registers_with_failure(
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
-        .chain(instructions.iter().filter_map(|instruction| match instruction.op().class() {
-            Class::GetIndex => instruction.operand_b().register_index(),
-            Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
-            _ => None,
-        }).filter(|register| !dynamic_arrays.contains(register)))
+        .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
+            .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
@@ -663,15 +660,13 @@ fn tagged_registers_with_failure(
         // A field receiver the region's field reads give holds an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(receiver)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(receiver)
+            field_reads_alone_define(instructions, receiver).then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged
         // (`Lowering::tagged_truthiness`): a field may hold an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
             let value = instruction.register_a();
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
+            field_reads_alone_define(instructions, value).then_some(value)
         }))
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
@@ -682,8 +677,7 @@ fn tagged_registers_with_failure(
         // which the entry's barrier on the receiver covers (`lane_loop_entry`).
         .chain(instructions.iter().filter(|instruction| admitted_store(instruction.op())).filter_map(|instruction| {
             let value = instruction.register_a();
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
+            field_reads_alone_define(instructions, value).then_some(value)
         }))
         .collect();
     loop {
@@ -928,9 +922,23 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
-        Class::GetIndex => instruction.operand_b().register_index(),
-        Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
-        _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
+        _ if let Some(array) = array_read(instruction) => Some(array),
+        _ => instruction.field_store_register(),
+    }
+}
+
+/// Whether `register` has definitions in `instructions` and every one is a field read, which
+/// may give an object.
+fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+    let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
+    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
+}
+
+/// The register an indexed access, or the coercibility check before one, reads as its array.
+fn array_read(instruction: WideInstruction) -> Option<Register> {
+    match instruction.op() {
+        Op::GetIndex => instruction.operand_b().register_index(),
+        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
         _ => None,
     }
 }
@@ -6071,35 +6079,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// it is `null`, `undefined`, the hole or `false`. Any other heap value (a string, or a
     /// function that may be the IsHTMLDDA object) exits at `pc`.
     fn tagged_truthiness(&mut self, pc: u32, bits: ir::Value) -> ir::Value {
-        let builder = &mut self.body.builder;
-        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-        let heap = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-        let record = builder.ins().bor(object, array);
-        let not_record = builder.ins().icmp_imm_u(IntCC::Equal, record, 0);
-        let undecided = builder.ins().band(heap, not_record);
+        let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut super::object_slots::emit(&mut self.body.builder), bits);
         self.guard(pc, undecided);
-        let builder = &mut self.body.builder;
-        let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
-        let payload = builder.ins().ireduce(types::I32, bits);
-        let integer_truthy = builder.ins().icmp_imm_u(IntCC::NotEqual, payload, 0);
-        let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
-        let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-        let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-        let mut falsy = builder.ins().iconst(types::I8, 0);
-        for value in [Value::NULL, Value::UNDEFINED, Value::DELETED, Value::FALSE] {
-            let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, value.to_bits() as i64);
-            falsy = builder.ins().bor(falsy, equal);
-        }
-        let immediate_truthy = builder.ins().icmp_imm_u(IntCC::Equal, falsy, 0);
-        let double = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
-        let double_truthy = super::emit_number_truthiness(builder, double);
-        let one = builder.ins().iconst(types::I8, 1);
-        let tagged_truthy = builder.ins().select(integer, integer_truthy, immediate_truthy);
-        let unheaped = builder.ins().select(tagged, tagged_truthy, double_truthy);
-        builder.ins().select(heap, one, unheaped)
+        truthy
     }
 
     /// A capacity helper may relocate a backing shared by several entry views. Reload

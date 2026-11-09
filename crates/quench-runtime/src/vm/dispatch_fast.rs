@@ -11294,24 +11294,40 @@ impl<H: Host> Vm<H> {
             && target.this_binding.binds_receiver())
     }
 
+    /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
+    fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
+        known: ScriptCallTarget) -> Option<ScriptCallTarget> {
+        let capture = if known.view.is_null() { std::ptr::null() } else { self.target_capture(code, program, env) };
+        // An arrow's `this` is its own closure's environment's, like `capture`.
+        let (this_binding, lexical_this) = match known.this_binding {
+            ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
+                Some(this) if this.is_deleted() => return None,
+                Some(this) => (ThisBinding::Lexical, this),
+                None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
+            },
+            binding => (binding, Value::UNDEFINED),
+        };
+        Some(ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known })
+    }
+
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
     fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
-        let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
+        let (program, function, env) = self.same_realm_user_target(callee)?;
+        // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
+        if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
+            let target = self.closure_target(code, program, callee, env, known)?;
+            self.lane_stack.remember_script_target(target, self.heap.memory_policy());
+            return Some(target);
+        }
+        let numeric = self.numeric_body(program, function);
         #[cfg(feature = "profile-lane-exits")]
-        if let Some(body) = self.programs.residual(program).and_then(|code| {
-            let body = code.function_get(function as usize)?;
-            Some(format!(
-                "resolve {} span={:?} cross={} known={}",
-                body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
-                body.source_span.map(|span| span.start),
-                program != self.active_program,
-                self.lane_stack.function_target(program, function, program != self.active_program).is_some(),
-            ))
-        }) {
+        if let Some(body) = self.programs.residual(program).and_then(|code| { let body = code.function_get(function as usize)?;
+            Some(format!("resolve {} span={:?} cross={}", body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                body.source_span.map(|span| span.start), program != self.active_program)) }) {
             super::lane_exits::record_detail(body);
         }
         // A callee of another program runs its own residual, which the program store keeps
@@ -11321,13 +11337,9 @@ impl<H: Host> Vm<H> {
         let code: &ResidualProgram = if cross {
             // SAFETY: as above; no program is installed or retired while a call resolves.
             let callee_code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
-            if numeric || !self.lane_admits(callee_code) {
-                return None;
-            }
+            if numeric || !self.lane_admits(callee_code) { return None; }
             callee_code
-        } else {
-            code
-        };
+        } else { code };
         // The JavaScript tier enters a frameless activation at its prologue as it enters a
         // frame (`lane_tier_prologue`), so a function it may claim is cached like any other.
         if function == super::ROOT_FUNCTION_ID {
@@ -11336,21 +11348,7 @@ impl<H: Host> Vm<H> {
         // A numeric body's target differs from its plain closures' (below), so only plain
         // closures share their function's.
         if !numeric && let Some(known) = self.lane_stack.function_target(program, function, cross) {
-            let capture = if known.view.is_null() {
-                std::ptr::null()
-            } else {
-                self.target_capture(code, program, env)
-            };
-            // An arrow's `this` is its own closure's environment's, like `capture`.
-            let (this_binding, lexical_this) = match known.this_binding {
-                ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
-                    Some(this) if this.is_deleted() => return None,
-                    Some(this) => (ThisBinding::Lexical, this),
-                    None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
-                },
-                binding => (binding, Value::UNDEFINED),
-            };
-            let target = ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known };
+            let target = self.closure_target(code, program, callee, env, known)?;
             let policy = self.heap.memory_policy();
             if cross {
                 self.lane_stack.remember_cross_target(target, policy);

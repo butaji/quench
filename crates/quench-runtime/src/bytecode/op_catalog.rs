@@ -203,6 +203,7 @@ macro_rules! class_of {
     (WasmJumpI32NonZero) => { Class::WasmJumpI32NonZero };
     (WasmJumpI32Zero) => { Class::WasmJumpI32Zero };
     (WasmSimd) => { Class::WasmSimd };
+    (WasmSimdShuffle) => { Class::WasmSimdShuffle };
     ($other:ident) => { Class::Other };
 }
 
@@ -232,16 +233,22 @@ impl Traits {
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
     /// A Wasm memory access through the function's memory register.
     pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
+    /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
+    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17);
+    /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
+    pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
+    /// An indexed element read or write, which a loop region views its arrays for.
+    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
     /// A general step that reads and writes only the frame, its registers and heap values.
-    pub(crate) const LANE_IN_PLACE: Self = Self(1 << 17);
+    pub(crate) const LANE_IN_PLACE: Self = Self(1 << 20);
     /// A frame-local step that runs beside frameless activations.
-    pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 18);
+    pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 21);
     /// An op whose result may return from the frame instead of the register file.
-    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 19);
+    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 22);
     /// An op that reads and writes only registers and control, no heap value.
-    pub(crate) const FRAME_ONLY: Self = Self(1 << 20);
+    pub(crate) const FRAME_ONLY: Self = Self(1 << 23);
     /// An op the lifetime-role loop admission can rename a register through.
-    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 21);
+    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 24);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -249,19 +256,19 @@ impl Traits {
 
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
-    (Nop) => { Traits::LEAF_VALUE.union(Traits::FRAME_ONLY) };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE).union(Traits::LIFETIME_SAFE) };
-    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Nop) => { Traits::LEAF_VALUE.union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY) };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::LIFETIME_SAFE) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::FRAME_RETURNABLE).union(Traits::LIFETIME_SAFE) };
+    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::SCALAR_REGION).union(Traits::LIFETIME_SAFE) };
+    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -285,8 +292,8 @@ macro_rules! traits_of {
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
     (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (SetIndex) => { Traits::INLINABLE.union(Traits::LIFETIME_SAFE) };
+    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
+    (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
     (WasmMemoryFill) => { Traits::WASM_MEMORY };
@@ -316,8 +323,13 @@ macro_rules! traits_of {
     (IteratorCleanupPop) => { Traits::LANE_IN_PLACE };
     (CallForwardingArguments) => { Traits::FRAME_RETURNABLE };
     (Construct) => { Traits::FRAME_RETURNABLE };
+    (LoadLocal) => { Traits::ACTIVATION_FREE };
+    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
+    (StoreLocal) => { Traits::ACTIVATION_FREE };
+    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
     ($other:ident) => { Traits::NONE };
 }
+
 
 /// The guarded JavaScript denotation available to the shared compiled region
 /// analyzer. This describes an instruction operation, never a source pattern.

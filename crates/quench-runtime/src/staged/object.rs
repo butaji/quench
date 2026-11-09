@@ -121,7 +121,7 @@ pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S:
 
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
-fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
+pub(crate) fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
     let start = stage.and_imm(start, u64::from(OBJECT.storage_start_mask));
     let offset = stage.mul_imm(start, OBJECT.property_value_size as u64);
     let base = stage.table(Table::PropertyValues);

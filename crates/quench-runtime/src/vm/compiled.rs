@@ -627,52 +627,11 @@ fn js_tagged_operand_supported(
 
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
-fn emit_js_tagged_truthiness(
-    builder: &mut FunctionBuilder<'_>,
-    bits: ir::Value,
-    fallback: ir::Block,
-) -> ir::Value {
-    let is_true = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64);
-    let is_false = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::FALSE.to_bits() as i64);
-    let is_null = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
-    let is_undefined = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
-    let known_primitive = builder.ins().bor(is_true, is_false);
-    let known_primitive = builder.ins().bor(known_primitive, is_null);
-    let known_primitive = builder.ins().bor(known_primitive, is_undefined);
-    // A direct object or array record is truthy: neither family holds the IsHTMLDDA object.
-    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), bits);
-    let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), bits);
-    let record = builder.ins().bor(object, array);
-    let known = builder.ins().bor(known_primitive, record);
-    let truthy_known = builder.ins().bor(is_true, record);
-
-    let known_block = builder.create_block();
-    let number_block = builder.create_block();
-    let join = builder.create_block();
-    builder.append_block_param(join, types::I8);
-    builder.ins().brif(known, known_block, &[], number_block, &[]);
-
-    builder.switch_to_block(known_block);
-    builder.ins().jump(join, &[ir::BlockArg::Value(truthy_known)]);
-
-    builder.switch_to_block(number_block);
-    let number = emit_js_tagged_number(builder, bits, fallback);
-    let truthy = emit_number_truthiness(builder, number);
-    builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);
-
-    builder.seal_block(known_block);
-    builder.seal_block(number_block);
-    builder.seal_block(join);
-    builder.switch_to_block(join);
-    builder.block_params(join)[0]
+fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut object_slots::emit(builder), bits);
+    let decided = builder.ins().icmp_imm_u(IntCC::Equal, undecided, 0);
+    emit_js_guard(builder, decided, fallback);
+    truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
@@ -2362,9 +2321,8 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
     let scalar = !has_calls && unit.instructions.iter().all(|instruction|
-        matches!(instruction.op().js_denotation(), JsDenotation::NumericBinary | JsDenotation::Noop
-                | JsDenotation::LoadConst | JsDenotation::Move | JsDenotation::Jump | JsDenotation::Return)
-            || matches!(instruction.op(), Op::IncDec | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+        instruction.op().js_denotation() == JsDenotation::NumericBinary
+            || instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION)
             || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
     // A region whose loops index arrays in place also gets its typed-array variant, which the
     // dispatcher enters at the same header where the dense one leaves there (it comes first
@@ -2405,7 +2363,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         instruction.op().control_flow_layout().jumps()
             && instruction.jump_target() as usize <= pc
             && unit.instructions[instruction.jump_target() as usize..=pc].iter()
-                .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
+                .any(|body| body.op().traits().has(crate::bytecode::Traits::ELEMENT_ACCESS)));
     if headers.is_empty() && !array_loops && !unit.frames.is_empty() { headers.push(0); }
     headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect()
 }
@@ -6806,7 +6764,6 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
         || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
-    if hit { general_store::record_store_class(vm, site as u16, value); }
     u64::from(hit)
 }
 

@@ -18,9 +18,11 @@ use crate::bytecode::Register;
 use crate::typed_ir::Type;
 
 pub(crate) mod numeric;
+mod heap;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
+pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod value;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
@@ -65,6 +67,14 @@ pub(crate) trait Stage {
     fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
+    /// Whether either condition holds.
+    fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
+    /// `then` where `cond` holds, else `otherwise`.
+    fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
+    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
+    fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
+    /// Whether the shape word `shape` is one of `shapes`, sorted.
+    fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
@@ -271,91 +281,11 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Step::Value(value)
         }
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => match frame.truthiness(stage, register) {
-            Some(condition) => {
-                let condition = if taken { condition } else { stage.not(condition) };
-                Step::Control(frame.branch(stage, condition))
-            }
-            None => Step::Unresolved,
-        },
+        Operation::JumpIf { register, taken } => heap::jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        heap => return heap_step(stage, frame, heap),
-    }
-}
-
-/// The heap operations: a field read or write. A frame with no heap for the operation leaves
-/// it `Unresolved` for its host path.
-#[inline(always)]
-fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        field @ (Operation::ReadField { .. } | Operation::WriteField { .. }) =>
-            field_step(stage, frame, field),
-        literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. }) =>
-            allocation_step(stage, frame, literal),
-        index => index_step(stage, frame, index),
-    }
-}
-
-/// A field read or write over a frame's object proof.
-#[inline(always)]
-fn field_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
-            Some((value, _)) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::WriteField { base, slot, ty, value, proof } =>
-            match frame.field_write(stage, base, slot, ty, value, proof) {
-                Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
-        _ => Step::Unresolved,
-    }
-}
-
-/// An object or array literal allocation over a frame's heap.
-#[inline(always)]
-fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    let value = match operation {
-        Operation::MakeObject { destination, proof } =>
-            frame.allocate_object(stage, destination, proof),
-        Operation::MakeArray { destination, length, elements, proof } =>
-            frame.allocate_array(stage, destination, length, elements, proof),
-        _ => None,
-    };
-    match value {
-        Some(value) => Step::Value(value),
-        None => Step::Unresolved,
-    }
-}
-
-/// A dense or typed element read or write over a frame's view proof.
-#[inline(always)]
-fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
-            Some(()) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::TypedIndexRead { index, proof } => match frame.typed_index_read(stage, index, proof) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::TypedIndexWrite { index, value, proof } => match frame.typed_index_write(stage, index, value, proof) {
-            Some(()) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        _ => Step::Unresolved,
+        heap => heap::heap_step(stage, frame, heap),
     }
 }
 
@@ -467,6 +397,16 @@ impl Stage for Concrete {
     }
     #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
+    #[inline(always)]
+    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
+    #[inline(always)]
+    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
+    #[inline(always)]
+    fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
+    #[inline(always)]
+    fn shape_in(&mut self, shape: u64, shapes: &[u32]) -> bool {
+        u32::try_from(shape).is_ok_and(|shape| shapes.binary_search(&shape).is_ok())
+    }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }

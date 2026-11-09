@@ -204,11 +204,11 @@ impl Shr<u32> for RegisterSet {
         let word_shift = (bits / u64::BITS) as usize;
         let bit_shift = bits % u64::BITS;
         let mut shifted = [0_u64; WORDS];
-        for index in 0..WORDS - word_shift {
+        for (index, slot) in shifted.iter_mut().enumerate().take(WORDS - word_shift) {
             let source = index + word_shift;
-            shifted[index] = self.0[source] >> bit_shift;
+            *slot = self.0[source] >> bit_shift;
             if bit_shift != 0 && source + 1 < WORDS {
-                shifted[index] |= self.0[source + 1] << (u64::BITS - bit_shift);
+                *slot |= self.0[source + 1] << (u64::BITS - bit_shift);
             }
         }
         Self(shifted)
@@ -223,11 +223,11 @@ impl Shl<u32> for RegisterSet {
         let word_shift = (bits / u64::BITS) as usize;
         let bit_shift = bits % u64::BITS;
         let mut shifted = [0_u64; WORDS];
-        for index in word_shift..WORDS {
+        for (index, slot) in shifted.iter_mut().enumerate().skip(word_shift) {
             let source = index - word_shift;
-            shifted[index] = self.0[source] << bit_shift;
+            *slot = self.0[source] << bit_shift;
             if bit_shift != 0 && source > 0 {
-                shifted[index] |= self.0[source - 1] >> (u64::BITS - bit_shift);
+                *slot |= self.0[source - 1] >> (u64::BITS - bit_shift);
             }
         }
         Self(shifted)
@@ -248,7 +248,7 @@ mod tests {
         }
         assert_eq!(RegisterSet::bit(200).checked_shl(400).map(|set| set.contains(600)), None);
         assert!(RegisterSet::bit(8).checked_shl(300).is_some_and(|set| set.contains(308)));
-        assert_eq!((RegisterSet::MAX >> 4).contains(507), true);
+        assert!((RegisterSet::MAX >> 4).contains(507));
         assert_eq!(u64::try_from(RegisterSet::bit(63)).map(|word| word.count_ones()), Ok(1));
         assert!(u64::try_from(RegisterSet::bit(64)).is_err());
         assert_eq!(RegisterSet::from(u128::MAX).as_u128(), Some(u128::MAX));

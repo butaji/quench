@@ -610,7 +610,7 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
         match instruction.op() {
             Op::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
-            op if op.traits().has(Traits::FRAME_ONLY) || op.is_inc_dec() || op.is_return() => true,
+            op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
             op => op.js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
@@ -4066,23 +4066,42 @@ impl Lowering<'_, '_> {
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
         let groups = super::object_slots::field_load_groups(shapes)?;
         if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
-            let member = super::object_slots::shape_in_set(&mut self.builder, shape, members);
-            emit_js_guard(&mut self.builder, member, exit);
-            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                *family, PackedAccess::Reload, exit)?;
-            return Some(projection.read(&mut self.builder, family.slot));
+            let at = crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) };
+            return self.own_slot_read_guarded(*family, Some(members), at, properties, exit);
         }
+        self.family_switch_read(state, (object, shape, inline, properties), &groups, exit)
+    }
+
+    /// `field`'s own slot of the object `at` reached, through the arena at `properties`, as the
+    /// staged op list `[GuardShapes(members), LoadSlot]` (`staged::ic`); with no members, the
+    /// caller has matched the shape. `None` for a plan no layout proof admits.
+    fn own_slot_read_guarded(&mut self, field: NativeFieldLoad, members: Option<&[u32]>,
+        at: crate::staged::ic::Reached<ir::Value, ir::Value>, properties: ir::Value, exit: ir::Block) -> Option<ir::Value> {
+        use crate::staged::ic::IcOp;
+        if !field.valid() { return None; }
+        let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
+            storage_len: field.storage_len };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
+        crate::staged::ic::run(&mut stage, ops, at, None, exit)
+    }
+
+    /// Layout families each tested by their shape set and read at their slot, joined; a shape
+    /// in none exits.
+    fn family_switch_read(&mut self, state: &mut State,
+        (object, shape, inline, properties): (ir::Value, ir::Value, ir::Value, ir::Value),
+        groups: &[(NativeFieldLoad, Vec<u32>)], exit: ir::Block) -> Option<ir::Value> {
         let join = self.builder.create_block();
         let value = self.builder.append_block_param(join, types::I64);
-        for (field, members) in &groups {
+        for (field, members) in groups {
             let matched = self.builder.create_block();
             let next = self.builder.create_block();
             let same = super::object_slots::shape_in_set(&mut self.builder, shape, members);
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
             let read = match field.holder {
-                None => CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
+                None => self.own_slot_read_guarded(*field, None,
+                    crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) }, properties, exit)?,
                 Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
             };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
@@ -4137,7 +4156,6 @@ impl Lowering<'_, '_> {
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         let proto = crate::staged::object::proto_link(&mut super::object_slots::emit(&mut self.builder), record);
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
@@ -4160,32 +4178,13 @@ impl Lowering<'_, '_> {
             ObjectTable::Checked(table) => table.base(),
             ObjectTable::Unchecked(base) => base,
         };
-        let mut stage = super::object_slots::emit(&mut self.builder);
-        let id = crate::staged::object::proto_object_record_id(&mut stage, proto, exit).expect("an emitted guard continues");
-        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
-        emit_js_guard(&mut self.builder, same, exit);
-        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
-        let inline = super::object_slots::inline_storage(&mut self.builder, prototype);
-        let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(&mut self.builder, arena, exit);
-        let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let tagged = crate::staged::object::has_extras(&mut super::object_slots::emit(&mut self.builder), storage);
-        emit_js_guard(&mut self.builder, tagged, exit);
-        let extras = crate::staged::object::extras_pointer(&mut super::object_slots::emit(&mut self.builder), storage);
-        let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
-        emit_js_guard(&mut self.builder, present, exit);
-        let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
-        let start = self.ins().uextend(types::I64, start);
         // The prototype's run lies inside the arena, as every live flat object's does
         // (`object_slots::arena_range`).
-        let entry = self.entry.as_ref().expect("entry facts");
-        let properties = self.builder.use_var(entry.receiver.properties);
-        let index = self.ins().iadd_imm_u(start, i64::from(field.slot));
-        let offset = self.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = self.ins().iadd(properties, offset);
-        Some(self.ins().load(types::I64, MemFlagsData::trusted(), address, 0))
+        let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        use crate::staged::ic::IcOp;
+        crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
+            crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
     }
 
     /// A dominating proof of `owner`'s object (a register's, or `this`'s), for its lifetime
