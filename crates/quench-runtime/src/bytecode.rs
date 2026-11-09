@@ -788,6 +788,47 @@ pub(crate) enum Class {
     WasmMemoryAddress,
     WasmMemoryLoad,
     WasmMemoryStore,
+    CallArray,
+    CallForwardingArguments,
+    CallSpread,
+    CheckPrivate,
+    CopyDataProperties,
+    CreateRegExpLiteral,
+    DefineField,
+    DefinePrivateField,
+    DefinePropertyRecord,
+    Delete,
+    InitializeTdz,
+    IteratorCleanupPop,
+    IteratorCleanupPush,
+    LoadCallee,
+    LoadEnvLocal,
+    LoadLocal,
+    LoadNameCall,
+    LoadNameTypeof,
+    MakeArray,
+    MakeClosure,
+    MakeConstArray,
+    MakeObject,
+    MakeObject2,
+    MakeObjectLiteral,
+    PrivateIn,
+    RequireIteratorResult,
+    StoreCapture,
+    StoreEnvLocal,
+    StoreLocal,
+    StoreName,
+    StringCaseIndex,
+    SuperConstArrayObject2,
+    ToPropertyKey,
+    WasmBranchTable,
+    WasmGlobalGet,
+    WasmGlobalSet,
+    WasmInstanceBinding,
+    WasmJumpI32NonZero,
+    WasmJumpI32Zero,
+    WasmSimd,
+    WasmSimdShuffle,
 }
 
 impl Class {
@@ -849,7 +890,48 @@ macro_rules! class_of {
     (WasmMemoryAddress) => { Class::WasmMemoryAddress };
     (WasmMemoryLoad) => { Class::WasmMemoryLoad };
     (WasmMemoryStore) => { Class::WasmMemoryStore };
-    ($other:ident) => { Class::Other };
+    (CallArray) => { Class::CallArray };
+    (CallForwardingArguments) => { Class::CallForwardingArguments };
+    (CallSpread) => { Class::CallSpread };
+    (CheckPrivate) => { Class::CheckPrivate };
+    (CopyDataProperties) => { Class::CopyDataProperties };
+    (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
+    (DefineField) => { Class::DefineField };
+    (DefinePrivateField) => { Class::DefinePrivateField };
+    (DefinePropertyRecord) => { Class::DefinePropertyRecord };
+    (Delete) => { Class::Delete };
+    (InitializeTdz) => { Class::InitializeTdz };
+    (IteratorCleanupPop) => { Class::IteratorCleanupPop };
+    (IteratorCleanupPush) => { Class::IteratorCleanupPush };
+    (LoadCallee) => { Class::LoadCallee };
+    (LoadEnvLocal) => { Class::LoadEnvLocal };
+    (LoadLocal) => { Class::LoadLocal };
+    (LoadNameCall) => { Class::LoadNameCall };
+    (LoadNameTypeof) => { Class::LoadNameTypeof };
+    (MakeArray) => { Class::MakeArray };
+    (MakeClosure) => { Class::MakeClosure };
+    (MakeConstArray) => { Class::MakeConstArray };
+    (MakeObject) => { Class::MakeObject };
+    (MakeObject2) => { Class::MakeObject2 };
+    (MakeObjectLiteral) => { Class::MakeObjectLiteral };
+    (PrivateIn) => { Class::PrivateIn };
+    (RequireIteratorResult) => { Class::RequireIteratorResult };
+    (StoreCapture) => { Class::StoreCapture };
+    (StoreEnvLocal) => { Class::StoreEnvLocal };
+    (StoreLocal) => { Class::StoreLocal };
+    (StoreName) => { Class::StoreName };
+    (StringCaseIndex) => { Class::StringCaseIndex };
+    (SuperConstArrayObject2) => { Class::SuperConstArrayObject2 };
+    (ToPropertyKey) => { Class::ToPropertyKey };
+    (WasmBranchTable) => { Class::WasmBranchTable };
+    (WasmGlobalGet) => { Class::WasmGlobalGet };
+    (WasmGlobalSet) => { Class::WasmGlobalSet };
+    (WasmInstanceBinding) => { Class::WasmInstanceBinding };
+    (WasmJumpI32NonZero) => { Class::WasmJumpI32NonZero };
+    (WasmJumpI32Zero) => { Class::WasmJumpI32Zero };
+    (WasmSimd) => { Class::WasmSimd };
+    (WasmSimdShuffle) => { Class::WasmSimdShuffle };    ($other:ident) => { Class::Other };
+
 }
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
@@ -931,6 +1013,25 @@ macro_rules! traits_of {
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
     ($other:ident) => { Traits::NONE };
+}
+
+/// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
+/// table load (unlike `Op::class()`), for per-instruction loops.
+macro_rules! op_predicates {
+    ($($method:ident => $($op:ident)|+),+ $(,)?) => {
+        #[allow(dead_code)]
+        impl Op { $(
+            pub(crate) const fn $method(self) -> bool { matches!(self, $(Op::$op)|+) }
+        )+ }
+    };
+}
+op_predicates! {
+    is_return => Return,
+    is_yield => Yield,
+    is_await => Await,
+    is_get_field => GetField,
+    is_jump_true => JumpTrue,
+    is_binary => Binary,
 }
 
 macro_rules! opcodes {
@@ -4405,3 +4506,21 @@ mod disassemble;
 #[cfg(test)]
 mod tests;
 mod validate;
+
+#[cfg(test)]
+mod class_table_tests {
+    use super::{Class, Op, Traits};
+
+    #[test]
+    fn catalog_tables_are_compact_and_the_runtime_uses_direct_predicates() {
+        // One byte per opcode's class and four per traits: ~2 KiB for the whole catalog,
+        // read only by planning code; the per-instruction loop calls the generated
+        // `is_*` predicates, which compile to direct enum comparisons.
+        assert_eq!(core::mem::size_of::<Class>(), 1);
+        assert_eq!(core::mem::size_of::<Traits>(), 4);
+        let bytes = Op::COUNT * (core::mem::size_of::<Class>() + core::mem::size_of::<Traits>());
+        assert!(bytes <= 4096, "catalog tables take {bytes} bytes");
+        assert!(Op::Call.class().eq(Class::Call) && !Op::Return.class().eq(Class::Call));
+        assert!(Op::Return.class().eq(Class::Return) && !Op::Call.class().eq(Class::Return));
+    }
+}
