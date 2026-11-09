@@ -1574,14 +1574,14 @@ fn forwarding_read_body(body: &Function) -> bool {
     let survives_copies = |register: u16| {
         u32::from(register) < u32::from(window) || u32::from(register) >= window_end
     };
-    field.op() == Op::GetField
+    field.op().is_get_field()
         && field.result_flags() == 0
         && field.result_register() >= body.params
         && survives_copies(field.result_register())
         && base.0 != crate::bytecode::FieldBase::NESTED
         && base.local_index().is_none()
         && base.register_index().is_none_or(|register| register < body.params)
-        && method.op() == Op::GetField
+        && method.op().is_get_field()
         && method.result_flags() == 0
         && method.result_register() >= body.params
         && method.result_register() != field.result_register()
@@ -1589,9 +1589,9 @@ fn forwarding_read_body(body: &Function) -> bool {
         && crate::bytecode::FieldBase(method.b()).register_index() == Some(field.a())
         && (window == 0 || window >= body.params)
         && decoded[2..count + 2].iter().zip(0..body.params).all(|(moved, parameter)| {
-            moved.op() == Op::Move && moved.b() == parameter && moved.a() == window + parameter
+            moved.op().is_move() && moved.b() == parameter && moved.a() == window + parameter
         })
-        && call.op() == Op::Call
+        && call.op().is_call()
         && call.result_flags() == crate::bytecode::RETURN_REGISTER
         && call.b() == method.a()
         && call.c() == field.a()
@@ -1607,15 +1607,15 @@ fn element_read_body(body: &Function) -> bool {
         _ => return false,
     };
     let base = crate::bytecode::FieldBase(field.b());
-    field.op() == Op::GetField
+    field.op().is_get_field()
         && !field.returns_from_frame()
         && base.0 != crate::bytecode::FieldBase::NESTED
         && base.local_index().is_none()
         && base.register_index().is_none_or(|register| register < body.params)
-        && element.op() == Op::GetIndex
+        && element.op().is_get_index()
         && element.b() == field.a()
         && element.c() < body.params
-        && done.op() == Op::Return
+        && done.op().is_return()
         && done.a() == element.a()
 }
 
@@ -1626,9 +1626,9 @@ fn capture_read_body(body: &Function) -> bool {
         Some(&[load, done]) => [load, done].map(|packed| decoded_instruction(body, packed)),
         _ => return false,
     };
-    load.op() == Op::LoadCapture
+    load.op().is_load_capture()
         && !load.returns_from_frame()
-        && done.op() == Op::Return
+        && done.op().is_return()
         && done.a() == load.a()
 }
 
@@ -1641,9 +1641,9 @@ fn this_read_body(body: &Function) -> bool {
     };
     !body.is_arrow
         && !body.is_class_constructor
-        && load.op() == Op::LoadThis
+        && load.op().is_load_this()
         && !load.returns_from_frame()
-        && done.op() == Op::Return
+        && done.op().is_return()
         && done.a() == load.a()
 }
 
@@ -4887,7 +4887,7 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if instruction.op() != Op::SetIndex {
+    if !instruction.op().is_set_index() {
         return Resumed::Exit(exit(ip));
     }
     let strict = body.strict || instruction.boolean_flag().unwrap_or(false);
@@ -8366,7 +8366,7 @@ fn lane_loop_run<H: Host>(
                         let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
                         if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
                             let instruction = decoded_instruction(body, packed);
-                            if instruction.op() == Op::SetIndex {
+                            if instruction.op().is_set_index() {
                                 let key = r.get(instruction.register_c());
                                 let base = r.get(instruction.register_b());
                                 if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
@@ -15145,7 +15145,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
         .enumerate()
         .map(|(pc, packed)| {
             let instruction = decoded_instruction(body, *packed);
-            (instruction.op() == Op::Call && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+            (instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
             (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
             // SAFETY: the view holds a record per PC; reading its link changes nothing.
             let record = unsafe { &*view.records.get(pc)?.get() };
@@ -15259,7 +15259,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
-    let pc = code.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+    let pc = code.instructions().position(|instruction| instruction.op().is_call()).unwrap();
     let mut direct = vec![None; code.code.len()];
     // Resolve the capture view exactly as production direct-call publication does.
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
@@ -18509,7 +18509,7 @@ fn lane_operand(
             }
         }
         // A case selector reads its run of constants from the context by index.
-        ImmediateRole::ConstantIndex if instruction.op() == Op::StringCaseIndex => {
+        ImmediateRole::ConstantIndex if instruction.op().is_string_case_index() => {
             let start = instruction.imm() as usize;
             constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
             LaneOperand { imm: instruction.imm() }
@@ -18571,7 +18571,7 @@ fn lane_call_awaited_marked<'live>(
     let Some(&awaited) = decoded.get(pc + 1) else {
         return operand;
     };
-    if call.op() != Op::Call || call.result_flags() != 0 || awaited.op() != Op::Await {
+    if !call.op().is_call() || call.result_flags() != 0 || !awaited.op().is_await() {
         return operand;
     }
     let result = call.result_register();
@@ -18597,7 +18597,7 @@ fn lane_call_result_marked(
     function: &Function,
     pc: usize,
 ) -> LaneOperand {
-    if instruction.op() != Op::Call || !function.register_roots.call_result_dead(pc) {
+    if !instruction.op().is_call() || !function.register_roots.call_result_dead(pc) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -18664,7 +18664,7 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
-        record(offset).is_some_and(|read| read.op() == Op::GetField && read.result_flags() == 0 && read.b() == result)
+        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
     };
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
@@ -19253,7 +19253,7 @@ fn derive_lane_view<'live, H: Host>(
                 || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
                     .into_iter()
                     .any(|acc| serves(records[pc + 2].handler, Op::WasmSelect, acc))
-                || constant.op() != Op::LoadConst
+                || !constant.op().is_load_const()
             {
                 continue;
             }
@@ -19302,7 +19302,7 @@ fn derive_lane_view<'live, H: Host>(
     let record_bytes = size_of::<LaneInstruction>() as isize;
     for (pc, &instruction) in decoded.iter().enumerate() {
         let target = instruction.imm() as usize;
-        if instruction.op() != Op::Jump
+        if !instruction.op().is_jump()
             || jump_direction(records[pc].handler).is_none()
             || entry_jumps.contains(pc)
             || target + 1 >= records.len()
@@ -19578,7 +19578,7 @@ fn derive_lane_view<'live, H: Host>(
                 if carrying_zero_jump(records[pc].handler).is_some() {
                     continue;
                 }
-                if instruction.op() != Op::Jump || entry_jumps.contains(pc) || jump_targets.contains(pc) || pc == 0 {
+                if !instruction.op().is_jump() || entry_jumps.contains(pc) || jump_targets.contains(pc) || pc == 0 {
                     return None;
                 }
                 let then = JumpFusions::<H>::THEN
@@ -19890,7 +19890,7 @@ fn derive_lane_view<'live, H: Host>(
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
-            .filter(|(pc, instruction)| instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32)
+            .filter(|(pc, instruction)| instruction.op().is_jump() && instruction.jump_target() <= *pc as u32)
             .count(),
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
@@ -21406,7 +21406,7 @@ impl<H: Host> Vm<H> {
                     instruction,
                     self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
                     instruction
-                        .filter(|instruction| instruction.op() == Op::GetField)
+                        .filter(|instruction| instruction.op().is_get_field())
                         .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
                     body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
                     body.source_span.map(|span| span.start),
@@ -22191,7 +22191,7 @@ mod field_pair_census_tests {
         vm.execute(&program).unwrap();
         let read_name = vm.lookup_atom("read").unwrap();
         let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
-        let instruction = function.instructions().find(|i| i.op() == Op::GetField).unwrap();
+        let instruction = function.instructions().find(|i| i.op().is_get_field()).unwrap();
         let (atom, cache) = match instruction.field_lookup().unwrap() {
             FieldLookup::Atom { atom, cache_site, .. } => (atom, cache_site),
             FieldLookup::Site(index) => program.field_sites.get(index).unwrap().first,

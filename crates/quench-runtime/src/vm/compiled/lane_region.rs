@@ -5447,7 +5447,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "function write(o, value) { o.value=value; return value; }", "store-proof.js").unwrap();
         let function = program.function(1);
-        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op() == Op::SetField)
+        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op().is_set_field())
             .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
                 ty: Type::INT32, target_shape: None, inherited: None, function_shape: false,
