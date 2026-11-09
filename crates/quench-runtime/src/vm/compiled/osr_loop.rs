@@ -29,7 +29,7 @@
 //! boundaries exit before their effects.
 
 use crate::bytecode::{
-    FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
+    Class, FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
@@ -2754,9 +2754,9 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 
 /// The value register an instruction defines, numeric or tagged.
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
-    use Op::*;
-    matches!(instruction.op(), LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply | IncDec
-        | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal)
+    matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary
+        | Class::NumericAdd | Class::NumericMultiply | Class::IncDec | Class::Unary | Class::ToNumeric
+        | Class::GetIndex | Class::GetField | Class::LoadEnvLocal)
     .then(|| instruction.result_register())
 }
 
@@ -2764,10 +2764,12 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// Every other one leaves at its exact PC before its effects and the interpreter runs its own
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(op: Op) -> bool {
-    use Op::*;
-    admitted_store(op) || matches!(op, LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply
-        | ToNumeric | IncDec | Unary | RequireObjectCoercible | GetIndex | GetField | SetIndex | LoadEnvLocal
-        | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
+    admitted_store(op) || matches!(op.class(),
+        Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary | Class::NumericAdd
+        | Class::NumericMultiply | Class::ToNumeric | Class::IncDec | Class::Unary
+        | Class::RequireObjectCoercible | Class::GetIndex | Class::GetField | Class::SetIndex
+        | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpBinaryFalse
+        | Class::JumpFalse | Class::JumpTrue)
 }
 
 fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
