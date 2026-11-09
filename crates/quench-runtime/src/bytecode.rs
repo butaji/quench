@@ -773,6 +773,17 @@ pub(crate) enum Class {
     RequireObjectCoercible,
     ToNumeric,
     CallKnown,
+    Throw,
+    Await,
+    Yield,
+    DefineArrayElement,
+    StoreLocalPlain,
+    LoadLocalPlain,
+    NumericAdd,
+    NumericMultiply,
+    JumpFalse,
+    CloneEnv,
+    LoadName,
 }
 
 impl Class {
@@ -819,6 +830,17 @@ macro_rules! class_of {
     (RequireObjectCoercible) => { Class::RequireObjectCoercible };
     (ToNumeric) => { Class::ToNumeric };
     (CallKnown) => { Class::CallKnown };
+    (Throw) => { Class::Throw };
+    (Await) => { Class::Await };
+    (Yield) => { Class::Yield };
+    (DefineArrayElement) => { Class::DefineArrayElement };
+    (StoreLocalPlain) => { Class::StoreLocalPlain };
+    (LoadLocalPlain) => { Class::LoadLocalPlain };
+    (NumericAdd) => { Class::NumericAdd };
+    (NumericMultiply) => { Class::NumericMultiply };
+    (JumpFalse) => { Class::JumpFalse };
+    (CloneEnv) => { Class::CloneEnv };
+    (LoadName) => { Class::LoadName };
     ($other:ident) => { Class::Other };
 }
 

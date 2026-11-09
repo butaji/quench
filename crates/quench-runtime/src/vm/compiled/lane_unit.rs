@@ -10,7 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
-use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
+use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
 #[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
@@ -304,7 +304,7 @@ fn renamable(instruction: WideInstruction) -> bool {
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
 /// an instruction that computes and returns) adds the result's move and the jump past the call.
 fn completion_length(instruction: WideInstruction) -> u32 {
-    if instruction.op() == Op::Return {
+    if instruction.op().class().eq(Class::Return) {
         2
     } else if super::osr_loop::inlined_returning(instruction) {
         3
@@ -379,7 +379,7 @@ impl Planner<'_, '_> {
                 let through = self.through_call(function, pc as u32, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
-                let (calls, ran) = if instruction.op() == Op::Call && instruction.returns_from_frame()
+                let (calls, ran) = if instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
                 } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some()) };
@@ -404,7 +404,7 @@ impl Planner<'_, '_> {
     fn through_call(&self, function: u32, pc: u32, instruction: WideInstruction) -> Option<(WideInstruction, (Register, Value))> {
         let imm = instruction.imm();
         let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
-        (instruction.op() == Op::Call && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+        (instruction.op().class().eq(Class::Call) && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
         let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
             ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
@@ -415,7 +415,7 @@ impl Planner<'_, '_> {
     /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
     fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool) -> (Vec<InlinedPlan>, bool) {
-        if instruction.op() != Op::Call {
+        if !instruction.op().class().eq(Class::Call) {
             return (Vec::new(), false);
         }
         if !returns_or_keeps(instruction) || instruction.direct_eval()
@@ -442,7 +442,7 @@ impl Planner<'_, '_> {
             || ImmediateLayout::argument_count(instruction.imm()) > callee.registers
             || !code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
             || !code.iter().any(|instruction| completion_length(*instruction) > 1
-                || (instruction.op() == Op::Call && instruction.returns_from_frame()))
+                || (instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()))
             || (target.callee == CalleeBinding::Function
                 && (!callee.plain_activation(self.program) || !super::super::js_compiled::eligible(callee, self.program)))
         {
@@ -558,7 +558,7 @@ impl Emitter {
                 continue;
             }
             if super::osr_loop::inlined_returning(instruction) {
-                let computed = if instruction.op() == Op::GetField && instruction.b() == crate::bytecode::FieldBase::NESTED {
+                let computed = if instruction.op().class().eq(Class::GetField) && instruction.b() == crate::bytecode::FieldBase::NESTED {
                     // A nested lookup keeps its site, whose base the lowering renames.
                     WideInstruction::new(instruction.op(), register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
                 } else {
@@ -710,7 +710,7 @@ mod tests {
                     "{definition}\n{}", program.disassemble());
                 if expected == 1 {
                     let target = targets[caller].iter().flatten().copied().next().unwrap();
-                    assert!(program.function(target as usize).instructions().any(|instruction| instruction.op() == Op::Return
+                    assert!(program.function(target as usize).instructions().any(|instruction| instruction.op().class().eq(Class::Return)
                         || instruction.returns_from_frame()));
                     let unit = unit(&program, caller as u32, program.function(caller), &|function, pc|
                         targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
@@ -765,15 +765,15 @@ mod tests {
                 continue;
             }
             assert_eq!(unit.frames.len(), 1);
-            assert!(!unit.instructions.iter().any(|instruction| instruction.op() == Op::Call));
+            assert!(!unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Call)));
             let terminal = unit.instructions.len() - 1;
             let returned = unit.instructions[terminal];
             assert_eq!(returned.op(), Op::Return);
             assert_eq!(unit.origins[terminal], Origin::Caller(original_terminal as u32),
                 "completion must recover at the original Return, never the Call");
-            assert!(unit.instructions.iter().any(|instruction| instruction.op() == Op::Move
+            assert!(unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Move)
                 && instruction.result_register() == returned.register_a()));
-            assert!(unit.instructions.iter().any(|instruction| instruction.op() == Op::Jump
+            assert!(unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Jump)
                 && instruction.jump_target() as usize == terminal));
             let live = unit.register_masks(&program, caller as u32).expect("terminal splice liveness");
             assert!(live.is_live(terminal, returned.register_a()));
@@ -800,7 +800,7 @@ mod tests {
                 assert_eq!(unit.frames.len(), 2, "ordinary nested terminal calls retain recursive expansion");
                 assert_eq!(unit.frames[0].parent, None);
                 assert_eq!(unit.frames[1].parent, Some(0));
-                assert!(!unit.instructions.iter().any(|instruction| instruction.op() == Op::Call));
+                assert!(!unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Call)));
             }
         }
     }
@@ -839,7 +839,7 @@ mod tests {
         let caller = id("caller");
         let leaf = id("leaf");
         let body = program.function(caller as usize);
-        let call = body.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+        let call = body.instructions().position(|instruction| instruction.op().class().eq(Class::Call)).unwrap();
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
         let mut unit = unit(&program, caller, body, &|function, pc| if function == caller {
@@ -851,7 +851,7 @@ mod tests {
             assert!(!masks.is_live(0, register), "callee register {register} is defined by call admission");
         }
         let (pc, instruction) = unit.instructions.iter().enumerate().find(|(pc, instruction)|
-            instruction.op() == Op::Move && matches!(unit.origins[*pc], Origin::Inlined { .. })
+            instruction.op().class().eq(Class::Move) && matches!(unit.origins[*pc], Origin::Inlined { .. })
                 && instruction.result_register() < unit.caller_registers).expect("synthesized result move");
         assert!(masks.is_live(pc, instruction.register_b()), "return projection must retain its produced result");
         drop(masks);
