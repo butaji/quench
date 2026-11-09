@@ -1829,7 +1829,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
         value: Value,
-        site: u16,
+        site: u16, layout: crate::heap::PropertyStoreLayout,
     ) -> Option<FieldCache> {
         debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
@@ -1843,7 +1843,7 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))?;
         // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
         // shape's own data slot.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, layout) } {
             return None;
         }
         self.profile.field_cache_hit(2, 0);
