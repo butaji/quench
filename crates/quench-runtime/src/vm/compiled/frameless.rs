@@ -343,25 +343,25 @@ fn emit_this(builder: &mut FunctionBuilder<'_>, entry: ir::Value, receiver: ir::
 }
 
 /// Pushes the activation onto the payload, calls the callee's entry at its first PC and pops
-/// it again: its status.
+/// it again: its status. The stacks' tops pop to the window and record the push began at
+/// (`emit_room`'s `top` and `record`); only the caller's views are saved.
 fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir::Value, ir::Value, ir::Value),
     entry: ir::Value, (top, next, record, this): (ir::Value, ir::Value, ir::Value, ir::Value)) -> ir::Value {
     let offset = |field: usize| field as i32;
-    let fields = [
+    // The caller's views, saved across the call, then the stacks' tops.
+    let views = [
         std::mem::offset_of!(JsStepDispatch, capture_values),
         std::mem::offset_of!(JsStepDispatch, capture_len),
         std::mem::offset_of!(JsStepDispatch, capture_stores),
         std::mem::offset_of!(JsStepDispatch, fixed_this_slot),
-        std::mem::offset_of!(JsStepDispatch, native_top),
-        std::mem::offset_of!(JsStepDispatch, shadow_top),
     ];
-    let saved: Vec<ir::Value> = fields.iter()
-        .map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(*field))).collect();
+    let tops = [std::mem::offset_of!(JsStepDispatch, native_top), std::mem::offset_of!(JsStepDispatch, shadow_top)];
+    let saved = views.map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(field)));
     let captures = [std::mem::offset_of!(CallEntry, capture_values), std::mem::offset_of!(CallEntry, capture_len),
         std::mem::offset_of!(CallEntry, capture_stores)]
         .map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(field)));
     let pushed = builder.ins().iadd_imm_u(record, size_of::<ShadowRecord>() as i64);
-    for (field, value) in fields.iter().zip(captures.into_iter().chain([this, next, pushed])) {
+    for (field, value) in views.iter().chain(&tops).zip(captures.into_iter().chain([this, next, pushed])) {
         builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
     }
     let zero = builder.ins().iconst(types::I64, 0);
@@ -371,7 +371,7 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
     let signature = builder.import_signature(signature);
     let call = builder.ins().call_indirect(signature, code, &[context, zero, zero, top, result]);
     let status = builder.inst_results(call)[0];
-    for (field, value) in fields.iter().zip(saved) {
+    for (field, value) in views.iter().chain(&tops).zip(saved.into_iter().chain([top, record])) {
         builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
     }
     status
