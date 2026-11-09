@@ -1,5 +1,4 @@
-use crate::bytecode::Class;
-use super::*;
+use {super::*, crate::bytecode::Class};
 
 mod loop_stack;
 

@@ -40,17 +40,21 @@ fn freed_blocks_serve_equal_and_smaller_bodies_before_the_bump() {
     );
 }
 
+/// Allocates quarter-chunk bodies until one lands in the second chunk: the first chunk's
+/// bodies and that next one.
+fn fill_first_chunk(heap: &mut CodeHeap) -> (Vec<(Block, usize)>, (Block, usize)) {
+    let mut first = Vec::new();
+    while first.last().is_none_or(|&(block, _): &(Block, usize)| block.chunk() == 0) {
+        first.push(heap.allocate(CHUNK_BYTES / 4).unwrap());
+    }
+    let next = first.pop().unwrap();
+    (first, next)
+}
+
 #[test]
 fn a_chunk_without_live_bodies_returns_its_pages() {
     let mut heap = CodeHeap::new();
-    let mut first_chunk = Vec::new();
-    while first_chunk
-        .last()
-        .is_none_or(|&(block, _): &(Block, usize)| block.chunk() == 0)
-    {
-        first_chunk.push(heap.allocate(CHUNK_BYTES / 4).unwrap());
-    }
-    let (next, next_granted) = first_chunk.pop().unwrap();
+    let (first_chunk, (next, next_granted)) = fill_first_chunk(&mut heap);
     let views = heap.regions[0].views;
     // SAFETY: the writable view of a live block, opened through the platform's write window
     // (Darwin's MAP_JIT page faults a write made outside it).
@@ -58,16 +62,7 @@ fn a_chunk_without_live_bodies_returns_its_pages() {
     for (block, granted) in first_chunk {
         heap.free(block, granted);
     }
-    assert_eq!(
-        chunk(
-            &heap,
-            Block {
-                region: 0,
-                offset: 0
-            }
-        ),
-        Chunk::Free
-    );
+    assert_eq!(chunk(&heap, Block { region: 0, offset: 0 }), Chunk::Free);
     // Linux returns the pages on release (`MADV_REMOVE`), so the mapping reads zero at once.
     // Darwin's `MADV_FREE` keeps the contents until the system reclaims them.
     #[cfg(target_os = "linux")]
