@@ -897,6 +897,7 @@ pub(in crate::vm::compiled) enum EmitProof {
     Field(object_slots::CheckedObject),
     Index { view: DenseArrayView, absent: ir::Block },
     TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
+    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: ir::Block }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -3051,14 +3052,14 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
 
-        let direct_branch = match instruction.op() {
-            Op::JumpFalse | Op::JumpTrue => register_offset(instruction.register_a()).map(
+        let direct_branch = match instruction.op().class() {
+            Class::JumpFalse | Class::JumpTrue => register_offset(instruction.register_a()).map(
                 |_| JsGeneralBranch::ToBoolean {
                     source: instruction.register_a(),
-                    take_when_truthy: instruction.op().class().eq(Class::JumpTrue),
+                    take_when_truthy: instruction.op().is_jump_true(),
                 },
             ),
-            Op::JumpBinaryFalse => {
+            Class::JumpBinaryFalse => {
                 let operator = instruction.binary_operator_field();
                 let left = instruction.operand_b();
                 let right = instruction.operand_c();
@@ -3911,23 +3912,23 @@ fn widen_unary(operator: I32UnaryOperator) -> I64UnaryOperator {
 /// A float operator and its operand type; both widths share one declaration
 /// (`crate::wasm::float`), so tags agree.
 fn float_binary_operator(op: Op, tag: u32) -> Option<(F64BinaryOperator, crate::WasmType)> {
-    match op {
-        Op::WasmF32Binary => Some((
+    match op.class() {
+        Class::WasmFloatBinary32 => Some((
             F64BinaryOperator::from_tag(F32BinaryOperator::from_tag(tag)? as u32)?,
             crate::WasmType::F32,
         )),
-        Op::WasmF64Binary => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
+        Class::WasmFloatBinary64 => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
         _ => None,
     }
 }
 
 fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::WasmType)> {
-    match op {
-        Op::WasmF32Unary => Some((
+    match op.class() {
+        Class::WasmFloatUnary32 => Some((
             F64UnaryOperator::from_tag(F32UnaryOperator::from_tag(tag)? as u32)?,
             crate::WasmType::F32,
         )),
-        Op::WasmF64Unary => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
+        Class::WasmFloatUnary64 => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
         _ => None,
     }
 }
@@ -6951,8 +6952,8 @@ impl<H: Host> Vm<H> {
     /// per read of its chain, and its sink's store.
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
-        match instruction.op() {
-            Op::GetField => match instruction.field_lookup() {
+        match instruction.op().class() {
+            Class::GetField => match instruction.field_lookup() {
                 Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
                 Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
                     let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
@@ -6960,7 +6961,7 @@ impl<H: Host> Vm<H> {
                 }),
                 None => Vec::new(),
             },
-            op if op.is_field_store() => vec![(instruction.cache_site_index(), false)],
+            _ if instruction.op().is_field_store() => vec![(instruction.cache_site_index(), false)],
             _ => Vec::new(),
         }
     }
@@ -8685,8 +8686,8 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                let operand = match instruction.op() {
-                    Op::WasmMemoryLoad | Op::WasmMemoryStore => instruction.c(),
+                let operand = match instruction.op().class() {
+                    Class::WasmMemoryLoad | Class::WasmMemoryStore => instruction.c(),
                     _ => instruction.b(),
                 };
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
@@ -8822,28 +8823,28 @@ impl<H: Host> Analysis<'_, H> {
             (value(state, instruction.b())? == kind).then_some(())?;
             return set(state, instruction.a(), Slot::Value(kind));
         }
-        match op {
-            Op::WasmI64Binary => {
+        match op.class() {
+            Class::WasmI64Binary => {
                 let operator = I64BinaryOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::I64).then_some(())?;
                 (value(state, instruction.c())? == Kind::I64).then_some(())?;
                 let result = Kind::of(operator.apply(1, 1).ok()?.ty())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::WasmI64Unary => {
+            Class::WasmI64Unary => {
                 let operator = I64UnaryOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::I64).then_some(())?;
                 let result = Kind::of(operator.apply(0).ty())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::WasmScalarConvert => {
+            Class::WasmScalarConvert => {
                 let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::of(operator.source_type())?)
                     .then_some(())?;
                 let result = Kind::of(operator.result_type())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::Move => match state.get(instruction.b(), function.registers)? {
+            Class::Move => match state.get(instruction.b(), function.registers)? {
                 slot @ (Slot::Vector | Slot::Memory32Address) => {
                     set(state, instruction.a(), slot)
                 }
@@ -8852,11 +8853,11 @@ impl<H: Host> Analysis<'_, H> {
                     set(state, instruction.a(), Slot::Value(kind))
                 }
             },
-            Op::LoadConst => {
+            Class::LoadConst => {
                 let constant = self.constant(instruction.constant_index())?;
                 set(state, instruction.a(), self.constant_slot(constant))
             }
-            Op::WasmFillRegisters => {
+            Class::WasmFillRegisters => {
                 let constant = self.constant(instruction.constant_index())?;
                 let slot = self.constant_slot(constant);
                 let window = instruction.register_window();
@@ -8867,13 +8868,13 @@ impl<H: Host> Analysis<'_, H> {
             }
             // A vector access's effective address: a 32-bit address plus the access's offset,
             // as 64 bits, so the sum cannot wrap.
-            Op::WasmMemoryAddress => {
+            Class::WasmMemoryAddress => {
                 self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
                 self.memory_offset(instruction.constant_index())?;
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Memory32Address)
             }
-            Op::WasmMemoryLoad | Op::WasmMemoryStore => {
+            Class::WasmMemoryLoad | Class::WasmMemoryStore => {
                 self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
                 if value(state, instruction.c())? != Kind::I64 {
                     return None;
@@ -8890,7 +8891,7 @@ impl<H: Host> Analysis<'_, H> {
                     (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
                 }
             }
-            Op::WasmSimd => {
+            Class::WasmSimd => {
                 let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
                 let operand = |register: u16, ty: crate::WasmType| match ty {
                     crate::WasmType::V128 => {
@@ -8908,43 +8909,43 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.a(), result)
             }
-            Op::WasmSimdShuffle => {
+            Class::WasmSimdShuffle => {
                 self.shuffle_lanes(instruction.constant_index())?;
                 for register in [instruction.b(), instruction.c()] {
                     (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
                 }
                 set(state, instruction.a(), Slot::Vector)
             }
-            Op::WasmI32Unary => {
+            Class::WasmI32Unary => {
                 I32UnaryOperator::from_tag(instruction.imm())?;
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+            Class::WasmI32ShiftRightUnsignedAnd => {
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmI32AddImmediateJumpNonZero => {
+            Class::WasmI32AddJump => {
                 i32_value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => i32_value(state, instruction.a()),
-            Op::Jump => Some(()),
-            Op::WasmBranchTable => {
+            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => i32_value(state, instruction.a()),
+            Class::Jump => Some(()),
+            Class::WasmBranchTable => {
                 i32_value(state, instruction.a())?;
                 
                 // Entries are `Jump`s; validation guarantees it for
                 // reachable tables.
                 (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
             }
-            Op::WasmSelect => {
+            Class::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
                 i32_value(state, condition)?;
                 let kind = value(state, instruction.b())?;
                 (value(state, instruction.c())? == kind).then_some(())?;
                 set(state, instruction.a(), Slot::Value(kind))
             }
-            Op::WasmMemorySize => {
+            Class::WasmMemorySize => {
                 let memory = instruction.b();
                 if Some(memory) != memory_register
                     || state.get(memory, function.registers) != Some(Slot::Memory)
@@ -8954,7 +8955,7 @@ impl<H: Host> Analysis<'_, H> {
                 }
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmMemoryFill => {
+            Class::WasmMemoryFill => {
                 let memory = instruction.a();
                 let (destination, _) = instruction.register_pair();
                 if Some(memory) != memory_register
@@ -8968,7 +8969,7 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, destination)
             }
             // A copy within the function's one memory: both memory operands name it.
-            Op::WasmMemoryCopy => {
+            Class::WasmMemoryCopy => {
                 let (destination, source) = instruction.register_pair();
                 if Some(instruction.a()) != memory_register
                     || Some(instruction.b()) != memory_register
@@ -8981,7 +8982,7 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, source)?;
                 i32_value(state, instruction.c())
             }
-            Op::WasmIndirectTarget if self.callouts => {
+            Class::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
@@ -8999,7 +9000,7 @@ impl<H: Host> Analysis<'_, H> {
                     },
                 )
             }
-            Op::CallKnown => {
+            Class::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
                 if !callable.contains(callee as usize)
                     && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
@@ -9028,12 +9029,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmRefFunc if self.callouts => {
+            Class::WasmRefFunc if self.callouts => {
                 let function = instruction.imm();
                 self.import_signature(function)?;
                 set(state, instruction.a(), Slot::Import(function))
             }
-            Op::Call => {
+            Class::Call => {
                 let slot = state.get(instruction.b(), function.registers)?;
                 let signature = match slot {
                     Slot::Import(function) => self.import_signature(function)?,
@@ -9057,16 +9058,16 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable
+            Class::WasmUnreachable
                 if self.experimental_root_compilation || eager_unreachable_admitted() =>
             {
                 Some(())
             }
-            Op::Return => match result {
+            Class::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
             },
-            Op::WasmInstanceBinding => {
+            Class::WasmInstanceBinding => {
                 let slot = instruction.imm();
                 if Some(instruction.a()) == memory_register {
                     if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
@@ -9080,14 +9081,14 @@ impl<H: Host> Analysis<'_, H> {
             // Compiled code reads and writes a 32-bit global's encoded value
             // in place; a 64-bit global's value is a box, so it stays
             // interpreted.
-            Op::WasmGlobalGet => {
+            Class::WasmGlobalGet => {
                 let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
                 (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
-            Op::WasmGlobalSet => {
+            Class::WasmGlobalSet => {
                 let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
@@ -9279,21 +9280,7 @@ struct UnrolledLoop {
 /// Whether `op` may sit in an unrolled body: no call, and no operation that calls out to the
 /// VM or ends the body other than by a branch out of the loop.
 fn unrollable_op(op: Op) -> bool {
-    !matches!(
-        op,
-        Op::WasmMemoryGrow
-            | Op::WasmMemoryFill
-            | Op::WasmMemoryCopy
-            | Op::WasmMemoryInit
-            | Op::WasmTableGet
-            | Op::WasmTableSet
-            | Op::WasmTableGrow
-            | Op::WasmTableFill
-            | Op::WasmTableCopy
-            | Op::WasmTableInit
-            | Op::WasmTableSize
-            | Op::WasmIndirectTarget
-    )
+    !op.traits().has(crate::bytecode::Traits::UNROLL_EXCLUDED)
 }
 
 /// The innermost loops to unroll, by latch: a back edge from `latch` to `header` whose body
@@ -9398,9 +9385,9 @@ fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Op
         let right = i32::from(instruction.b() as i16);
         return operator.evaluate(value, right).ok().map(|holds| holds != 0);
     }
-    match op {
-        Op::WasmJumpI32Zero => Some(value == 0),
-        Op::WasmJumpI32NonZero => Some(value != 0),
+    match op.class() {
+        Class::WasmJumpI32Zero => Some(value == 0),
+        Class::WasmJumpI32NonZero => Some(value != 0),
         _ => None,
     }
 }
@@ -10918,12 +10905,12 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
     fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        match instruction.op() {
-            Op::Move if self.plan.operand(pc) == Slot::Vector => {
+        match instruction.op().class() {
+            Class::Move if self.plan.operand(pc) == Slot::Vector => {
                 let value = self.read_vector(b);
                 self.write_vector(a, value);
             }
-            Op::LoadConst | Op::WasmFillRegisters => {
+            Class::LoadConst | Class::WasmFillRegisters => {
                 let constant = self.analysis.constant(instruction.constant_index())?;
                 let bits = self.analysis.constant_vector(constant)?;
                 let registers = if instruction.op().class().eq(Class::LoadConst) {
@@ -10937,7 +10924,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     self.write_vector(register, value);
                 }
             }
-            Op::WasmMemoryAddress => {
+            Class::WasmMemoryAddress => {
                 let offset = self
                     .analysis
                     .memory_offset(instruction.constant_index())
@@ -10948,17 +10935,17 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
                 self.write(a, Kind::I64, address);
             }
-            Op::WasmMemoryLoad => {
+            Class::WasmMemoryLoad => {
                 let (address, flags) = self.vector_address(pc, c);
                 let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
                 self.write_vector(a, value);
             }
-            Op::WasmMemoryStore => {
+            Class::WasmMemoryStore => {
                 let (address, flags) = self.vector_address(pc, c);
                 let value = self.read_vector(a);
                 self.body.core.builder.ins().store(flags, value, address, 0);
             }
-            Op::WasmSimdShuffle => {
+            Class::WasmSimdShuffle => {
                 let lanes = self
                     .analysis
                     .shuffle_lanes(instruction.constant_index())
@@ -10973,7 +10960,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.body.core.builder.ins().shuffle(left, right, mask);
                 self.write_vector(a, value);
             }
-            Op::WasmSimd => self.simd(pc, instruction),
+            Class::WasmSimd => self.simd(pc, instruction),
             _ => return None,
         }
         Some(true)
@@ -11330,8 +11317,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.write_typed(a, ty, value);
             return true;
         }
-        match op {
-            Op::WasmI64Binary => {
+        match op.class() {
+            Class::WasmI64Binary => {
                 let operator = I64BinaryOperator::from_tag(instruction.imm()).expect("planned");
                 let left = self.read(b, Kind::I64);
                 let right = self.read(c, Kind::I64);
@@ -11339,26 +11326,26 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
                 self.write(a, kind, value);
             }
-            Op::WasmI64Unary => {
+            Class::WasmI64Unary => {
                 let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read(b, Kind::I64);
                 let value = self.integer_unary(operator, input);
                 let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
                 self.write(a, kind, value);
             }
-            Op::WasmScalarConvert => {
+            Class::WasmScalarConvert => {
                 let operator =
                     ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read_typed(b, operator.source_type());
                 let value = self.convert(operator, input);
                 self.write_typed(a, operator.result_type(), value);
             }
-            Op::Move => {
+            Class::Move => {
                 let kind = self.operand_kind(pc);
                 let value = self.read(b, kind);
                 self.write(a, kind, value);
             }
-            Op::LoadConst | Op::WasmFillRegisters => {
+            Class::LoadConst | Class::WasmFillRegisters => {
                 let constant = self
                     .analysis
                     .constant(instruction.constant_index())
@@ -11374,13 +11361,13 @@ impl<H: Host> Emitter<'_, '_, H> {
                     }
                 }
             }
-            Op::WasmI32Unary => {
+            Class::WasmI32Unary => {
                 let operator = I32UnaryOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read(b, Kind::I32);
                 let value = self.integer_unary(widen_unary(operator), input);
                 self.write(a, Kind::I32, value);
             }
-            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+            Class::WasmI32ShiftRightUnsignedAnd => {
                 let input = self.read(b, Kind::I32);
                 let shift = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let shifted =
@@ -11392,7 +11379,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
                 self.write(a, Kind::I32, value);
             }
-            Op::WasmI32AddImmediateJumpNonZero => {
+            Class::WasmI32AddJump => {
                 let input = self.read(b, Kind::I32);
                 let addend = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let sum = self.body.core.builder.ins().iadd(input, addend);
@@ -11400,7 +11387,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
                 return false;
             }
-            Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => {
+            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => {
                 let value = self.read(a, Kind::I32);
                 let (taken, other) = (instruction.jump_target() as usize, pc + 1);
                 if op.is_wasm_jump_i32_non_zero() {
@@ -11410,12 +11397,12 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
                 return false;
             }
-            Op::Jump => {
+            Class::Jump => {
                 let target = instruction.jump_target() as usize;
                 self.jump(target, self.polls(pc, target));
                 return false;
             }
-            Op::WasmBranchTable => {
+            Class::WasmBranchTable => {
                 let selector = self.read(a, Kind::I32);
                 let entries: Vec<usize> = crate::bytecode::branch_table_entries(pc, instruction)
                     .map(|entry| {
@@ -11443,7 +11430,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.body.core.builder.ins().br_table(selector, table);
                 return false;
             }
-            Op::WasmSelect => {
+            Class::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
                 let kind = self.operand_kind(pc);
                 let condition = self.read(condition, Kind::I32);
@@ -11452,7 +11439,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.body.core.builder.ins().select(condition, taken, other);
                 self.write(a, kind, value);
             }
-            Op::CallKnown => {
+            Class::CallKnown => {
                 let callee = usize::from(instruction.known_function_index());
                 let Some(callee_plan) = self.plans[callee].as_ref() else {
                     self.callout_known_fallback(callee as u32, instruction);
@@ -11506,19 +11493,19 @@ impl<H: Host> Emitter<'_, '_, H> {
                     }
                 }
             }
-            Op::WasmRefFunc => {}
-            Op::WasmIndirectTarget => self.indirect_target(pc, instruction),
-            Op::Call => match self.plan.operand(pc) {
+            Class::WasmRefFunc => {}
+            Class::WasmIndirectTarget => self.indirect_target(pc, instruction),
+            Class::Call => match self.plan.operand(pc) {
                 Slot::Import(_) => self.callout(pc, instruction),
                 Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
                 _ => unreachable!("planned calls hold a supported callable"),
             },
-            Op::WasmUnreachable => {
+            Class::WasmUnreachable => {
                 let trap = self.trap_block(crate::WasmTrap::Unreachable);
                 self.body.core.builder.ins().jump(trap, &[]);
                 return false;
             }
-            Op::Return => {
+            Class::Return => {
                 let status = self.body.core.builder.ins().iconst(types::I64, 0);
                 let mut values = vec![status];
                 if let Some(ty) = self.plan.result {
@@ -11529,15 +11516,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             // A binding is known statically per instruction; the globals it
             // names are reached through the context.
-            Op::WasmInstanceBinding => {}
-            Op::WasmGlobalGet => {
+            Class::WasmInstanceBinding => {}
+            Class::WasmGlobalGet => {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let flags = self.flags(Region::Globals);
                 let value = self.body.core.builder.ins().load(types::I32, flags, address, 0);
                 self.write(a, Kind::I32, value);
             }
-            Op::WasmGlobalSet => {
+            Class::WasmGlobalSet => {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let value = self.read(a, Kind::I32);
@@ -13404,8 +13391,8 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                match instruction.op() {
-                    Op::Call => {
+                match instruction.op().class() {
+                    Class::Call => {
                         if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
                             let site_id = reference_cache_count;
                             reference_cache_count += 1;
@@ -13421,7 +13408,7 @@ impl<H: Host> Vm<H> {
                             }
                         }
                     }
-                    Op::WasmGlobalGet | Op::WasmGlobalSet => {
+                    Class::WasmGlobalGet | Class::WasmGlobalSet => {
                         if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
                             && !globals.contains(&slot)
                         {

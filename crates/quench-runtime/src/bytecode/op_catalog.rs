@@ -17,6 +17,7 @@ pub(crate) enum Class {
     WasmFloatUnary64,
     WasmI32AddRegister,
     WasmI32AddImmediate,
+    WasmI32SubtractImmediate,
     WasmI32AddJump,
     WasmI32ShiftRightUnsignedAnd,
     WasmI32Unary,
@@ -46,6 +47,9 @@ pub(crate) enum Class {
     RequireObjectCoercible,
     ToNumeric,
     CallKnown,
+    CallMethod,
+    ArgumentsLength,
+    ArgumentGet,
     Throw,
     Await,
     Yield,
@@ -59,6 +63,22 @@ pub(crate) enum Class {
     LoadName,
     WasmFillRegisters,
     WasmMemoryAddress,
+    WasmMemorySize,
+    WasmMemoryFill,
+    WasmMemoryCopy,
+    WasmIndirectTarget,
+    WasmRefFunc,
+    WasmUnreachable,
+    WasmRefGetDesc,
+    WasmArrayNewData,
+    WasmArrayNewElem,
+    WasmArrayNew,
+    WasmArrayNewDefault,
+    WasmArrayNewFixed,
+    WasmDescriptorTest,
+    WasmDescriptorCast,
+    WasmRefTest,
+    WasmRefCast,
     WasmMemoryLoad,
     WasmMemoryStore,
     CallArray,
@@ -120,6 +140,7 @@ macro_rules! class_of {
     (WasmF64Unary) => { Class::WasmFloatUnary64 };
     (WasmI32Add) => { Class::WasmI32AddRegister };
     (WasmI32AddImmediate) => { Class::WasmI32AddImmediate };
+    (WasmI32SubtractImmediate) => { Class::WasmI32SubtractImmediate };
     (WasmI32AddImmediateJumpNonZero) => { Class::WasmI32AddJump };
     (WasmI32ShiftRightUnsignedAndImmediate) => { Class::WasmI32ShiftRightUnsignedAnd };
     (WasmI32Unary) => { Class::WasmI32Unary };
@@ -149,6 +170,9 @@ macro_rules! class_of {
     (RequireObjectCoercible) => { Class::RequireObjectCoercible };
     (ToNumeric) => { Class::ToNumeric };
     (CallKnown) => { Class::CallKnown };
+    (CallMethod) => { Class::CallMethod };
+    (ArgumentsLength) => { Class::ArgumentsLength };
+    (ArgumentGet) => { Class::ArgumentGet };
     (Throw) => { Class::Throw };
     (Await) => { Class::Await };
     (Yield) => { Class::Yield };
@@ -162,6 +186,23 @@ macro_rules! class_of {
     (LoadName) => { Class::LoadName };
     (WasmFillRegisters) => { Class::WasmFillRegisters };
     (WasmMemoryAddress) => { Class::WasmMemoryAddress };
+    (WasmMemorySize) => { Class::WasmMemorySize };
+    (WasmMemoryFill) => { Class::WasmMemoryFill };
+    (WasmMemoryCopy) => { Class::WasmMemoryCopy };
+    (WasmIndirectTarget) => { Class::WasmIndirectTarget };
+    (WasmRefFunc) => { Class::WasmRefFunc };
+    (WasmUnreachable) => { Class::WasmUnreachable };
+    (WasmRefGetDesc) => { Class::WasmRefGetDesc };
+    (WasmArrayNewData) => { Class::WasmArrayNewData };
+    (WasmArrayNewElem) => { Class::WasmArrayNewElem };
+    (WasmArrayNew) => { Class::WasmArrayNew };
+    (WasmArrayNewDefault) => { Class::WasmArrayNewDefault };
+    (WasmArrayNewFixed) => { Class::WasmArrayNewFixed };
+    (WasmDescriptorTest) => { Class::WasmDescriptorTest };
+    (WasmDescriptorCast) => { Class::WasmDescriptorCast };
+    (WasmRefTest) => { Class::WasmRefTest };
+    (WasmRefCast) => { Class::WasmRefCast };
+
     (WasmMemoryLoad) => { Class::WasmMemoryLoad };
     (WasmMemoryStore) => { Class::WasmMemoryStore };
     (CallArray) => { Class::CallArray };
@@ -251,6 +292,14 @@ impl Traits {
     pub(crate) const FRAME_ONLY: Self = Self(1 << 23);
     /// An op the lifetime-role loop admission can rename a register through.
     pub(crate) const LIFETIME_SAFE: Self = Self(1 << 24);
+    /// A call form a read memo's call site may answer.
+    pub(crate) const SCRIPT_CALL: Self = Self(1 << 25);
+    /// An op whose handler keeps its call target hint in the record's `call_link`.
+    pub(crate) const CALL_LINK: Self = Self(1 << 26);
+    /// A by-name load or store access.
+    pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 27);
+    /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
+    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 28);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -272,24 +321,24 @@ macro_rules! traits_of {
     (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
     (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
     (LoadThis) => { Traits::THIS_LEAF };
-    (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
-    (LoadNameCall) => { Traits::NAME_OPERATION };
-    (LoadNameTypeof) => { Traits::NAME_OPERATION };
+    (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION).union(Traits::GLOBAL_NAME_ACCESS) };
+    (LoadNameCall) => { Traits::NAME_OPERATION.union(Traits::CALL_LINK).union(Traits::GLOBAL_NAME_ACCESS) };
+    (LoadNameTypeof) => { Traits::NAME_OPERATION.union(Traits::GLOBAL_NAME_ACCESS) };
     (ResolveName) => { Traits::NAME_OPERATION };
     (LoadResolvedName) => { Traits::NAME_OPERATION };
     (DeleteName) => { Traits::NAME_OPERATION };
-    (StoreName) => { Traits::NAME_OPERATION };
+    (StoreName) => { Traits::NAME_OPERATION.union(Traits::GLOBAL_NAME_ACCESS) };
     (StoreResolvedName) => { Traits::NAME_OPERATION };
     (StoreVarBinding) => { Traits::NAME_OPERATION };
     (CloneEnv) => { Traits::NAME_OPERATION };
     (InitializeThis) => { Traits::NAME_OPERATION };
-    (SuperCallCheck) => { Traits::NAME_OPERATION };
+    (SuperCallCheck) => { Traits::NAME_OPERATION.union(Traits::CALL_LINK) };
     (MakeClosure) => { Traits::MAKES_CLOSURE };
     (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
     (MakeObject2) => { Traits::RETURNING_OBJECT.union(Traits::FRAME_RETURNABLE) };
     (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL.union(Traits::FRAME_RETURNABLE) };
     (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL.union(Traits::FRAME_RETURNABLE) };
-    (Call) => { Traits::INLINABLE.union(Traits::FRAME_RETURNABLE) };
+    (Call) => { Traits::INLINABLE.union(Traits::FRAME_RETURNABLE).union(Traits::SCRIPT_CALL).union(Traits::CALL_LINK) };
     (SetField) => { Traits::INLINABLE };
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
@@ -298,15 +347,11 @@ macro_rules! traits_of {
     (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
-    (WasmMemoryFill) => { Traits::WASM_MEMORY };
-    (WasmMemoryCopy) => { Traits::WASM_MEMORY };
+    (WasmMemoryFill) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
+    (WasmMemoryCopy) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
-    (LoadLocal) => { Traits::ACTIVATION_FREE };
-    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
-    (StoreLocal) => { Traits::ACTIVATION_FREE };
-    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
     (DefineField) => { Traits::LANE_IN_PLACE };
     (DefineComputedField) => { Traits::LANE_IN_PLACE };
     (DefinePrivateField) => { Traits::LANE_IN_PLACE };
@@ -327,36 +372,32 @@ macro_rules! traits_of {
     (IteratorClose) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
     (IteratorCleanupPush) => { Traits::LANE_IN_PLACE };
     (IteratorCleanupPop) => { Traits::LANE_IN_PLACE };
-    (CallForwardingArguments) => { Traits::FRAME_RETURNABLE };
-    (Construct) => { Traits::FRAME_RETURNABLE };
+    (CallForwardingArguments) => { Traits::FRAME_RETURNABLE.union(Traits::SCRIPT_CALL).union(Traits::CALL_LINK) };
+    (Construct) => { Traits::FRAME_RETURNABLE.union(Traits::SCRIPT_CALL).union(Traits::CALL_LINK) };
+    (LoadLocal) => { Traits::ACTIVATION_FREE };
+    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
+    (StoreLocal) => { Traits::ACTIVATION_FREE };
+    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
+    (CallArray) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (CallKnown) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (CallMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (CallSpread) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (CallThisMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (WasmMemoryGrow) => { Traits::UNROLL_EXCLUDED };
+    (WasmMemoryInit) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableGet) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableSet) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableGrow) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableFill) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableCopy) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableInit) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableSize) => { Traits::UNROLL_EXCLUDED };
+    (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
 
 
-/// The guarded JavaScript denotation available to the shared compiled region
-/// analyzer. This describes an instruction operation, never a source pattern.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsDenotation {
-    Unsupported,
-    Noop,
-    Jump,
-    LoadConst,
-    Move,
-    GetField,
-    FieldStore,
-    NumericBinary,
-    NumericUnary,
-    /// ToString of each register of a window, concatenated in order.
-    StringConcatenation,
-    CapturedValue,
-    PlainLocalLoad,
-    PlainLocalStore,
-    Return,
-    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
-    ObjectAllocation,
-    /// A literal's own data property definition, by name, through its cache site.
-    FieldDefinition,
-}
+pub(crate) use super::denotation::JsDenotation;
 
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
 /// table load (unlike `Op::class()`), for per-instruction loops.
@@ -423,6 +464,12 @@ op_predicates! {
     is_wasm_f64_load => WasmF64Load,
     is_wasm_f64_store => WasmF64Store,
     is_wasm_f64_binary => WasmF64Binary,
+    is_wasm_simd_shuffle => WasmSimdShuffle,
+    is_wasm_f64_unary => WasmF64Unary,
+    is_wasm_fill_registers => WasmFillRegisters,
+    is_store_env_local => StoreEnvLocal,
+    is_wasm_i32_add => WasmI32Add,
+    is_wasm_i32_subtract_immediate => WasmI32SubtractImmediate,
 }
 
 #[cfg(test)]

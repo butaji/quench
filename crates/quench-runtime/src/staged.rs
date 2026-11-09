@@ -18,6 +18,7 @@ use crate::bytecode::{Op, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 pub(crate) mod numeric;
+mod heap;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
@@ -194,6 +195,22 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
+    #[inline(always)]
+    fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
+
+    /// The element store's host helper; `None` where the frame has no helper table.
+    #[inline(always)]
+    fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The lane's own global-name read (`LaneHelper::GlobalGet`).
+    #[inline(always)]
+    fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
+
+    /// The VM's field-store hit (`LaneHelper::FieldSet`).
+    #[inline(always)]
+    fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -267,6 +284,16 @@ pub(crate) enum Operation<W, P> {
     MakeObject { destination: Register, proof: P },
     /// The array literal `destination`: `length` holes, or `elements` values.
     MakeArray { destination: Register, length: W, elements: W, proof: P },
+    /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
+    Safepoint { proof: P },
+    /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
+    /// miss edge takes a failed store.
+    IndexSetHelper { base: W, key: W, value: W, proof: P },
+    /// The global-name read of `atom` through cache `site`, defined into `destination`; a
+    /// miss leaves at the proof's edge.
+    GlobalRead { destination: Register, atom: u32, site: u16, proof: P },
+    /// The VM field-store helper for `object.atom = value` through cache `site`.
+    FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -356,7 +383,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Step::Value(value)
         }
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
+        Operation::JumpIf { register, taken } => heap::jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
@@ -369,91 +396,12 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             }
             None => Step::Unresolved,
         },
-        heap => heap_step(stage, frame, heap),
-    }
-}
-
-/// The heap operations: a field read or write. A frame with no heap for the operation leaves
-/// it `Unresolved` for its host path.
-#[inline(always)]
-fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        field @ (Operation::ReadField { .. } | Operation::WriteField { .. }) =>
-            field_step(stage, frame, field),
-        literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. }) =>
-            allocation_step(stage, frame, literal),
-        index => index_step(stage, frame, index),
-    }
-}
-
-/// A field read or write over a frame's object proof.
-#[inline(always)]
-fn field_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
-            Some((value, _)) => Step::Value(value),
+        Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
+            Some(()) => Step::Value(stage.constant(0)),
             None => Step::Unresolved,
         },
-        Operation::WriteField { base, slot, ty, value, proof } =>
-            match frame.field_write(stage, base, slot, ty, value, proof) {
-                Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
-        _ => Step::Unresolved,
+        heap => heap::heap_step(stage, frame, heap),
     }
-}
-
-/// An object or array literal allocation over a frame's heap.
-#[inline(always)]
-fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    let value = match operation {
-        Operation::MakeObject { destination, proof } =>
-            frame.allocate_object(stage, destination, proof),
-        Operation::MakeArray { destination, length, elements, proof } =>
-            frame.allocate_array(stage, destination, length, elements, proof),
-        _ => None,
-    };
-    match value {
-        Some(value) => Step::Value(value),
-        None => Step::Unresolved,
-    }
-}
-
-/// A dense or typed element read or write over a frame's view proof.
-#[inline(always)]
-fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
-            Some(()) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::TypedIndexRead { index, proof } => match frame.typed_index_read(stage, index, proof) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::TypedIndexWrite { index, value, proof } => match frame.typed_index_write(stage, index, value, proof) {
-            Some(()) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        _ => Step::Unresolved,
-    }
-}
-
-/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
-/// the stage cannot tell its truthiness.
-fn jump_if<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool)
-    -> Step<S::Word, F::Control> {
-    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
-    let condition = if taken { condition } else { stage.not(condition) };
-    Step::Control(frame.branch(stage, condition))
 }
 
 /// The activation's `this` into `destination`, where the activation holds it.

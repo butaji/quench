@@ -1480,15 +1480,15 @@ impl ProgramStore {
                 } else {
                     instruction.as_wide()
                 };
-                let valid = match instruction.op() {
-                    crate::bytecode::Op::WasmRefFunc => {
+                let valid = match instruction.op().class() {
+                    crate::bytecode::Class::WasmRefFunc => {
                         signatures.get(instruction.imm() as usize).is_some()
                     }
-                    crate::bytecode::Op::WasmIndirectTarget => {
+                    crate::bytecode::Class::WasmIndirectTarget => {
                         signatures.type_signature(instruction.imm()).is_some()
                     }
-                    op if crate::wasm::gc::StructConstruction::from_op(op).is_some() => {
-                        let mode = crate::wasm::gc::StructConstruction::from_op(op).unwrap();
+                    _ if crate::wasm::gc::StructConstruction::from_op(instruction.op()).is_some() => {
+                        let mode = crate::wasm::gc::StructConstruction::from_op(instruction.op()).unwrap();
                         signatures
                             .declarations
                             .struct_fields(instruction.imm())
@@ -1518,12 +1518,12 @@ impl ProgramStore {
                                             })
                             })
                     }
-                    crate::bytecode::Op::WasmRefGetDesc => signatures
+                    crate::bytecode::Class::WasmRefGetDesc => signatures
                         .declarations
                         .descriptor_type(instruction.imm())
                         .is_some(),
-                    crate::bytecode::Op::WasmArrayNewData
-                    | crate::bytecode::Op::WasmArrayNewElem => {
+                    crate::bytecode::Class::WasmArrayNewData
+                    | crate::bytecode::Class::WasmArrayNewElem => {
                         use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
                         instruction.register_window().count == ArraySegmentInput::COUNT
                             && signatures
@@ -1542,9 +1542,9 @@ impl ProgramStore {
                                         }
                                 })
                     }
-                    crate::bytecode::Op::WasmArrayNew
-                    | crate::bytecode::Op::WasmArrayNewDefault
-                    | crate::bytecode::Op::WasmArrayNewFixed => signatures
+                    crate::bytecode::Class::WasmArrayNew
+                    | crate::bytecode::Class::WasmArrayNewDefault
+                    | crate::bytecode::Class::WasmArrayNewFixed => signatures
                         .declarations
                         .array_field(instruction.imm())
                         .is_some_and(|field| {
@@ -1552,26 +1552,25 @@ impl ProgramStore {
                                 wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => true,
                                 wasmparser::StorageType::Val(ty) => {
                                     signatures.declarations.callable_value_type(ty).is_some()
-                                        && (instruction.op()
-                                            != crate::bytecode::Op::WasmArrayNewDefault
+                                        && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewDefault)
                                             || ty.is_defaultable())
                                 }
                             };
                             valid
-                                && (instruction.op() != crate::bytecode::Op::WasmArrayNewFixed
+                                && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewFixed)
                                     || usize::from(instruction.register_b())
                                         .checked_add(usize::from(
                                             instruction.register_window().count,
                                         ))
                                         .is_some_and(|end| end <= usize::from(function.registers)))
                         }),
-                    crate::bytecode::Op::WasmDescriptorTest
-                    | crate::bytecode::Op::WasmDescriptorCast => {
+                    crate::bytecode::Class::WasmDescriptorTest
+                    | crate::bytecode::Class::WasmDescriptorCast => {
                         crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                             .and_then(|target| target.descriptor_type(&signatures.declarations))
                             .is_some()
                     }
-                    crate::bytecode::Op::WasmRefTest | crate::bytecode::Op::WasmRefCast => {
+                    crate::bytecode::Class::WasmRefTest | crate::bytecode::Class::WasmRefCast => {
                         crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                             .and_then(|target| target.reference_type())
                             .and_then(|ty| {

@@ -17,34 +17,31 @@ fn scalar(instruction: WideInstruction, constants: &[Value]) -> bool {
     {
         return false;
     }
-    let op = instruction.op();
-    if matches!(op.class(), Class::Move | Class::IncDec | Class::ToNumeric | Class::GetField) {
-        return true;
-    }
-    if op.class().eq(Class::LoadConst) {
-        return constants
+    match instruction.op().class() {
+        Class::Move | Class::IncDec | Class::ToNumeric | Class::GetField => true,
+        Class::LoadConst => constants
             .get(instruction.constant_index())
-            .is_some_and(|v| v.as_number().is_some());
-    }
-    if op.js_denotation() == JsDenotation::NumericUnary {
-        return super::super::operations::NumberUnary::from_js_instruction(
-            op,
-            instruction.unary_operator(),
-        )
-        .is_some();
-    }
-    if op.js_denotation() == JsDenotation::NumericBinary {
-        return super::super::operations::NumberArithmetic::from_js_instruction(
-            op,
-            instruction.binary_operator(),
-        )
-        .is_some()
-            || super::super::operations::NumberBitwise::from_operator(
+            .is_some_and(|v| v.as_number().is_some()),
+        _ if instruction.op().js_denotation() == JsDenotation::NumericUnary => {
+            super::super::operations::NumberUnary::from_js_instruction(
+                instruction.op(),
+                instruction.unary_operator(),
+            )
+            .is_some()
+        }
+        _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => {
+            super::super::operations::NumberArithmetic::from_js_instruction(
+                instruction.op(),
                 instruction.binary_operator(),
             )
-            .is_some();
+            .is_some()
+                || super::super::operations::NumberBitwise::from_operator(
+                    instruction.binary_operator(),
+                )
+                .is_some()
+        }
+        _ => false,
     }
-    false
 }
 
 /// The function's scalar ranges: maximal runs of `scalar` instructions no jump enters,

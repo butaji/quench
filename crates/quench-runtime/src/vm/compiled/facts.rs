@@ -11,7 +11,7 @@
 //! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
-use crate::bytecode::{Constant, ControlFlowLayout, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
 use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
@@ -189,29 +189,29 @@ fn transfer(
     native_calls: bool,
 ) -> Flow {
     let op = instruction.op();
-    match op {
-        Op::LoadConst => {
+    match op.class() {
+        Class::LoadConst => {
             let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
-        Op::Move => {
+        Class::Move => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             set(types, instruction.result_register(), source);
             Flow::Next
         }
-        Op::IncDec if instruction.numeric_local_target().is_none() => {
+        Class::IncDec if instruction.numeric_local_target().is_none() => {
             // The operand is proved int32 or the instruction leaves.
             set(types, instruction.register_b(), Type::INT32);
             set(types, instruction.result_register(), Type::INT32);
             Flow::Next
         }
         _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
-        Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
+        Class::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
         }
-        Op::JumpBinaryFalse => {
+        Class::JumpBinaryFalse => {
             // An equality, loose or strict, and `instanceof` decide operands of any type
             // (`lane_region::relation`: two objects compare by identity) and prove nothing of
             // them; every other relation compares Numbers.
@@ -236,9 +236,9 @@ fn transfer(
                     for ty in types.iter_mut() { *ty = ty.without_object_shape(); }
                     Flow::Next
                 }
-                ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op), (true, _)
-                    | (_, Op::Nop | Op::LoadThis | Op::LoadCapture | Op::GetIndex
-                    | Op::SetIndex)) => Flow::Next,
+                ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op.class()), (true, _)
+                    | (_, Class::Nop | Class::LoadThis | Class::LoadCapture | Class::GetIndex
+                    | Class::SetIndex)) => Flow::Next,
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }

@@ -473,3 +473,35 @@ fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
     }
 }
+
+#[test]
+fn the_element_store_helper_is_the_host_callout_boundary() {
+    // The interpreter stage has no helper table: an element-store helper is the host callout
+    // boundary, so the frame declines it and the lane's Emit stage provides the call.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}
+
+#[test]
+fn a_global_name_read_is_the_host_callout_boundary() {
+    // The interpreter reads globals through its own loop; the lane's helper call is the
+    // callout boundary, so the frame declines it.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}
+
+#[test]
+fn the_field_store_helper_is_the_host_callout_boundary() {
+    // The host's cached field-store hit is a callout: the interpreter stage declines it.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 2], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}

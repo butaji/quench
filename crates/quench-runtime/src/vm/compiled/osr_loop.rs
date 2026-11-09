@@ -463,11 +463,8 @@ fn tagged_registers_with_failure(
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
-        .chain(instructions.iter().filter_map(|instruction| match instruction.op().class() {
-            Class::GetIndex => instruction.operand_b().register_index(),
-            Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
-            _ => None,
-        }).filter(|register| !dynamic_arrays.contains(register)))
+        .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
+            .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
@@ -800,7 +797,7 @@ pub(super) fn renamed(
         ImmediateRole::JumpTarget => target(instruction.imm())?,
         // A call's argument window renames as one block: each of its registers to the one
         // after the base's rename.
-        _ if op == Op::Call => {
+        _ if op.is_call() => {
             let imm = instruction.imm();
             let base = ImmediateLayout::call_window_base(imm);
             let count = ImmediateLayout::argument_count(imm);
@@ -821,9 +818,16 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
+        _ if let Some(array) = array_read(instruction) => Some(array),
+        _ => instruction.field_store_register(),
+    }
+}
+
+/// The register an indexed access, or the coercibility check before one, reads as its array.
+fn array_read(instruction: WideInstruction) -> Option<Register> {
+    match instruction.op().class() {
         Class::GetIndex => instruction.operand_b().register_index(),
         Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
-        _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
         _ => None,
     }
 }
@@ -1495,7 +1499,7 @@ enum Arithmetic {
 }
 
 fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if instruction == Op::Binary && operator == super::super::operations::REMAINDER {
+    if instruction.is_binary() && operator == super::super::operations::REMAINDER {
         return Some(Arithmetic::Remainder);
     }
     if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
@@ -1531,7 +1535,7 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
     if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
         return Some(Unary::Number(operation));
     }
-    (instruction == Op::Unary && operator == UnaryOperator::BitwiseNot as u32)
+    (instruction.is_unary() && operator == UnaryOperator::BitwiseNot as u32)
         .then_some(Unary::BitwiseNot)
 }
 
@@ -1917,7 +1921,7 @@ fn admit_register_roles(
             continue;
         }
         if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move | Op::LoadCapture | Op::LoadEnvLocal))
+            definitions.find(|(_, instruction)| !matches!(instruction.op().class(), Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal))
         {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
