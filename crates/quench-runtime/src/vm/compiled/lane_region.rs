@@ -2326,11 +2326,29 @@ impl Lowering<'_, '_> {
                 None => Some(true),
             },
             op if plain && op.js_denotation() == JsDenotation::LoadConst => {
-                self.constant_value(instruction.constant_index()).map(|(value, ty)| {
-                    self.step(state, frame::Edges::Value, crate::staged::Operation::LoadConst {
-                        destination: instruction.result_register(), constant: crate::staged::Constant { value, ty } });
-                    true
-                })
+                let index = instruction.constant_index();
+                let Some(constant) = self.program.constants.get(index) else { return false };
+                if super::facts::immediate(constant).is_none()
+                    && matches!(constant, crate::bytecode::Constant::String(_))
+                    && let Some(base) = self.vm.frozen_constants
+                {
+                    // The image materializes the string once at load; the read is checked
+                    // against the image's invalidation word like every other frozen fact.
+                    let exit = self.guard_exit(state, pc as u32);
+                    self.read_invalidation(state, exit);
+                    let address = self.ins().iconst(types::I64,
+                        (base + index * std::mem::size_of::<Value>()) as i64);
+                    let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+                    self.define(state, instruction.result_register(), value,
+                        RegisterFact::definition(super::facts::constant_type(constant), Representation::Tagged));
+                    Some(true)
+                } else {
+                    self.constant_value(index).map(|(value, ty)| {
+                        self.step(state, frame::Edges::Value, crate::staged::Operation::LoadConst {
+                            destination: instruction.result_register(), constant: crate::staged::Constant { value, ty } });
+                        true
+                    })
+                }
             }
             op if plain && op.js_denotation() == JsDenotation::Move => {
                 self.step(state, frame::Edges::Value, crate::staged::Operation::Move {

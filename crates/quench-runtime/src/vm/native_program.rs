@@ -74,11 +74,13 @@ pub(crate) struct FrozenAssumptions {
     pub(crate) watch: Rc<crate::code_dependencies::PublishedCode<()>>,
     /// The tier the dispatcher selected last (0 call-threaded, 1 general, 2 specialized).
     pub(crate) last_tier: Rc<std::cell::Cell<u64>>,
+    /// The program's constants, materialized into this block after realm initialization.
+    pub(crate) constants: Rc<std::cell::RefCell<Box<[Value]>>>,
 }
 
 impl Clone for FrozenAssumptions {
     fn clone(&self) -> Self {
-        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone(), last_tier: self.last_tier.clone() }
+        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone(), last_tier: self.last_tier.clone(), constants: self.constants.clone() }
     }
 }
 
@@ -154,6 +156,12 @@ impl<H: Host> NativeJsProgram<H> {
     #[cfg(test)]
     pub(crate) fn invalidate_frozen(&self) {
         if let Some(frozen) = &self.frozen { frozen.watch.retire() }
+    }
+
+    /// How many constants the image materializes (tests).
+    #[cfg(test)]
+    pub(crate) fn materialized_constants(&self) -> usize {
+        self.frozen.as_ref().map_or(0, |frozen| frozen.constants.borrow().len())
     }
 
     /// The AOT tier the dispatcher selected last (tests).
@@ -358,6 +366,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Materializes the image's constant block in the fresh realm: strings are allocated once
+    /// here, so the compiled literal reads the block instead of materializing per use.
+    fn materialize_frozen_constants(&mut self, native: &NativeJsProgram<H>) {
+        let Some(frozen) = &native.frozen else { return };
+        let mut slots = frozen.constants.borrow_mut();
+        for (index, constant) in native.program.constants.iter().enumerate() {
+            slots[index] = match constant {
+                crate::bytecode::Constant::String(text) =>
+                    self.heap.alloc_string(crate::vm::wtf16::JsString::from_str(text)),
+                other => crate::vm::compiled::facts::immediate(other).unwrap_or(Value::UNDEFINED),
+            };
+        }
+    }
+
     fn execute_native_with_scripts(
         &mut self,
         scripts: &[NativeJsProgram<H>],
@@ -368,6 +390,7 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         self.replay_frozen_assumptions(native);
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
+        self.materialize_frozen_constants(native);
         self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
         for module in modules {
             if native.program.kind == crate::bytecode::ProgramKind::Module

@@ -2261,20 +2261,22 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen: bool,
     /// Whole-program prototype values by atom, each guarded at its read site.
     pub(super) frozen_fields: Option<&'a std::collections::BTreeMap<Atom, Value>>,
+    /// The image's constant block, materialized after realm initialization.
+    pub(super) frozen_constants: Option<usize>,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
-        frozen_fields: None };
+        frozen_fields: None, frozen_constants: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false,
-            frozen_fields: None }
+            frozen_fields: None, frozen_constants: None }
     }
 }
 
@@ -6581,11 +6583,14 @@ pub(super) fn compile_eager_native<H: Host>(
     let targets = super::compiled::static_call_targets(&program);
     let globals = frozen_globals(&program);
     let frozen_field_facts = frozen_fields(&program);
+    let constant_slots: Box<[Value]> = vec![Value::UNDEFINED; program.constants.len()].into_boxed_slice();
+    let constant_block = Rc::new(std::cell::RefCell::new(constant_slots));
+    let constant_base = constant_block.borrow().as_ptr() as usize;
     // The image's invalidation word: zero while every whole-program assumption holds.
     let invalidation = crate::code_dependencies::Invalidation::default();
     let last_tier = Rc::new(std::cell::Cell::new(0u64));
     let extension = EagerCraneliftExtension::<H> { program: &program, targets, globals: &globals,
-        fields: &frozen_field_facts, isa, options, entries: Vec::new(),
+        fields: &frozen_field_facts, constants: constant_base, isa, options, entries: Vec::new(),
         owners: EagerOwners::default(), counts: Default::default(), invalidation: invalidation.clone(),
         last_tier: last_tier.as_ptr() as usize, host: std::marker::PhantomData };
     let (entries, mut owners, mut counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
@@ -6596,6 +6601,7 @@ pub(super) fn compile_eager_native<H: Host>(
         atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
         globals: globals.keys().copied().collect(),
         fields: frozen_field_facts.keys().copied().collect(),
+        constants: constant_block,
         watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation.clone())),
         last_tier,
     };
@@ -6627,6 +6633,8 @@ struct EagerCraneliftExtension<'p, H> {
     globals: &'p std::collections::BTreeMap<Atom, Value>,
     /// Whole-program prototype values the frozen regions may fold.
     fields: &'p std::collections::BTreeMap<Atom, Value>,
+    /// The address of the image's constant block.
+    constants: usize,
     isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
     options: super::native_graph::NativeJsCodegenOptions,
     entries: Vec<crate::NativeJsFunctionEntry>,
@@ -6792,7 +6800,8 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         isa: &dyn cranelift_codegen::isa::TargetIsa,
     ) -> Vec<StaticTypedRegion> {
         let unnamed_atoms = super::method_cache::AtomBits::default();
-        let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), online: Some(OnlineFacts {
+        let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), frozen_constants: Some(self.constants),
+            online: Some(OnlineFacts {
             method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[],
         }), ..VmFacts::STATIC };
         let function = program.function(function_id as usize);

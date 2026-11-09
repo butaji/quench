@@ -2682,3 +2682,28 @@ fn the_aot_tier_ladder_selects_the_general_body_after_invalidation() {
     assert_eq!(native.last_tier(), 1, "a retired image must select the general body");
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() {
+    // The image allocates the literal once at load and the typed region reads the block
+    // behind the invalidation word; a retired image takes the general tier and still
+    // computes the same answer.
+    let source = r#"
+        function read(n) { let s = 0; for (let i = 0; i < n; i++) { let k = "abc"; if (k.length === 3) s++; } return s; }
+        globalThis.answer = read(4);
+        if (globalThis.answer !== 4) throw Error("answer " + globalThis.answer);
+    "#;
+    let (_program, native) = compile_frozen(source);
+    assert!(native.materialized_constants() >= 1, "no heap constant materialized");
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(native.last_tier(), 2, "specialized tier first");
+    native.invalidate_frozen();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(native.last_tier(), 1, "general tier after retirement");
+    assert_eq!(runtime.native_execution_rejections(), 0);
+}
