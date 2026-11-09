@@ -619,14 +619,11 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    pub(super) fn define_array_literal_element(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        index: usize,
-        value: Value,
-    ) -> Result<(), JsError> {
-        if self.set_array_element(object, index, value) {
+    /// A literal's element definition: into its dense storage (`define_literal_element`),
+    /// else as an array element set.
+    pub(super) fn define_array_literal_element(&mut self, p: &ResidualProgram, object: Value, index: usize, value: Value)
+        -> Result<(), JsError> {
+        if self.define_literal_element(object, index, value) || self.set_array_element(object, index, value) {
             Ok(())
         } else {
             Err(self.type_error(p, "cannot define array literal element".into()))

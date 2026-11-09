@@ -76,7 +76,6 @@ vm/compiled/frameless.rs Construct 1
 vm/compiled/general_binary.rs Binary 1
 vm/compiled/general_call.rs Call 1
 vm/compiled/general_call.rs Construct 1
-vm/compiled/general_call.rs SetIndex 1
 vm/compiled/general_capture.rs LoadCapture 1
 vm/compiled/general_capture.rs StoreCapture 1
 vm/compiled/general_names.rs LoadNameCall 2

@@ -2779,7 +2779,7 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
         if let Some(native) = general_call::lower_shortcut(&mut builder,
-            (pc, instruction, next), function, &register_offset, (arguments, payload), (locals, local_count),
+            (pc, instruction, &entries), function, &register_offset, (arguments, payload), (locals, local_count),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = if native { PcLowering::Native } else { PcLowering::Stepped } as u8;
             continue;

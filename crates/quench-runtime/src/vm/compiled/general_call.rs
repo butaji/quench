@@ -6,7 +6,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
-use crate::bytecode::{ConstructArguments, JsDenotation, Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::{ConstructArguments, ControlFlowLayout, JsDenotation, Op, WideInstruction, RETURN_REGISTER};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -18,18 +18,20 @@ const USER_CALL_STOPPED: i64 = 1;
 const USER_CALL_MISSED: u64 = 2;
 
 /// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture or
-/// frame binding (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
-/// is native, or `None` where only the exact step applies. A call stays in a fallback
-/// island's batch: native code only resumes past it.
+/// frame binding (`general_capture`), a plain call, an index store (`general_elements`) or a
+/// case table, given each PC's block in `entries`. Whether its PC is native, or `None` where
+/// only the exact step applies. A call stays in a fallback island's batch: native code only
+/// resumes past it.
 pub(super) fn lower_shortcut(
     builder: &mut FunctionBuilder<'_>,
-    (pc, instruction, next): (usize, WideInstruction, Option<ir::Block>),
+    (pc, instruction, entries): (usize, WideInstruction, &[ir::Block]),
     function: &crate::bytecode::Function,
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
     frame_locals: (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> Option<bool> {
+    let next = entries.get(pc + 1).copied();
     if lower_call(builder, (pc, instruction, next), function.strict, register_offset, (arguments, payload), exact) {
         return Some(false);
     }
@@ -45,9 +47,28 @@ pub(super) fn lower_shortcut(
     if lower_literal(builder, (instruction, next), register_offset, (arguments, payload), exact) {
         return Some(true);
     }
-    (instruction.op() == Op::SetIndex
-        && super::general_elements::lower_store(builder, (instruction, next), register_offset, (arguments, payload), exact))
-        .then_some(true)
+    match instruction.op().control_flow_layout() {
+        ControlFlowLayout::BranchTable => lower_branch_table(builder, (pc, instruction, entries), register_offset, arguments),
+        _ => instruction.op().is_set_index()
+            && super::general_elements::lower_store(builder, (instruction, next), register_offset, (arguments, payload), exact),
+    }.then_some(true)
+}
+
+/// The case table at `pc` (a string `switch`'s, after its `StringCaseIndex`): its selector's
+/// low 32 bits enter that entry, any past the cases the default after them, as the
+/// interpreter's table does. Each entry is a jump, lowered at its own PC.
+fn lower_branch_table(builder: &mut FunctionBuilder<'_>, (pc, instruction, entries): (usize, WideInstruction, &[ir::Block]),
+    register_offset: &dyn Fn(u16) -> Option<i32>, arguments: ir::Value) -> bool {
+    let (Some(selector), Some(targets)) = (register_offset(instruction.register_a()),
+        entries.get(crate::bytecode::branch_table_entries(pc, instruction))) else { return false };
+    let Some((default, cases)) = targets.split_last() else { return false };
+    let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, selector);
+    let case = builder.ins().ireduce(types::I32, bits);
+    let default = builder.func.dfg.block_call(*default, &[]);
+    let cases: Vec<_> = cases.iter().map(|block| builder.func.dfg.block_call(*block, &[])).collect();
+    let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
+    builder.ins().br_table(case, table);
+    true
 }
 
 /// Lowers the plain call at `pc` through its shortcuts, the exact step taking any miss;
