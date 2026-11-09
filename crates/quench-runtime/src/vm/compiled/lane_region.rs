@@ -4906,6 +4906,15 @@ impl Lowering<'_, '_> {
             self.consumed.insert(pc + 1);
             return Some(true);
         }
+        // `%` is the shared Number remainder: both operands are Numbers, and the result
+        // keeps the sign of the dividend (`-0` included).
+        if instruction.op() == Op::Binary && operator == super::operations::REMAINDER {
+            let left = self.operand_number(state, left, exit)?;
+            let right = self.operand_number(state, right, exit)?;
+            let value = super::emit_number_remainder(&mut self.builder, types::I64, left, right);
+            self.set_number(state, destination, value);
+            return Some(true);
+        }
         match (arithmetic, bitwise) {
             (Some(arithmetic), _) => {
                 let float_operand = [left, right].iter().any(|operand| match operand.kind() {

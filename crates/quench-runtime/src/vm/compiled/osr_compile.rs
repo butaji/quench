@@ -314,6 +314,35 @@ mod tests {
             "the lane OSR path ran");
     }
 
+    /// A loop taking a Number remainder runs through the lane unit's shared remainder, keeping
+    /// signed zeros and leaving a coercing operand to the general path.
+    #[test]
+    fn a_remainder_loop_runs_through_the_lane_unit() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function remainderLoop(left, right) { let result = 0; for (let i = 0; i < 64; i++) result = left % right; return result; }
+             for (let i = 0; i < 100; i++) remainderLoop(7, 3);
+             const pairs = [[-4, 2], [-0, 3], [4, -2], [1, 0], [1, -0], [Infinity, 2], [-Infinity, 2], [2, Infinity], [-2, -Infinity], [NaN, 2], [2, NaN], [-2147483648, -1], [0.5, 0.2], [5.5, 2]];
+             const results = [];
+             for (const pair of pairs) { const value = remainderLoop(pair[0], pair[1]); results.push(Object.is(value, -0) ? '-0' : String(value)); }
+             print(results.join(','));
+             let calls = 0; print(remainderLoop({valueOf() {calls++; return 7;}}, 3)); print(calls);",
+            "lane-osr-remainder.js").unwrap();
+        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [
+            "-0,-0,0,NaN,NaN,NaN,NaN,2,-2,NaN,NaN,-0,0.09999999999999998,1.5", "1", "64",
+        ]);
+        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+            "the lane OSR path ran");
+    }
+
     /// A loop negating a Number runs through the lane unit's shared Number unary denotation,
     /// keeping `-0` and widening an overflowing int32 negation.
     #[test]
