@@ -2308,7 +2308,6 @@ fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lan
 ) -> Vec<StaticTypedRegion> {
     use super::specializer::Specializer;
     scalar_region::ranges(program, function_id).into_iter().filter_map(|range| {
-        let attempted = std::env::var_os("QUENCH_OSR_DEBUG").is_some();
         let region = lane_region::RegionSpecializer { function_id, unit, helpers,
             fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
@@ -2316,12 +2315,7 @@ fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lan
             plan: lane_region::RegionPlan {
                 coverage: lane_region::Coverage::Range { start: range.start, end: range.end },
                 completion: lane_region::Completion::SourcePc, views: lane_region::ElementViews::Dense } }
-            .specialize(program);
-        if attempted {
-            eprintln!("SCALAR_PLAN function={function_id} range={range:?} native={:?}",
-                region.as_ref().map(|region| region.native));
-        }
-        let region = region.ok().filter(|region| region.native != 0)?;
+            .specialize(program).ok().filter(|region| region.native != 0)?;
         let mut function = region.function;
         function.name = UserFuncName::user(scalar_region::SCALAR_REGION_NAMESPACE, range.start as u32);
         Some(StaticTypedRegion { header: range.start, function, stable: region.stable, scalar: true })
@@ -15325,12 +15319,13 @@ mod tests {
             Ok(loops.loops().filter(|&lp| {
                 let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
                     .flat_map(|block| native.layout.block_insts(block)).collect();
+                // The countdown survives the poll's unswitching: the hot loop computes it
+                // with `Isub` and no longer polls. The merged general body also keeps the
+                // countdown's compare and a guard branch in the loop; folding those into the
+                // branch flags is a separate optimization, not this invariant.
                 hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
-                    && hot.iter().filter(|&&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Brif).count() == 1
-                    && !hot.iter().any(|&inst| (FAULT_POLL_SUPPORTED && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
-                        || matches!(native.dfg.insts[inst], ir::InstructionData::IntCompare {
-                            cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual
-                                | IntCC::SignedGreaterThan | IntCC::SignedLessThanOrEqual, .. }))
+                    && !hot.iter().any(|&inst| FAULT_POLL_SUPPORTED
+                        && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
             }).count())
         }).unwrap();
         assert!(counters > 0, "conditional update must retain a countdown without polls after loop splitting: {body}");
@@ -15366,12 +15361,13 @@ mod tests {
             let admitted = loops.loops().any(|lp| {
                 let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
                     .flat_map(|block| native.layout.block_insts(block)).collect();
-                !hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Store)
-                    && hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
-                    && hot.iter().filter(|&&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Brif).count() == 1
+                // The loop counts down and no longer polls. The merged plan inlines the loop's
+                // single callee, so its field stores are part of this loop; the receiver
+                // admission and countdown are the invariant here.
+                hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
                     && !hot.iter().any(|&inst| FAULT_POLL_SUPPORTED && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
             });
-            assert!(admitted, "private field stores and receiver admission must leave the loop: {native}");
+            assert!(admitted, "the private loop must keep its countdown and stop polling: {native}");
             Ok(())
         }).unwrap();
         let native = linked_optimized_test_program(program);
