@@ -228,27 +228,27 @@ const MAX_INLINING_DEPTH: usize = 5;
 /// only one it inlines in turn.
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
-    match instruction.op() {
-        op if op.traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
+    match instruction.op().class() {
+        _ if instruction.op().traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
-        Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
+        Class::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
         // A nested lookup's chain names its base by the function's registers; the lowering
         // renames it through the frame (`Lowering::get_field`), and its sink stores to `this`.
-        Op::GetField => match instruction.field_lookup() {
+        Class::GetField => match instruction.field_lookup() {
             Some(FieldLookup::Atom { .. }) => plain,
             Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
         },
-        op if op.is_field_store() => plain,
+        _ if instruction.op().is_field_store() => plain,
         // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
         // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
-        Op::Unary => plain,
+        Class::Unary => plain,
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
         // global name's read, a construction and a throw, typically a callee's error path.
-        Op::LoadName | Op::Construct | Op::Throw => instruction.result_flags() == 0,
-        Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
-        op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
+        Class::LoadName | Class::Construct | Class::Throw => instruction.result_flags() == 0,
+        Class::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
+        _ => plain && instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
 }
 
@@ -256,11 +256,11 @@ fn inlinable(instruction: WideInstruction) -> bool {
 /// leaf. A miss may restart that call without replaying effects.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
-        Op::SetIndex | Op::Call => false,
-        op if op.is_field_store() => false,
-        Op::IncDec => instruction.numeric_local_target().is_none(),
-        Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => instruction.jump_target() as usize > pc,
+    code.iter().enumerate().all(|(pc, instruction)| match instruction.op().class() {
+        Class::SetIndex | Class::Call => false,
+        _ if instruction.op().is_field_store() => false,
+        Class::IncDec => instruction.numeric_local_target().is_none(),
+        Class::Jump | Class::JumpFalse | Class::JumpTrue | Class::JumpBinaryFalse => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.
     })
 }
@@ -286,9 +286,9 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        Op::Call | Op::Return | Op::LoadThis | Op::LoadName | Op::Construct | Op::Throw => true,
-        Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
+    match instruction.op().class() {
+        Class::Call | Class::Return | Class::LoadThis | Class::LoadName | Class::Construct | Class::Throw => true,
+        Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
                 WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
@@ -570,19 +570,19 @@ impl Emitter {
                 self.unit.origins.extend([origin; 3]);
                 continue;
             }
-            let rewritten = match instruction.op() {
-                Op::Return => {
+            let rewritten = match instruction.op().class() {
+                Class::Return => {
                     self.unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.register_a()), 0, 0));
                     self.unit.origins.push(origin);
                     WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
                 }
-                Op::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+                Class::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
                 // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
                 // the lowering leaves at each, and recovery runs the callee's own instruction.
-                Op::LoadName | Op::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
-                Op::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
+                Class::LoadName | Class::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+                Class::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
                     register(instruction.c()), instruction.imm()),
-                Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
+                Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                     let flags = instruction.result_flags();
                     WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
                 }
