@@ -71,6 +71,26 @@ pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Con
     stage.ne_imm(inline, 0)
 }
 
+/// Whether an object's payload word points at its extras (`Object::payload`).
+#[inline(always)]
+pub(crate) fn has_extras<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+    let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
+    stage.eq_imm(tag, OBJECT.extras_tag)
+}
+
+/// Whether an object's payload word holds plain storage, no extras: `has_extras` negated.
+#[inline(always)]
+pub(crate) fn plain_payload<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+    let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
+    stage.ne_imm(tag, OBJECT.extras_tag)
+}
+
+/// The extras an object's payload word points at, once `has_extras` holds.
+#[inline(always)]
+pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+    stage.and_imm(payload, !OBJECT.extras_tag_mask)
+}
+
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
 fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
@@ -90,12 +110,11 @@ fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
 pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, form: Form,
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
-    let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
-    let extras = stage.eq_imm(tag, OBJECT.extras_tag);
+    let extras = has_extras(stage, payload);
     if stage.known(extras) == Some(true) {
         return Some(Layout { slots: extras_slots(stage, payload, inline), storage_len });
     }
-    let plain = stage.ne_imm(tag, OBJECT.extras_tag);
+    let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let packed = match access {
         PackedAccess::Snapshot => Packed::Snapshot(payload),
@@ -107,7 +126,7 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
 /// The slots of an object whose payload word points at its extras, which hold the inline
 /// values wide or the run's start (`Object::extras_storage_start`).
 fn extras_slots<S: Stage>(stage: &mut S, payload: S::Word, inline: S::Cond) -> Slots<S::Word, S::Cond> {
-    let pointer = stage.and_imm(payload, !OBJECT.extras_tag_mask);
+    let pointer = extras_pointer(stage, payload);
     if stage.known(inline) == Some(true) {
         Slots::Flat(stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64))
     } else {

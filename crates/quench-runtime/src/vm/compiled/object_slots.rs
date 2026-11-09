@@ -147,9 +147,14 @@ impl ObjectHeader {
     }
 }
 
+/// The stage whose residual `staged` operations that address no arena emit into `builder`.
+pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
+    Emit { builder, property_values: None }
+}
+
 /// `staged::object::inline_storage`'s residual for the record at `record`.
 pub(super) fn inline_storage(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    crate::staged::object::inline_storage(&mut Emit { builder, property_values: None }, record)
+    crate::staged::object::inline_storage(&mut emit(builder), record)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

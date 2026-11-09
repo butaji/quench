@@ -990,8 +990,7 @@ fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir
         record,
         i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
     );
-    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
-    builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64)
+    crate::staged::object::has_extras(&mut object_slots::emit(builder), object_payload)
 }
 
 /// The backing header of an array record.
@@ -1379,8 +1378,7 @@ fn emit_js_cached_field_slot(
             builder.switch_to_block(packed);
             let storage = builder.ins().load(types::I64, MemFlagsData::trusted(), object,
                 OBJECT.payload_offset as i32);
-            let tag = builder.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
-            let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+            let plain = crate::staged::object::plain_payload(&mut object_slots::emit(builder), storage);
             emit_js_guard(builder, plain, fallback);
             let slot = slot.read(builder);
             let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot,
@@ -1450,10 +1448,9 @@ fn emit_js_cached_field_slot(
             types::I64, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
         );
-        let tag = builder.ins().band_imm_u(proto_storage, OBJECT.extras_tag_mask as i64);
-        let extras = builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
+        let extras = crate::staged::object::has_extras(&mut object_slots::emit(builder), proto_storage);
         emit_js_guard(builder, extras, fallback);
-        let extras_pointer = builder.ins().band_imm_u(proto_storage, !OBJECT.extras_tag_mask as i64);
+        let extras_pointer = crate::staged::object::extras_pointer(&mut object_slots::emit(builder), proto_storage);
         let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
         emit_js_guard(builder, present, fallback);
         let displaced = builder.create_block();

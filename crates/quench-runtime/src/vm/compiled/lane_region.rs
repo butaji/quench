@@ -4273,10 +4273,9 @@ impl Lowering<'_, '_> {
         let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
         emit_js_guard(&mut self.builder, arena, exit);
         let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let tag = self.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
-        let tagged = self.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
+        let tagged = crate::staged::object::has_extras(&mut super::object_slots::emit(&mut self.builder), storage);
         emit_js_guard(&mut self.builder, tagged, exit);
-        let extras = self.ins().band_imm_u(storage, !OBJECT.extras_tag_mask as i64);
+        let extras = crate::staged::object::extras_pointer(&mut super::object_slots::emit(&mut self.builder), storage);
         let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
         emit_js_guard(&mut self.builder, present, exit);
         let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
@@ -4665,8 +4664,7 @@ impl Lowering<'_, '_> {
         self.ins().brif(inline, packed, &[], arena, &[]);
         self.builder.switch_to_block(packed);
         let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
-        let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
-        let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+        let plain = crate::staged::object::plain_payload(&mut super::object_slots::emit(&mut self.builder), payload);
         emit_js_guard(&mut self.builder, plain, general);
         let narrow = emit_narrow_store_value(&mut self.builder, value, ty, general);
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
