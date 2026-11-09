@@ -1,4 +1,5 @@
 //! How a value is held in machine form.
+#![allow(dead_code)]
 
 use super::Type;
 

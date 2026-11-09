@@ -106,7 +106,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let started = observe(machine, r, region, entry, &tier.widened, |observation| {
-        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt,
+        super::super::compiled::start_osr_region(region, observation,
             machine.heap.memory_policy(), program.as_deref()?, function, helpers)
     });
     machine.host.after_native_compilation();

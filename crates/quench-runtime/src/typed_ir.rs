@@ -5,6 +5,7 @@
 //! A representation is not a JavaScript type, and a profile observation is not
 //! a proof. A region may specialize an observed representation only by keeping
 //! the corresponding guard obligation in its verified entry/definition plan.
+#![allow(dead_code)]
 
 use crate::{Value, ValueType};
 

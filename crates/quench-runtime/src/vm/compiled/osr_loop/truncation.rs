@@ -1,7 +1,7 @@
 //! Truncation: arithmetic every read of which takes ToInt32 runs as wrapping `i32`
 //! arithmetic, which is exact modulo 2^32 whenever the Number result is an exact integer
 //! (LLVM's Float2Int and demanded-bits reasoning, over the region's webs).
-use super::{Arithmetic, Definition, Lowering, LoopRegion, Range, Webs, arithmetic};
+use super::{Arithmetic, Definition, LoopRegion, Range, Webs, arithmetic};
 use crate::bytecode::WideInstruction;
 use crate::vm::operations::NumberArithmetic;
 use std::collections::BTreeSet;
@@ -55,15 +55,3 @@ pub(super) fn truncated_webs(
         }
     }
 }
-
-impl Lowering<'_, '_> {
-    /// Whether the product at `pc` needs no overflow guard: a proof covers it, or only its
-    /// ToInt32 is read and it is exact (`Int32Facts::truncated`).
-    pub(super) fn wraps(&self, pc: u32) -> bool {
-        self.proved(pc) || self.facts.truncated.contains(&pc)
-    }
-}
-
-#[cfg(test)]
-#[path = "truncation_tests.rs"]
-mod tests;

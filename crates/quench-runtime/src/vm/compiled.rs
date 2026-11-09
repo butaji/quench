@@ -143,6 +143,7 @@ impl RegionExit {
     const KIND_SHIFT: u32 = u32::BITS;
     const PAYLOAD_MASK: u64 = u32::MAX as u64;
 
+    #[allow(dead_code)]
     pub(super) const fn encode(self) -> u64 {
         let (kind, payload) = match self {
             Self::EntryMiss(payload) => (0, payload),
@@ -169,11 +170,13 @@ impl RegionExit {
 /// Common cold handoff blocks for a compiled region. The tier still supplies its live-state
 /// writeback at each exact PC; this type owns only the shared control-flow continuation.
 #[derive(Default)]
+#[allow(dead_code)]
 pub(super) struct RegionExitBlocks {
     leave_blocks: std::collections::BTreeMap<u32, ir::Block>,
     outcomes: Vec<(ir::Block, RegionExit)>,
 }
 
+#[allow(dead_code)]
 impl RegionExitBlocks {
     /// Queues a cold outcome block for filling after the hot region has been lowered.
     pub(super) fn outcome_block(
@@ -387,6 +390,7 @@ pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
 /// The shared Number remainder denotation, after the caller's Number guards.
 /// Native entries use the host calling convention. This pure scalar helper cannot
 /// enter the VM or collect, so it does not introduce an effect/recovery boundary.
+#[allow(dead_code)]
 pub(super) fn emit_number_remainder(
     builder: &mut FunctionBuilder<'_>,
     pointer: ir::Type,
