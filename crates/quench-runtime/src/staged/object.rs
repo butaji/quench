@@ -170,6 +170,14 @@ fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16) -> S
 /// beside its index.
 #[inline(always)]
 pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word {
+    let upper_words = stage.constant(NarrowLayout::upper_words() as u64);
+    decode_narrow_through(stage, narrow, upper_words)
+}
+
+/// `decode_narrow` with the reference codes' upper words at `upper_words`, a copy of
+/// `NarrowLayout::upper_words` (an ahead-of-time image links its own).
+#[inline(always)]
+pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
     let integer = stage.ne_imm(flag, 0);
     stage.choose(integer, |stage| {
@@ -179,8 +187,7 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
         let code = stage.shr_imm(narrow, NarrowLayout::CODE_SHIFT);
         let code = stage.and_imm(code, u64::from(NarrowLayout::CODE_MASK));
         let offset = stage.mul_imm(code, std::mem::size_of::<u64>() as u64);
-        let table = stage.constant(NarrowLayout::upper_words() as u64);
-        let entry = stage.add(table, offset);
+        let entry = stage.add(upper_words, offset);
         let upper = stage.load_table(entry);
         let lower = stage.shr_imm(narrow, NarrowLayout::INDEX_SHIFT);
         stage.or(upper, lower)

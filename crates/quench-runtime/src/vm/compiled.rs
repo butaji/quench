@@ -1772,13 +1772,6 @@ struct LaneReceiver {
     properties: Variable,
 }
 
-/// Decode an already proved narrow integer without a process-local lookup table.
-fn emit_narrow_integer_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value) -> ir::Value {
-    let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let value = builder.ins().uextend(types::I64, value);
-    builder.ins().bor_imm_u(value, crate::value::ValueLayout::INT_TAG as i64)
-}
-
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
@@ -1843,23 +1836,11 @@ enum NarrowTable {
     Linked(u32),
 }
 
+/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
+/// passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     table: NarrowTable, join: ir::Block)
 {
-    let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
-    let integer_block = builder.create_block();
-    let reference_block = builder.create_block();
-    builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
-    builder.switch_to_block(integer_block);
-    builder.seal_block(integer_block);
-    let encoded = emit_narrow_integer_read(builder, narrow);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-    builder.switch_to_block(reference_block);
-    builder.seal_block(reference_block);
-    let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
-    let code = builder.ins().uextend(types::I64, code);
-    let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
     let table = match table {
         NarrowTable::Process => builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64),
         #[cfg(feature = "aot")]
@@ -1872,11 +1853,9 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
             builder.ins().symbol_value(types::I64, global)
         }
     };
-    let address = builder.ins().iadd(table, offset);
-    let upper = builder.ins().load(types::I64, invariant(), address, 0);
-    let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
-    let lower = builder.ins().uextend(types::I64, lower);
-    let encoded = builder.ins().bor(upper, lower);
+    let narrow = builder.ins().uextend(types::I64, narrow);
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }
 

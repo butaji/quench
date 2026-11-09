@@ -216,7 +216,7 @@ fn a_narrow_decode_inverts_every_narrow_encoding() {
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.
 const LAYOUT_DECODES: &[(&str, &str, usize)] = &[
-    ("vm/compiled.rs", include_str!("../vm/compiled.rs"), 7),
+    ("vm/compiled.rs", include_str!("../vm/compiled.rs"), 4),
     ("vm/compiled/lane_region.rs", include_str!("../vm/compiled/lane_region.rs"), 3),
     ("vm/compiled/osr_loop.rs", include_str!("../vm/compiled/osr_loop.rs"), 1),
     ("vm/compiled/object_slots.rs", include_str!("../vm/compiled/object_slots.rs"), 0),
