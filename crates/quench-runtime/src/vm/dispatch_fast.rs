@@ -6907,7 +6907,7 @@ fn lane_set_field_in_place<H: Host>(
 /// The brand of private name `atom` at the record `ip`, whose home follows the running
 /// function and the environment its frame would capture from: the lane's frame, or a
 /// frameless activation's function and closure environment (`Vm::site_private_brand`).
-#[inline(never)]
+#[inline(always)]
 fn lane_private_brand<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
