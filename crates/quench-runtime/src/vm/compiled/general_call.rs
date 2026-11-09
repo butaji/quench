@@ -6,7 +6,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
-use crate::bytecode::{ConstructArguments, Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::{ConstructArguments, JsDenotation, Op, WideInstruction, RETURN_REGISTER};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -40,6 +40,9 @@ pub(super) fn lower_shortcut(
     }
     if lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
         return Some(false);
+    }
+    if lower_literal(builder, (instruction, next), register_offset, (arguments, payload), exact) {
+        return Some(true);
     }
     (instruction.op() == Op::SetIndex
         && super::general_elements::lower_store(builder, (instruction, next), register_offset, (arguments, payload), exact))
@@ -142,6 +145,47 @@ fn lower_construct(
     builder.ins().jump(next, &[]);
     builder.switch_to_block(user);
     emit_user_call(builder, (pc, next, fallback), payload, exact);
+    true
+}
+
+/// Lowers an object literal's allocation (`JsDenotation::ObjectAllocation`, `general_object`) or
+/// field definition (`JsDenotation::FieldDefinition`, `general_define_field`), each as the lane
+/// makes it, the exact step taking any miss; false where only the step applies.
+fn lower_literal(
+    builder: &mut FunctionBuilder<'_>,
+    (instruction, next): (WideInstruction, ir::Block),
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    let denotation = instruction.op().js_denotation();
+    if instruction.result_flags() != 0 { return false; }
+    let (answer, refused, destination) = match denotation {
+        JsDenotation::ObjectAllocation => {
+            let Some(destination) = register_offset(instruction.result_register()) else { return false };
+            let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object));
+            (emit_lane_helper_call(builder, payload, helper, &[payload]), Value::DELETED.to_bits(), Some(destination))
+        }
+        JsDenotation::FieldDefinition => {
+            let (Some(value), Some(object)) = (register_offset(instruction.register_a()), register_offset(instruction.register_b()))
+                else { return false };
+            let word = (u64::from(instruction.atom_index()) << u16::BITS) | u64::from(instruction.cache_site_index());
+            let [value, object] = [value, object].map(|offset| builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset));
+            let word = builder.ins().iconst(types::I64, word as i64);
+            let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, define_field));
+            (emit_lane_helper_call(builder, payload, helper, &[payload, object, word, value]), 0, None)
+        }
+        _ => return false,
+    };
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, answer, refused as i64);
+    let (done, fallback) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(hit, done, &[], fallback, &[]);
+    builder.switch_to_block(done);
+    if let Some(destination) = destination {
+        builder.ins().store(MemFlagsData::trusted(), answer, arguments, destination);
+    }
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
     true
 }
 

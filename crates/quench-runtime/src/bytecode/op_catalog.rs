@@ -207,4 +207,8 @@ pub(crate) enum JsDenotation {
     PlainLocalLoad,
     PlainLocalStore,
     Return,
+    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
+    ObjectAllocation,
+    /// A literal's own data property definition, by name, through its cache site.
+    FieldDefinition,
 }
