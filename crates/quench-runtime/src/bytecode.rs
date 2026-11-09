@@ -868,11 +868,9 @@ impl Traits {
     pub(crate) const INLINABLE: Self = Self(1 << 14);
     /// An op a call's argument setup may run with no repeatable effect.
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
-    /// An op that reads nothing of its activation (environment, `this`, captures, names) and
-    /// makes no closure or call of its own: a body of such ops observes no activation.
+    /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
     pub(crate) const ACTIVATION_FREE: Self = Self(1 << 16);
-    /// An op a loop region without calls lowers whole beside numeric binaries: no-ops,
-    /// constants, moves, counters, jumps and returns (`static_typed_regions`).
+    /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
     pub(crate) const SCALAR_REGION: Self = Self(1 << 17);
     /// An indexed element read or write, which a loop region views its arrays for.
     pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 18);
@@ -2469,11 +2467,7 @@ impl Function {
 
     fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
         {
-            let promoted_parameters = self
-                .local_registers
-                .iter()
-                .filter(|entry| entry.local < self.params)
-                .count();
+            let promoted_parameters = self.local_registers.iter().filter(|entry| entry.local < self.params).count();
             // Laid out as its registers whatever kind of function it is: an ordinary
             // body's layout, or a non-suspending async body's (`settles_registers_only`).
             let registers_layout_of_any_kind = self.parent.is_some()
@@ -2825,10 +2819,7 @@ impl Function {
         if !fits(self.code.len()) {
             return None;
         }
-        let mut records = self
-            .instructions()
-            .take(shaped_records + FORWARDED_WINDOW_COPY)
-            .collect::<SmallVec<[WideInstruction; 16]>>();
+        let mut records = self.instructions().take(shaped_records + FORWARDED_WINDOW_COPY).collect::<SmallVec<[WideInstruction; 16]>>();
         // The copy, dropped here: the call's window is that copy.
         let copied = records.iter().position(|record| record.op() == Op::Call).and_then(|call| {
             let moved = *records.get(call.checked_sub(1)?)?;
@@ -4123,10 +4114,7 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
-        let deferred = self
-            .encoded_records
-            .as_deref()
-            .and_then(|records| binary::decode_deferred_function(records, index));
+        let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
             Some(decoded) => decoded.unwrap_or_else(|error| {
                 panic!("function {index} of {} does not decode: {error}", self.source_name)
@@ -4154,10 +4142,7 @@ impl ResidualProgram {
     fn lower_unlowered(&self, unlowered: std::rc::Rc<Function>) -> Function {
         let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
-            let index = self
-                .constants
-                .iter()
-                .position(|constant| matches!(constant, Constant::Undefined))
+            let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
                 .expect("a program with an unlowered record holds the `undefined` constant");
             u32::try_from(index).expect("constant index fits u32")
         });

@@ -21,6 +21,7 @@ pub(crate) mod numeric;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
+pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod value;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,

@@ -4228,7 +4228,6 @@ impl Lowering<'_, '_> {
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         let proto = crate::staged::object::proto_link(&mut super::object_slots::emit(&mut self.builder), record);
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
@@ -4251,32 +4250,13 @@ impl Lowering<'_, '_> {
             ObjectTable::Checked(table) => table.base(),
             ObjectTable::Unchecked(base) => base,
         };
-        let mut stage = super::object_slots::emit(&mut self.builder);
-        let id = crate::staged::object::proto_object_record_id(&mut stage, proto, exit).expect("an emitted guard continues");
-        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
-        emit_js_guard(&mut self.builder, same, exit);
-        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
-        let inline = super::object_slots::inline_storage(&mut self.builder, prototype);
-        let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(&mut self.builder, arena, exit);
-        let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let tagged = crate::staged::object::has_extras(&mut super::object_slots::emit(&mut self.builder), storage);
-        emit_js_guard(&mut self.builder, tagged, exit);
-        let extras = crate::staged::object::extras_pointer(&mut super::object_slots::emit(&mut self.builder), storage);
-        let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
-        emit_js_guard(&mut self.builder, present, exit);
-        let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
-        let start = self.ins().uextend(types::I64, start);
         // The prototype's run lies inside the arena, as every live flat object's does
         // (`object_slots::arena_range`).
-        let entry = self.entry.as_ref().expect("entry facts");
-        let properties = self.builder.use_var(entry.receiver.properties);
-        let index = self.ins().iadd_imm_u(start, i64::from(field.slot));
-        let offset = self.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = self.ins().iadd(properties, offset);
-        Some(self.ins().load(types::I64, MemFlagsData::trusted(), address, 0))
+        let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        use crate::staged::ic::IcOp;
+        crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
+            record, records, exit)
     }
 
     /// A dominating proof of `owner`'s object (a register's, or `this`'s), for its lifetime
