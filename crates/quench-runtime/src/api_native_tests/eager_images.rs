@@ -200,7 +200,7 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
 
 #[cfg(feature = "aot")]
 #[test]
-fn functions_past_the_set_width_keep_a_conservative_map() {
+fn functions_past_the_set_width_keep_a_windowed_map() {
     let locals = crate::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
     let parameters = (0..locals).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
@@ -208,13 +208,14 @@ fn functions_past_the_set_width_keep_a_conservative_map() {
     let wide = (0..program.function_count()).find(|index| program.function_get(*index)
         .is_some_and(|function| function.registers > crate::compile::liveness::ROOT_MAP_REGISTERS))
         .expect("the wide body");
-    let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a conservative map");
-    assert!(masks.get(0).is_none(), "the conservative map has no per-pc entry");
+    let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a map");
+    assert!(masks.is_windowed(), "the mask holds one set per register window");
+    assert!(masks.live_at(0, 512).is_some(), "the second window has a per-pc entry");
     let options = crate::NativeJsCodegenOptions {
         backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
     let native = crate::NativeJsProgram::<TestHost>::compile_eager_with_options(program, options).unwrap();
-    assert!(native.publication_counts().wide_frame_functions >= 1,
-        "{:?}", native.publication_counts());
+    assert_eq!(native.publication_counts().wide_frame_functions, 0,
+        "a windowed body has a precise map: {:?}", native.publication_counts());
 }
 
 #[cfg(feature = "aot")]
@@ -229,4 +230,18 @@ fn a_function_past_the_old_width_still_has_a_stack_map() {
     let native = crate::NativeJsProgram::<TestHost>::compile_eager_with_options(program, options).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "{:?}", native.publication_counts());
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn functions_past_the_window_budget_keep_a_conservative_map() {
+    let parameters = (0..crate::compile::liveness::MAX_MAP_REGISTERS + 1)
+        .map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
+    let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
+    let program = Engine::specialize(&source, "wide-frame-budget.js").unwrap();
+    let wide = (0..program.function_count()).find(|index| program.function_get(*index)
+        .is_some_and(|function| function.registers > crate::compile::liveness::MAX_MAP_REGISTERS))
+        .expect("the wide body");
+    let masks = program.register_root_masks(wide as u32).expect("a body past the budget keeps a map");
+    assert!(!masks.is_windowed() && masks.get(0).is_none(), "the map is conservative all-live");
 }

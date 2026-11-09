@@ -144,7 +144,7 @@ impl Unit {
         &self, program: &'a crate::ResidualProgram, caller: u32,
     ) -> Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>> {
         use crate::compile::liveness::{ROOT_MAP_REGISTERS, RegisterMasks, RegisterSet, register_bit};
-        let caller_masks = program.register_root_masks(caller)?;
+        let caller_masks = program.register_root_masks(caller).filter(|masks| !masks.is_windowed())?;
         if self.frames.is_empty() && self.origins.iter().enumerate().all(|(pc, origin)|
             *origin == Origin::Caller(pc as u32)) {
             return Some(std::borrow::Cow::Borrowed(caller_masks));
@@ -161,7 +161,7 @@ impl Unit {
             let call = frame.call as usize;
             let around = parent.get(call)? | (parent.get(call + 1).unwrap_or_default() & !frame.result.map_or(RegisterSet::default(), |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
-            callees.push(program.register_root_masks(frame.target.function)?);
+            callees.push(program.register_root_masks(frame.target.function).filter(|masks| !masks.is_windowed())?);
         }
         let mut masks = self.origins.iter().map(|origin| match *origin {
             Origin::Caller(pc) => caller_masks.get(pc as usize),

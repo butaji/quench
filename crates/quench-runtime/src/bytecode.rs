@@ -3980,6 +3980,7 @@ impl ResidualProgram {
     }
 
     /// The registers live at `pc` in `function`, when liveness covers it.
+    #[allow(dead_code)]
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc)
     }
