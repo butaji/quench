@@ -7430,14 +7430,11 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
             }
         }
     };
-    let hit = vm.primary_own_field_store_hit::<true>(
-        residual,
-        Value::from_bits(receiver),
-        atom as Atom,
-        Value::from_bits(value),
-        site as u16,
-        crate::heap::PropertyStoreLayout::PreserveNative,
-    );
+    // A receiver of another shape the site met stores through its polymorphic entries, as
+    // long as the store keeps the record's layout, which the caller's proofs rely on.
+    let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), crate::heap::PropertyStoreLayout::PreserveNative);
+    let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout)
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
     if hit { general_store::record_store_class(vm, site as u16, Value::from_bits(value)); }
@@ -7505,7 +7502,7 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
     // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_none()
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden).is_none()
         && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }
@@ -7531,7 +7528,7 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
     if !(vm.proved_field_add_hit(receiver, atom, value, site)
         || vm.primary_field_add_hit(residual, receiver, atom, value, site)
-        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_some()) {
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden).is_some()) {
         return 0;
     }
     // A collection the add made due waits for the next back edge's safepoint

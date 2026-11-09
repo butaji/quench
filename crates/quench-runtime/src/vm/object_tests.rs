@@ -207,7 +207,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     // Real reads install the other two shape/slot pairs at this same site.
     assert_eq!(vm.get_field_cached(&program, other, atom, site).unwrap(), Value::integer(0));
     assert_eq!(vm.get_field_cached(&program, third, atom, site).unwrap(), Value::integer(0));
-    assert!(vm.polymorphic_own_field_store_hit(&program, other, atom, Value::integer(6), site).is_some());
+    assert!(vm.polymorphic_own_field_store_hit(&program, other, atom, Value::integer(6), site, crate::heap::PropertyStoreLayout::MayWiden).is_some());
     assert_eq!(vm.profile.field_primitives.count(Path::PolymorphicStore), 1);
     assert_eq!(vm.own_property(other, atom), Some(Value::integer(6)));
 }
