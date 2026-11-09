@@ -40,6 +40,7 @@ vm/dispatch_frame.rs ToNumeric 1
 #
 vm/compiled.rs COUNT 1
 vm/compiled.rs WasmMemoryAddress 1
+vm/compiled/exact_budget.rs NAMES 1
 vm/dispatch_fast.rs WasmI32AddImmediate 2
 vm/dispatch_fast.rs WasmI32Load 1
 vm/dispatch_fast.rs WasmI32Load16S 1
@@ -47,30 +48,18 @@ vm/dispatch_fast.rs WasmI32Load16U 1
 vm/dispatch_fast.rs WasmI32Load8S 1
 vm/dispatch_fast.rs WasmI32Load8U 1
 vm/lane_exits.rs COUNT 6
+vm/lane_exits.rs NAMES 6
 vm/native_graph.rs COUNT 2
+vm/native_graph.rs NAMES 1
 vm/native_op_profile.rs COUNT 2
+vm/native_op_profile.rs NAMES 3
 vm/program_store.rs COUNT 1
+vm/program_store.rs NAMES 5
 #
 # category: per-op bodies — operation-specific work, not family dispatch.
 #
-vm/call_printer.rs Call 1
-vm/call_printer.rs CallArray 1
-vm/call_printer.rs CallForwardingArguments 1
-vm/call_printer.rs CallMethod 2
-vm/call_printer.rs CallSpread 1
-vm/call_printer.rs Construct 1
 vm/compiled.rs Call 1
 vm/compiled/exact_budget.rs Binary 1
-vm/compiled/exact_budget.rs NAMES 1
-vm/compiled/facts.rs GetIndex 1
-vm/compiled/facts.rs IncDec 1
-vm/compiled/facts.rs JumpBinaryFalse 2
-vm/compiled/facts.rs LoadCapture 1
-vm/compiled/facts.rs LoadConst 1
-vm/compiled/facts.rs LoadThis 1
-vm/compiled/facts.rs Move 1
-vm/compiled/facts.rs Nop 1
-vm/compiled/facts.rs SetIndex 1
 vm/compiled/general_binary.rs Binary 1
 vm/compiled/general_names.rs LoadNameCall 1
 vm/compiled/lane_region.rs LoadConst 1
@@ -80,30 +69,17 @@ vm/compiled/lane_region/stable.rs LoadName 1
 vm/compiled/lane_region/stable.rs LoadNameCall 1
 vm/compiled/lane_unit/static_hints.rs DefineField 1
 vm/compiled/lane_unit/static_hints.rs DefinePropertyRecord 1
-vm/compiled/osr_loop.rs Binary 1
-vm/compiled/osr_loop.rs Call 2
-vm/compiled/osr_loop.rs GetField 2
-vm/compiled/osr_loop.rs GetIndex 2
+vm/compiled/osr_loop.rs Call 1
+vm/compiled/osr_loop.rs GetField 1
 vm/compiled/osr_loop.rs JumpFalse 1
 vm/compiled/osr_loop.rs JumpTrue 1
-vm/compiled/osr_loop.rs LoadCapture 1
-vm/compiled/osr_loop.rs LoadEnvLocal 1
-vm/compiled/osr_loop.rs Move 2
-vm/compiled/osr_loop.rs RequireObjectCoercible 1
-vm/compiled/osr_loop.rs SetIndex 1
-vm/compiled/osr_loop.rs Unary 1
+vm/compiled/osr_loop.rs Move 1
 vm/compiled/scalar_region.rs GetField 1
 vm/compiled/scalar_region.rs LoadConst 1
 vm/compiled/scalar_region.rs Move 1
 vm/compiled/scalar_region.rs ToNumeric 1
-vm/compiled/static_loops.rs IncDec 2
-vm/compiled/static_loops.rs LoadConst 2
-vm/compiled/static_loops.rs Move 2
 vm/dispatch_fast.rs Move 2
 vm/first_call_chunk.rs CallFirstChunk 2
-vm/lane_exits.rs NAMES 6
-vm/native_graph.rs NAMES 1
-vm/native_op_profile.rs NAMES 3
 vm/object_static/for_in_keys.rs ForInNext 2
 vm/operations.rs Binary 7
 vm/operations.rs NumericAdd 3
@@ -114,7 +90,6 @@ vm/program_store.rs Binary 1
 vm/program_store.rs JumpBinaryFalse 2
 vm/program_store.rs JumpFalse 1
 vm/program_store.rs JumpTrue 1
-vm/program_store.rs NAMES 5
 vm/program_store.rs Unary 1
 vm/specialize.rs Jump 1
 vm/superinstruction.rs Binary 2

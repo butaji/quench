@@ -7,9 +7,15 @@
 use super::{add_suspended_exception_roots, analyze_graph, register_bit, MethodArguments, RegisterMasks, RegisterSet};
 use crate::bytecode::{FieldSite, Function, Successors, Superinstruction};
 
-/// The bytes one body's windowed masks may take. A body whose windows would exceed it keeps
-/// one conservative all-live map instead: a documented memory bound with safe exhaustion,
-/// rather than an arbitrary register count.
+/// The bytes one body's windowed masks may take.
+///
+/// Precise liveness costs `registers x pcs` bits however it is stored, so a very wide body
+/// with many instructions has no compact precise form. At a 16 MiB budget an earley-boyer
+/// function past 4096 registers took 14 MiB of masks with no score change; the budget is
+/// 4 MiB so that such a body keeps one conservative all-live map (sound: every consumer
+/// reads a missing per-pc entry as "no register proved dead"). This is the accepted
+/// exhaustion behaviour: bodies whose precise tables fit stay precise, wider ones scan
+/// their whole frame at a collection.
 pub(crate) const MAX_MASK_BYTES: usize = 4 << 20;
 
 /// Whether `windows` sets for `length` instructions exceed [`MAX_MASK_BYTES`].
@@ -58,7 +64,7 @@ pub(super) fn masked(
 
 #[cfg(test)]
 mod tests {
-    use super::{over_budget, RegisterSet, MAX_MASK_BYTES};
+    use super::{over_budget, RegisterMasks, RegisterSet, MAX_MASK_BYTES};
 
     #[test]
     fn the_window_budget_admits_past_4096_registers_and_exhausts_safely() {
@@ -69,5 +75,13 @@ mod tests {
         assert!(!over_budget(9, 7_000));
         assert_eq!(MAX_MASK_BYTES, 4 << 20);
         assert_eq!(std::mem::size_of::<RegisterSet>(), 64);
+    }
+
+    #[test]
+    fn the_budget_fallback_is_a_sound_all_live_map() {
+        // No per-pc entry: every consumer reads a register as conservatively live.
+        let masks = RegisterMasks::Wide(Box::default());
+        assert!(!masks.is_windowed());
+        assert!(masks.get(0).is_none() && masks.live_at(0, 0).is_none());
     }
 }

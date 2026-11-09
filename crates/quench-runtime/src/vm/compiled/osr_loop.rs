@@ -901,7 +901,7 @@ pub(super) fn renamed(
         ImmediateRole::JumpTarget => target(instruction.imm())?,
         // A call's argument window renames as one block: each of its registers to the one
         // after the base's rename.
-        _ if op == Op::Call => {
+        _ if op.is_call() => {
             let imm = instruction.imm();
             let base = ImmediateLayout::call_window_base(imm);
             let count = ImmediateLayout::argument_count(imm);
@@ -936,9 +936,9 @@ fn field_reads_alone_define(instructions: &[WideInstruction], register: Register
 
 /// The register an indexed access, or the coercibility check before one, reads as its array.
 fn array_read(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op() {
-        Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+    match instruction.op().class() {
+        Class::GetIndex => instruction.operand_b().register_index(),
+        Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
         _ => None,
     }
 }
@@ -1637,7 +1637,7 @@ enum Arithmetic {
 }
 
 fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if instruction == Op::Binary && operator == super::super::operations::REMAINDER {
+    if instruction.is_binary() && operator == super::super::operations::REMAINDER {
         return Some(Arithmetic::Remainder);
     }
     if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
@@ -1673,7 +1673,7 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
     if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
         return Some(Unary::Number(operation));
     }
-    (instruction == Op::Unary && operator == UnaryOperator::BitwiseNot as u32)
+    (instruction.is_unary() && operator == UnaryOperator::BitwiseNot as u32)
         .then_some(Unary::BitwiseNot)
 }
 
@@ -2072,7 +2072,7 @@ fn admit_register_roles(
             continue;
         }
         if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move | Op::LoadCapture | Op::LoadEnvLocal))
+            definitions.find(|(_, instruction)| !matches!(instruction.op().class(), Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal))
         {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
