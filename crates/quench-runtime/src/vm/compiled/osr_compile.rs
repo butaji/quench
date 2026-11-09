@@ -165,8 +165,8 @@ pub(in crate::vm) fn start_osr_region(
     let fields = loop_fields(region, observation);
     let simple = region.inlining.is_none();
     // A callee with its own loop makes the inlined unit a nested loop region. The lane
-    // plan models one loop; the verified lowering models the nested inlined loop, so the
-    // lane plan declines it and the verified lowering publishes the region.
+    // plan's single loop does not inline that callee's loop yet; the verified lowering
+    // does, so the lane plan declines it and the verified lowering publishes the region.
     let nested_inlined_loop = region.inlining.is_some() && region.instructions().iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
             && (instruction.jump_target() as usize) <= pc
@@ -222,8 +222,13 @@ pub(in crate::vm) fn start_osr_region(
     let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
     slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
     slot_dependencies.dedup();
+    // A lane region carries each inlined callee's full body and its guards, so a loop
+    // that inlines two calls may legitimately exceed the verified lowering's budget.
+    // The code is published once per hot loop and retires with its site, so the larger
+    // per-site bound stays bounded by the lane plan's own admission.
+    let code_budget = if lane { 2 * osr_loop::MAX_CODE_BYTES } else { osr_loop::MAX_CODE_BYTES };
     let code = super::super::jit_backend::run_in_background(move || {
-        compile_native_function(function, &*isa, osr_loop::MAX_CODE_BYTES, |code| Some(code.to_vec()))
+        compile_native_function(function, &*isa, code_budget, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     Some(PendingOsrRegion { code, watch, header: region.header, clif, lane,
