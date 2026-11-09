@@ -152,13 +152,13 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    while coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
     if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    while rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
+    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
     if crate::trace::Channel::Rewrite.on() {
