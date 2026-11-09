@@ -846,7 +846,7 @@ macro_rules! class_of {
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(u16);
+pub(crate) struct Traits(u32);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0);
@@ -868,6 +868,9 @@ impl Traits {
     pub(crate) const INLINABLE: Self = Self(1 << 14);
     /// An op a call's argument setup may run with no repeatable effect.
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
+    /// An op that reads nothing of its activation (environment, `this`, captures, names) and
+    /// makes no closure or call of its own: a body of such ops observes no activation.
+    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 16);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -876,18 +879,18 @@ impl Traits {
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
     (Nop) => { Traits::LEAF_VALUE };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
     (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE) };
+    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -914,6 +917,10 @@ macro_rules! traits_of {
     (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
     (SetIndex) => { Traits::INLINABLE };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (LoadLocal) => { Traits::ACTIVATION_FREE };
+    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
+    (StoreLocal) => { Traits::ACTIVATION_FREE };
+    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
     ($other:ident) => { Traits::NONE };
 }
 
