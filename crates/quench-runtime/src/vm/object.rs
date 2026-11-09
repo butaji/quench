@@ -2057,9 +2057,10 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<(Value, u32)> {
         debug_assert!(self.specialized_operations_enabled(p));
-        let (receiver, function_receiver) = self.inherited_receiver(object)?;
+        let (receiver, kind) = self.inherited_receiver(object)?;
         let (hit, index, proof) =
-            self.cached_inherited_field_value(self.field_cache_index(site), receiver, function_receiver)?;
+            self.cached_inherited_field_value(self.field_cache_index(site), receiver, kind == super::field_cache::InheritedReceiver::Function)?;
+        self.inherited_entry_answers(kind, index).then_some(())?;
         if let Some(proof) = proof {
             self.prove_inherited_chain(proof);
         }
@@ -2106,7 +2107,9 @@ impl<H: Host> Vm<H> {
     /// holder's slot, which becomes the constant.
     #[inline(always)]
     fn proved_inherited_entry_value(&mut self, index: u32, object: Value) -> Option<Value> {
-        let (receiver, function_receiver) = self.inherited_receiver(object)?;
+        let (receiver, kind) = self.inherited_receiver(object)?;
+        let function_receiver = kind == super::field_cache::InheritedReceiver::Function;
+        self.inherited_entry_answers(kind, index).then_some(())?;
         let (shape, link) = (receiver.shape(), receiver.proto_link());
         // SAFETY: a site's index names a recorded entry (`record_inherited_field`), and a
         // hint's was found in the cache.
@@ -2134,17 +2137,6 @@ impl<H: Host> Vm<H> {
         };
         self.profile.field_cache_hit(0, depth);
         Some(value)
-    }
-
-    /// The object an inherited entry's receiver test reads, and whether it is a function's:
-    /// an object record, or a function, which an entry answers only where its shape holds
-    /// the name (`InheritedFieldCache::function_links`).
-    #[inline(always)]
-    fn inherited_receiver(&self, value: Value) -> Option<(&Object, bool)> {
-        match value.direct_object_index() {
-            Some(record_id) => Some((self.heap.object_record_by_id(record_id), false)),
-            None => self.heap.function(value).map(|function| (&function.object, true)),
-        }
     }
 
     /// Whether the site has an inherited entry (`inherited_field_hit`).
