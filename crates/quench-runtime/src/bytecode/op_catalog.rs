@@ -69,6 +69,7 @@ pub(crate) enum Class {
     CreateRegExpLiteral,
     DefineField,
     DefinePrivateField,
+    MarkPrivateName,
     DefinePropertyRecord,
     Delete,
     InitializeTdz,
@@ -171,6 +172,7 @@ macro_rules! class_of {
     (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
     (DefineField) => { Class::DefineField };
     (DefinePrivateField) => { Class::DefinePrivateField };
+    (MarkPrivateName) => { Class::MarkPrivateName };
     (DefinePropertyRecord) => { Class::DefinePropertyRecord };
     (Delete) => { Class::Delete };
     (InitializeTdz) => { Class::InitializeTdz };

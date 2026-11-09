@@ -1,7 +1,7 @@
 //! Two indexed Number additions below dispatch. Register roles are distinct;
 //! production admission/alias analysis is deliberately not implemented here.
 use super::*;
-use super::super::operations::{ADDITION, number_operator, number_value_operator};
+use super::super::operations::{ADDITION, immediate_number_pair, number_operator, number_value_operator};
 use crate::heap::{ArrayObject, ArrayStorageProofs, Cell, Heap, LaneProofScope, Object};
 
 #[derive(Clone, Copy)]
@@ -44,7 +44,7 @@ fn pair<const FORWARD: bool, const LIVE: bool>(proofs: &ArrayStorageProofs, r: R
     let element = match read(proofs, r, Step::First) { Ok(value) => value, Err(stop) => return stop };
     let accumulator = r.get(Slot::Accumulator as u16);
     let first = if FORWARD {
-        let Some(value) = Value::number_pair(accumulator, element)
+        let Some(value) = Value::number_pair(accumulator, element).or_else(|| immediate_number_pair(accumulator, element))
             .and_then(|(a, b)| number_operator::<ADDITION>(a, b)) else { return Stop::Operator(Step::First) };
         value
     } else {
@@ -56,7 +56,7 @@ fn pair<const FORWARD: bool, const LIVE: bool>(proofs: &ArrayStorageProofs, r: R
     let second = (|| {
         let element = read(proofs, r, Step::Second)?;
         let result = if FORWARD {
-            element.as_number().and_then(|value| number_operator::<ADDITION>(first, value)).map(Value::number)
+            immediate_number_pair(Value::number(first), element).and_then(|(a, b)| number_operator::<ADDITION>(a, b)).map(Value::number)
         } else {
             number_value_operator::<ADDITION>(r.get(Slot::Intermediate as u16), element)
         };

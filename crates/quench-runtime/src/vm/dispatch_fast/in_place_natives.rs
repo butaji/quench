@@ -40,7 +40,8 @@ fn math_value(native: Native, args: &[Value]) -> Option<Value> {
 /// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, an object's
 /// keys, values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
-/// property read ignores the receiver) and `Symbol.for` of a string.
+/// property read ignores the receiver), `Symbol.for` of a string and
+/// `Object.prototype.toString` (`object_to_string_in_place`).
 fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -59,11 +60,29 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
+        Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>
             vm.call_symbol_native(code, Native::SymbolFor, args).ok(),
         _ => None,
     }
+}
+
+/// `Object.prototype.toString` of `undefined`, `null`, or an object whose `@@toStringTag`
+/// a plain lookup reads (`Vm::plain_keyed_get`, which declines accessors on the chain): its
+/// brand and its tag then run no guest code. A proxy, whose brand asks `IsArray` of its
+/// target, and a primitive, which the tag reads through its wrapper, take the native.
+fn object_to_string_in_place<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, receiver: Value) -> Option<Value> {
+    if receiver.is_heap() {
+        if matches!(vm.heap.get(receiver), Some(Cell::Proxy { .. })) || !vm.is_object_like(receiver) {
+            return None;
+        }
+        let tag = vm.well_known_symbols.get(super::super::WellKnownSymbol::ToStringTag)?;
+        vm.plain_keyed_get(receiver, tag)?;
+    } else if !receiver.is_undefined() && !receiver.is_null() {
+        return None;
+    }
+    vm.object_prototype_to_string(code, receiver).ok()
 }
 
 /// Steps of collections and built-in records on their own receivers: the Map and Set
@@ -98,7 +117,8 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
 /// Conversions and predicates of primitives whose steps read no cell but a string's text:
 /// `String.fromCharCode` of numbers, `Boolean`, `String` of a string or an immediate
 /// primitive, `Number` of a primitive, decimal `Number.prototype.toString`, the global
-/// `isNaN` and `isFinite`, and the `Number` predicates (`number::number_predicate`).
+/// `isNaN` and `isFinite`, the `Number` predicates (`number::number_predicate`), and a
+/// default-collation `localeCompare` of two strings (`default_locale_compare`).
 fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -109,10 +129,26 @@ fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, arg
         Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
         Native::NumberString if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(DECIMAL)) =>
             Some(vm.heap.alloc_string(super::super::wtf16::JsString::from_number(receiver.as_number()?))),
+        Native::StringLocaleCompare => default_locale_compare(vm, receiver, args),
         Native::GlobalIsNaN | Native::GlobalIsFinite =>
             super::super::number::global_number_predicate(native, vm.primitive_to_number(argument)?).map(Value::boolean),
         _ => super::super::number::number_predicate(native, argument).map(Value::boolean),
     }
+}
+
+/// `String.prototype.localeCompare` of two strings under the default collation, once a call
+/// without locales or options has made it (`Vm::locale_compare_collation`): neither string
+/// converts and no guest code runs.
+fn default_locale_compare<H: Host>(vm: &Vm<H>, receiver: Value, args: &[Value]) -> Option<Value> {
+    // Its locales and options, the only arguments it reads past the other string, are absent.
+    let [other, settings @ ..] = args else { return None };
+    let (locales, options) = (settings.first(), settings.get(1));
+    if locales.is_some_and(|value| !value.is_undefined()) || options.is_some_and(|value| !value.is_undefined()) {
+        return None;
+    }
+    let collation = vm.default_collation.as_ref()?;
+    let (left, right) = (vm.heap.string(receiver)?, vm.heap.string(*other)?);
+    Some(Value::number(collation.compare(left.host_string(), right.host_string())))
 }
 
 /// The radix `Number.prototype.toString` writes in place.

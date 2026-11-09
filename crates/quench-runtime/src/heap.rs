@@ -4628,6 +4628,10 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
                 widen_inline_storage(data, properties, data.shape(), length, slot, value);
             }
         }
+        // A prototype's store of the value its slot holds changes nothing its readers took, as
+        // three.js's constructors store `Vector3.prototype.isVector3 = true` for each instance.
+        // SAFETY: as above.
+        ExactStorage::Extended { .. } if data.was_used_as_prototype() && unsafe { read_exact_slot(data, properties, slot) } == value => {}
         ExactStorage::Extended { inline } => {
             data.note_value_write(slot);
             // SAFETY: as above.

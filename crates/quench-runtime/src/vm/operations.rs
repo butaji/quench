@@ -3,6 +3,7 @@ use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
 pub(crate) use number_operators::static_number_binary;
+pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 
 /// Shared Number/BigInt content mismatch diagnostic.
@@ -758,14 +759,18 @@ pub(super) const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
 pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 
 /// Operator `OP` on two Numbers through their double values, which is how ECMA-262 defines
-/// every numeric operator's result (`Value::number` stores the integral ones as integers);
-/// `None` for any other operand.
+/// every numeric operator's result (`Value::number` stores the integral ones as integers),
+/// an immediate primitive operand as its ToNumeric (`immediate_number_pair`); `None` for
+/// any other operand.
 #[inline(always)]
 pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     if let Some(value) = bitwise_value_operator::<OP>(left, right) {
         return Some(value);
     }
-    let (left, right) = Value::number_pair(left, right)?;
+    let (left, right) = match Value::number_pair(left, right) {
+        Some(numbers) => numbers,
+        None => immediate_number_pair(left, right)?,
+    };
     number_operator::<OP>(left, right).map(Value::number)
 }
 
