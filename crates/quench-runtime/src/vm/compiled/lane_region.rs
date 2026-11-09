@@ -3226,10 +3226,8 @@ impl Lowering<'_, '_> {
     }
 
     fn emit_fault_poll(&mut self) {
-        let flag = self.interrupt;
-        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
-        let ir::ValueDef::Result(inst, _) = self.builder.func.dfg.value_def(requested) else { unreachable!("poll instruction") };
-        self.polls.push(inst);
+        frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
+            super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
     }
 
     /// Joining edges must not move a guard, conversion or recovery across the

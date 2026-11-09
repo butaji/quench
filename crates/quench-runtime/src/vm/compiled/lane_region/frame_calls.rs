@@ -12,16 +12,23 @@ use cranelift_codegen::ir::{types, InstBuilder, MemFlagsData, condcodes::IntCC};
 /// A fault-polling body records its poll instruction; any other leaves at the miss edge when
 /// the flag is set.
 pub(super) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
+    safepoint_parts(stage.builder, frame.polls, proof)
+}
+
+/// The safepoint emission without a frame: the entry poll-latch fill has no register state.
+pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::FunctionBuilder<'_>,
+    polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
+    proof: EmitProof) -> Option<()> {
     let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
-    let requested = stage.builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
+    let requested = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
     if fault_poll {
-        let cranelift_codegen::ir::ValueDef::Result(inst, _) = stage.builder.func.dfg.value_def(requested) else { return None };
-        frame.polls.push(inst);
+        let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
+        polls.push(inst);
     } else {
         let miss = miss?;
-        let requested = stage.builder.ins().uextend(types::I32, requested);
-        let clear = stage.builder.ins().icmp_imm_u(IntCC::Equal, requested, 0);
-        emit_js_guard(stage.builder, clear, miss);
+        let requested = builder.ins().uextend(types::I32, requested);
+        let clear = builder.ins().icmp_imm_u(IntCC::Equal, requested, 0);
+        emit_js_guard(builder, clear, miss);
     }
     Some(())
 }

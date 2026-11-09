@@ -1,7 +1,6 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
-
 use super::*;
-#[path = "frame_calls.rs"] mod calls;
+#[path = "frame_calls.rs"] pub(super) mod calls;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -498,3 +497,4 @@ pub(super) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut 
         _ => None,
     }
 }
+
