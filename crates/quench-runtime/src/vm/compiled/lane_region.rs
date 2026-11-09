@@ -353,6 +353,9 @@ struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
     unit: &'a super::lane_unit::Unit,
+    /// The function's parameter count: an entry guard on a parameter declines the region
+    /// when a call's value does not match the compiled entry fact.
+    params: usize,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
@@ -730,6 +733,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
         for (index, ty) in types.iter().copied().enumerate() {
             let register = index as Register;
             if !self.is_live(target, register) { continue; }
+            // A parameter's entry fact varies per call: a mismatched value declines the
+            // region (the lane runs the header) instead of exiting native code.
+            let entry_param = target == self.coverage.entry() && index < self.params;
+            let saved = self.proving_entry;
+            if entry_param { self.proving_entry = true; }
             if ty == Type::INT32 && state.values[index].value.representation != Representation::Int32 {
                 let exit = self.guard_exit(state, target as u32);
                 self.int(state, register, exit);
@@ -755,8 +763,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 self.builder.ins().jump(exit, &[]);
                 let unreached = self.builder.create_block();
                 self.builder.switch_to_block(unreached);
+                self.proving_entry = saved;
                 return;
             }
+            self.proving_entry = saved;
         }
     }
 
@@ -1328,6 +1338,7 @@ pub(super) fn lower(
         builder,
         program,
         unit,
+        params: usize::from(function.params),
         helpers,
         fields,
         interrupt,
