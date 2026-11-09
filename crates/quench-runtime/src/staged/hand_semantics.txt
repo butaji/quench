@@ -91,7 +91,7 @@ vm/compiled/lane_compile.rs Call 2
 vm/compiled/lane_region.rs Call 1
 vm/compiled/lane_region.rs Construct 1
 vm/compiled/lane_region.rs GetField 5
-vm/compiled/lane_region.rs GetIndex 3
+vm/compiled/lane_region.rs GetIndex 2
 vm/compiled/lane_region.rs IncDec 3
 vm/compiled/lane_region.rs Jump 4
 vm/compiled/lane_region.rs JumpBinaryFalse 6

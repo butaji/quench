@@ -94,7 +94,8 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// read, so the frame adds no second decode.
     #[inline(always)]
     fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
-        proof: CheckedObject) -> Option<(ir::Value, RegisterFact)> {
+        proof: EmitProof) -> Option<(ir::Value, RegisterFact)> {
+        let EmitProof::Field(proof) = proof else { return None };
         Some((proof.read(stage.builder, slot),
             RegisterFact::definition(ty, Representation::Tagged)))
     }
@@ -103,10 +104,28 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// guard uses.
     #[inline(always)]
     fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
-        value: ir::Value, proof: CheckedObject) -> Option<()> {
+        value: ir::Value, proof: EmitProof) -> Option<()> {
+        let EmitProof::Field(proof) = proof else { return None };
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
         let address = proof.arena_address(stage.builder, slot, miss)?;
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        Some(())
+    }
+
+    /// A dense element under the view proof; a hole or an index past the view continues at
+    /// the proof's cold block, exactly as the lowering's cold path did.
+    #[inline(always)]
+    fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Index { view, absent } = proof else { return None };
+        Some(super::super::emit_dense_element(stage.builder, view, index, absent).1)
+    }
+
+    #[inline(always)]
+    fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+        proof: EmitProof) -> Option<()> {
+        let EmitProof::Index { view, absent } = proof else { return None };
+        let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent);
+        super::super::emit_dense_element_replace(stage.builder, view, address, old, value);
         Some(())
     }
 

@@ -14,7 +14,7 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
 }
 
 impl Stage for Emit<'_, '_> {
-    type Proof = CheckedObject;
+    type Proof = super::super::EmitProof;
     type Word = ir::Value;
     /// Any integer: nonzero holds.
     type Cond = ir::Value;

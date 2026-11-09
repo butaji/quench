@@ -1044,6 +1044,14 @@ pub(super) struct DenseArrayView {
     pub(super) writable: bool,
 }
 
+/// The emission proofs a staged value operation carries: a field projection or a dense
+/// array view with the cold block a hole or miss continues at.
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) enum EmitProof {
+    Field(object_slots::CheckedObject),
+    Index { view: DenseArrayView, absent: ir::Block },
+}
+
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
 /// replacement. Any other base leaves through `fallback`, with nothing read.
 pub(super) fn emit_dense_array_view(
