@@ -1618,10 +1618,10 @@ fn emit_js_own_field_set(
     exact: &JsExactFallback,
 ) {
     let receiver = receiver.emit(builder, arguments, payload, fallback);
-    let (store, add, done) = (builder.create_block(), builder.create_block(), builder.create_block());
+    let (store, done) = (builder.create_block(), builder.create_block());
     general_store::emit_store(builder, (arguments, payload), receiver, atom, site, value, done, store);
     builder.switch_to_block(store);
-    general_store::emit_helper_store(builder, payload, (receiver, atom, site, value), (add, done, fallback));
+    general_store::emit_helper_store(builder, payload, (receiver, atom, site, value), (done, fallback));
     builder.switch_to_block(done);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
@@ -2746,7 +2746,7 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
         if let Some(native) = general_call::lower_shortcut(&mut builder,
-            (pc, instruction, next), function, &register_offset, (arguments, payload), (locals, local_count),
+            (pc, instruction, &entries), function, &register_offset, (arguments, payload), (locals, local_count),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = if native { PcLowering::Native } else { PcLowering::Stepped } as u8;
             continue;
@@ -6446,7 +6446,7 @@ struct JsStepDispatch {
     /// through callouts; growth/compaction update its base/length in place.
     property_buffer: usize,
     field_entries: usize,
-    /// Host-bound recording store operation; no JIT/compiler capability is required.
+    /// A store into the receiver's slot, else the site's cached add (`general_field_store`).
     field_store: usize,
     /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
     /// length in words; and whether the VM and program run specialized, which a cached store
@@ -6478,9 +6478,6 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
-    /// What a store missing its existing slot tries next (`lane_store_miss`): the object's
-    /// shape and storage may change, which only re-proved reads see.
-    field_add: usize,
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step, then its cached user getter (`general_getter`).
     field_get: usize, field_getter: usize,
@@ -6835,6 +6832,15 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     1
+}
+
+/// A general-dispatch store in one call: into the slot the receiver has (`lane_field_set`),
+/// else as `lane_store_miss`.
+unsafe extern "C" fn general_field_store<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+    let (atom, site) = (write >> u16::BITS, write & u64::from(u16::MAX));
+    // SAFETY: as the caller promises, for both.
+    unsafe { lane_field_set::<H>(vm, residual, receiver, atom, site, value) != 0 || lane_store_miss::<H>(vm, residual, payload, receiver, write, value) != 0 }
+        .into()
 }
 
 /// A general-dispatch store that missed its existing slot (`lane_field_set`): the site's cached
@@ -7253,7 +7259,6 @@ impl LaneFrame {
                 property_buffer: 0,
                 field_entries: 0,
                 field_store: 0,
-                field_add: 0,
                 field_get: 0, field_getter: 0,
                 native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0,
                 allocated: 0,
@@ -7406,7 +7411,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7439,8 +7444,7 @@ impl JsStepDispatch {
     fn bind_native_storage<H: Host>(&mut self, vm: *mut Vm<H>) {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
-        self.field_store = lane_field_set::<H> as *const () as usize;
-        self.field_add = lane_store_miss::<H> as *const () as usize;
+        self.field_store = general_field_store::<H> as *const () as usize;
         (self.field_get, self.field_getter) = (general_field_get::<H> as *const () as usize,
             general_getter::general_field_getter::<H> as *const () as usize);
         self.native_call = general_call::general_native_call::<H> as *const () as usize;
@@ -7477,6 +7481,7 @@ impl JsStepDispatch {
 
     /// Refresh the additional frame and array views read by the general tier.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>, program: &ResidualProgram) {
+        let (epoch, captures, view) = (self.epoch, self.capture_values, self.env_view);
         self.refresh_object_bases(vm);
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
@@ -7490,7 +7495,11 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
-        (self.capture_stores, self.env_view) = (0, general_capture::EnvView::of(vm, self));
+        // Admitted writes outlive the refresh while their slots and collection epoch do: the
+        // barrier they took holds until a collection.
+        let kept = |same: bool| usize::from(same && epoch == self.epoch);
+        self.capture_stores &= kept(captures == self.capture_values);
+        self.env_view = general_capture::EnvView::of(vm, self).kept(view, kept(true));
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);

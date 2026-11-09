@@ -68,25 +68,24 @@ impl StringCaseFilter {
     }
 }
 
-/// Replaces each validated string-case selector of `records` whose constants admit a
-/// filter with the filtered selector, and returns the filters the records point into.
+/// Replaces each string-case selector of `records` (decoded as `decoded`) whose constants
+/// admit a filter with the filtered selector, and returns the filters the records point into.
 pub(in super::super) fn specialize<H: Host>(
     heap: &crate::heap::Heap,
     constants: &[Value],
-    decoded: &[crate::bytecode::WideInstruction],
+    decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
 ) -> Box<[StringCaseFilter]> {
     let mut filters = Vec::new();
     let mut sites = Vec::new();
-    for (pc, record) in records.iter().enumerate() {
-        // The site's own opcode names it a case selector; a handler's address does not.
-        if !decoded.get(pc).is_some_and(|instruction| instruction.op().is_string_case_index()) {
+    for (pc, instruction) in decoded.iter().enumerate() {
+        if !instruction.op().is_string_case_index() {
             continue;
         }
-        let start = record.imm() as usize;
-        // SAFETY: this handler is installed only after lane_operand validates the range.
-        let cases = unsafe { constants.get_unchecked(start..start + usize::from(record.b)) };
-        let Some(filter) = StringCaseFilter::new(heap, start, cases) else {
+        // The range `lane_operand` validated before installing the selector.
+        let start = instruction.imm() as usize;
+        let Some(filter) = start.checked_add(usize::from(instruction.b())).and_then(|end| constants.get(start..end))
+            .and_then(|cases| StringCaseFilter::new(heap, start, cases)) else {
             continue;
         };
         filters.push(filter);
