@@ -98,7 +98,8 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
 /// Conversions and predicates of primitives whose steps read no cell but a string's text:
 /// `String.fromCharCode` of numbers, `Boolean`, `String` of a string or an immediate
 /// primitive, `Number` of a primitive, decimal `Number.prototype.toString`, the global
-/// `isNaN` and `isFinite`, and the `Number` predicates (`number::number_predicate`).
+/// `isNaN` and `isFinite`, the `Number` predicates (`number::number_predicate`), and a
+/// default-collation `localeCompare` of two strings (`default_locale_compare`).
 fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -109,10 +110,26 @@ fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, arg
         Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
         Native::NumberString if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(DECIMAL)) =>
             Some(vm.heap.alloc_string(super::super::wtf16::JsString::from_number(receiver.as_number()?))),
+        Native::StringLocaleCompare => default_locale_compare(vm, receiver, args),
         Native::GlobalIsNaN | Native::GlobalIsFinite =>
             super::super::number::global_number_predicate(native, vm.primitive_to_number(argument)?).map(Value::boolean),
         _ => super::super::number::number_predicate(native, argument).map(Value::boolean),
     }
+}
+
+/// `String.prototype.localeCompare` of two strings under the default collation, once a call
+/// without locales or options has made it (`Vm::locale_compare_collation`): neither string
+/// converts and no guest code runs.
+fn default_locale_compare<H: Host>(vm: &Vm<H>, receiver: Value, args: &[Value]) -> Option<Value> {
+    // Its locales and options, the only arguments it reads past the other string, are absent.
+    let [other, settings @ ..] = args else { return None };
+    let (locales, options) = (settings.first(), settings.get(1));
+    if locales.is_some_and(|value| !value.is_undefined()) || options.is_some_and(|value| !value.is_undefined()) {
+        return None;
+    }
+    let collation = vm.default_collation.as_ref()?;
+    let (left, right) = (vm.heap.string(receiver)?, vm.heap.string(*other)?);
+    Some(Value::number(collation.compare(left.host_string(), right.host_string())))
 }
 
 /// The radix `Number.prototype.toString` writes in place.

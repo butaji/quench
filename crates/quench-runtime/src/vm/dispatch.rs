@@ -1,5 +1,4 @@
 use super::*;
-use crate::heap::PrivateBrand;
 
 mod increment;
 pub(super) use increment::{integer_increment, number_increment};
@@ -1000,30 +999,7 @@ impl<H: Host> Vm<H> {
                 );
             }
             Op::MarkPrivateName => {
-                let object = self.read(f, i.register_b());
-                let home = self.read(f, i.register_c());
-                let atom = i.atom_index();
-                let brand = PrivateBrand { home, name: atom };
-                if object != home {
-                    if !self.object_data(object).is_some_and(|object| self.private_element_addable(object)) {
-                        return Err(self.type_error(
-                            p,
-                            "Cannot add private method to a non-extensible object".into(),
-                        ));
-                    }
-                    let already_branded = self
-                        .object_data(object)
-                        .is_some_and(|object| object.has_private_name(brand));
-                    if already_branded {
-                        return Err(self.type_error(
-                            p,
-                            "Cannot add private method to an object that already has it".into(),
-                        ));
-                    }
-                }
-                if let Some(object) = self.object_data_mut(object) {
-                    object.add_private_name(brand);
-                }
+                self.mark_private_name(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index())?;
             }
             Op::ResolveName => {
                 let strict = i

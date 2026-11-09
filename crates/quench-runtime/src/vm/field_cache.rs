@@ -9,7 +9,45 @@ pub(super) enum GlobalNameRead {
     Miss,
 }
 
+/// The receiver an inherited field entry's test reads (`Vm::inherited_receiver`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum InheritedReceiver {
+    Record,
+    Function,
+    Builtin,
+}
+
 impl<H: Host> Vm<H> {
+    /// The object an inherited entry's receiver test reads, and its kind: an object record;
+    /// a function, which an entry answers only where its shape holds the name
+    /// (`InheritedFieldCache::function_links`); or an array or ordinary builtin (a
+    /// collection, date, regexp, promise, iterator or generator), whose shape answers every
+    /// name but the exotic ones (`inherited_entry_answers`), as `shape_property_lookup`
+    /// reads them.
+    #[inline(always)]
+    pub(super) fn inherited_receiver(&self, value: Value) -> Option<(&Object, InheritedReceiver)> {
+        if let Some(record_id) = value.direct_object_index() {
+            return Some((self.heap.object_record_by_id(record_id), InheritedReceiver::Record));
+        }
+        if let Some(function) = self.heap.function(value) {
+            return Some((&function.object, InheritedReceiver::Function));
+        }
+        let builtin: Option<&Object> = self.heap.array(value).map(|array| &**array);
+        builtin
+            .or_else(|| self.heap.ordinary_builtin_object(value))
+            .map(|object| (object, InheritedReceiver::Builtin))
+    }
+
+    /// Whether inherited entry `index` answers a receiver of `kind`: a builtin's own lookup of
+    /// a private, virtual-field or index name is not its shape's (`shape_answers`).
+    #[inline(always)]
+    pub(super) fn inherited_entry_answers(&self, kind: InheritedReceiver, index: u32) -> bool {
+        kind != InheritedReceiver::Builtin
+            || self.heap.dependencies().inherited_get(index).is_some_and(|cache| {
+                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX)
+            })
+    }
+
     /// A global name read as the lane takes it (`dispatch_fast::lane_load_global_name_refresh`):
     /// an initialized global lexical binding of the name, else the global object's own data
     /// field with the hint that names it, else the site's cached field.
