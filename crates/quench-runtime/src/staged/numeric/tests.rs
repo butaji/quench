@@ -59,6 +59,9 @@ impl Frame<Concrete> for NumberFrame {
     fn jump(&mut self, _stage: &mut Concrete) -> Edge {
         unreachable!("a Number operation jumps nowhere")
     }
+    fn boolean(&mut self, _stage: &mut Concrete, _condition: bool) -> (u64, Domain) {
+        unreachable!("a Number operation makes no boolean")
+    }
 }
 
 impl NumericFrame<Concrete> for NumberFrame {

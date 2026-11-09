@@ -121,6 +121,10 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
     fn jump(&mut self, _stage: &mut Concrete) -> Edge {
         Edge::Target
     }
+
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
+        (Value::boolean(condition).to_bits(), ())
+    }
 }
 
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
@@ -155,6 +159,26 @@ fn step_moves_and_defines_constants_on_the_concrete_stage() {
         destination: 3, constant: Constant::untyped(constant) }) else { panic!("a constant produces a value") };
     assert_eq!(Value::from_bits(word), constant);
     assert_eq!(Value::from_bits(frame.registers[3]), constant);
+}
+
+/// Logical negation is ToBoolean then the canonical boolean: one operation for the
+/// interpreter and every tier.
+#[test]
+fn staged_logical_not_is_the_javascript_truthiness_negation() {
+    let mut stage = Concrete::new(std::ptr::null());
+    for (value, expected) in [
+        (Value::TRUE, false), (Value::FALSE, true), (Value::number(0.0), true),
+        (Value::number(-0.0), true), (Value::number(f64::NAN), true),
+        (Value::number(3.0), false), (Value::NULL, true), (Value::UNDEFINED, true),
+    ] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), 0], heap: None };
+        let Step::Value(word) = step(&mut stage, &mut frame,
+            Operation::LogicalNot { destination: 1, source: 0 }) else {
+            panic!("logical not produces a value")
+        };
+        assert_eq!(Value::from_bits(word), Value::boolean(expected), "{value:?}");
+        assert_eq!(Value::from_bits(frame.registers[1]), Value::boolean(expected));
+    }
 }
 
 /// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks

@@ -113,6 +113,16 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     #[inline(always)]
+    fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
+        -> (ir::Value, RegisterFact) {
+        let (yes, no) = (stage.builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
+            stage.builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+        let value = stage.builder.ins().select(holds, yes, no);
+        (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
+            Representation::Tagged))
+    }
+
+    #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: ir::Block)
         -> Option<(ir::Value, RegisterFact)> {
         let locals = self.locals?;

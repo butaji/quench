@@ -2483,10 +2483,9 @@ impl Lowering<'_, '_> {
             Op::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
                 && instruction.register_b() < self.unit.registers => {
                 let exit = self.guard_exit(state, pc32);
-                let truthy = self.truthiness(state, instruction.register_b(), exit);
-                let falsy = self.ins().bxor_imm_u(truthy, 1);
-                let boolean = self.boolean(falsy);
-                self.set_boolean(state, instruction.result_register(), boolean);
+                let operation = crate::staged::Operation::decode(instruction, |_| None)
+                    .expect("logical not decodes");
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
             }
             Op::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
@@ -2788,10 +2787,6 @@ impl Lowering<'_, '_> {
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
-    }
-
-    fn truthiness(&mut self, state: &mut State, register: Register, exit: ir::Block) -> ir::Value {
-        frame::register_truthiness(&mut self.builder, &mut self.registers, state, register, exit)
     }
 
     fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {

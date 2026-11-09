@@ -78,6 +78,11 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
+        (Value::boolean(condition).to_bits(), ())
+    }
+
+    #[inline(always)]
     fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: ())
         -> Option<(u64, ())> {
         let (locals, len) = self.locals?;

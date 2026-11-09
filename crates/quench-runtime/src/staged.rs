@@ -145,6 +145,9 @@ pub(crate) trait Frame<S: Stage> {
     /// Continue at the jump target.
     fn jump(&mut self, stage: &mut S) -> Self::Control;
 
+    /// The canonical boolean `condition`, with the fact this stage keeps of it.
+    fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
+
     /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
     /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
     #[inline(always)]
@@ -182,6 +185,8 @@ pub(crate) enum Operation {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
+    /// Define `destination` with the logical negation of register `source`'s truthiness.
+    LogicalNot { destination: Register, source: Register },
 }
 
 impl Operation {
@@ -214,6 +219,9 @@ impl Operation {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
+            Op::Unary if instruction.unary_operator()
+                == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
+                    destination: instruction.result_register(), source: instruction.register_b() },
             _ => return None,
         })
     }
@@ -280,6 +288,15 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::LogicalNot { destination, source } => match frame.truthiness(stage, source) {
+            Some(truthy) => {
+                let falsy = stage.not(truthy);
+                let (value, fact) = frame.boolean(stage, falsy);
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            }
+            None => Step::Unresolved,
+        },
     }
 }
 
