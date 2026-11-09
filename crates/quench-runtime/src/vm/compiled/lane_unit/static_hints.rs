@@ -2,7 +2,7 @@
 //! per-PC call targets (`static_call_targets`). A hint is never a proof: replacement and
 //! aliasing are handled by call-edge admission, which tries each target a site names behind
 //! its own body guard.
-use crate::bytecode::{Atom, Class, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, Op, PropertyDefinitionMode, StoreReceiver, WideInstruction};
+use crate::bytecode::{Atom, Class, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, PropertyDefinitionMode, StoreReceiver, WideInstruction};
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
@@ -111,9 +111,9 @@ impl Hints {
     /// result remains dynamic.
     fn note_method(&mut self, instruction: WideInstruction, target: u32, definitions: &[Option<Definition>]) {
         let op = instruction.op();
-        let atom = if op.field_store().map_or_else(|| op == Op::DefineField, |store| store.receiver == StoreReceiver::Register) {
+        let atom = if op.field_store().map_or_else(|| op.class().eq(Class::DefineField), |store| store.receiver == StoreReceiver::Register) {
             Some(instruction.atom_index())
-        } else if op == Op::DefinePropertyRecord
+        } else if op.class().eq(Class::DefinePropertyRecord)
             && matches!(instruction.property_definition_mode(), Some(PropertyDefinitionMode::Method | PropertyDefinitionMode::ReadonlyMethod))
             && let Some(Definition::Name(atom)) = definitions[usize::from(instruction.register_c())] {
             Some(atom)

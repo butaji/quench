@@ -607,11 +607,11 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
     instructions.iter().all(|instruction| {
         if instruction.writes_current_this()
             || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
-        match instruction.op() {
-            Op::LoadConst => program.constants.get(instruction.constant_index())
+        match instruction.op().class() {
+            Class::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
-            op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
-            op => op.js_denotation() == JsDenotation::NumericBinary
+            _ if instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
+            _ => instruction.op().js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
     })

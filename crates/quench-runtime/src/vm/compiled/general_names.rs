@@ -18,7 +18,7 @@ pub(super) fn lower_global_read(
     exact: &JsExactFallback,
 ) -> bool {
     let Some(destination) = register_offset(instruction.result_register()) else { return false };
-    // A call's receiver register reads `undefined` (`Op::LoadNameCall`).
+    // A call's receiver register reads `undefined` (`LoadNameCall`).
     let receiver = if instruction.op().is_load_name_call() {
         let Some(receiver) = register_offset(instruction.register_b()) else { return false };
         Some(receiver)

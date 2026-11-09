@@ -62,13 +62,5 @@ vm/program_store.rs NAMES 5
 #
 # category: per-op bodies — operation-specific work, not family dispatch.
 #
-vm/compiled/exact_budget.rs Binary 1
-vm/compiled/general_binary.rs Binary 1
-vm/compiled/general_names.rs LoadNameCall 1
-vm/compiled/lane_region.rs LoadConst 1
-vm/compiled/lane_unit/static_hints.rs DefineField 1
-vm/compiled/lane_unit/static_hints.rs DefinePropertyRecord 1
 vm/compiled/osr_loop.rs Call 1
 vm/compiled/osr_loop.rs GetField 1
-vm/specialize.rs Jump 1
-vm/wasm_js.rs LoadCapture 1
