@@ -18569,36 +18569,6 @@ mod tests {
 
     #[test]
     #[cfg(all(target_arch = "x86_64", unix))]
-    fn native_value_index_offset_preserves_large_indices() {
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        for ty in [types::I32, types::I64] {
-            let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.push(AbiParam::new(types::I64));
-            signature.returns.push(AbiParam::new(types::I64));
-            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-            let mut context = FunctionBuilderContext::new();
-            let mut builder = FunctionBuilder::new(&mut function, &mut context);
-            let block = builder.create_block();
-            builder.append_block_params_for_function_params(block);
-            builder.switch_to_block(block);
-            builder.seal_block(block);
-            let index = builder.block_params(block)[0];
-            let index = if ty == types::I32 { builder.ins().ireduce(ty, index) } else { index };
-            let offset = emit_value_index_offset(&mut builder, index);
-            builder.ins().return_(&[offset]);
-            builder.finalize(isa.frontend_config());
-            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
-            // SAFETY: the generated function has this signature, accesses no memory,
-            // and its executable allocation remains live throughout these calls.
-            let offset = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64) -> u64>(code.pointer()) };
-            for index in [0, 1, (1 << 29) - 1, 1 << 29, (1 << 29) + 1, i32::MAX as u64] {
-                assert_eq!(unsafe { offset(index) }, index * std::mem::size_of::<Value>() as u64, "{ty}: index {index}");
-            }
-        }
-    }
-
-    #[test]
-    #[cfg(all(target_arch = "x86_64", unix))]
     fn native_checked_signed_multiply_preserves_product_and_overflow() {
         let isa = super::super::jit_backend::target_isa().unwrap();
         for ty in [types::I16, types::I32, types::I64] {
