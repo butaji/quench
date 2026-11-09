@@ -129,6 +129,25 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(())
     }
 
+    /// A typed array element: the kind's load, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
+        Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
+    }
+
+    /// A typed array element store: the kind's conversion, then its width.
+    #[inline(always)]
+    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+        proof: EmitProof) -> Option<()> {
+        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
+        super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
+            super::typed_write(builder, load, address, value, absent);
+            value
+        });
+        Some(())
+    }
+
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
         let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };

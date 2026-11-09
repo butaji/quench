@@ -168,6 +168,14 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
+    /// The typed array element at `index`, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store the Number `value` at typed array element `index`.
+    #[inline(always)]
+    fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -212,6 +220,10 @@ pub(crate) enum Operation<W, P> {
     IndexRead { index: W, proof: P },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
+    /// A typed array element at `index`, as a Number word, under `proof`.
+    TypedIndexRead { index: W, proof: P },
+    /// Store the Number `value` at typed array element `index`, under `proof`.
+    TypedIndexWrite { index: W, value: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -265,6 +277,17 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
+        field @ (Operation::ReadField { .. } | Operation::WriteField { .. }) =>
+            field_step(stage, frame, field),
+        index => index_step(stage, frame, index),
+    }
+}
+
+/// A field read or write over a frame's object proof.
+#[inline(always)]
+fn field_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
         Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
             Some((value, _)) => Step::Value(value),
             None => Step::Unresolved,
@@ -274,11 +297,28 @@ fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                 Some(()) => Step::Value(value),
                 None => Step::Unresolved,
             },
+        _ => Step::Unresolved,
+    }
+}
+
+/// A dense or typed element read or write over a frame's view proof.
+#[inline(always)]
+fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
         Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
             Some(value) => Step::Value(value),
             None => Step::Unresolved,
         },
         Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
+            Some(()) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::TypedIndexRead { index, proof } => match frame.typed_index_read(stage, index, proof) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::TypedIndexWrite { index, value, proof } => match frame.typed_index_write(stage, index, value, proof) {
             Some(()) => Step::Value(value),
             None => Step::Unresolved,
         },
