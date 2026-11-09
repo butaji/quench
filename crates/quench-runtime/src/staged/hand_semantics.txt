@@ -50,18 +50,6 @@ vm/lane_exits.rs COUNT 6
 vm/native_graph.rs COUNT 2
 vm/native_op_profile.rs COUNT 2
 vm/program_store.rs COUNT 1
-vm/program_store.rs WasmArrayNew 1
-vm/program_store.rs WasmArrayNewData 1
-vm/program_store.rs WasmArrayNewDefault 2
-vm/program_store.rs WasmArrayNewElem 1
-vm/program_store.rs WasmArrayNewFixed 2
-vm/program_store.rs WasmDescriptorCast 1
-vm/program_store.rs WasmDescriptorTest 1
-vm/program_store.rs WasmIndirectTarget 1
-vm/program_store.rs WasmRefCast 1
-vm/program_store.rs WasmRefFunc 1
-vm/program_store.rs WasmRefGetDesc 1
-vm/program_store.rs WasmRefTest 1
 #
 # category: per-op bodies — operation-specific work, not family dispatch.
 #

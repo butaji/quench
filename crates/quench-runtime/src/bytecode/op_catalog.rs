@@ -68,6 +68,16 @@ pub(crate) enum Class {
     WasmIndirectTarget,
     WasmRefFunc,
     WasmUnreachable,
+    WasmRefGetDesc,
+    WasmArrayNewData,
+    WasmArrayNewElem,
+    WasmArrayNew,
+    WasmArrayNewDefault,
+    WasmArrayNewFixed,
+    WasmDescriptorTest,
+    WasmDescriptorCast,
+    WasmRefTest,
+    WasmRefCast,
     WasmMemoryLoad,
     WasmMemoryStore,
     CallArray,
@@ -180,6 +190,17 @@ macro_rules! class_of {
     (WasmIndirectTarget) => { Class::WasmIndirectTarget };
     (WasmRefFunc) => { Class::WasmRefFunc };
     (WasmUnreachable) => { Class::WasmUnreachable };
+    (WasmRefGetDesc) => { Class::WasmRefGetDesc };
+    (WasmArrayNewData) => { Class::WasmArrayNewData };
+    (WasmArrayNewElem) => { Class::WasmArrayNewElem };
+    (WasmArrayNew) => { Class::WasmArrayNew };
+    (WasmArrayNewDefault) => { Class::WasmArrayNewDefault };
+    (WasmArrayNewFixed) => { Class::WasmArrayNewFixed };
+    (WasmDescriptorTest) => { Class::WasmDescriptorTest };
+    (WasmDescriptorCast) => { Class::WasmDescriptorCast };
+    (WasmRefTest) => { Class::WasmRefTest };
+    (WasmRefCast) => { Class::WasmRefCast };
+
     (WasmMemoryLoad) => { Class::WasmMemoryLoad };
     (WasmMemoryStore) => { Class::WasmMemoryStore };
     (CallArray) => { Class::CallArray };
@@ -374,30 +395,7 @@ macro_rules! traits_of {
 }
 
 
-/// The guarded JavaScript denotation available to the shared compiled region
-/// analyzer. This describes an instruction operation, never a source pattern.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsDenotation {
-    Unsupported,
-    Noop,
-    Jump,
-    LoadConst,
-    Move,
-    GetField,
-    FieldStore,
-    NumericBinary,
-    NumericUnary,
-    /// ToString of each register of a window, concatenated in order.
-    StringConcatenation,
-    CapturedValue,
-    PlainLocalLoad,
-    PlainLocalStore,
-    Return,
-    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
-    ObjectAllocation,
-    /// A literal's own data property definition, by name, through its cache site.
-    FieldDefinition,
-}
+pub(crate) use super::denotation::JsDenotation;
 
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
 /// table load (unlike `Op::class()`), for per-instruction loops.

@@ -732,7 +732,7 @@ impl ImmediateLayout {
 }
 
 #[macro_use]
-mod op_catalog;
+mod op_catalog; mod denotation;
 pub(crate) use op_catalog::{Class, JsDenotation, Traits};
 
 macro_rules! opcodes {
