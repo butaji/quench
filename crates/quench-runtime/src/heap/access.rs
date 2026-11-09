@@ -806,9 +806,6 @@ impl Heap {
         self.properties.slot_observation(shape, slot).ty()
     }
 
-    /// Whether `slot` of `shape` already holds any target shape, so no store widens its target.
-    pub(crate) fn slot_target_settled(&self, shape: u32, slot: usize) -> bool { self.properties.slot_target_settled(shape, slot) }
-
     pub(crate) fn subscribe_shape(&mut self, shape: u32,
         code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
         self.properties.subscribe_shape(shape, code)

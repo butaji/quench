@@ -1,7 +1,7 @@
 //! A field store's in-place case in general dispatch code: an own data slot of its site's
 //! cached exact shape in plain arena storage, for a value of the class the site's last
 //! helper store proved its slot representation already holds (`record_store_class`). Slot
-//! representations only widen (`ValueArena::note_slot_target`), and rewriting or invalidating
+//! representations only widen (`ValueArena::note_slot_value`), and rewriting or invalidating
 //! the entry clears the class, so the proof holds until then. Any other store takes the
 //! helper (`lane_field_set`), which records the proof.
 use super::{emit_js_cached_field_slot, emit_js_guard, emit_js_payload_word, emit_lane_helper_call, emit_unlogged_property_store_guard, Host,
@@ -13,7 +13,7 @@ use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
 
-/// The value classes a store proof names: each one `ValueArena::note_slot_target` joins alike
+/// The value classes a store proof names: each one `ValueArena::note_slot_value` joins alike
 /// for every value of it, so one store that widened nothing proves every later one. Objects
 /// join their own shape as the slot's target, so theirs needs a settled target too.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,9 +54,7 @@ impl StoreClass {
 pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Value) {
     let Some(class) = StoreClass::of(value) else { return };
     let index = vm.field_cache_index(site);
-    let cache = vm.field_cache_entry(site);
-    if !vm.field_cache_records(index) || (class == StoreClass::DirectObject && vm.heap.tracks_slot_representations()
-        && !vm.heap.slot_target_settled(cache.receiver, usize::from(cache.slot))) {
+    if !vm.field_cache_records(index) {
         return;
     }
     let word = &mut vm.field_caches.stored_mut(index)[StoreClass::WORD];

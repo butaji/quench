@@ -2740,7 +2740,6 @@ function-lines crates/quench-runtime/src/subset_tests.rs::try_finally_bodies_kee
 function-lines crates/quench-runtime/src/subset_tests.rs::unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead 188
 function-lines crates/quench-runtime/src/value.rs::tests::number_encoding_preserves_arbitrary_float_bits_and_integer_boundaries 51
 function-lines crates/quench-runtime/src/value.rs::tests::values_round_trip 67
-function-lines crates/quench-runtime/src/value_vec.rs::ValueArena::register_derived_shape 41
 function-lines crates/quench-runtime/src/value_vec.rs::tests::young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor 48
 function-lines crates/quench-runtime/src/value_vec/buffer.rs::PropertyBuffer::grow 57
 function-lines crates/quench-runtime/src/value_vec/buffer.rs::PropertyBuffer::reserve_address_space 43

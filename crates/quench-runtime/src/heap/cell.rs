@@ -2351,8 +2351,8 @@ impl Object {
     /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
     /// Without extras it was never a prototype; the move still retires shape readers.
     #[inline(always)]
-    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, target: crate::value_vec::TargetShape, shape: u32) {
-        properties.note_shape_target(shape, slot, value, target);
+    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+        properties.note_shape_value(shape, slot, value);
         debug_assert!(self.admits_plain_append(slot, value));
         match value.to_narrow().filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0) {
             Some(narrow) => self.store_payload_narrow(slot, narrow),
