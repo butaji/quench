@@ -4803,7 +4803,7 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
 /// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
 /// operator, which lowering leaves naming register 0 and nothing reads.
 fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
-    instruction.op() == Op::WasmSimd
+    instruction.op().is_wasm_simd()
         && field == crate::bytecode::InstructionField::C
         && crate::wasm::simd::SimdKernel::of(instruction.imm())
             .is_some_and(|(kernel, _)| kernel.right.is_none())
@@ -8756,7 +8756,7 @@ impl<H: Host> Analysis<'_, H> {
         result: Option<crate::WasmType>,
     ) -> Option<()> {
         let op = instruction.op();
-        if op != Op::Return && instruction.returns_from_frame() {
+        if !op.is_return() && instruction.returns_from_frame() {
             return None;
         }
         if !super::dispatch_fast::lane_fields_fit(instruction, function) {
@@ -8777,7 +8777,7 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
-                && op != Op::WasmInstanceBinding
+                && !op.is_wasm_instance_binding()
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
                         && instruction.field_value(*field) == memory
@@ -11240,7 +11240,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             };
             return true;
         }
-        if op == Op::WasmMemorySize {
+        if op.is_wasm_memory_size() {
             let bytes = self.body.core.builder.ins().load(
                 types::I64,
                 MemFlagsData::trusted(),
@@ -11252,7 +11252,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.write(a, Kind::I32, pages);
             return true;
         }
-        if op == Op::WasmMemoryCopy {
+        if op.is_wasm_memory_copy() {
             let (destination, source) = instruction.register_pair();
             let destination = self.read(destination, Kind::I32);
             let destination = self.body.core.builder.ins().uextend(types::I64, destination);
@@ -11293,7 +11293,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .call_indirect(signature, target, &[destination, source, length]);
             return true;
         }
-        if op == Op::WasmMemoryFill {
+        if op.is_wasm_memory_fill() {
             let (destination, _) = instruction.register_pair();
             let destination = self.read(destination, Kind::I32);
             let destination = self.body.core.builder.ins().uextend(types::I64, destination);
@@ -11382,7 +11382,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     .expect("planned");
                 let kind = self.analysis.constant_kind(constant);
                 let bits = self.analysis.constant_bits(constant);
-                if op == Op::LoadConst {
+                if op.is_load_const() {
                     self.write_constant(a, kind, bits);
                 } else {
                     let window = instruction.register_window();
@@ -11420,7 +11420,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => {
                 let value = self.read(a, Kind::I32);
                 let (taken, other) = (instruction.jump_target() as usize, pc + 1);
-                if op == Op::WasmJumpI32NonZero {
+                if op.is_wasm_jump_i32_non_zero() {
                     self.branch(pc, value, taken, other);
                 } else {
                     self.branch(pc, value, other, taken);
@@ -11778,7 +11778,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .enumerate()
             .filter(|(pc, instruction)| {
-                plan.reachable(*pc) && instruction.op() == Op::WasmBranchTable
+                plan.reachable(*pc) && instruction.op().is_wasm_branch_table()
             })
             .map(|(_, instruction)| instruction.a())
             .collect();
@@ -18508,7 +18508,7 @@ mod tests {
     fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
-        let pc = body.instructions().position(|instruction| instruction.op() == Op::Throw).unwrap();
+        let pc = body.instructions().position(|instruction| instruction.op().is_throw()).unwrap();
         let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);

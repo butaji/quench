@@ -364,6 +364,12 @@ op_predicates! {
     is_wasm_f64_load => WasmF64Load,
     is_wasm_f64_store => WasmF64Store,
     is_wasm_f64_binary => WasmF64Binary,
+    is_throw => Throw,
+    is_wasm_simd => WasmSimd,
+    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
+    is_wasm_memory_size => WasmMemorySize,
+    is_wasm_memory_copy => WasmMemoryCopy,
+    is_wasm_memory_fill => WasmMemoryFill,
 }
 
 #[cfg(test)]
