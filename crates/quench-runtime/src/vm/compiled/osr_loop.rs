@@ -3170,7 +3170,7 @@ pub(super) fn verify_region<'a>(
         let pc = region.header + offset as u32;
         let numeric = !instruction.op().is_move()
             && !region.identity_branches.contains_key(&pc);
-        if numeric && matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse) {
+        if numeric && instruction.op().traits().has(crate::bytecode::Traits::LEAF_BINARY) {
             for operand in [instruction.operand_b(), instruction.operand_c()] {
                 if operand.kind() == Some(OperandKind::Constant) {
                     let index = usize::from(operand.payload());
