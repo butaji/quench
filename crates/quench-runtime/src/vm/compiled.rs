@@ -7750,6 +7750,11 @@ unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, obj
 unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
     // SAFETY: as `lane_field_get`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    // Collection debt leaves before the store, as the verified lowering's Grow exit does:
+    // the lane performs the store and the VM collects at its rooted safepoint.
+    if vm.heap.should_collect() {
+        return 0;
+    }
     let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
     u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
 }
