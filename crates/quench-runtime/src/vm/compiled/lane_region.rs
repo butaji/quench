@@ -4046,15 +4046,24 @@ impl Lowering<'_, '_> {
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
         let groups = super::object_slots::field_load_groups(shapes)?;
         if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
-            if !family.valid() { return None; }
-            use crate::staged::ic::{IcOp, Reached};
-            let load = IcOp::LoadSlot { slot: family.slot, form: crate::staged::Form::of(family.storage, family.storage_len),
-                storage_len: family.storage_len };
-            let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
-            return crate::staged::ic::run(&mut stage, &[IcOp::GuardShapes(members), load],
-                Reached { record: object, shape: Some(shape), inline: Some(inline) }, None, exit);
+            let at = crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) };
+            return self.own_slot_read_guarded(*family, Some(members), at, properties, exit);
         }
         self.family_switch_read(state, (object, shape, inline, properties), &groups, exit)
+    }
+
+    /// `field`'s own slot of the object `at` reached, through the arena at `properties`, as the
+    /// staged op list `[GuardShapes(members), LoadSlot]` (`staged::ic`); with no members, the
+    /// caller has matched the shape. `None` for a plan no layout proof admits.
+    fn own_slot_read_guarded(&mut self, field: NativeFieldLoad, members: Option<&[u32]>,
+        at: crate::staged::ic::Reached<ir::Value, ir::Value>, properties: ir::Value, exit: ir::Block) -> Option<ir::Value> {
+        use crate::staged::ic::IcOp;
+        if !field.valid() { return None; }
+        let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
+            storage_len: field.storage_len };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
+        crate::staged::ic::run(&mut stage, ops, at, None, exit)
     }
 
     /// Layout families each tested by their shape set and read at their slot, joined; a shape
@@ -4071,8 +4080,8 @@ impl Lowering<'_, '_> {
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
             let read = match field.holder {
-                None => CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
+                None => self.own_slot_read_guarded(*field, None,
+                    crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) }, properties, exit)?,
                 Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
             };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
