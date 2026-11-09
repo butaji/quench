@@ -8322,7 +8322,7 @@ fn lane_loop_run<H: Host>(
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
     let outcome = unsafe {
-        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt)
+        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize)
     };
     if site.diagnostics {
         site.native_entry_attempts
@@ -8689,6 +8689,7 @@ fn lane_inlining_region<H: Host>(
         let body = code.function_get(target.function as usize)?;
         Some(super::compiled::InlineCallee {
             callee,
+            function: target.function,
             params: body.params,
             registers: body.registers,
             instructions: body.instructions().collect(),

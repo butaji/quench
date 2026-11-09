@@ -79,6 +79,54 @@ fn loop_unit(function: &Function) -> lane_unit::Unit {
     }
 }
 
+/// Map an inlining loop region onto the lane unit: its instructions' jump targets become
+/// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
+/// carry the callee identity, function, call window and result.
+fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
+    let inlining = region.inlining.as_deref()?;
+    let count = region.instructions().len();
+    let header = region.header as usize;
+    let mut instructions = region.instructions().to_vec();
+    for instruction in &mut instructions {
+        if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
+            let target = instruction.imm() as usize;
+            let local = target.checked_sub(header).filter(|local| *local < count).unwrap_or(count);
+            instruction.set_jump_target(local as u32);
+        }
+    }
+    let origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
+        osr_loop::Origin::Caller(pc) => lane_unit::Origin::Caller(*pc),
+        osr_loop::Origin::Inlined { frame, pc } => lane_unit::Origin::Inlined { frame: usize::from(*frame), pc: *pc },
+        osr_loop::Origin::Leave(pc) => lane_unit::Origin::Caller(*pc),
+    }).collect();
+    let frames: Vec<lane_unit::Frame> = inlining.frames.iter().map(|frame| lane_unit::Frame {
+        recovery: lane_unit::CallRecovery::Materialize,
+        parent: None,
+        call: frame.call,
+        target: lane_unit::CallTarget {
+            callee: lane_unit::CalleeBinding::Identity(frame.callee),
+            function: frame.function,
+        },
+        callee_register: frame.callee_register,
+        receiver: frame.receiver,
+        window: frame.window,
+        arguments: frame.arguments,
+        result: Some(frame.result),
+        base: frame.base,
+        registers: frame.registers,
+        alternative: None,
+        function_call: None,
+    }).collect();
+    let markers: Vec<usize> = (0..frames.len()).map(|frame| origins.iter().position(|origin|
+        matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame)).unwrap_or(0)).collect();
+    let registers = frames.iter().map(|frame| frame.base + frame.registers)
+        .max().unwrap_or(0).max(inlining.caller_registers);
+    Some(lane_unit::Unit {
+        instructions, origins, frames, markers,
+        caller_registers: inlining.caller_registers, registers, end: count as u32,
+    })
+}
+
 /// The loop's cached field reads, keyed by their field-cache site: the lane specializer's
 /// field-site map, from the observation's descriptors.
 fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
@@ -105,19 +153,22 @@ pub(in crate::vm) fn start_osr_region(
     helpers: LaneHelpers,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    let unit = loop_unit(program.function(function_id as usize));
+    let plain = loop_unit(program.function(function_id as usize));
+    let inlined = region.inlining.is_some().then(|| inlining_unit(region)).flatten();
+    let unit = inlined.as_ref().unwrap_or(&plain);
     let fields = loop_fields(region, observation);
-    // The lane unit models the loop's registers and locals; its captures, fields and
-    // arrays still come from the loop entry record, so those regions keep the private
-    // lowering until the lane unit carries them too.
     let simple = region.inlining.is_none();
-    let lane = simple.then(|| super::lane_region::RegionSpecializer {
-        function_id, unit: &unit, helpers, fields: &fields,
+    let lane = (simple || inlined.is_some()).then(|| super::lane_region::RegionSpecializer {
+        function_id, unit, helpers, fields: &fields,
         global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
         direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
         plan: super::lane_region::RegionPlan {
             coverage: super::lane_region::Coverage::Loop {
-                header: region.header as usize, backedge: region.backedge as usize, poll: false },
+                header: if inlined.is_some() { 0 } else { region.header as usize },
+                backedge: if inlined.is_some() {
+                    unit.instructions.len().saturating_sub(1)
+                } else { region.backedge as usize },
+                poll: false },
             completion: super::lane_region::Completion::StatusAndPc,
             views: super::lane_region::ElementViews::Dense,
         },
@@ -310,5 +361,64 @@ mod tests {
         let interpreted = run(crate::ExecutionMode::Interpreted);
         let compiled = run(crate::ExecutionMode::Compiled);
         assert_eq!(interpreted, compiled);
+    }
+    /// An inlining loop region maps onto a lane unit with one frame, inlined origins and a
+    /// call marker, before it is offered to `RegionSpecializer`.
+    #[test]
+    fn an_inlining_region_maps_onto_a_lane_unit() {
+        let program = crate::Engine::specialize(
+            "function callee(o){ return o.x; } function caller(o){ let s=0; for(let i=0;i<10;i++){ s += o.callee(o); } return s; } caller({callee: callee, x: 1});",
+            "inlining-unit.js").unwrap();
+        let caller_id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "caller")).unwrap() as u32;
+        let callee_id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "callee")).unwrap() as u32;
+        let function = program.function(caller_id as usize);
+        let decoded: Vec<_> = function.instructions().collect();
+        let constants: Vec<crate::Value> = program.constants.iter()
+            .map(|constant| super::super::facts::immediate(constant).unwrap_or(crate::Value::UNDEFINED))
+            .collect();
+        let live = program.register_root_masks(caller_id).unwrap();
+        let callee = program.function(callee_id as usize);
+        let mut resolve = |_chain: &[super::super::FieldUse], _capture: Option<u16>| {
+            Some(super::super::osr_loop::InlineCallee {
+                callee: crate::Value::UNDEFINED,
+                function: callee_id,
+                params: callee.params,
+                registers: callee.registers,
+                instructions: callee.instructions().collect(),
+                live: program.register_root_masks(callee_id).unwrap(),
+            })
+        };
+        let (header, backedge) = decoded.iter().enumerate().find_map(|(pc, instruction)| {
+            (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && (instruction.jump_target() as usize) <= pc)
+                .then(|| (instruction.jump_target(), pc as u32))
+        }).expect("the caller has a loop");
+        let region = super::super::osr_loop::inline_region(function, &decoded, &constants,
+            &program.field_sites, live, header, backedge, &mut resolve)
+            .expect("the loop inlines");
+        let unit = inlining_unit(&region).expect("the region maps onto a lane unit");
+        assert_eq!(unit.frames.len(), 1, "one inlined frame");
+        assert!(unit.origins.iter().any(|origin|
+            matches!(origin, lane_unit::Origin::Inlined { .. })), "inlined origins");
+        assert!(!unit.markers.is_empty(), "the call marker");
+    }
+    /// An inlined callee's loop executes through the lane unit when it lowers.
+    #[test]
+    fn an_inlined_call_loop_runs_through_the_lane_unit() {
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function callee(o){ return o.x; } function caller(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+callee(o))|0; } } return s; } throw caller({x:1});",
+            "lane-osr-inline.js").unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        let error = vm.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(crate::Value::integer(200_000)));
+        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+            "the inlining lane OSR path ran");
     }
 }

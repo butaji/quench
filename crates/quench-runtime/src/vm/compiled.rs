@@ -6320,9 +6320,10 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
+        lane_context: usize,
     ) -> LoopOutcome {
         if self.lane {
-            return unsafe { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt) };
+            return unsafe { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) };
         }
         // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
         // native code runs. The interrupt reference is used only to construct raw ABI fields.
@@ -6385,12 +6386,14 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
+        lane_context: usize,
     ) -> LoopOutcome {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
             native.dispatch.bind_native_storage(vm);
+            native.dispatch.lane_context = lane_context;
             // The loop entry's captures in the dense slot view the lane capture reads use.
             let captures = if region.captures.is_empty() { Vec::new() } else {
                 let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);

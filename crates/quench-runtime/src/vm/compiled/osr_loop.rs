@@ -767,6 +767,15 @@ pub(crate) struct InlineFrame {
     pub(crate) call: u32,
     /// The function inlined; `guard` verifies its current field or capture at entry.
     pub(crate) callee: Value,
+    /// The callee's function id.
+    pub(crate) function: u32,
+    /// The caller register the call read the callee from.
+    pub(crate) callee_register: Register,
+    /// The call's first argument register and count.
+    pub(crate) window: Register,
+    pub(crate) arguments: u16,
+    /// The caller register the call's result lands in.
+    pub(crate) result: Register,
     pub(crate) guard: InlineGuard,
     /// The caller register holding the call's receiver, which the region never writes.
     pub(crate) receiver: Register,
@@ -782,7 +791,7 @@ pub(crate) const MAX_INLINE_PARAMS: usize = 8;
 
 /// Where an inlining region's PC comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Origin {
+pub(crate) enum Origin {
     /// The caller's instruction at this PC.
     Caller(u32),
     /// The instruction at `pc` of `frame`'s callee.
@@ -795,7 +804,7 @@ enum Origin {
 /// header, then each jump out of the region takes one past them (`Origin::Leave`).
 pub(crate) struct Inlining {
     /// By offset from the header.
-    origins: Vec<Origin>,
+    pub(crate) origins: Vec<Origin>,
     pub(crate) frames: Vec<InlineFrame>,
     /// The captures inlined callees read, by the frame and its depth-0 slot: a callee's
     /// `LoadCapture` reads `CALLEE_CAPTURE` with its index here, which the entry resolves
@@ -819,6 +828,7 @@ pub(crate) const INLINED_EXIT: u32 = 1 << 31;
 /// What `inline_region` needs of a call's callee.
 pub(crate) struct InlineCallee<'a> {
     pub(crate) callee: Value,
+    pub(crate) function: u32,
     pub(crate) params: u16,
     pub(crate) registers: u16,
     pub(crate) instructions: Vec<WideInstruction>,
@@ -1150,6 +1160,11 @@ pub(super) fn inline_region<'a>(
                 frame: InlineFrame {
                     call: pc,
                     callee: callee.callee,
+                    function: callee.function,
+                    callee_register: function_register,
+                    window,
+                    arguments: argc,
+                    result: instruction.result_register(),
                     guard: capture.map_or(InlineGuard::Field(usize::MAX), InlineGuard::Capture),
                     receiver,
                     base,
