@@ -19,6 +19,7 @@
 use crate::bytecode::Class;
 
 use super::*;
+use super::super::specializer::Specializer;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
 use crate::typed_ir::Division;
@@ -466,7 +467,7 @@ enum Liveness<'a> {
 
 /// How much of the unit must run natively: a prefix (a lane body, which leaves to the lane
 /// anywhere), or all of it but the leaves to its source (a static typed region).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
 pub(super) enum Coverage {
     Prefix,
@@ -485,7 +486,7 @@ impl Coverage {
 
 /// How a run ends: a lane body's status and result word (`LaneExit`), or a static typed
 /// region's source PC, which its canonical code continues at.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Completion {
     StatusAndPc,
     SourcePc,
@@ -1134,6 +1135,44 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
     fields
 }
 
+/// What a region specializer is asked to produce: how much of the unit must run, how its
+/// runs end, and which element views it may assume. The division and the facts it folds are
+/// `VmFacts`, so AOT (`Frozen`) and JIT (`Online`) are two plans over one lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RegionPlan {
+    pub(super) coverage: Coverage,
+    pub(super) completion: Completion,
+    pub(super) views: ElementViews,
+}
+
+/// Futamura's first projection for one region: the same `lower` a lane body, a static typed
+/// region and a numeric region run, parameterized by its `RegionPlan`. AOT and JIT both call
+/// this specializer; only the plan and the `VmFacts` division differ.
+pub(super) struct RegionSpecializer<'p> {
+    pub(super) function_id: u32,
+    pub(super) unit: &'p super::lane_unit::Unit,
+    pub(super) helpers: LaneHelpers,
+    pub(super) fields: &'p BTreeMap<u16, Vec<NativeFieldLoad>>,
+    pub(super) global_reads: &'p BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    pub(super) facts: VmFacts<'p>,
+    pub(super) generic: &'p [usize],
+    pub(super) direct: &'p BTreeMap<usize, *const DirectCallee>,
+    pub(super) frame_captures: &'p [(usize, usize)],
+    pub(super) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
+    pub(super) plan: RegionPlan,
+}
+
+impl Specializer for RegionSpecializer<'_> {
+    type Residual = LoweredRegion;
+
+    fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
+        lower(program, self.function_id, self.unit, self.helpers, self.fields,
+            self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
+            self.isa, self.plan.coverage, self.plan.completion, self.plan.views)
+            .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
+    }
+}
+
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
@@ -1150,8 +1189,11 @@ pub(super) fn lower_body(
     frame_captures: &[(usize, usize)],
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
-    let region = lower(program, function_id, unit, helpers, fields, global_reads, vm, generic, direct, frame_captures,
-        &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense)?;
+    let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
+        generic, direct, frame_captures, isa: &*isa,
+        plan: RegionPlan { coverage: Coverage::Prefix, completion: Completion::StatusAndPc,
+            views: ElementViews::Dense } }
+        .specialize(program).ok()?;
     let clif = native_dump_directory().map(|_| region.function.to_string());
     Some(LoweredLane { region, clif })
 }
@@ -2309,15 +2351,17 @@ impl Lowering<'_, '_> {
             // and an untyped one is taken for an int, tested once, which leaves where it is not.
             Op::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
                 let exit = self.guard_exit(state, pc32);
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric {
-                    destination: instruction.result_register(), source: instruction.register_b() }));
+                let operation = crate::staged::Operation::decode(instruction, |_| None)
+                    .expect("ToNumeric decodes");
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
             }
             // Anything but `null` and `undefined` is coercible; those take the lane's TypeError.
             Op::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers => {
                 let exit = self.guard_exit(state, pc as u32);
-                self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                    crate::staged::Operation::RequireObjectCoercible { register: instruction.register_b() });
+                let operation = crate::staged::Operation::decode(instruction, |_| None)
+                    .expect("RequireObjectCoercible decodes");
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
             }
             Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
@@ -2343,17 +2387,19 @@ impl Lowering<'_, '_> {
                         RegisterFact::definition(super::facts::constant_type(constant), Representation::Tagged));
                     Some(true)
                 } else {
-                    self.constant_value(index).map(|(value, ty)| {
-                        self.step(state, frame::Edges::Value, crate::staged::Operation::LoadConst {
-                            destination: instruction.result_register(), constant: crate::staged::Constant { value, ty } });
-                        true
-                    })
+                    crate::staged::Operation::decode(instruction, |index|
+                        self.constant_value(index).map(|(value, ty)| crate::staged::Constant { value, ty }))
+                        .map(|operation| {
+                            self.step(state, frame::Edges::Value, operation);
+                            true
+                        })
                 }
             }
             op if plain && op.js_denotation() == JsDenotation::Move => {
-                self.step(state, frame::Edges::Value, crate::staged::Operation::Move {
-                    destination: instruction.result_register(), source: instruction.register_b() });
-                Some(true)
+                crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
+                    self.step(state, frame::Edges::Value, operation);
+                    true
+                })
             }
             Op::Return if plain && self.completion == Completion::Number => {
                 self.return_number(state, instruction.register_a(), pc32);
@@ -2361,8 +2407,9 @@ impl Lowering<'_, '_> {
             }
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
-                self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                    crate::staged::Operation::LoadThis { destination: instruction.result_register() });
+                let operation = crate::staged::Operation::decode(instruction, |_| None)
+                    .expect("LoadThis decodes");
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
@@ -5561,5 +5608,28 @@ mod tests {
             }
         }
         assert_eq!(arithmetic, 3, "{native}");
+    }
+
+    /// The JIT lane plan and the AOT typed-region plan are two `RegionPlan`s over the one
+    /// `RegionSpecializer`; neither has its own lowering path.
+    #[test]
+    fn one_region_specializer_drives_the_jit_and_aot_plans() {
+        let program = crate::Engine::specialize(
+            "function accumulate(x) { let s = 0; for (let i = 0; i < x; i++) { s = (s + i) | 0; } return s; } accumulate(4);",
+            "region-plan.js").unwrap();
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap() as u32;
+        let unit = super::super::lane_unit::unit(&program, id, program.function(id as usize), &|_, _| Vec::new(), &|_| None).unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let helpers = LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]);
+        let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
+            fields: &BTreeMap::new(), global_reads: &BTreeMap::new(), facts: VmFacts::STATIC,
+            generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa, plan }
+            .specialize(&program).expect("the region lowers");
+        let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
+            completion: Completion::StatusAndPc, views: ElementViews::Dense });
+        let aot = specialize(RegionPlan { coverage: Coverage::Full,
+            completion: Completion::SourcePc, views: ElementViews::Dense });
+        assert!(jit.native > 0 && aot.native > 0, "both plans lower the same unit");
     }
 }

@@ -516,12 +516,17 @@ fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) 
 /// frameless JIT bodies and linked AOT regions, without a canonical VM frame.
 pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
     -> Option<super::js_compiled::JsJitArtifact> {
+    use super::specializer::Specializer;
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa()?;
-    let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], &*isa,
-        lane_region::Coverage::Full, lane_region::Completion::Number, lane_region::ElementViews::Dense)?;
+    let region = lane_region::RegionSpecializer { function_id, unit: &unit,
+        helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
+        global_reads: &std::collections::BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
+        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
+        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
+            completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
+        .specialize(program).ok()?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
         |code| Some(code.to_vec())).ok()?;
@@ -2432,9 +2437,12 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
-            lane_region::lower(program, function_id, &unit, helpers,
-                &std::collections::BTreeMap::new(), global_reads, facts, &[], &std::collections::BTreeMap::new(), &[], isa,
-                coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
+            use super::specializer::Specializer;
+            lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
+                fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
+                direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
+                plan: lane_region::RegionPlan { coverage, completion: lane_region::Completion::SourcePc, views } }
+                .specialize(program).ok().filter(|region| region.native != 0)
                 .map(|mut region| {
                     let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
                     region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, symbol);
@@ -6573,7 +6581,7 @@ pub(super) fn compile_eager_native<H: Host>(
     if options.backend == super::native_graph::NativeJsBackend::Stencil && super::native_stencil::available() {
         return super::native_stencil::compile_program(program).map(|(native, _)| native);
     }
-    use super::specialize::Specializer;
+    use super::specializer::Specializer;
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
         .ok_or("native target unavailable")?;

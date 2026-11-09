@@ -157,6 +157,28 @@ fn step_moves_and_defines_constants_on_the_concrete_stage() {
     assert_eq!(Value::from_bits(frame.registers[3]), constant);
 }
 
+/// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks
+/// `Staged` decodes to one operation, and every other opcode is explicitly `Exact`.
+#[test]
+fn every_staged_opcode_decodes_to_one_operation() {
+    use crate::bytecode::{Op, Semantics, WideInstruction};
+    let constants = [Constant::untyped(Value::number(1.0))];
+    let staged = [Op::Move, Op::LoadConst, Op::Jump, Op::JumpFalse, Op::JumpTrue,
+        Op::LoadThis, Op::RequireObjectCoercible, Op::ToNumeric];
+    for op in staged {
+        assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
+        let instruction = WideInstruction::new(op, 1, 2, 3, 0);
+        assert!(Operation::decode(instruction, |index| constants.get(index).copied()).is_some(),
+            "{op:?} must decode to a staged operation");
+    }
+    for index in 0..Op::COUNT {
+        let op = Op::from_index(index).unwrap();
+        if !staged.contains(&op) {
+            assert_eq!(op.semantics(), Semantics::Exact, "{op:?} must be an explicit exact path");
+        }
+    }
+}
+
 /// The edge a `JumpIf` takes on the concrete stage for `value`.
 fn jump_if_edge(value: Value, taken: bool, heap: &Heap) -> Edge {
     let mut stage = Concrete::new(std::ptr::null());

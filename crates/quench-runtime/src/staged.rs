@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::Register;
+use crate::bytecode::{Op, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 pub(crate) mod numeric;
@@ -167,6 +167,34 @@ pub(crate) enum Operation {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
+}
+
+impl Operation {
+    /// The staged operation `instruction` denotes, with the operands the catalog fixes.
+    /// `None` where the opcode has no staged operation, or where its constant is not
+    /// available to this tier: the caller then takes its own exact path.
+    pub(crate) fn decode(instruction: WideInstruction,
+        constant: impl FnOnce(usize) -> Option<Constant>) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::Move => Self::Move {
+                destination: instruction.result_register(), source: instruction.register_b() },
+            Op::LoadConst => Self::LoadConst {
+                destination: instruction.result_register(),
+                constant: constant(instruction.constant_index())? },
+            Op::Jump => Self::Jump,
+            Op::JumpFalse => Self::JumpIf {
+                register: instruction.register_a(), taken: false },
+            Op::JumpTrue => Self::JumpIf {
+                register: instruction.register_a(), taken: true },
+            Op::LoadThis => Self::LoadThis {
+                destination: instruction.result_register() },
+            Op::RequireObjectCoercible => Self::RequireObjectCoercible {
+                register: instruction.register_b() },
+            Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
+                destination: instruction.result_register(), source: instruction.register_b() }),
+            _ => return None,
+        })
+    }
 }
 
 /// Which of an instruction's two control edges it takes.
