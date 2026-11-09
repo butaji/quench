@@ -4,6 +4,34 @@
 use super::{ControlFlowLayout, FieldLayout, Op};
 
 impl Op {
+    /// A leaf record that only moves or computes an immediate value.
+    pub(crate) const fn is_leaf_value(self) -> bool {
+        matches!(self, Op::Nop | Op::LoadConst | Op::Move | Op::Unary | Op::IncDec | Op::Return)
+    }
+
+    /// A branch a leaf may hold.
+    pub(crate) const fn is_leaf_jump(self) -> bool {
+        matches!(self, Op::Jump | Op::JumpFalse | Op::JumpTrue)
+    }
+
+    /// A binary record a leaf admits with register or constant operands.
+    pub(crate) const fn is_leaf_binary(self) -> bool {
+        self.is_binary_arithmetic() || matches!(self, Op::JumpBinaryFalse)
+    }
+
+    /// A by-name operation, the set the frame-entry diagnostics list.
+    #[cfg_attr(not(feature = "profile-lane-exits"), allow(dead_code))]
+    pub(crate) const fn is_name_operation(self) -> bool {
+        self.loads_name() || matches!(self,
+            Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
+            | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding | Op::CloneEnv
+            | Op::InitializeThis | Op::SuperCallCheck)
+    }
+
+    /// A record that makes a closure.
+    #[cfg_attr(not(feature = "profile-lane-exits"), allow(dead_code))]
+    pub(crate) const fn makes_closure(self) -> bool { matches!(self, Op::MakeClosure) }
+
     /// A JavaScript branch: the unconditional jump or one of its conditional tests.
     pub(crate) const fn is_js_jump(self) -> bool {
         matches!(self, Op::Jump) || self.is_js_conditional_jump()
