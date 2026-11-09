@@ -1,6 +1,7 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 
 use super::*;
+#[path = "frame_safepoint.rs"] mod safepoint;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -30,6 +31,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
     pub(super) helpers: LaneHelpers,
+    /// The poll instructions a fault-polling body records for later patching.
+    pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -132,6 +135,14 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         super::super::emit_dense_element_replace(stage.builder, view, address, old, value);
         Some(())
     }
+
+    /// The interrupt/collection safepoint: a fault-polling body records its poll instruction,
+    /// any other leaves at the miss edge when the flag is set.
+    #[inline(always)]
+    fn safepoint(&mut self, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
+        safepoint::safepoint(self, stage, proof)
+    }
+
 
     /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
     /// leaves at the proof's miss edge.

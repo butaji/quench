@@ -195,6 +195,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
+    #[inline(always)]
+    fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -248,6 +252,8 @@ pub(crate) enum Operation<W, P> {
     MakeObject { destination: Register, proof: P },
     /// The array literal `destination`: `length` holes, or `elements` values.
     MakeArray { destination: Register, length: W, elements: W, proof: P },
+    /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
+    Safepoint { proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -285,6 +291,10 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
+            Some(()) => Step::Value(stage.constant(0)),
+            None => Step::Unresolved,
+        },
         heap => heap::heap_step(stage, frame, heap),
     }
 }

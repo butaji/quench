@@ -2716,7 +2716,7 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers };
+            payload: self.payload, helpers: self.helpers, polls: &mut self.polls };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3212,17 +3212,17 @@ impl Lowering<'_, '_> {
         self.ins().jump(leave, &[returned.into()]);
     }
 
-    fn interrupt_check(&mut self, state: &State, pc: u32) {
+    fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
-            self.emit_fault_poll();
+            let interrupt = self.interrupt;
+            let proof = super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
+            self.step(state, frame::Edges::Value, crate::staged::Operation::Safepoint { proof });
             return;
         }
-        let flag = self.interrupt;
-        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
+        let interrupt = self.interrupt;
         let exit = self.guard_exit(state, pc);
-        let requested = self.ins().uextend(types::I32, requested);
-        let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
-        emit_js_guard(&mut self.builder, clear, exit);
+        let proof = super::EmitProof::Safepoint { interrupt, miss: Some(exit), fault_poll: false };
+        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Safepoint { proof });
     }
 
     fn emit_fault_poll(&mut self) {
