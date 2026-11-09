@@ -91,6 +91,31 @@ pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Wo
     stage.and_imm(payload, !OBJECT.extras_tag_mask)
 }
 
+/// The record's encoded prototype link (`Object::proto_link`).
+#[inline(always)]
+pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+    let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
+    stage.and_imm(meta, u64::from(OBJECT.proto_mask))
+}
+
+/// The id of the object record `link` names, or `miss` where it names none
+/// (`ProtoLink::object_record_id`): one unsigned compare of the link past the range's base.
+#[inline(always)]
+pub(crate) fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let id = stage.add_imm(link, u64::from(OBJECT.proto_record_base).wrapping_neg());
+    let span = stage.constant(u64::from(OBJECT.proto_record_end - OBJECT.proto_record_base));
+    let inside = stage.ult(id, span);
+    stage.guard(inside, miss)?;
+    Some(id)
+}
+
+/// The address of object record `id` in the record table at `records`.
+#[inline(always)]
+pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
+    let offset = stage.mul_imm(id, OBJECT.record_size as u64);
+    stage.add(records, offset)
+}
+
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
 fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {

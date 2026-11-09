@@ -1420,23 +1420,10 @@ fn emit_js_cached_field_slot(
         builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
 
         builder.switch_to_block(holder_block);
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), object,
-            OBJECT.meta_offset as i32);
-        let proto = builder.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
-        let in_start = builder.ins().icmp_imm_u(
-            IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base),
-        );
-        let in_end = builder.ins().icmp_imm_u(
-            IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end),
-        );
-        let object_proto = builder.ins().band(in_start, in_end);
-        emit_js_guard(builder, object_proto, fallback);
-        let proto_id = builder.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
-        let proto_id = builder.ins().uextend(types::I64, proto_id);
-        let proto_offset = builder.ins().imul_imm_u(
-            proto_id, i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
-        );
-        let prototype = builder.ins().iadd(records, proto_offset);
+        let mut stage = object_slots::emit(builder);
+        let link = crate::staged::object::proto_link(&mut stage, object);
+        let id = crate::staged::object::proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
         let proto_shape = builder.ins().load(
             types::I32, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),

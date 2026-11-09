@@ -232,6 +232,8 @@ const LAYOUT_TOKENS: &[&str] = &[
     "storage_start_mask",
     "NarrowLayout::INTEGER_FLAG",
     "NarrowLayout::CODE_SHIFT",
+    "proto_mask",
+    "proto_record_base",
 ];
 
 #[test]

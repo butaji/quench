@@ -1456,14 +1456,8 @@ impl ProtoLink {
         // The object range starts at a power of two above its own power-of-two span, so a
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
-        const _: () = assert!(
-            PROTO_OBJECT_RECORD_BASE.is_power_of_two()
-                && RECORD_SPACE_CAPACITY.is_power_of_two()
-                && RECORD_SPACE_CAPACITY as u32 <= PROTO_OBJECT_RECORD_BASE
-        );
-        (PROTO_OBJECT_RECORD_BASE..PROTO_ARRAY_RECORD_BASE)
-            .contains(&self.0)
-            .then(|| self.0 & (RECORD_SPACE_CAPACITY as u32 - 1))
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        crate::staged::object::proto_object_record_id(&mut stage, u64::from(self.0), ()).map(|id| id as u32)
     }
 
     /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).

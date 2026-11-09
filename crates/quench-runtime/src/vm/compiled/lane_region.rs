@@ -4234,8 +4234,7 @@ impl Lowering<'_, '_> {
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
         use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
-        let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
+        let proto = crate::staged::object::proto_link(&mut super::object_slots::emit(&mut self.builder), record);
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
         if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
@@ -4253,18 +4252,13 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, matched, exit);
             return Some(read);
         }
-        let from = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base));
-        let below = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end));
-        let object_proto = self.ins().band(from, below);
-        emit_js_guard(&mut self.builder, object_proto, exit);
-        let id = self.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
-        let id = self.ins().uextend(types::I64, id);
-        let offset = self.ins().imul_imm_u(id, OBJECT.record_size as i64);
         let records = match self.object_table() {
             ObjectTable::Checked(table) => table.base(),
             ObjectTable::Unchecked(base) => base,
         };
-        let prototype = self.ins().iadd(records, offset);
+        let mut stage = super::object_slots::emit(&mut self.builder);
+        let id = crate::staged::object::proto_object_record_id(&mut stage, proto, exit).expect("an emitted guard continues");
+        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
         emit_js_guard(&mut self.builder, same, exit);
