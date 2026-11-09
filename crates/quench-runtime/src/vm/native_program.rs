@@ -32,16 +32,36 @@ impl NativeJsCode {
 
 }
 
+/// What a publication lowered, so admission is measured rather than assumed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NativeJsPublicationCounts {
+    /// Functions in the program.
+    pub functions: usize,
+    /// Functions published through the general-dispatch baseline.
+    pub general_dispatch: usize,
+    /// Functions left on the call-threaded body (per-PC semantic entries).
+    pub call_threaded: usize,
+    /// Typed regions inlined into their caller.
+    pub typed_regions: usize,
+    /// Scalar regions published beside their caller.
+    pub scalar_regions: usize,
+    /// Instruction sites whose continuation is a folded static transfer.
+    pub static_transfers: usize,
+    /// Instruction sites that call their opcode's semantic entry.
+    pub semantic_entry_sites: usize,
+}
+
 /// A program bound to native entries compiled for the same host and semantic ABI.
 pub struct NativeJsProgram<H> {
     program: Rc<ResidualProgram>,
     code: Rc<NativeJsCode>,
+    counts: NativeJsPublicationCounts,
     host: PhantomData<fn(&mut H)>,
 }
 
 impl<H: Host> Clone for NativeJsProgram<H> {
     fn clone(&self) -> Self {
-        Self { program: self.program.clone(), code: self.code.clone(), host: PhantomData }
+        Self { program: self.program.clone(), code: self.code.clone(), counts: self.counts, host: PhantomData }
     }
 }
 
@@ -85,8 +105,12 @@ impl<H: Host> NativeJsProgram<H> {
             )
         };
         // SAFETY: the linked image is static and bound to this program and H.
-        Self::bind(program, NativeJsCode::Linked { entries })
+        Self::bind(program, NativeJsCode::Linked { entries }, NativeJsPublicationCounts::default())
     }
+
+    /// What this publication lowered: the counters that make an AOT claim
+    /// measurable (`native_execution_rejections` covers the runtime half).
+    pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
 
     /// The canonical metadata used by host job checkpoints and source reporting.
     pub fn residual(&self) -> &ResidualProgram {
@@ -104,16 +128,27 @@ impl<H: Host> NativeJsProgram<H> {
         entries: Vec<NativeJsFunctionEntry>,
         owner: Rc<dyn Any>,
     ) -> Result<Self, String> {
+        // SAFETY: the caller's contract is this function's contract.
+        unsafe { Self::from_entries_with_counts(program, entries, owner, NativeJsPublicationCounts::default()) }
+    }
+
+    pub(crate) unsafe fn from_entries_with_counts(
+        program: ResidualProgram,
+        entries: Vec<NativeJsFunctionEntry>,
+        owner: Rc<dyn Any>,
+        counts: NativeJsPublicationCounts,
+    ) -> Result<Self, String> {
         Self::bind(
             program,
             NativeJsCode::Owned {
                 entries: entries.into_boxed_slice(),
                 _owner: owner,
             },
+            counts,
         )
     }
 
-    fn bind(program: ResidualProgram, code: NativeJsCode) -> Result<Self, String> {
+    fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts) -> Result<Self, String> {
         if !crate::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
             return Err("native program has no frozen call-site descriptions".into());
         }
@@ -127,6 +162,7 @@ impl<H: Host> NativeJsProgram<H> {
         Ok(Self {
             program: Rc::new(program),
             code: Rc::new(code),
+            counts,
             host: PhantomData,
         })
     }

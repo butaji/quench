@@ -2518,3 +2518,33 @@ fn reflection_finishes_replacement_lazy_groups_before_exposing_data_descriptors(
         }
     }
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn eager_publication_reports_general_dispatch_and_typed_regions() {
+    // A loop the static typed lowering admits: the eager publisher must select
+    // the general-dispatch baseline and inline a typed region, not fall back to
+    // a per-PC call-threaded body for the hot function.
+    let source = r#"
+        function sum(n) { let s = 0; for (let i = 0; i < n; i++) { s += i * 2; } return s; }
+        globalThis.answer = sum(1000);
+    "#;
+    let program = Engine::specialize_unspecialized(source, "eager-report.js").unwrap();
+    // The counts describe this publication's lowering; stencil publication has
+    // its own shapes and is measured separately.
+    let options = crate::NativeJsCodegenOptions { backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
+    let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
+    let counts = native.publication_counts();
+    assert!(counts.functions >= 2, "program functions: {counts:?}");
+    assert!(counts.general_dispatch >= 1, "no function used general dispatch: {counts:?}");
+    assert!(counts.typed_regions >= 1, "no typed region was inlined: {counts:?}");
+    assert!(counts.semantic_entry_sites > 0, "a fallback must still exist: {counts:?}");
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("answer");
+    let answer = runtime.get_property_rooted(global, key).unwrap();
+    assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(999_000.0));
+}

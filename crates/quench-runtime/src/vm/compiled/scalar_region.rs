@@ -302,7 +302,7 @@ pub(super) fn emit_entry(
             });
             builder.ins().call(callee, &[context, registers, zero, record, result])
         }
-        #[cfg(test)]
+        #[cfg(feature = "aot")]
         StaticRegionTarget::Address(address) => {
             let callee = builder.ins().iconst(isa.pointer_type(), address as i64);
             builder.ins().call_indirect(

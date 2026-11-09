@@ -5,6 +5,7 @@ use crate::bytecode::{Op, WideInstruction};
 /// The native semantic-call data layout. Each register field retains the full
 /// bytecode operand representation, including flags; the opcode is bound by
 /// the selected entry. Both words are initialized and contain no heap pointers.
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct NativeJsOperands {
     registers: u64,

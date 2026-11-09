@@ -127,7 +127,7 @@ pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_J
 #[cfg(feature = "native-execution")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
-    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeProgramResolver},
+    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
 #[cfg(feature = "aot")]
 pub use vm::{
