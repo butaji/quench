@@ -17,23 +17,24 @@ const USER_CALL_COMPLETED: i64 = 0;
 const USER_CALL_STOPPED: i64 = 1;
 const USER_CALL_MISSED: u64 = 2;
 
-/// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture
-/// (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
+/// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture or
+/// frame binding (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
 /// is native, or `None` where only the exact step applies. A call stays in a fallback
 /// island's batch: native code only resumes past it.
 pub(super) fn lower_shortcut(
     builder: &mut FunctionBuilder<'_>,
     (pc, instruction, next): (usize, WideInstruction, Option<ir::Block>),
-    strict: bool,
+    function: &crate::bytecode::Function,
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> Option<bool> {
-    if lower_call(builder, (pc, instruction, next), strict, register_offset, (arguments, payload), exact) {
+    if lower_call(builder, (pc, instruction, next), function.strict, register_offset, (arguments, payload), exact) {
         return Some(false);
     }
     let next = next?;
-    if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact) {
+    if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact)
+        || super::general_capture::lower_env_local(builder, (instruction, next), function, register_offset, (arguments, payload), exact) {
         return Some(true);
     }
     if lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
