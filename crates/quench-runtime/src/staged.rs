@@ -242,6 +242,16 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        heap => return heap_step(stage, frame, heap),
+    }
+}
+
+/// The heap operations: a field read or write. A frame with no heap for the operation leaves
+/// it `Unresolved` for its host path.
+#[inline(always)]
+fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
         Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
             Some((value, _)) => Step::Value(value),
             None => Step::Unresolved,
@@ -251,6 +261,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
                 Some(()) => Step::Value(value),
                 None => Step::Unresolved,
             },
+        _ => Step::Unresolved,
     }
 }
 

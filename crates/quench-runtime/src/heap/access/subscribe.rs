@@ -6,6 +6,10 @@ use crate::heap::Heap;
 use std::rc::Rc;
 
 impl Heap {
+    pub(crate) fn subscribe_shape(&mut self, shape: u32, code: &Rc<dyn DependentCode>) -> bool {
+        self.properties.subscribe_shape(shape, code)
+    }
+
     /// The slot's observation and its shape's departures together (tests of both tables).
     #[cfg(test)]
     pub(crate) fn subscribe_slot(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {

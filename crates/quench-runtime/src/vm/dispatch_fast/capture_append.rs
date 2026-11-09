@@ -10,6 +10,11 @@ const LOAD_CAPTURE_PC: usize = 2;
 const RESULT_PC: usize = 5;
 const RETURN_PC: usize = RESULT_PC + 1;
 
+/// The parameter the recognized body appends: its register is the parameter's own.
+const CHUNK_PARAMETER: u16 = 0;
+
+/// Whether `body` is `null !== chunk && (binding += chunk); return true;` over its first
+/// parameter and one capture of its own environment, as each instruction's role says.
 pub(super) fn recognizes(body: &Function, constants: &[crate::bytecode::Constant]) -> bool {
     if body.params == 0 || !body.handlers.is_empty() {
         return false;
@@ -18,39 +23,61 @@ pub(super) fn recognizes(body: &Function, constants: &[crate::bytecode::Constant
         return false;
     };
     let [test, branch, load, add, store, result, done] =
-        [test, branch, load, add, store, result, done]
-            .map(|packed| decoded_instruction(body, packed));
+        [test, branch, load, add, store, result, done].map(|packed| decoded_instruction(body, packed));
+    tests_chunk_is_not_null(test, constants)
+        && skips_append_unless(branch, test)
+        && loads_own_capture(load)
+        && appends_chunk(add, load)
+        && stores_back(store, add, load)
+        && returns_true(result, done, constants)
+}
+
+/// A write that leaves the chunk parameter's register for the append to read.
+fn spares_chunk(instruction: WideInstruction) -> bool {
+    instruction.result_flags() == 0 && instruction.result_register() != CHUNK_PARAMETER
+}
+
+/// `null !== chunk`, into a register other than the chunk's.
+fn tests_chunk_is_not_null(test: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
     test.op() == Op::Binary
-        && test.result_flags() == 0
-        && test.result_register() != 0
+        && spares_chunk(test)
         && test.binary_operator() == STRICT_INEQUALITY_OPERATOR
-        && test.operand_b().register_index() == Some(0)
+        && test.operand_b().register_index() == Some(CHUNK_PARAMETER)
         && test.operand_c().kind() == Some(crate::bytecode::OperandKind::Constant)
-        && matches!(
-            constants.get(usize::from(test.operand_c().payload())),
-            Some(crate::bytecode::Constant::Null)
-        )
-        && branch.op() == Op::JumpFalse
+        && matches!(constants.get(usize::from(test.operand_c().payload())), Some(crate::bytecode::Constant::Null))
+}
+
+/// A false test jumps over the append to the result.
+fn skips_append_unless(branch: WideInstruction, test: WideInstruction) -> bool {
+    branch.op() == Op::JumpFalse
         && branch.register_a() == test.result_register()
         && branch.jump_target() as usize == RESULT_PC
-        && load.op() == Op::LoadCapture
-        && load.result_flags() == 0
-        && load.result_register() != 0
-        && load.capture_depth() == 0
-        && add.op() == Op::Binary
+}
+
+/// A capture of the body's own environment, into a register other than the chunk's.
+fn loads_own_capture(load: WideInstruction) -> bool {
+    load.op() == Op::LoadCapture && spares_chunk(load) && load.capture_depth() == 0
+}
+
+/// `binding + chunk`, in that order.
+fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
+    add.op() == Op::Binary
         && add.result_flags() == 0
         && add.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
         && add.operand_b().register_index() == Some(load.result_register())
-        && add.operand_c().register_index() == Some(0)
-        && store.op() == Op::StoreCapture
-        && store.register_a() == add.result_register()
-        && store.imm() == load.imm()
-        && result.op() == Op::LoadConst
+        && add.operand_c().register_index() == Some(CHUNK_PARAMETER)
+}
+
+/// The sum, stored to the capture the load read.
+fn stores_back(store: WideInstruction, add: WideInstruction, load: WideInstruction) -> bool {
+    store.op() == Op::StoreCapture && store.register_a() == add.result_register() && store.imm() == load.imm()
+}
+
+/// `return true`, whether or not the append ran.
+fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
+    result.op() == Op::LoadConst
         && result.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
-        && matches!(
-            constants.get(result.constant_index()),
-            Some(crate::bytecode::Constant::Boolean(true))
-        )
+        && matches!(constants.get(result.constant_index()), Some(crate::bytecode::Constant::Boolean(true)))
         && done.op() == Op::Return
         && done.register_a() == result.result_register()
 }
@@ -101,9 +128,8 @@ mod tests {
     use crate::{Engine, test_host::TestHost};
     use std::{cell::RefCell, rc::Rc};
 
-    #[test]
-    fn capture_append_leaf_preserves_coercion_tdz_const_and_collection() {
-        let source = r##"const out = [];
+    /// Coercion, TDZ, `const`, reentrant appends and collection through one leaf.
+    const EFFECTS_SOURCE: &str = r##"const out = [];
 function make(initial) {
   let text = initial;
   return {
@@ -162,29 +188,45 @@ object.push("1"); object.push = after.push; object.push("2");
 out.push(before.read(), after.read());
 print(JSON.stringify(out));
 "##;
-        let expected = r##"[240,"a😀",true,241,240,"a😀",true,241,240,"a😀",true,241,true,true,true,true,true,true,"x12undefinedtrue3","LR","Q!","default,default","TypeError","Q!",true,"Q!",true,"TypeError",true,"ReferenceError",true,"Tx",true,10,"10z","old1","new2"]"##;
+    const EFFECTS_PRINTED: &str = r##"[240,"a😀",true,241,240,"a😀",true,241,240,"a😀",true,241,true,true,true,true,true,true,"x12undefinedtrue3","LR","Q!","default,default","TypeError","Q!",true,"Q!",true,"TypeError",true,"ReferenceError",true,"Tx",true,10,"10z","old1","new2"]"##;
+
+    /// `program`'s printed lines, run by a VM in the given modes, and that VM.
+    fn printed(program: &ResidualProgram, test262: bool, compiled: bool) -> (Vm<TestHost>, Vec<String>) {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let host = TestHost::writing_to(output.clone());
+        let mut vm = Vm::new(if test262 { host.with_test262() } else { host });
+        if compiled {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        }
+        vm.execute(program).unwrap();
+        let lines = output.borrow().clone();
+        (vm, lines)
+    }
+
+    #[test]
+    fn capture_append_leaf_preserves_coercion_tdz_const_and_collection() {
+        let name = "capture-append-effects.js";
         for (specialized, compiled) in [(false, false), (true, false), (true, true)] {
             let program = if specialized {
-                Engine::specialize(source, "capture-append-effects.js")
+                Engine::specialize(EFFECTS_SOURCE, name)
             } else {
-                Engine::compile(crate::ExecutionRequest::script(
-                    source,
-                    "capture-append-effects.js",
-                ))
+                Engine::compile(crate::ExecutionRequest::script(EFFECTS_SOURCE, name))
             }
             .unwrap();
-            let output = Rc::new(RefCell::new(Vec::new()));
-            let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
-            if compiled {
-                vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            }
-            vm.execute(&program).unwrap();
-            assert_eq!(
-                output.borrow().as_slice(),
-                [expected],
-                "specialized={specialized} compiled={compiled}"
-            );
+            let (_, lines) = printed(&program, true, compiled);
+            assert_eq!(lines, [EFFECTS_PRINTED], "specialized={specialized} compiled={compiled}");
         }
+    }
+
+    /// The append target the ordinary calls of `vm`'s run resolved.
+    fn append_target(vm: &Vm<TestHost>) -> ScriptCallTarget {
+        vm.lane_stack
+            .script_targets
+            .entries
+            .iter()
+            .find(|target| target.entry == CallEntry::AppendsCapture)
+            .copied()
+            .expect("ordinary calls must resolve to the append operation")
     }
 
     #[test]
@@ -210,30 +252,12 @@ print(JSON.stringify(out));
         "#;
         for compiled in [false, true] {
             let program = Engine::specialize(source, "capture-append-leaf.js").unwrap();
-            let output = Rc::new(RefCell::new(Vec::new()));
-            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-            if compiled {
-                vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            }
-            vm.execute(&program).unwrap();
-            assert_eq!(output.borrow().as_slice(), ["xy".repeat(128)]);
-            let target = vm
-                .lane_stack
-                .script_targets
-                .entries
-                .iter()
-                .find(|target| target.entry == CallEntry::AppendsCapture)
-                .copied()
-                .expect("ordinary calls must resolve to the append operation");
+            let (vm, lines) = printed(&program, false, compiled);
+            assert_eq!(lines, ["xy".repeat(128)]);
+            let target = append_target(&vm);
+            assert!(capture_stores(target.capture).is_some(), "the primitive calls must admit direct writes");
             assert!(
-                capture_stores(target.capture).is_some(),
-                "the primitive calls must admit direct writes"
-            );
-            assert!(
-                vm.lane_stack
-                    .read_memos
-                    .iter()
-                    .all(|memo| memo.callee != target.callee),
+                vm.lane_stack.read_memos.iter().all(|memo| memo.callee != target.callee),
                 "a mutating call must never populate the pure read memo"
             );
         }
@@ -261,16 +285,8 @@ print(JSON.stringify(out));
         for compiled in [false, true] {
             let program =
                 Engine::specialize(source, "capture-append-callback-construct.js").unwrap();
-            let output = Rc::new(RefCell::new(Vec::new()));
-            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-            if compiled {
-                vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            }
-            vm.execute(&program).unwrap();
-            assert_eq!(
-                output.borrow().as_slice(),
-                [r#"[true,true,"AB","object",true,"ABC","ABCDE"]"#]
-            );
+            let (_, lines) = printed(&program, false, compiled);
+            assert_eq!(lines, [r#"[true,true,"AB","object",true,"ABC","ABCDE"]"#]);
         }
     }
 

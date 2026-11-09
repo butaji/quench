@@ -6,7 +6,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
-use crate::bytecode::{ConstructArguments, Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::{ConstructArguments, JsDenotation, Op, WideInstruction, RETURN_REGISTER};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -17,27 +17,33 @@ const USER_CALL_COMPLETED: i64 = 0;
 const USER_CALL_STOPPED: i64 = 1;
 const USER_CALL_MISSED: u64 = 2;
 
-/// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture
-/// (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
+/// Lowers the instruction at `pc` through the first shortcut that takes it: an own capture or
+/// frame binding (`general_capture`), a plain call, or an index store (`general_elements`). Whether its PC
 /// is native, or `None` where only the exact step applies. A call stays in a fallback
 /// island's batch: native code only resumes past it.
 pub(super) fn lower_shortcut(
     builder: &mut FunctionBuilder<'_>,
     (pc, instruction, next): (usize, WideInstruction, Option<ir::Block>),
-    strict: bool,
+    function: &crate::bytecode::Function,
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
+    frame_locals: (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> Option<bool> {
-    if lower_call(builder, (pc, instruction, next), strict, register_offset, (arguments, payload), exact) {
+    if lower_call(builder, (pc, instruction, next), function.strict, register_offset, (arguments, payload), exact) {
         return Some(false);
     }
     let next = next?;
-    if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact) {
+    if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact)
+        || super::general_capture::lower_env_local(builder, (instruction, next), function, register_offset, (arguments, payload), frame_locals, exact)
+        || super::general_capture::lower_closure(builder, (instruction, next), function, register_offset, (arguments, payload), exact) {
         return Some(true);
     }
     if lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
         return Some(false);
+    }
+    if lower_literal(builder, (instruction, next), register_offset, (arguments, payload), exact) {
+        return Some(true);
     }
     (instruction.op() == Op::SetIndex
         && super::general_elements::lower_store(builder, (instruction, next), register_offset, (arguments, payload), exact))
@@ -68,13 +74,15 @@ fn lower_call(
         (false, None) => return false,
         (true, _) => emit_returning_continuation(builder, (arguments, payload), (destination, fallback), strict, exact),
     };
-    if let Some(builtin) = builtin_call(instruction, register_offset) {
-        emit_builtin_shortcut(builder, (arguments, payload), builtin, (destination, next));
-    }
+    // A user callee runs frameless first; a native's in-place case is asked only where no
+    // frameless activation takes the callee.
     let framed = builder.create_block();
     if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
         destination, framed).is_none() { builder.ins().jump(framed, &[]); }
     builder.switch_to_block(framed);
+    if let Some(builtin) = builtin_call(instruction, register_offset) {
+        emit_builtin_shortcut(builder, (arguments, payload), builtin, (destination, next));
+    }
     emit_user_call(builder, (pc, next, fallback), payload, exact);
     true
 }
@@ -143,6 +151,47 @@ fn lower_construct(
     true
 }
 
+/// Lowers an object literal's allocation (`JsDenotation::ObjectAllocation`, `general_object`) or
+/// field definition (`JsDenotation::FieldDefinition`, `general_define_field`), each as the lane
+/// makes it, the exact step taking any miss; false where only the step applies.
+fn lower_literal(
+    builder: &mut FunctionBuilder<'_>,
+    (instruction, next): (WideInstruction, ir::Block),
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    let denotation = instruction.op().js_denotation();
+    if instruction.result_flags() != 0 { return false; }
+    let (answer, refused, destination) = match denotation {
+        JsDenotation::ObjectAllocation => {
+            let Some(destination) = register_offset(instruction.result_register()) else { return false };
+            let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object));
+            (emit_lane_helper_call(builder, payload, helper, &[payload]), Value::DELETED.to_bits(), Some(destination))
+        }
+        JsDenotation::FieldDefinition => {
+            let (Some(value), Some(object)) = (register_offset(instruction.register_a()), register_offset(instruction.register_b()))
+                else { return false };
+            let word = (u64::from(instruction.atom_index()) << u16::BITS) | u64::from(instruction.cache_site_index());
+            let [value, object] = [value, object].map(|offset| builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset));
+            let word = builder.ins().iconst(types::I64, word as i64);
+            let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, define_field));
+            (emit_lane_helper_call(builder, payload, helper, &[payload, object, word, value]), 0, None)
+        }
+        _ => return false,
+    };
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, answer, refused as i64);
+    let (done, fallback) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(hit, done, &[], fallback, &[]);
+    builder.switch_to_block(done);
+    if let Some(destination) = destination {
+        builder.ins().store(MemFlagsData::trusted(), answer, arguments, destination);
+    }
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+    true
+}
+
 /// The framed call through `general_user_call`, its miss taking the exact step.
 fn emit_user_call(builder: &mut FunctionBuilder<'_>, (pc, next, fallback): (usize, ir::Block, ir::Block),
     payload: ir::Value, exact: &JsExactFallback) {
@@ -158,23 +207,26 @@ fn emit_user_call(builder: &mut FunctionBuilder<'_>, (pc, next, fallback): (usiz
     exact.emit(builder, fallback);
 }
 
-/// The registers of a call with at most one argument, which may be a native's in-place case
-/// (`Vm::in_place_native_value`, which tests the callee itself): callee, receiver and the
-/// argument, if any.
+/// The registers of a call that may be a native's in-place case (`Vm::in_place_native_value`,
+/// which tests the callee itself): callee, receiver, and the window of its arguments.
 struct BuiltinCall {
     callee: i32,
     receiver: i32,
-    argument: Option<i32>,
+    window: i32,
     count: u16,
 }
 
 fn builtin_call(instruction: WideInstruction, register_offset: &dyn Fn(u16) -> Option<i32>) -> Option<BuiltinCall> {
     let window = instruction.call_window();
-    if window.count > 1 { return None; }
+    // Every register of the window is the frame's, so the window is one run of them.
+    let base = match window.count {
+        0 => 0,
+        count => { register_offset(window.base + count - 1)?; register_offset(window.base)? }
+    };
     Some(BuiltinCall {
         callee: register_offset(instruction.register_b())?,
         receiver: register_offset(instruction.register_c())?,
-        argument: if window.count == 1 { Some(register_offset(window.base)?) } else { None },
+        window: base,
         count: window.count,
     })
 }
@@ -182,30 +234,28 @@ fn builtin_call(instruction: WideInstruction, register_offset: &dyn Fn(u16) -> O
 fn emit_builtin_call(builder: &mut FunctionBuilder<'_>, (arguments, payload): (ir::Value, ir::Value), call: BuiltinCall) -> ir::Value {
     let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, call.callee);
     let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, call.receiver);
-    let argument = match call.argument {
-        Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        None => builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64),
-    };
+    let window = builder.ins().iadd_imm_s(arguments, i64::from(call.window));
     let count = builder.ins().iconst(types::I64, i64::from(call.count));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_call));
-    emit_lane_helper_call(builder, payload, helper, &[payload, callee, receiver, argument, count])
+    emit_lane_helper_call(builder, payload, helper, &[payload, callee, receiver, window, count])
 }
 
-/// A native's in-place case (`Vm::in_place_native_value`): its value, else `Value::DELETED`
-/// before any effect.
+/// A native's in-place case (`Vm::in_place_native_value`) of the `count` registers at `window`:
+/// its value, else `Value::DELETED` before any effect.
 pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, receiver: u64,
-    argument: u64, count: u64) -> u64 {
+    window: u64, count: u64) -> u64 {
     // SAFETY: as `lane_field_add`.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
     let native = match vm.heap.function(Value::from_bits(callee)).map(|record| &record.kind) {
         Some(crate::heap::FunctionKind::Native(native)) => *native,
         _ => return Value::DELETED.to_bits(),
     };
-    let argument = [Value::from_bits(argument)];
-    let Some(args) = argument.get(..usize::try_from(count).unwrap_or(usize::MAX)) else { return Value::DELETED.to_bits() };
+    // The values are copied out of the frame's registers, which the native's VM borrow owns.
+    // SAFETY: the caller passes `count` registers of the running frame at `window`.
+    let args: smallvec::SmallVec<[Value; 4]> = unsafe { std::slice::from_raw_parts(window as *const Value, count as usize) }.into();
     // SAFETY: the running entry's program, live for the call.
     let code = unsafe { &*(residual as *const ResidualProgram) };
-    let Some(value) = vm.in_place_native_value(code, native, Value::from_bits(callee), Value::from_bits(receiver), args)
+    let Some(value) = vm.in_place_native_value(code, native, Value::from_bits(callee), Value::from_bits(receiver), &args)
         else { return Value::DELETED.to_bits() };
     // As `lane_store_miss`: a due collection waits for the next back edge's safepoint.
     dispatch.refresh_object_bases(vm);

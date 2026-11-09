@@ -2,10 +2,11 @@
 
 use super::*;
 
+const SCALAR_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QSCR");
+
 pub(crate) struct ScalarRegion {
     pub(crate) range: std::ops::Range<usize>,
     pub(crate) fields: Vec<FieldUse>,
-    pub(crate) frame: Vec<Register>,
     pub(crate) function: ir::Function,
 }
 
@@ -77,8 +78,7 @@ pub(crate) fn lower_regions(
     let Some(live) = program.shared_register_root_masks(function_id) else {
         return Vec::new();
     };
-    let no_int32_elements = |_: u16| false;
-    let widened = std::collections::BTreeSet::new();
+    let (no_int32_elements, widened) = (|_: u16| false, std::collections::BTreeSet::new());
     let observation = Observation {
         register: None,
         int32_elements: &no_int32_elements,
@@ -133,10 +133,11 @@ pub(crate) fn lower_regions(
             // an entry-record transfer. Keep its existing numeric region;
             // field binding needs shared inputs or a longer arithmetic chain.
             && (region.fields.len() != 1 || arithmetic > 1)
-            && let Some((native, _)) = osr_loop::lower(&region, &observation, isa, None)
+            && let Some((mut native, _)) = osr_loop::lower(&region, &observation, isa, None)
         {
+            // Its own name, by which the caller's body inlines it (`emit_entry`).
+            native.name = ir::UserFuncName::user(SCALAR_REGION_NAMESPACE, header);
             Some(ScalarRegion {
-                frame: region.entry_registers().collect(),
                 range,
                 fields: region.fields,
                 function: native,
@@ -200,7 +201,7 @@ pub(super) fn emit_entry(
     entries: &[ir::Block],
     invalid: ir::Block,
     control: &NativeStopControl,
-) -> ir::Inst {
+) {
     let range = entry.range.clone();
     builder.switch_to_block(gate);
     // An activation whose bound was not discharged may stop inside the region.
@@ -286,32 +287,15 @@ pub(super) fn emit_entry(
         isa.pointer_type(),
         isa.default_call_conv(),
     ));
-    let call = match entry.target {
-        StaticRegionTarget::Symbol(symbol) => {
-            let name = builder
-                .func
-                .declare_imported_user_function(ir::UserExternalName::new(
-                    super::super::native_object::NATIVE_FUNCTION_NAMESPACE,
-                    symbol,
-                ));
-            let callee = builder.import_function(ir::ExtFuncData {
-                name: ir::ExternalName::user(name),
-                signature,
-                colocated: false,
-                patchable: false,
-            });
-            builder.ins().call(callee, &[context, registers, zero, record, result])
-        }
-        #[cfg(feature = "aot")]
-        StaticRegionTarget::Address(address) => {
-            let callee = builder.ins().iconst(isa.pointer_type(), address as i64);
-            builder.ins().call_indirect(
-                signature,
-                callee,
-                &[context, registers, zero, record, result],
-            )
-        }
-    };
+    let name = builder.func.declare_imported_user_function(
+        entry.function.name.get_user().expect("a scalar region has a user name").clone());
+    let callee = builder.import_function(ir::ExtFuncData {
+        name: ir::ExternalName::user(name),
+        signature,
+        colocated: false,
+        patchable: false,
+    });
+    builder.ins().call(callee, &[context, registers, zero, record, result]);
     let word = builder
         .ins()
         .load(types::I64, MemFlagsData::trusted(), result, 0);
@@ -353,7 +337,6 @@ pub(super) fn emit_entry(
         .block_call(invalid, &[ir::BlockArg::Value(pc)]);
     let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
     builder.ins().br_table(selector, table);
-    call
 }
 
 #[cfg(all(test, target_pointer_width = "64"))]
@@ -420,17 +403,11 @@ mod tests {
                 cursor
                     .ins()
                     .store(MemFlagsData::trusted(), next, address, 0);
-                let memory = publish_eager_graph(region.function, &*isa).unwrap();
-                bound.push((region.range, region.fields, region.frame, memory));
+                bound.push((region.range, region.fields, region.function));
             }
             let plans: Vec<_> = bound
                 .iter()
-                .map(|(range, fields, frame, memory)| StaticRegionEntry {
-                    range: range.clone(),
-                    target: StaticRegionTarget::Address(memory.pointer() as usize),
-                    fields,
-                    frame,
-                })
+                .map(|(range, fields, function)| StaticRegionEntry { range: range.clone(), fields, function })
                 .collect();
             let (native, _) = lower_js_general_dispatch(
                 &program,
@@ -448,7 +425,6 @@ mod tests {
                 std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(memory.pointer())
             });
             code.push(memory);
-            code.extend(bound.into_iter().map(|(_, _, _, memory)| memory));
         }
         // SAFETY: every entry belongs to its function and TestHost; the owner
         // keeps all code, operand storage and the instrumentation address alive.

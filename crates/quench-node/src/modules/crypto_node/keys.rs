@@ -715,7 +715,7 @@ pub(crate) fn is_key_object(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 
 /// `internal/crypto/keys`: the key classes and the public creators, with the predicates.
 pub(crate) fn internal_module(c: &mut Context<'_>) -> Outcome {
-    let crypto = super::module(c)?;
+    let crypto = super::exports::module(c)?;
     let module = c.object_rooted()?;
     for name in ["createSecretKey", "createPublicKey", "createPrivateKey"] {
         let function = get(c, crypto, name)?;
