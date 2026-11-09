@@ -3760,6 +3760,9 @@ unsafe fn lane_binary_value<H: Host>(
     let operator = i.imm();
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
+        // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
+        // element or an emulator's `flag & mask`.
+        None if let Some(value) = unsafe { vm(cx) }.immediate_binary(operator, left, right) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
         // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
