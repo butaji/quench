@@ -948,15 +948,15 @@ fn int32_read(program: &ResidualProgram, fields: &BTreeMap<u16, Vec<NativeFieldL
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
 /// non-Number operand, a missed cache) leaves the body first.
 fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        op if op.traits().has(Traits::FRAME_ONLY) => true,
-        Op::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
-        Op::IncDec => instruction.numeric_local_target().is_none(),
-        Op::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
-        Op::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+    match instruction.op().class() {
+        _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
+        Class::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
+        Class::IncDec => instruction.numeric_local_target().is_none(),
+        Class::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
+        Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
-        Op::GetIndex => !instruction.returns_from_frame(),
-        op => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
+        Class::GetIndex => !instruction.returns_from_frame(),
+        _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
 
@@ -977,9 +977,9 @@ fn stores_element(instruction: WideInstruction) -> bool {
 /// value but an element, or replaces one in place (`Lowering::set_index` retires the views
 /// itself on its general path), so no array's storage changes.
 fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        Op::GetField | Op::LoadCapture => false,
-        Op::SetIndex => true,
+    match instruction.op().class() {
+        Class::GetField | Class::LoadCapture => false,
+        Class::SetIndex => true,
         _ => reads_only(constants, instruction),
     }
 }

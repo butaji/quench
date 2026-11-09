@@ -18,21 +18,21 @@ fn scalar(instruction: WideInstruction, constants: &[Value]) -> bool {
     {
         return false;
     }
-    match instruction.op() {
-        Op::Move | Op::IncDec | Op::ToNumeric | Op::GetField => true,
-        Op::LoadConst => constants
+    match instruction.op().class() {
+        Class::Move | Class::IncDec | Class::ToNumeric | Class::GetField => true,
+        Class::LoadConst => constants
             .get(instruction.constant_index())
             .is_some_and(|v| v.as_number().is_some()),
-        op if op.js_denotation() == JsDenotation::NumericUnary => {
+        _ if instruction.op().js_denotation() == JsDenotation::NumericUnary => {
             super::super::operations::NumberUnary::from_js_instruction(
-                op,
+                instruction.op(),
                 instruction.unary_operator(),
             )
             .is_some()
         }
-        op if op.js_denotation() == JsDenotation::NumericBinary => {
+        _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => {
             super::super::operations::NumberArithmetic::from_js_instruction(
-                op,
+                instruction.op(),
                 instruction.binary_operator(),
             )
             .is_some()
