@@ -1050,7 +1050,7 @@ pub(super) struct DenseArrayView {
 pub(in crate::vm::compiled) enum EmitProof {
     Field(object_slots::CheckedObject),
     Index { view: DenseArrayView, absent: ir::Block },
-    TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block },
+    TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place

@@ -2429,20 +2429,19 @@ impl Lowering<'_, '_> {
             Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
                 && !matches!(self.helpers, LaneHelpers::Numeric) => self.typeof_test(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
-            // collection leaves first.
+            // collection leaves first. The staged operation allocates and writes the result.
             Op::MakeObject | Op::MakeArray if plain && self.completion == Completion::StatusAndPc => {
                 let exit = self.guard_exit(state, pc32);
-                let payload = self.payload;
-                let value = if instruction.op().is_make_object() {
-                    self.helper_call(LaneHelper::NewObject, &[payload])
+                let proof = super::EmitProof::Allocation { miss: exit };
+                if instruction.op().is_make_object() {
+                    self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                        crate::staged::Operation::MakeObject { destination: instruction.result_register(), proof });
                 } else {
                     let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
-                    self.helper_call(LaneHelper::NewArray, &[payload, length, elements])
-                };
-                let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, made, exit);
+                    self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                        crate::staged::Operation::MakeArray { destination: instruction.result_register(), length, elements, proof });
+                }
                 self.allocated(state);
-                self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
             Op::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
@@ -2716,7 +2715,8 @@ impl Lowering<'_, '_> {
         -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
-            state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this) };
+            state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
+            payload: self.payload, helpers: self.helpers };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step

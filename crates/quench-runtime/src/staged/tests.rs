@@ -394,3 +394,17 @@ fn a_proven_slot_field_read_is_one_staged_operation() {
         _ => panic!("a proven slot reads"),
     }
 }
+
+#[test]
+fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
+    // The interpreter stage has no allocator of its own: an allocation is the host callout
+    // boundary, so the frame declines it and the lane's Emit stage provides the semantics.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
+    for operation in [
+        Operation::MakeObject { destination: 0, proof: () },
+        Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
+    ] {
+        assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
+    }
+}
