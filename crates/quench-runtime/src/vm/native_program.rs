@@ -49,6 +49,12 @@ pub struct NativeJsPublicationCounts {
     pub static_transfers: usize,
     /// Instruction sites that call their opcode's semantic entry.
     pub semantic_entry_sites: usize,
+    /// Functions whose entry is the specialized body (general dispatch + typed regions).
+    pub tier_specialized: usize,
+    /// Functions whose entry is general dispatch without a typed region.
+    pub tier_general: usize,
+    /// Functions whose entry is the call-threaded body (the AOT tier zero).
+    pub tier_call_threaded: usize,
 }
 
 /// The whole-program assumptions an eager image folded, replayed when it loads.

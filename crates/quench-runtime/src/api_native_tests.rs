@@ -2538,6 +2538,8 @@ fn eager_publication_reports_general_dispatch_and_typed_regions() {
     assert!(counts.functions >= 2, "program functions: {counts:?}");
     assert!(counts.general_dispatch >= 1, "no function used general dispatch: {counts:?}");
     assert!(counts.typed_regions >= 1, "no typed region was inlined: {counts:?}");
+    assert!(counts.tier_specialized >= 1, "no function reached the specialized tier: {counts:?}");
+    assert!(counts.tier_call_threaded >= 1, "the root stays on tier zero: {counts:?}");
     assert!(counts.semantic_entry_sites > 0, "a fallback must still exist: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);

@@ -6544,6 +6544,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             return self.lower_baseline_or_threaded(function_id, sites, isa);
         };
         self.counts.call_threaded += 1;
+        self.counts.tier_call_threaded += 1;
         self.lower_regions(function_id, sites, isa, &regions)
     }
 
@@ -6555,10 +6556,13 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
                 self.counts.general_dispatch += 1;
                 self.counts.typed_regions += lowered.typed_regions;
                 self.counts.scalar_regions += lowered.scalar_regions;
+                if lowered.typed_regions > 0 { self.counts.tier_specialized += 1; }
+                else { self.counts.tier_general += 1; }
                 Ok(lowered.code)
             }
             None => {
                 self.counts.call_threaded += 1;
+                self.counts.tier_call_threaded += 1;
                 Ok(vec![compile_eager_body::<H>(sites, function_id, isa, None)?])
             }
         }
