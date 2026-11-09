@@ -2401,6 +2401,20 @@ impl Lowering<'_, '_> {
                     true
                 })
             }
+            op if plain && self.completion != Completion::Number
+                && op.class().eq(Class::LoadLocalPlain) => {
+                crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
+                    self.step(state, frame::Edges::Value, operation);
+                    true
+                })
+            }
+            op if plain && self.completion != Completion::Number
+                && op.class().eq(Class::StoreLocalPlain) => {
+                crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
+                    self.step(state, frame::Edges::Value, operation);
+                    true
+                })
+            }
             Op::Return if plain && self.completion == Completion::Number => {
                 self.return_number(state, instruction.register_a(), pc32);
                 Some(false)
@@ -2765,9 +2779,12 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation)
         -> crate::staged::Step<ir::Value, ()> {
+        let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
+            &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
-            state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this) };
+            state, edges, constants: &self.program.constants,
+            this: self.entry.as_ref().map(|entry| entry.this), locals };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step

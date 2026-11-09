@@ -2864,10 +2864,9 @@ use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
-        // SAFETY: validated bytecode bounds the slot by Function.locals, and
-        // frame setup sizes locals to that count.
-        let value = unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) };
-        r.set(i.a, value);
+        if !lane_frame::staged_load_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), view)
     }
 }
@@ -3219,11 +3218,9 @@ script_handler! {
 
 lane_handler! {
     fn lane_store_local_plain<>(cx, r, ip, i, view) {
-        let value = r.get(i.a);
-        // SAFETY: validated bytecode bounds the slot by Function.locals.
-        unsafe { vm(cx).write_validated_local((*cx).frame, i.imm() as usize, value) };
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
+        let result = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
+        if !lane_frame::staged_store_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16, result) {
+            return exit(ip);
         }
         next!(cx, r, following(ip), view)
     }

@@ -144,6 +144,17 @@ pub(crate) trait Frame<S: Stage> {
 
     /// Continue at the jump target.
     fn jump(&mut self, stage: &mut S) -> Self::Control;
+
+    /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
+    /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
+    #[inline(always)]
+    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: S::Miss)
+        -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Write `value` to local slot `slot`; `false` where this frame cannot write them.
+    #[inline(always)]
+    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: S::Miss)
+        -> bool { false }
 }
 
 /// An instruction `step` runs, with the operands a tier decoded.
@@ -153,6 +164,10 @@ pub(crate) enum Operation {
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
     LoadConst { destination: Register, constant: Constant },
+    /// Define `destination` from local slot `slot`.
+    LoadLocalPlain { destination: Register, slot: u16 },
+    /// Write `source` to local slot `slot`, and to `result` where the instruction has one.
+    StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
     /// Continue at the jump target.
     Jump,
     /// Continue at the jump target when register `register` is truthy, or when it is falsy
@@ -181,6 +196,13 @@ impl Operation {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: constant(instruction.constant_index())? },
+            Op::LoadLocalPlain => Self::LoadLocalPlain {
+                destination: instruction.result_register(),
+                slot: u16::try_from(instruction.local_slot()).ok()? },
+            Op::StoreLocalPlain => Self::StoreLocalPlain {
+                source: instruction.register_a(),
+                slot: u16::try_from(instruction.local_slot()).ok()?,
+                result: instruction.optional_register_b() },
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
@@ -225,6 +247,26 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::LoadConst { destination, constant } => {
             let (value, fact) = frame.constant(stage, constant);
             frame.write(stage, destination, value, fact);
+            Step::Value(value)
+        }
+        Operation::LoadLocalPlain { destination, slot } => {
+            let miss = frame.miss();
+            match frame.load_local(stage, slot, miss) {
+                Some((value, fact)) => {
+                    frame.write(stage, destination, value, fact);
+                    Step::Value(value)
+                }
+                None => Step::Unresolved,
+            }
+        }
+        Operation::StoreLocalPlain { source, slot, result } => {
+            let value = frame.tagged(stage, source);
+            let miss = frame.miss();
+            if !frame.store_local(stage, slot, value, miss) { return Step::Unresolved; }
+            if let Some(result) = result {
+                let fact = frame.fact(source);
+                frame.write(stage, result, value, fact);
+            }
             Step::Value(value)
         }
         Operation::Jump => Step::Control(frame.jump(stage)),

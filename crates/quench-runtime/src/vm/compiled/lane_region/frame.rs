@@ -26,6 +26,9 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
+    /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
+    /// may read or write them; `None` for a numeric region, whose activation has none.
+    pub(super) locals: Option<ir::Value>,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -107,6 +110,26 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
         debug_assert!(matches!(self.edges, Edges::Jump));
+    }
+
+    #[inline(always)]
+    fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: ir::Block)
+        -> Option<(ir::Value, RegisterFact)> {
+        let locals = self.locals?;
+        let address = stage.builder.ins().iadd_imm_s(locals,
+            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        Some((value, RegisterFact::canonical()))
+    }
+
+    #[inline(always)]
+    fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
+        _miss: ir::Block) -> bool {
+        let Some(locals) = self.locals else { return false };
+        let address = stage.builder.ins().iadd_imm_s(locals,
+            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        true
     }
 }
 

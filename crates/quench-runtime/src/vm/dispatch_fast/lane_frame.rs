@@ -12,13 +12,21 @@ struct LaneFrame<const ACC: u8> {
     /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
     /// not hold it.
     this: Value,
+    /// The activation's local slots and their count, for a staged local operation.
+    locals: Option<(*mut Value, usize)>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED }
+        Self { registers, view, this: Value::DELETED, locals: None }
+    }
+
+    /// A frame that may read and write the activation's local slots.
+    fn with_locals(registers: Registers, view: Carried, this: Value,
+        locals: *mut Value, len: usize) -> Self {
+        Self { registers, view, this, locals: Some((locals, len)) }
     }
 }
 
@@ -67,6 +75,25 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn jump(&mut self, _stage: &mut Concrete) -> Edge {
         Edge::Target
+    }
+
+    #[inline(always)]
+    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: ())
+        -> Option<(u64, ())> {
+        let (locals, len) = self.locals?;
+        (usize::from(slot) < len).then(|| {
+            // SAFETY: `slot` is inside the activation's live local slots.
+            (unsafe { *locals.add(usize::from(slot)) }.to_bits(), ())
+        })
+    }
+
+    #[inline(always)]
+    fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: ()) -> bool {
+        let Some((locals, len)) = self.locals else { return false };
+        if usize::from(slot) >= len { return false; }
+        // SAFETY: `slot` is inside the activation's live local slots.
+        unsafe { *locals.add(usize::from(slot)) = Value::from_bits(value) };
+        true
     }
 }
 
@@ -133,12 +160,40 @@ pub(super) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, s
 #[inline(always)]
 pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this };
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None };
     match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a load transfers no control"),
     }
+}
+
+/// `LoadLocalPlain` of `slot` into `destination` by the staged operation; false, writing
+/// nothing, where the activation has no such local slot.
+#[inline(always)]
+pub(super) fn staged_load_local_plain<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
+    r: Registers, view: Carried, destination: u16, slot: u16) -> bool {
+    let vm = unsafe { vm(cx) };
+    let frame = &mut vm.frames[unsafe { (*cx).frame }];
+    let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
+    matches!(crate::staged::step(&mut stage, &mut frame,
+        Operation::LoadLocalPlain { destination, slot }), Step::Value(_))
+}
+
+/// `StoreLocalPlain` of `source` to `slot`, and to `result` where the instruction has one,
+/// by the staged operation; false, writing nothing, where the activation has no such slot.
+#[inline(always)]
+pub(super) fn staged_store_local_plain<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
+    r: Registers, view: Carried, source: u16, slot: u16, result: Option<u16>) -> bool {
+    let vm = unsafe { vm(cx) };
+    let frame = &mut vm.frames[unsafe { (*cx).frame }];
+    let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
+    matches!(crate::staged::step(&mut stage, &mut frame,
+        Operation::StoreLocalPlain { source, slot, result }), Step::Value(_))
 }
 
 /// The edge a staged unconditional jump takes.
