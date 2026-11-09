@@ -10,7 +10,7 @@ use crate::bytecode::{FieldSite, Function, Successors, Superinstruction};
 /// The bytes one body's windowed masks may take. A body whose windows would exceed it keeps
 /// one conservative all-live map instead: a documented memory bound with safe exhaustion,
 /// rather than an arbitrary register count.
-pub(crate) const MAX_MASK_BYTES: usize = 16 << 20;
+pub(crate) const MAX_MASK_BYTES: usize = 4 << 20;
 
 /// Whether `windows` sets for `length` instructions exceed [`MAX_MASK_BYTES`].
 fn over_budget(windows: usize, length: usize) -> bool {
@@ -64,9 +64,10 @@ mod tests {
     fn the_window_budget_admits_past_4096_registers_and_exhausts_safely() {
         // 4097 registers span 9 windows; a small body is far inside the budget.
         assert!(!over_budget(9, 10));
-        // 9 windows of a 60K-instruction body exceed 16 MiB of sets.
+        // 9 windows of a 60K-instruction body exceed 4 MiB of sets.
         assert!(over_budget(9, 60_000));
-        assert_eq!(MAX_MASK_BYTES, 16 << 20);
+        assert!(!over_budget(9, 7_000));
+        assert_eq!(MAX_MASK_BYTES, 4 << 20);
         assert_eq!(std::mem::size_of::<RegisterSet>(), 64);
     }
 }
