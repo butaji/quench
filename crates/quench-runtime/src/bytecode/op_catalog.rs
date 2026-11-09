@@ -350,6 +350,20 @@ op_predicates! {
     is_require_object_coercible => RequireObjectCoercible,
     is_define_array_element => DefineArrayElement,
     is_string_case_index => StringCaseIndex,
+    is_construct => Construct,
+    is_require_iterator_result => RequireIteratorResult,
+    is_call_forwarding_arguments => CallForwardingArguments,
+    is_wasm_memory_address => WasmMemoryAddress,
+    is_wasm_instance_binding => WasmInstanceBinding,
+    is_wasm_branch_table => WasmBranchTable,
+    is_wasm_i32_add_immediate => WasmI32AddImmediate,
+    is_wasm_i32_and_immediate => WasmI32AndImmediate,
+    is_wasm_i32_shift_right_unsigned_and_immediate => WasmI32ShiftRightUnsignedAndImmediate,
+    is_wasm_i32_load => WasmI32Load,
+    is_wasm_i32_store => WasmI32Store,
+    is_wasm_f64_load => WasmF64Load,
+    is_wasm_f64_store => WasmF64Store,
+    is_wasm_f64_binary => WasmF64Binary,
 }
 
 #[cfg(test)]
