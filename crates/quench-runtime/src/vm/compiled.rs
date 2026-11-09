@@ -7437,7 +7437,7 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
         || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
-    if hit { general_store::record_store_class(vm, site as u16, Value::from_bits(value)); }
+    if hit { general_store::record_store_class(vm, site as u16, value); }
     u64::from(hit)
 }
 
