@@ -27,9 +27,6 @@ pub(in crate::vm) struct Loops {
     /// never hits at entry (an array's `length`) made V8-v7 Crypto's sum loop decline at each of
     /// its iterations.
     pub(in crate::vm) max_declines: u32,
-    /// Elements of an array read to guess whether it holds `i32`s; a wrong guess costs one
-    /// compilation.
-    pub(in crate::vm) element_sample: usize,
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub(in crate::vm) max_compilations: u32,
@@ -147,7 +144,7 @@ const FLOOR: Tiers = Tiers {
 };
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, element_sample: 8, max_compilations: 8 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
         trial_runs: 1024,

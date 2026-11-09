@@ -61,6 +61,13 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> {
     /// untyped register taken for an int32), leaving at `miss` for the rest.
     fn prove_number(&mut self, stage: &mut S, register: Register, miss: S::Miss) -> Option<()>;
     fn miss(&self) -> S::Miss;
+
+    /// The miss edge a local access uses, where this frame guards it. A frame whose locals
+    /// are plain storage reads and writes them without a guard returns `None`, and its
+    /// `load_local`/`store_local` then ignore the edge.
+    #[inline(always)]
+    fn local_miss(&self) -> Option<S::Miss> { Some(self.miss()) }
+
     fn int_fact(&self) -> Self::Fact;
     fn number_fact(&self) -> Self::Fact;
 }

@@ -8148,7 +8148,7 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        lane_loop_compile(cx, r, site, region, entry, &mut tier);
+        lane_loop_compile(cx, site, region, &mut tier);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -8175,10 +8175,10 @@ fn lane_loop_run<H: Host>(
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
-            LoopOutcome::NotEntered(widening) => {
+            LoopOutcome::NotEntered => {
                 if crate::trace::Channel::OsrReject.on() {
                     eprintln!(
-                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
+                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={}",
                         site.function,
                         site.header,
                     );
@@ -8228,15 +8228,6 @@ fn lane_loop_run<H: Host>(
                     }
                 }
             }
-            LoopOutcome::Grow(_) => {
-                site.native_region_runs
-                    .set(site.native_region_runs.get().saturating_add(1));
-            }
-            LoopOutcome::Widen(_) => {
-                site.native_region_runs
-                    .set(site.native_region_runs.get().saturating_add(1));
-                site.widenings.set(site.widenings.get().saturating_add(1));
-            }
             LoopOutcome::Terminated => {}
         }
     }
@@ -8267,46 +8258,26 @@ fn lane_loop_run<H: Host>(
             false
         }
     };
-    let mut tier = site.tier.borrow_mut();
     if general_dispatch_due {
         match outcome {
-            LoopOutcome::Resume(pc) | LoopOutcome::Grow(pc) => return LoopContinuation::Exit(pc),
+            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
             LoopOutcome::Exit(pc) => {
                 site.exits.set(site.exits.get().saturating_add(1));
                 return LoopContinuation::Exit(pc);
             }
             LoopOutcome::Callee => return LoopContinuation::Callee,
-            LoopOutcome::Widen(pc) => {
-                if let Some(widening) = code.widening(pc) {
-                    tier.widened.insert(widening);
-                }
-                publication.retire();
-                return LoopContinuation::Exit(pc);
-            }
-            LoopOutcome::NotEntered(_) | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
+            LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
     }
     match outcome {
-        LoopOutcome::NotEntered(widening) => {
-            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
-            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
-                publication.retire();
-            }
-            LoopContinuation::Jump
-        }
+        // An entry guard missed: registers are untouched, so the backward jump runs in
+        // the interpreter.
+        LoopOutcome::NotEntered => LoopContinuation::Jump,
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
-        LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         // The call made the callee's activation, whose own records the lane runs next.
         LoopOutcome::Callee => LoopContinuation::Callee,
-        LoopOutcome::Widen(pc) => {
-            if let Some(widening) = code.widening(pc) {
-                tier.widened.insert(widening);
-            }
-            publication.retire();
-            LoopContinuation::Exit(pc)
-        }
         LoopOutcome::Returned { pc, value } => {
             site.note_run(entry.backedge_count());
             LoopContinuation::Completed(pc, value)
@@ -10872,12 +10843,6 @@ fn lane_frame_state<H: Host>(
 }
 
 impl<H: Host> Vm<H> {
-    /// Whether the running fast-lane activation stack is empty. OSR adapter reads that use
-    /// frame-local storage must decline while locals live in frameless lane activations.
-    pub(super) fn lane_has_activations(&self) -> bool {
-        !self.lane_stack.activations.is_empty()
-    }
-
     /// Make the lane's activations VM frames, innermost last, each with the
     /// pending call its push would have recorded; the lane continues in the
     /// innermost one. The bottom caller is the lane run's VM frame.

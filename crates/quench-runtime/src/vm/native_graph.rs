@@ -190,18 +190,11 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let region_count = (0..program.function_count())
             .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id).code.len())))
             .ok_or("native region count overflow")?;
-        let scalar_regions: Vec<_> = (0..program.function_count()).map(|id| {
-            let body = program.function(id);
-            if id == 0 || options.regions(body.code.len()).is_some()
-                || !super::compiled::js_general_dispatch_candidate(program, body)
-            {
-                Vec::new()
-            } else {
-                super::compiled::lower_static_scalar_regions(program, id as u32, &*isa)
-            }
-        }).collect();
-        let scalar_count = scalar_regions.iter().try_fold(0usize, |count, regions|
-            count.checked_add(regions.len())).ok_or("native scalar symbol count overflow")?;
+        // A function's static regions are its loop regions and its bounded scalar ranges
+        // (`lower_static_typed_regions`); each publishes under its own symbol.
+        let scalar_count = typed_units.iter().try_fold(0usize, |count, regions| count
+            .checked_add(regions.iter().filter(|region| region.scalar).count()))
+            .ok_or("native scalar symbol count overflow")?;
         let scalar_base = (first_definition as usize)
             .checked_add(program.function_count())
             .and_then(|base| base.checked_add(region_count))
@@ -214,7 +207,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let mut fallback_definitions = Vec::new();
         let mut fallback_tables = Vec::new();
         let mut scalar_definitions = Vec::new();
-        for (id, scalar_regions) in scalar_regions.into_iter().enumerate() {
+        for (id, typed_units) in typed_units.into_iter().enumerate() {
             let body = program.function(id);
             let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
             let sites = &bodies[id];
@@ -226,8 +219,8 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             for site in sites {
                 site.operands.append_native_bytes(&mut bytes);
             }
-            let units: Vec<_> = typed_units[id].iter().map(|unit|
-                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function }).collect();
+            let units: Vec<_> = typed_units.iter().map(|unit|
+                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function, gated: !unit.scalar }).collect();
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)
                     .checked_add(program.function_count())
@@ -290,13 +283,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 match super::compiled::lower_js_general_dispatch(
                     program, function_id, &*isa,
                     super::compiled::JsGeneralCallout::Relocatable { fallback },
-                    &scalar_regions.iter().map(|region| {
-                        super::compiled::StaticRegionEntry {
-                            range: region.range.clone(),
-                            fields: &region.fields,
-                            function: &region.function,
-                        }
-                    }).collect::<Vec<_>>(), &units,
+                    &units,
                 ) {
                     Ok((native, _)) => {
                         let table = program.function_count().checked_add(usize::from(has_narrow_table))
@@ -326,7 +313,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 name: format!("{namespace}_function_{id}"),
                 function: native,
             });
-            for (index, region) in scalar_regions.into_iter().enumerate() {
+            for (index, region) in typed_units.into_iter().filter(|region| region.scalar).enumerate() {
                 scalar_definitions.push(NativeFunction::Definition {
                     name: format!("{namespace}_function_{id}_scalar_{index}"),
                     function: region.function,

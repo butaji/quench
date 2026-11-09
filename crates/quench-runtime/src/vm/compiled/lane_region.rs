@@ -484,6 +484,10 @@ pub(super) enum Coverage {
     /// instructions in the loop lower; an edge out of it leaves at the exact PC. The
     /// backedge is a native branch to the header with the tier's poll.
     Loop { header: usize, backedge: usize, poll: bool },
+    /// A bounded straight-line range `start..end` of the function's unit: a static scalar
+    /// region. Only instructions in it lower; the instruction at `end` and every edge out
+    /// leave at the exact PC, which the caller resumes at.
+    Range { start: usize, end: usize },
     /// A caller-origin entry into the original unit CFG. Opaque operations
     /// leave at their exact origin; earlier loops and effects are not replayed.
     PrefixFrom(usize),
@@ -492,16 +496,30 @@ pub(super) enum Coverage {
 
 impl Coverage {
     pub(super) fn entry(self) -> usize {
-        match self { Self::Loop { header, .. } => header,
+        match self { Self::Loop { header, .. } => header, Self::Range { start, .. } => start,
             Self::PrefixFrom(pc) | Self::FullFrom(pc) => pc, _ => 0 }
     }
-    fn full(self) -> bool { matches!(self, Self::Full | Self::FullFrom(_) | Self::Loop { .. }) }
+    fn full(self) -> bool { matches!(self, Self::Full | Self::FullFrom(_)) }
     fn selected_entry(self) -> bool {
-        matches!(self, Self::PrefixFrom(_) | Self::FullFrom(_) | Self::Loop { .. })
+        matches!(self, Self::PrefixFrom(_) | Self::FullFrom(_) | Self::Loop { .. } | Self::Range { .. })
     }
+    /// The PC after the region this coverage selects: where a path that falls off its end
+    /// leaves. A loop leaves after its backward jump, a range at its end.
+    fn exit_pc(self, unit_len: usize) -> usize {
+        match self {
+            Self::Loop { backedge, .. } => backedge.saturating_add(1).min(unit_len),
+            Self::Range { end, .. } => end,
+            _ => unit_len,
+        }
+    }
+
     /// Whether instruction `pc` is part of the region this coverage selects.
     fn lowered(self, pc: usize) -> bool {
-        match self { Self::Loop { header, backedge, .. } => (header..=backedge).contains(&pc), _ => true }
+        match self {
+            Self::Loop { header, backedge, .. } => (header..=backedge).contains(&pc),
+            Self::Range { start, end } => (start..end).contains(&pc),
+            _ => true,
+        }
     }
 }
 
@@ -1214,6 +1232,7 @@ impl Specializer for RegionSpecializer<'_> {
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
+
 pub(super) fn lower_body(
     program: &ResidualProgram,
     function_id: u32,
@@ -1262,9 +1281,14 @@ pub(super) fn lower(
     completion: Completion,
     views: ElementViews,
 ) -> Option<LoweredRegion> {
-    let residual = super::static_loops::specialize(program, unit, coverage.entry()).map(|instructions|
-        super::lane_unit::Unit { instructions, origins: unit.origins.clone(), frames: unit.frames.clone(),
-            markers: unit.markers.clone(), caller_registers: unit.caller_registers, registers: unit.registers, end: unit.end });
+    // A loop entry may take the rotated residual of its proven condition; a bounded range
+    // is straight-line code whose PCs are its function's, which rotation would rename.
+    let residual = (!matches!(coverage, Coverage::Range { .. }))
+        .then(|| super::static_loops::specialize(program, unit, coverage.entry()))
+        .flatten()
+        .map(|instructions| super::lane_unit::Unit { instructions, origins: unit.origins.clone(),
+            frames: unit.frames.clone(), markers: unit.markers.clone(), caller_registers: unit.caller_registers,
+            registers: unit.registers, end: unit.end });
     let unit = residual.as_ref().unwrap_or(unit);
     let function = program.function_get(function_id as usize)?;
     let numeric = completion == Completion::Number;
@@ -1573,7 +1597,9 @@ pub(super) fn lower(
         // entry edge, before the header and every possible loop effect. A failed
         // entry proof declines the region (the lane runs the header itself), not
         // an exit: the old lowering's entry admission declines the same arrays.
-        lowering.proving_entry = true;
+        // A bounded range reads its fields at their sites; hoisting them to a shared entry
+        // guard would make every call leave at the entry.
+        lowering.proving_entry = !matches!(coverage, Coverage::Range { .. });
         lowering.hoist_reads(&mut state, pc);
         lowering.proving_entry = false;
         lowering.builder.ins().jump(target, &[]);
@@ -1609,7 +1635,7 @@ pub(super) fn lower(
         reachable = lowering.instruction(&mut state, pc, instruction);
     }
     if reachable {
-        lowering.exit(&mut state, instructions.len() as u32);
+        lowering.exit(&mut state, coverage.exit_pc(instructions.len()) as u32);
     }
     for (header, latch) in std::mem::take(&mut lowering.poll_latches).iter() {
         if let Some(latch) = latch {
@@ -1731,7 +1757,17 @@ pub(super) fn lower(
     lowering.builder.switch_to_block(leave);
     let status = lowering.builder.block_params(leave)[0];
     lowering.builder.ins().return_(&[status]);
-    if !lowering.valid || (completion == Completion::StatusAndPc && !lowering.finishes) { return None; }
+    // A lane body is a whole function body and must complete; so must an inlined unit, whose
+    // callees rejoin it. A loop or range over the function's own code completes by its exits
+    // and backedge, which the plan emits where the interpreter resumes.
+    let must_finish = match coverage {
+        Coverage::Prefix | Coverage::PrefixFrom(_) | Coverage::Full | Coverage::FullFrom(_) => true,
+        Coverage::Loop { .. } => !unit.frames.is_empty(),
+        Coverage::Range { .. } => false,
+    };
+    if !lowering.valid || (completion == Completion::StatusAndPc && must_finish && !lowering.finishes) {
+        return None;
+    }
     let number_result = (completion == Completion::Number).then(|| lowering.finish_number_returns());
     let native_count = lowering.native;
     let hoists_arrays = !lowering.loop_arrays.is_empty();
@@ -2449,8 +2485,6 @@ impl Lowering<'_, '_> {
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction)
             }
-            op if plain && op.js_denotation() == JsDenotation::NumericUnary
-                && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             Op::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
                 && instruction.register_b() < self.unit.registers => {
                 let exit = self.guard_exit(state, pc32);
@@ -2463,6 +2497,8 @@ impl Lowering<'_, '_> {
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
                 && !matches!(self.helpers, LaneHelpers::Numeric) => self.typeof_test(state, pc, instruction),
+            op if plain && op.js_denotation() == JsDenotation::NumericUnary
+                && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
             // collection leaves first.
             Op::MakeObject | Op::MakeArray if plain && self.completion == Completion::StatusAndPc => {

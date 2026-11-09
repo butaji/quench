@@ -490,7 +490,7 @@ mod tests {
 #[path = "facts/immediates.rs"] mod immediates;
 #[path = "facts/written.rs"] mod written;
 #[path = "facts/binary.rs"] mod binary;
-pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32, is_int32_number};
+pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 
 #[cfg(test)]

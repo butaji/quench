@@ -162,7 +162,8 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     #[inline(always)]
-    fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: ir::Block)
+
+    fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
         let locals = self.locals?;
         let address = stage.builder.ins().iadd_imm_s(locals,
@@ -173,7 +174,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
-        _miss: ir::Block) -> bool {
+        _miss: Option<ir::Block>) -> bool {
         let Some(locals) = self.locals else { return false };
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
@@ -344,6 +345,10 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
             Edges::ValueGuarded { miss } => miss,
             _ => unreachable!("a numeric operation has a miss edge"),
         }
+    }
+
+    fn local_miss(&self) -> Option<ir::Block> {
+        matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())
     }
 
     fn int_fact(&self) -> RegisterFact {

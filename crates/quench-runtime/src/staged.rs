@@ -188,12 +188,12 @@ pub(crate) trait Frame<S: Stage> {
     /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
     /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
     #[inline(always)]
-    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: S::Miss)
+    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: Option<S::Miss>)
         -> Option<(S::Word, Self::Fact)> { None }
 
     /// Write `value` to local slot `slot`; `false` where this frame cannot write them.
     #[inline(always)]
-    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: S::Miss)
+    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: Option<S::Miss>)
         -> bool { false }
 }
 
@@ -303,8 +303,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Step::Value(value)
         }
         Operation::LoadLocalPlain { destination, slot } => {
-            let miss = frame.miss();
-            match frame.load_local(stage, slot, miss) {
+            match frame.load_local(stage, slot, frame.local_miss()) {
                 Some((value, fact)) => {
                     frame.write(stage, destination, value, fact);
                     Step::Value(value)
@@ -314,8 +313,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         }
         Operation::StoreLocalPlain { source, slot, result } => {
             let value = frame.tagged(stage, source);
-            let miss = frame.miss();
-            if !frame.store_local(stage, slot, value, miss) { return Step::Unresolved; }
+            if !frame.store_local(stage, slot, value, frame.local_miss()) { return Step::Unresolved; }
             if let Some(result) = result {
                 let fact = frame.fact(source);
                 frame.write(stage, result, value, fact);

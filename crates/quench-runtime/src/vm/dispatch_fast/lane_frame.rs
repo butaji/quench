@@ -83,7 +83,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: ())
+    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>)
         -> Option<(u64, ())> {
         let (locals, len) = self.locals?;
         (usize::from(slot) < len).then(|| {
@@ -93,7 +93,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: ()) -> bool {
+    fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {
         let Some((locals, len)) = self.locals else { return false };
         if usize::from(slot) >= len { return false; }
         // SAFETY: `slot` is inside the activation's live local slots.
