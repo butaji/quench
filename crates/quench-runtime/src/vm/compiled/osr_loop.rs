@@ -84,6 +84,10 @@ pub(crate) enum LoopOutcome {
     /// inside the loop, or a returning call. The lane completes the activation as its own
     /// body would (`lane_return_value_general`), which is not an exit.
     Returned { pc: u32, value: Value },
+    /// A call activated the callee's lane body, and the run left there (`LaneExit::Callee`):
+    /// the lane resumes in the activation the call made, at `LaneContext::callee_resume`,
+    /// not in this region's view.
+    Callee,
     /// Termination was requested while the code ran: its poll faulted, so registers may
     /// hold values of an unfinished iteration, which nothing reads before the request ends
     /// the execution.

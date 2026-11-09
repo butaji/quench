@@ -7973,6 +7973,9 @@ fn lane_loop_native<H: Host>(
             None => exit(at(pc)),
         }),
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
+        // SAFETY: the call set the callee's activation and its resume record before the body
+        // left (`lane_body_activate`), so the run leaves at a record of that view.
+        LoopContinuation::Callee => LoopAttempt::Leave(exit(unsafe { (*cx).callee_resume })),
         LoopContinuation::Completed(pc, value) =>
             LoopAttempt::Resumed(lane_return_value_general::<H>(cx, at(pc), value)),
     }
@@ -8119,6 +8122,8 @@ enum LoopContinuation {
     Compiling,
     /// The region completed its activation with this value at this record.
     Completed(u32, Value),
+    /// A call activated the callee's lane body: leave the run in that activation.
+    Callee,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -8177,7 +8182,7 @@ fn lane_loop_run<H: Host>(
                 site.entry_guard_misses
                     .set(site.entry_guard_misses.get().saturating_add(1));
             }
-            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } => {
+            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Callee => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
@@ -8266,6 +8271,7 @@ fn lane_loop_run<H: Host>(
                 site.exits.set(site.exits.get().saturating_add(1));
                 return LoopContinuation::Exit(pc);
             }
+            LoopOutcome::Callee => return LoopContinuation::Callee,
             LoopOutcome::Widen(pc) => {
                 if let Some(widening) = code.widening(pc) {
                     tier.widened.insert(widening);
@@ -8288,6 +8294,8 @@ fn lane_loop_run<H: Host>(
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
         LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
+        // The call made the callee's activation, whose own records the lane runs next.
+        LoopOutcome::Callee => LoopContinuation::Callee,
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
                 tier.widened.insert(widening);

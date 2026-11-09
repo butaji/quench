@@ -6427,8 +6427,8 @@ impl CompiledOsrRegion {
                     }
                     LaneExit::Entry => LoopOutcome::NotEntered(None),
                     LaneExit::Terminated => LoopOutcome::Terminated,
-                    LaneExit::Callee | LaneExit::Inlined { .. } | LaneExit::Returned { .. } =>
-                        LoopOutcome::Exit(0),
+                    LaneExit::Callee => LoopOutcome::Callee,
+                    LaneExit::Inlined { .. } | LaneExit::Returned { .. } => LoopOutcome::Exit(0),
                 }
             };
         }) };
