@@ -731,6 +731,61 @@ impl ImmediateLayout {
     }
 }
 
+/// A tier's operation family, declared once by the catalog (`Op::class`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Class {
+    Other,
+    Move,
+    LoadConst,
+    WasmFloatBinary32,
+    WasmFloatBinary64,
+    WasmFloatUnary32,
+    WasmFloatUnary64,
+    WasmI32AddRegister,
+    WasmI32AddImmediate,
+    WasmI32AddJump,
+    WasmI32ShiftRightUnsignedAnd,
+    WasmI32Unary,
+    WasmI64Binary,
+    WasmI64Unary,
+    WasmScalarConvert,
+    WasmSelect,
+    WasmI32Load,
+    WasmI32Load8U,
+    WasmJumpI32EqualImmediate,
+    WasmJumpI32NotEqualImmediate,
+}
+
+impl Class {
+    /// Equality usable in a `const` context (the derived `PartialEq` is not const).
+    pub(crate) const fn eq(self, other: Self) -> bool { self as u8 == other as u8 }
+}
+
+/// The class of each opcode, the catalog's one home for the family.
+macro_rules! class_of {
+    (Move) => { Class::Move };
+    (LoadConst) => { Class::LoadConst };
+    (WasmF32Binary) => { Class::WasmFloatBinary32 };
+    (WasmF64Binary) => { Class::WasmFloatBinary64 };
+    (WasmF32Unary) => { Class::WasmFloatUnary32 };
+    (WasmF64Unary) => { Class::WasmFloatUnary64 };
+    (WasmI32Add) => { Class::WasmI32AddRegister };
+    (WasmI32AddImmediate) => { Class::WasmI32AddImmediate };
+    (WasmI32AddImmediateJumpNonZero) => { Class::WasmI32AddJump };
+    (WasmI32ShiftRightUnsignedAndImmediate) => { Class::WasmI32ShiftRightUnsignedAnd };
+    (WasmI32Unary) => { Class::WasmI32Unary };
+    (WasmI64Binary) => { Class::WasmI64Binary };
+    (WasmI64Unary) => { Class::WasmI64Unary };
+    (WasmScalarConvert) => { Class::WasmScalarConvert };
+    (WasmSelect) => { Class::WasmSelect };
+    (WasmI32Load) => { Class::WasmI32Load };
+    (WasmI32Load8U) => { Class::WasmI32Load8U };
+    (WasmJumpI32EqualImmediate) => { Class::WasmJumpI32EqualImmediate };
+    (WasmJumpI32NotEqualImmediate) => { Class::WasmJumpI32NotEqualImmediate };
+    ($other:ident) => { Class::Other };
+}
+
 macro_rules! opcodes {
     ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -749,6 +804,8 @@ macro_rules! opcodes {
         impl Op {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
+            const CLASSES: [Class; Self::COUNT] = [$(class_of!($name)),+];
+            pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
             #[cfg(feature = "native-execution")]
             pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
                 match self {

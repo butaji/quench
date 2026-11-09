@@ -28,6 +28,7 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::index as opc;
+use crate::bytecode::Class;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
@@ -9009,7 +9010,7 @@ lane_handler! {
     fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
-        let value = if const { opcode(OP) as u16 == opc::WasmF64Binary } {
+        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) } {
             let (Some(left), Some(right), Some(operator)) = (
                 left.bits64(),
                 right.bits64(),
@@ -9053,8 +9054,8 @@ const FLOAT_ARITHMETIC: usize = 10;
 
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
-    Some(match op as u16 {
-        opc::WasmF64Binary => match F64BinaryOperator::from_tag(selector)? {
+    Some(match op.class() {
+        Class::WasmFloatBinary64 => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -9067,7 +9068,7 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
             F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
             _ => return None,
         },
-        opc::WasmF32Binary => match F32BinaryOperator::from_tag(selector)? {
+        Class::WasmFloatBinary32 => match F32BinaryOperator::from_tag(selector)? {
             F32BinaryOperator::Add => FLOAT_ADD,
             F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -10316,7 +10317,7 @@ lane_handler! {
     fn lane_bit_field_then<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
         let (operator, immediate) = const {
             let second = opcode(SECOND);
-            if second as u16 == opc::WasmI32ShiftRightUnsignedAndImmediate { (None, true) }
+            if second.class().eq(Class::WasmI32ShiftRightUnsignedAnd) { (None, true) }
             else if let Some(operator) = I32BinaryOperator::from_register_op(second) { (Some(operator), false) }
             else if let Some(operator) = I32BinaryOperator::from_immediate_op(second) { (Some(operator), true) }
             else { panic!("not an i32 operator") }
@@ -10413,16 +10414,16 @@ fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u
     }
     macro_rules! loads {
         ($jump:ident) => {
-            match load as u16 {
-                opc::WasmI32Load => accs!($jump, WasmI32Load),
-                opc::WasmI32Load8U => accs!($jump, WasmI32Load8U),
+            match load.class() {
+                Class::WasmI32Load => accs!($jump, WasmI32Load),
+                Class::WasmI32Load8U => accs!($jump, WasmI32Load8U),
                 _ => None,
             }
         };
     }
-    match jump as u16 {
-        opc::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
-        opc::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
+    match jump.class() {
+        Class::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
+        Class::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
         _ => None,
     }
 }
@@ -10434,9 +10435,9 @@ lane_handler! {
     /// first result is written before the second reads its operands, as two records do.
     fn lane_add_pair<FIRST: u16, SECOND: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         let first_immediate = const {
-            match opcode(FIRST) as u16 {
-                opc::WasmI32Add => false,
-                opc::WasmI32AddImmediate => true,
+            match opcode(FIRST).class() {
+                Class::WasmI32AddRegister => false,
+                Class::WasmI32AddImmediate => true,
                 _ => panic!("not an i32 add"),
             }
         };
@@ -10447,8 +10448,8 @@ lane_handler! {
         // SAFETY: the view fuses an add only with a following add or loop step.
         let second = unsafe { &*second_ip };
         let view = Carried { acc: Slot::of(first), ..view };
-        match const { opcode(SECOND) as u16 } {
-            opc::WasmI32AddImmediateJumpNonZero => {
+        match const { opcode(SECOND).class() } {
+            Class::WasmI32AddJump => {
                 let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
                 let encoded = view.integers.encode(sum);
                 if sum != 0 {
@@ -10456,7 +10457,7 @@ lane_handler! {
                 }
                 produce!(cx, r, second_ip, second.a, encoded, view)
             }
-            opc::WasmI32AddImmediate => {
+            Class::WasmI32AddImmediate => {
                 let sum = r.i32(second.b).wrapping_add(second.imm() as i32);
                 produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
             }
@@ -10482,18 +10483,18 @@ fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> 
     }
     macro_rules! seconds {
         ($first:ident) => {
-            match (second as u16, backward) {
-                (opc::WasmI32Add, _) => accs!($first, WasmI32Add, false),
-                (opc::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
-                (opc::WasmI32AddImmediateJumpNonZero, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
-                (opc::WasmI32AddImmediateJumpNonZero, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
+            match (second.class(), backward) {
+                (Class::WasmI32AddRegister, _) => accs!($first, WasmI32Add, false),
+                (Class::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
+                (Class::WasmI32AddJump, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
+                (Class::WasmI32AddJump, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
                 _ => None,
             }
         };
     }
-    match first as u16 {
-        opc::WasmI32Add => seconds!(WasmI32Add),
-        opc::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
+    match first.class() {
+        Class::WasmI32AddRegister => seconds!(WasmI32Add),
+        Class::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
         _ => None,
     }
 }
@@ -18223,26 +18224,26 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     } else if MemoryStore::from_direct_op(op).is_some() {
         lane_store::<H, OP, ACC>
     } else {
-        match op {
-            Op::Move => return LaneHandler::producer(lane_move::<H, ACC>),
-            Op::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
-            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+        match op.class() {
+            Class::Move => return LaneHandler::producer(lane_move::<H, ACC>),
+            Class::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
+            Class::WasmI32ShiftRightUnsignedAnd => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
-            Op::WasmSelect => return LaneHandler::producer(lane_select::<H, ACC>),
-            Op::WasmI32AddImmediateJumpNonZero => {
+            Class::WasmSelect => return LaneHandler::producer(lane_select::<H, ACC>),
+            Class::WasmI32AddJump => {
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
-            Op::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
-            Op::WasmF32Binary | Op::WasmF64Binary => {
+            Class::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
+            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 => {
                 return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
             }
-            Op::WasmF32Unary | Op::WasmF64Unary => {
+            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 => {
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
-            Op::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, ACC>),
-            Op::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, ACC>),
-            Op::WasmScalarConvert => {
+            Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, ACC>),
+            Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, ACC>),
+            Class::WasmScalarConvert => {
                 return LaneHandler::producer(lane_scalar_convert::<H, ACC>);
             }
             _ => match other_handler::<H, BACKWARD, ACC>(op) {
