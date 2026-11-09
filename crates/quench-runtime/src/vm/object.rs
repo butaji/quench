@@ -1562,7 +1562,6 @@ impl<H: Host> Vm<H> {
         Some(super::compiled::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
             ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
-            target_shape: self.heap.slot_target_shape(cache.receiver, usize::from(cache.slot)),
             inherited: None, function_shape: false,
         })
     }
@@ -1623,7 +1622,6 @@ impl<H: Host> Vm<H> {
                 storage_len: usize::from(slot) + 1,
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
-                target_shape: None,
                 inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]), function_shape: false,
             });
         }
@@ -1676,7 +1674,6 @@ impl<H: Host> Vm<H> {
         (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
             ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
-            target_shape: self.heap.slot_target_shape(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
         })
     }
@@ -1817,7 +1814,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
         value: Value,
-        site: u16,
+        site: u16, layout: crate::heap::PropertyStoreLayout,
     ) -> Option<FieldCache> {
         debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
@@ -1831,7 +1828,7 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))?;
         // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
         // shape's own data slot.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, layout) } {
             return None;
         }
         self.profile.field_cache_hit(2, 0);

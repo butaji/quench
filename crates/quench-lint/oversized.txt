@@ -2699,7 +2699,6 @@ function-lines crates/quench-runtime/src/heap/records.rs::RecordSpace<T,CAPACITY
 function-lines crates/quench-runtime/src/heap/snapshot.rs::Heap::read_snapshot 51
 function-lines crates/quench-runtime/src/heap/snapshot.rs::Heap::write_snapshot 44
 function-lines crates/quench-runtime/src/heap/tests.rs::direct_array_records_trace_values_and_release_shared_backing 43
-function-lines crates/quench-runtime/src/heap/tests.rs::linked_target_observations_retire_on_mutation_and_raw_admission 45
 function-lines crates/quench-runtime/src/heap/tests.rs::memory_census_counts_array_allocations_once_across_storage_and_collection 60
 function-lines crates/quench-runtime/src/heap/tests.rs::named_property_publication_retires_readers_for_every_record_family 57
 function-lines crates/quench-runtime/src/heap/tests.rs::object_property_storage_migration_preserves_writes_and_gc_roots 51
@@ -2741,7 +2740,6 @@ function-lines crates/quench-runtime/src/subset_tests.rs::try_finally_bodies_kee
 function-lines crates/quench-runtime/src/subset_tests.rs::unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead 188
 function-lines crates/quench-runtime/src/value.rs::tests::number_encoding_preserves_arbitrary_float_bits_and_integer_boundaries 51
 function-lines crates/quench-runtime/src/value.rs::tests::values_round_trip 67
-function-lines crates/quench-runtime/src/value_vec.rs::ValueArena::register_derived_shape 41
 function-lines crates/quench-runtime/src/value_vec.rs::tests::young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor 48
 function-lines crates/quench-runtime/src/value_vec/buffer.rs::PropertyBuffer::grow 57
 function-lines crates/quench-runtime/src/value_vec/buffer.rs::PropertyBuffer::reserve_address_space 43

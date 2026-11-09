@@ -588,12 +588,12 @@ impl Value {
     #[inline(always)]
     pub(crate) fn direct_object_index(self) -> Option<u32> {
         // `heap_reference` as one family test: hot reads ask for this family alone.
-        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT).then_some(self.0 as u32)
+        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
 
     #[inline(always)]
     pub(crate) fn direct_array_index(self) -> Option<u32> {
-        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
+        crate::staged::value::is_direct_array(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
 
     #[inline(always)]
@@ -618,7 +618,7 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn direct_function_index(self) -> Option<u32> {
-        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS).then_some(self.0 as u32)
+        crate::staged::value::is_direct_function(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
 
     /// Whether the value names a direct record of an object family: an ordinary object,

@@ -73,6 +73,54 @@ pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Con
     stage.ne_imm(inline, 0)
 }
 
+/// Whether an object's payload word points at its extras (`Object::payload`).
+#[inline(always)]
+pub(crate) fn has_extras<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+    let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
+    stage.eq_imm(tag, OBJECT.extras_tag)
+}
+
+/// Whether an object's payload word holds plain storage, no extras: `has_extras` negated.
+#[inline(always)]
+pub(crate) fn plain_payload<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+    let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
+    stage.ne_imm(tag, OBJECT.extras_tag)
+}
+
+/// The extras an object's payload word points at, once `has_extras` holds.
+#[inline(always)]
+pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+    stage.and_imm(payload, !OBJECT.extras_tag_mask)
+}
+
+/// The record's encoded prototype link (`Object::proto_link`).
+#[inline(always)]
+pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+    let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
+    stage.and_imm(meta, u64::from(OBJECT.proto_mask))
+}
+
+/// The id of the object record `link` names, or `miss` where it names none
+/// (`ProtoLink::object_record_id`). The range starts at a multiple of its power-of-two span,
+/// so a link in it is the base in its high bits, one mask and compare, and holds the id in
+/// its low bits, a mask that addresses the record without the subtracted base.
+#[inline(always)]
+pub(crate) fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
+    const SPAN: u32 = OBJECT.proto_record_end - OBJECT.proto_record_base;
+    const _: () = assert!(SPAN.is_power_of_two() && OBJECT.proto_record_base.is_multiple_of(SPAN));
+    let high = stage.and_imm(link, !u64::from(SPAN - 1));
+    let inside = stage.eq_imm(high, u64::from(OBJECT.proto_record_base));
+    stage.guard(inside, miss)?;
+    Some(stage.and_imm(link, u64::from(SPAN - 1)))
+}
+
+/// The address of object record `id` in the record table at `records`.
+#[inline(always)]
+pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
+    let offset = stage.mul_imm(id, OBJECT.record_size as u64);
+    stage.add(records, offset)
+}
+
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
 fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
@@ -92,12 +140,11 @@ fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
 pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, form: Form,
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
-    let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
-    let extras = stage.eq_imm(tag, OBJECT.extras_tag);
+    let extras = has_extras(stage, payload);
     if stage.known(extras) == Some(true) {
         return Some(Layout { slots: extras_slots(stage, payload, inline), storage_len });
     }
-    let plain = stage.ne_imm(tag, OBJECT.extras_tag);
+    let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let packed = match access {
         PackedAccess::Snapshot => Packed::Snapshot(payload),
@@ -109,7 +156,7 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
 /// The slots of an object whose payload word points at its extras, which hold the inline
 /// values wide or the run's start (`Object::extras_storage_start`).
 fn extras_slots<S: Stage>(stage: &mut S, payload: S::Word, inline: S::Cond) -> Slots<S::Word, S::Cond> {
-    let pointer = stage.and_imm(payload, !OBJECT.extras_tag_mask);
+    let pointer = extras_pointer(stage, payload);
     if stage.known(inline) == Some(true) {
         Slots::Flat(stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64))
     } else {
@@ -172,6 +219,14 @@ fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16) -> S
 /// beside its index.
 #[inline(always)]
 pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word {
+    let upper_words = stage.constant(NarrowLayout::upper_words() as u64);
+    decode_narrow_through(stage, narrow, upper_words)
+}
+
+/// `decode_narrow` with the reference codes' upper words at `upper_words`, a copy of
+/// `NarrowLayout::upper_words` (an ahead-of-time image links its own).
+#[inline(always)]
+pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
     let integer = stage.ne_imm(flag, 0);
     stage.choose(integer, |stage| {
@@ -181,8 +236,7 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
         let code = stage.shr_imm(narrow, NarrowLayout::CODE_SHIFT);
         let code = stage.and_imm(code, u64::from(NarrowLayout::CODE_MASK));
         let offset = stage.mul_imm(code, std::mem::size_of::<u64>() as u64);
-        let table = stage.constant(NarrowLayout::upper_words() as u64);
-        let entry = stage.add(table, offset);
+        let entry = stage.add(upper_words, offset);
         let upper = stage.load_table(entry);
         let lower = stage.shr_imm(narrow, NarrowLayout::INDEX_SHIFT);
         stage.or(upper, lower)

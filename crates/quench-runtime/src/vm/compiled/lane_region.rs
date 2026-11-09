@@ -753,8 +753,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
                 let exit = self.guard_exit(state, target as u32);
                 let bits = self.tagged(state, register);
-                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
                 emit_js_guard(&mut self.builder, object, exit);
                 self.refine_object_family(state, bits);
             }
@@ -2936,9 +2935,8 @@ impl Lowering<'_, '_> {
                 builder.ins().bor(null, undefined)
             };
             let record = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-                let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-                let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(builder), bits);
+                let array = crate::staged::value::is_direct_array(&mut super::object_slots::emit(builder), bits);
                 builder.ins().bor(object, array)
             };
             let (left_nullish, right_nullish) = (nullish(&mut self.builder, left), nullish(&mut self.builder, right));
@@ -3121,8 +3119,7 @@ impl Lowering<'_, '_> {
     /// Nullish receivers need no boxing only when the body ignores `this`.
     /// All other primitives retain interpreter recovery's boxing semantics.
     fn receiver_recovery(&mut self, receiver: ir::Value, recovery: ReceiverRecovery) -> ir::Value {
-        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), receiver);
         match recovery {
             ReceiverRecovery::Object => object,
             ReceiverRecovery::ObjectOrNullish => {
@@ -3215,7 +3212,6 @@ impl Lowering<'_, '_> {
     /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
     /// stack takes `helper`. The caller wrote back its registers.
     fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
-        use crate::value::ValueLayout;
         let word = std::mem::size_of::<Value>() as i64;
         let frame_size = std::mem::size_of::<ShadowFrame>() as i64;
         let offset = |field: usize| i32::try_from(field).expect("dispatch offset fits i32");
@@ -3227,8 +3223,7 @@ impl Lowering<'_, '_> {
         // to the global object (`lane_receiver_this`); any other receiver takes the helper.
         let (admitted, this) = match callee.sloppy {
             Some(global) => {
-                let family = self.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), this);
                 let undefined = self.ins().icmp_imm_u(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
                 let null = self.ins().icmp_imm_u(IntCC::Equal, this, Value::NULL.to_bits() as i64);
                 let nullish = self.ins().bor(undefined, null);
@@ -4390,8 +4385,7 @@ impl Lowering<'_, '_> {
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
         use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
-        let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
+        let proto = crate::staged::object::proto_link(&mut super::object_slots::emit(&mut self.builder), record);
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
         if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
@@ -4409,31 +4403,24 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, matched, exit);
             return Some(read);
         }
-        let from = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base));
-        let below = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end));
-        let object_proto = self.ins().band(from, below);
-        emit_js_guard(&mut self.builder, object_proto, exit);
-        let id = self.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
-        let id = self.ins().uextend(types::I64, id);
-        let offset = self.ins().imul_imm_u(id, OBJECT.record_size as i64);
         let records = match self.object_table() {
             ObjectTable::Checked(table) => table.base(),
             ObjectTable::Unchecked(base) => base,
         };
-        let prototype = self.ins().iadd(records, offset);
+        let mut stage = super::object_slots::emit(&mut self.builder);
+        let id = crate::staged::object::proto_object_record_id(&mut stage, proto, exit).expect("an emitted guard continues");
+        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
         emit_js_guard(&mut self.builder, same, exit);
         // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
-        let holder_meta = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.meta_offset as i32);
-        let inline = self.ins().band_imm_u(holder_meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = super::object_slots::inline_storage(&mut self.builder, prototype);
         let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
         emit_js_guard(&mut self.builder, arena, exit);
         let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let tag = self.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
-        let tagged = self.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
+        let tagged = crate::staged::object::has_extras(&mut super::object_slots::emit(&mut self.builder), storage);
         emit_js_guard(&mut self.builder, tagged, exit);
-        let extras = self.ins().band_imm_u(storage, !OBJECT.extras_tag_mask as i64);
+        let extras = crate::staged::object::extras_pointer(&mut super::object_slots::emit(&mut self.builder), storage);
         let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
         emit_js_guard(&mut self.builder, present, exit);
         let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
@@ -4460,8 +4447,7 @@ impl Lowering<'_, '_> {
         if let Some(header) = state.proofs.headers[index] {
             if !read && state.proofs.readable.contains(index) {
                 let bits = self.owner_bits(state, owner);
-                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
                 emit_js_guard(&mut self.builder, object, exit);
                 state.proofs.readable.remove(index);
                 self.refine_owner(state, index, fact);
@@ -4659,8 +4645,7 @@ impl Lowering<'_, '_> {
         self.ins().brif(present, found, &[], done, &[]);
         self.builder.switch_to_block(found);
         let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.auxiliary_offset as i32);
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.meta_offset as i32);
-        let inline = self.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = super::object_slots::inline_storage(&mut self.builder, object);
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);
         self.ins().jump(done, &[]);
@@ -4823,8 +4808,7 @@ impl Lowering<'_, '_> {
         self.ins().brif(inline, packed, &[], arena, &[]);
         self.builder.switch_to_block(packed);
         let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
-        let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
-        let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+        let plain = crate::staged::object::plain_payload(&mut super::object_slots::emit(&mut self.builder), payload);
         emit_js_guard(&mut self.builder, plain, general);
         let narrow = emit_narrow_store_value(&mut self.builder, value, ty, general);
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
@@ -5639,7 +5623,7 @@ mod tests {
         let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op().is_set_field())
             .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-                ty: Type::INT32, target_shape: None, inherited: None, function_shape: false,
+                ty: Type::INT32, inherited: None, function_shape: false,
             }])).collect();
         assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -5668,7 +5652,7 @@ mod tests {
             if instruction.op().class().eq(Class::GetField)
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, target_shape: None, inherited: None, function_shape: false }]))
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -5697,7 +5681,7 @@ mod tests {
             if instruction.op().class().eq(Class::GetField)
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, target_shape: None,
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
                     ty: Type::ANY, inherited: None, function_shape: false }]))
             } else { None }
         }).collect();
