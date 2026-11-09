@@ -755,6 +755,24 @@ pub(crate) enum Class {
     WasmI32Load8U,
     WasmJumpI32EqualImmediate,
     WasmJumpI32NotEqualImmediate,
+    GetField,
+    LoadCapture,
+    SetIndex,
+    GetIndex,
+    JumpBinaryFalse,
+    LoadThis,
+    Nop,
+    Jump,
+    JumpTrue,
+    Unary,
+    Return,
+    IncDec,
+    Binary,
+    Call,
+    Construct,
+    RequireObjectCoercible,
+    ToNumeric,
+    CallKnown,
 }
 
 impl Class {
@@ -783,6 +801,24 @@ macro_rules! class_of {
     (WasmI32Load8U) => { Class::WasmI32Load8U };
     (WasmJumpI32EqualImmediate) => { Class::WasmJumpI32EqualImmediate };
     (WasmJumpI32NotEqualImmediate) => { Class::WasmJumpI32NotEqualImmediate };
+    (GetField) => { Class::GetField };
+    (LoadCapture) => { Class::LoadCapture };
+    (SetIndex) => { Class::SetIndex };
+    (GetIndex) => { Class::GetIndex };
+    (JumpBinaryFalse) => { Class::JumpBinaryFalse };
+    (LoadThis) => { Class::LoadThis };
+    (Nop) => { Class::Nop };
+    (Jump) => { Class::Jump };
+    (JumpTrue) => { Class::JumpTrue };
+    (Unary) => { Class::Unary };
+    (Return) => { Class::Return };
+    (IncDec) => { Class::IncDec };
+    (Binary) => { Class::Binary };
+    (Call) => { Class::Call };
+    (Construct) => { Class::Construct };
+    (RequireObjectCoercible) => { Class::RequireObjectCoercible };
+    (ToNumeric) => { Class::ToNumeric };
+    (CallKnown) => { Class::CallKnown };
     ($other:ident) => { Class::Other };
 }
 

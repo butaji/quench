@@ -25,7 +25,7 @@
 
 use tier_policy::TIERS;
 use super::*;
-use crate::bytecode::{
+use crate::bytecode::{Class, 
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
@@ -2205,7 +2205,7 @@ impl NullishComparison {
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
-    if instruction.op() != Op::JumpBinaryFalse { return None; }
+    if !instruction.op().class().eq(Class::JumpBinaryFalse) { return None; }
     let nullish = |operand: Operand| {
         let ty = facts::operand_type(constants, operand, &register_type);
         if ty == typed_ir::Type::language(crate::ValueType::Null) { Some(Value::NULL) }
@@ -2422,7 +2422,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
             || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
                 | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return)
-            || (instruction.op() == Op::LoadCapture && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
+            || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
     // A region whose loops index arrays in place also gets its typed-array variant, which the
     // dispatcher enters at the same header where the dense one leaves there (it comes first
     // here, the dispatcher trying the last first). Each variant's symbol is its header and kind.
@@ -2777,7 +2777,7 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
-        if instruction.op() == Op::GetIndex
+        if instruction.op().class().eq(Class::GetIndex)
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
@@ -2819,7 +2819,7 @@ pub(super) fn lower_js_general_dispatch(
         }
         // A fused field chain and `this` sink makes no guest effects until the
         // cached data reads and the own store have all passed their guards.
-        if instruction.op() == Op::GetField
+        if instruction.op().class().eq(Class::GetField)
             && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER
             && instruction.writes_current_this()
             && !instruction.returns_from_frame()
@@ -2849,7 +2849,7 @@ pub(super) fn lower_js_general_dispatch(
         }
         // A direct array's `length` is its record's; any other receiver reads the field as
         // the plain read below does.
-        if instruction.op() == Op::GetField
+        if instruction.op().class().eq(Class::GetField)
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
@@ -2877,7 +2877,7 @@ pub(super) fn lower_js_general_dispatch(
         // A read that returns its value (`return object.field`, `Recipe::ReturnResult`) is
         // the read, then the native `Return` of its register.
         let field_returns = instruction.returns_from_frame();
-        if instruction.op() == Op::GetField
+        if instruction.op().class().eq(Class::GetField)
             && instruction.result_flags() == if field_returns { RETURN_REGISTER } else { 0 }
             && instruction.numeric_local_target().is_none()
             && (field_returns || next.is_some())
@@ -2935,7 +2935,7 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
-        if instruction.op() == Op::LoadThis
+        if instruction.op().class().eq(Class::LoadThis)
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
@@ -3224,7 +3224,7 @@ pub(super) fn lower_js_general_dispatch(
             Op::JumpFalse | Op::JumpTrue => register_offset(instruction.register_a()).map(
                 |_| JsGeneralBranch::ToBoolean {
                     source: instruction.register_a(),
-                    take_when_truthy: instruction.op() == Op::JumpTrue,
+                    take_when_truthy: instruction.op().class().eq(Class::JumpTrue),
                 },
             ),
             Op::JumpBinaryFalse => {
@@ -3370,7 +3370,7 @@ pub(super) fn lower_js_general_dispatch(
 
         // `++`/`--` of a Number is that Number plus or minus one (ECMA-262 13.4); any other
         // operand takes the exact-PC fallback before ToNumeric.
-        if instruction.op() == Op::IncDec
+        if instruction.op().class().eq(Class::IncDec)
             && instruction.numeric_local_target().is_none()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -8241,7 +8241,7 @@ const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
 fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
-    if instruction.op() == Op::JumpBinaryFalse {
+    if instruction.op().class().eq(Class::JumpBinaryFalse) {
         let Some((strict, _)) = super::operations::equality_operator(instruction.binary_operator_field()) else {
             return "branch-relation";
         };
@@ -8265,7 +8265,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             "branch-other-equality"
         };
     }
-    if instruction.op() == Op::LoadCapture {
+    if instruction.op().class().eq(Class::LoadCapture) {
         if instruction.capture_depth() != 0 {
             return "capture-outer-depth";
         }
@@ -8289,7 +8289,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             None => "capture-slot-miss",
         };
     }
-    if instruction.op() != Op::GetField {
+    if !instruction.op().class().eq(Class::GetField) {
         return "other";
     }
     if vm.frames[frame].function == 0 {
@@ -8491,7 +8491,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }));
         }
 
-        if !SINGLE_OPERATION && instruction.op() == Op::GetField
+        if !SINGLE_OPERATION && instruction.op().class().eq(Class::GetField)
             && (instruction.result_flags() == 0
                 || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
             && !instruction.writes_current_this()
@@ -8610,7 +8610,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let capture = if current_instruction.op() == Op::LoadCapture {
+            let capture = if current_instruction.op().class().eq(Class::LoadCapture) {
                 vm.cached_direct_capture(
                     dispatch.frame,
                     current_instruction.capture_depth(),
@@ -8656,7 +8656,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 )
             };
             // A construction the operation pushed completes as a pushed call does.
-            let step = if current_instruction.op() == Op::Construct && dispatch.allow_inline_calls {
+            let step = if current_instruction.op().class().eq(Class::Construct) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
             if is_call && diagnostics_enabled {
@@ -9281,7 +9281,7 @@ impl<H: Host> Analysis<'_, H> {
             let mut state = states[pc]
                 .clone()
                 .expect("queued instructions have a state");
-            if instruction.op() == Op::CallKnown
+            if instruction.op().class().eq(Class::CallKnown)
                 && !callable.contains(usize::from(instruction.known_function_index()))
                 && !self.experimental_root_compilation
             {
@@ -11577,7 +11577,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             Op::LoadConst | Op::WasmFillRegisters => {
                 let constant = self.analysis.constant(instruction.constant_index())?;
                 let bits = self.analysis.constant_vector(constant)?;
-                let registers = if instruction.op() == Op::LoadConst {
+                let registers = if instruction.op().class().eq(Class::LoadConst) {
                     a..a + 1
                 } else {
                     let window = instruction.register_window();
@@ -13265,7 +13265,7 @@ impl<H: Host> Vm<H> {
             let body = program.function_get(function as usize)?;
             let last_pc = body.code.len().checked_sub(1)?;
             let terminal = body.code.get(last_pc)?.as_wide();
-            if terminal.op() == Op::Return {
+            if terminal.op().class().eq(Class::Return) {
                 return Some((last_pc, terminal.register_a(), value));
             }
         }
@@ -13674,7 +13674,7 @@ impl<H: Host> Vm<H> {
         let value = compiled.call(&arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
-        (terminal.op() == Op::Return).then_some((last_pc, terminal.register_a(), value))
+        (terminal.op().class().eq(Class::Return)).then_some((last_pc, terminal.register_a(), value))
     }
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
@@ -13790,7 +13790,7 @@ impl<H: Host> Vm<H> {
         (!compiled.is_general_dispatch() && compiled.params() == params).then_some(())?;
         let return_pc = body.code.len().checked_sub(1)?;
         let terminal = body.code.get(return_pc)?.as_wide();
-        (terminal.op() == Op::Return).then_some(())?;
+        (terminal.op().class().eq(Class::Return)).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
             return_pc,
@@ -13913,7 +13913,7 @@ impl<H: Host> Vm<H> {
                 *selected_function = true;
                 for packed in &function.code {
                     let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                    if instruction.op() == Op::CallKnown {
+                    if instruction.op().class().eq(Class::CallKnown) {
                         pending.push(usize::from(instruction.known_function_index()));
                     }
                 }
@@ -13964,7 +13964,7 @@ impl<H: Host> Vm<H> {
                     for packed in &function.code {
                         let instruction =
                             super::dispatch_fast::decoded_instruction(function, *packed);
-                        if instruction.op() == Op::CallKnown {
+                        if instruction.op().class().eq(Class::CallKnown) {
                             pending.push(usize::from(instruction.known_function_index()));
                         }
                     }
@@ -16711,7 +16711,7 @@ mod tests {
             let targets = static_call_targets(&program);
             let body = program.function(id);
             let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
-                instruction.op() == Op::Call && !targets[id][*pc].is_empty()).count();
+                instruction.op().class().eq(Class::Call) && !targets[id][*pc].is_empty()).count();
             assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
             let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
                 (caller == id as u32).then(|| &targets[id][pc as usize]).into_iter().flatten()
@@ -16838,7 +16838,7 @@ mod tests {
             for (name, forwards) in [("pure", true), ("unrelated", true), ("liveUnrelated", true), ("diamond", false), ("moved", false)] {
                 let id = program.functions.iter().position(|function|
                     function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-                let site = program.function_get(id).unwrap().instructions().filter(|instruction| instruction.op() == Op::GetField).filter_map(|instruction|
+                let site = program.function_get(id).unwrap().instructions().filter(|instruction| instruction.op().class().eq(Class::GetField)).filter_map(|instruction|
                     match instruction.field_lookup() {
                         Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site),
                         _ => None,
@@ -16851,7 +16851,7 @@ mod tests {
             }
             let chained = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "chained")).unwrap();
-            let site = program.function(chained).instructions().filter(|instruction| instruction.op() == Op::GetField)
+            let site = program.function(chained).instructions().filter(|instruction| instruction.op().class().eq(Class::GetField))
                 .find_map(|instruction| match instruction.field_lookup() {
                 Some(FieldLookup::Site(index)) => Some(program.field_sites.get(index).unwrap().first.1),
                 _ => None,
@@ -16863,7 +16863,7 @@ mod tests {
                 "reuse the first field of a fused read without confusing the chain result");
             let anonymous = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "anonymous")).unwrap();
-            assert!(program.function(anonymous).instructions().filter(|instruction| instruction.op() == Op::GetField)
+            assert!(program.function(anonymous).instructions().filter(|instruction| instruction.op().class().eq(Class::GetField))
                 .any(|instruction| matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))));
             FIELD_VALUE_FORWARDS.with(|counter| counter.set(0));
             let regions = lower_static_typed_regions(&program, anonymous as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &std::collections::BTreeMap::new());
@@ -16905,7 +16905,7 @@ mod tests {
             let advance = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "advance"))
                 .unwrap();
-            let control_read = program.function_get(advance).unwrap().instructions().filter(|instruction| instruction.op() == Op::GetField).find_map(|instruction| match instruction.field_lookup() {
+            let control_read = program.function_get(advance).unwrap().instructions().filter(|instruction| instruction.op().class().eq(Class::GetField)).find_map(|instruction| match instruction.field_lookup() {
                     Some(FieldLookup::Atom { atom, cache_site, .. }) if &program.atoms[atom as usize] == "control" => Some(cache_site),
                     _ => None,
                 }).unwrap();
@@ -17260,7 +17260,7 @@ mod tests {
             let named = |name: &str| program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let (caller, consume) = (named("run"), named("consume"));
-            let call = program.function(consume).instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+            let call = program.function(consume).instructions().position(|instruction| instruction.op().class().eq(Class::Call)).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa().unwrap();
             let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &std::collections::BTreeMap::new())
@@ -17358,7 +17358,7 @@ mod tests {
             let consume = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
             let read = program.function(consume).instructions().position(|instruction|
-                instruction.op() == Op::GetField && matches!(instruction.field_lookup(),
+                instruction.op().class().eq(Class::GetField) && matches!(instruction.field_lookup(),
                     Some(FieldLookup::Atom { atom, .. }) if &program.atoms[atom as usize] == "value")).unwrap();
             bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
             let mut entries = Vec::new();
@@ -17573,7 +17573,7 @@ mod tests {
             "function route(base,n){for(let i=0;i<n;i++)this.current=base.next.value;return this.current;}",
             "fused-typed.js").unwrap();
         let function = program.function(1);
-        assert!(function.instructions().any(|instruction| instruction.op() == Op::GetField
+        assert!(function.instructions().any(|instruction| instruction.op().class().eq(Class::GetField)
             && instruction.writes_current_this() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))),
             "fixture must exercise a fused read/read/sink instruction");
         let isa = super::super::jit_backend::target_isa_for("speed",
@@ -17728,7 +17728,7 @@ mod tests {
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
         let body = program.function_get(1).unwrap();
-        assert!(body.instructions().any(|instruction| instruction.op() == Op::Call
+        assert!(body.instructions().any(|instruction| instruction.op().class().eq(Class::Call)
             && instruction.returns_from_frame() && instruction.call_window().count == 1));
         let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &std::collections::BTreeMap::new()).into_iter().next().expect("typed prefix before terminal call");
         assert_eq!(region.header, 0);
