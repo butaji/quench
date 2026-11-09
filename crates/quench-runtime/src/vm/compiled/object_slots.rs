@@ -66,8 +66,7 @@ impl ObjectRecord {
         // Only a dominating verified definition/edge can supply this fact.
         // No safepoint or layout-changing operation may cross its lifetime.
         if !known.is_some_and(|fact| fact.ty.is_direct_object_family()) {
-            let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-            let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            let object = crate::staged::value::is_direct_object(&mut emit(builder), bits);
             emit_js_guard(builder, object, miss);
         }
         // A direct object's id names a record of the reservation, whose base every native
@@ -101,9 +100,7 @@ impl ObjectRecord {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
             None => builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32),
         };
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
-        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        ObjectHeader { record: self, shape, inline }
+        ObjectHeader { record: self, shape, inline: inline_storage(builder, address) }
     }
 }
 
@@ -118,24 +115,22 @@ impl ObjectHeader {
     /// A store must not take this proof: its barrier reads object record marks.
     pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
-        use crate::value::ValueLayout;
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
         let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
         // A function's own read is the rare one; the object path stays the straight line.
         builder.set_cold_block(function_block);
         let record = builder.append_block_param(join, types::I64);
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
         let id = builder.ins().ireduce(types::I32, bits);
         let id = builder.ins().uextend(types::I64, id);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let object = crate::staged::value::is_direct_object(&mut emit(builder), bits);
         builder.ins().brif(object, object_block, &[], function_block, &[]);
         builder.switch_to_block(object_block);
         let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
         let object_record = builder.ins().iadd(records, offset);
         builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
         builder.switch_to_block(function_block);
-        let is_function = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_FUNCTION_TAG as i64);
+        let is_function = crate::staged::value::is_direct_function(&mut emit(builder), bits);
         let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
         let readable = builder.ins().band(is_function, reserved);
         emit_js_guard(builder, readable, miss);
@@ -145,10 +140,18 @@ impl ObjectHeader {
         builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
         builder.switch_to_block(join);
         let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
-        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        Self { record: ObjectRecord::Address(record), shape, inline }
+        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record) }
     }
+}
+
+/// The stage whose residual `staged` operations that address no arena emit into `builder`.
+pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
+    Emit { builder, property_values: None }
+}
+
+/// `staged::object::inline_storage`'s residual for the record at `record`.
+pub(super) fn inline_storage(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
+    crate::staged::object::inline_storage(&mut emit(builder), record)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,8 +166,6 @@ pub(crate) struct NativeFieldLoad {
     /// The observed slot type (`Heap::slot_type`), not a write-maintained
     /// invariant: a read speculates on it and leaves where its check fails.
     pub(crate) ty: crate::typed_ir::Type,
-    /// Historical pointee shape, not a heap-access proof.
-    pub(crate) target_shape: Option<u32>,
     /// For a holder read, the value its proved immediate prototype holds when the code was
     /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
     /// prototype is that one; a change of the value retires the code that took it
@@ -298,7 +299,7 @@ impl NativeFieldLoad {
     pub(super) fn slot_dependency(self) -> Option<crate::code_dependencies::SlotDependency> {
         use crate::typed_ir::Type;
         (self.ty != Type::ANY && self.ty != Type::NEVER).then_some(crate::code_dependencies::SlotDependency {
-            shape: self.holder.unwrap_or(self.shape), slot: self.slot, ty: self.ty, target_shape: self.target_shape,
+            shape: self.holder.unwrap_or(self.shape), slot: self.slot, ty: self.ty,
         })
     }
 
@@ -326,7 +327,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, target_shape: None, inherited: None, function_shape: false };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

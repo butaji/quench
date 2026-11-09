@@ -641,9 +641,8 @@ fn emit_js_tagged_truthiness(
     let known_primitive = builder.ins().bor(known_primitive, is_null);
     let known_primitive = builder.ins().bor(known_primitive, is_undefined);
     // A direct object or array record is truthy: neither family holds the IsHTMLDDA object.
-    let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-    let array = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
+    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), bits);
+    let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), bits);
     let record = builder.ins().bor(object, array);
     let known = builder.ins().bor(known_primitive, record);
     let truthy_known = builder.ins().bor(is_true, record);
@@ -938,16 +937,8 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
 
 /// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
 fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-    use crate::value::ValueLayout;
 
-    let family = builder
-        .ins()
-        .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let is_array = builder.ins().icmp_imm_u(
-        IntCC::Equal,
-        family,
-        ValueLayout::DIRECT_ARRAY_TAG as i64,
-    );
+    let is_array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), base);
     emit_js_guard(builder, is_array, fallback);
 
     // A direct array's index names a live record of the reservation.
@@ -990,8 +981,7 @@ fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir
         record,
         i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
     );
-    let tag = builder.ins().band_imm_u(object_payload, OBJECT.extras_tag_mask as i64);
-    builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64)
+    crate::staged::object::has_extras(&mut object_slots::emit(builder), object_payload)
 }
 
 /// The backing header of an array record.
@@ -1102,14 +1092,9 @@ pub(super) fn emit_dense_element(
     index: ir::Value,
     fallback: ir::Block,
 ) -> (ir::Value, ir::Value) {
-    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, index, view.length);
-    emit_js_guard(builder, in_bounds, fallback);
-    let value_offset = emit_value_index_offset(builder, index);
-    let address = builder.ins().iadd(view.values, value_offset);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-    let is_present = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-    emit_js_guard(builder, is_present, fallback);
-    (address, value)
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
+        .expect("the emit stage continues past its guards")
 }
 
 /// Replace the present element at `address`, whose value was `old`, with the non-heap
@@ -1123,22 +1108,9 @@ pub(super) fn emit_dense_element_replace(
     old: ir::Value,
     value: ir::Value,
 ) {
-    use crate::value::ValueLayout;
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let other = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-        let other = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
-        builder.ins().uextend(types::I32, other)
-    };
-    let added = other(builder, value);
-    let removed = other(builder, old);
-    let others = builder.ins().load(types::I32, MemFlagsData::trusted(), view.values, crate::heap::OTHERS_FROM_VALUES);
-    let delta = builder.ins().isub(added, removed);
-    let recounted = builder.ins().iadd(others, delta);
-    let unknown = builder.ins().icmp_imm_u(IntCC::Equal, others, i64::from(crate::heap::OTHERS_UNKNOWN));
-    let others = builder.ins().select(unknown, others, recounted);
-    builder.ins().store(MemFlagsData::trusted(), others, view.values, crate::heap::OTHERS_FROM_VALUES);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
 }
 
 /// Mark a writable view's backing as holding uncounted other values (`OTHERS_UNKNOWN`), so
@@ -1397,8 +1369,7 @@ fn emit_js_cached_field_slot(
             builder.switch_to_block(packed);
             let storage = builder.ins().load(types::I64, MemFlagsData::trusted(), object,
                 OBJECT.payload_offset as i32);
-            let tag = builder.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
-            let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+            let plain = crate::staged::object::plain_payload(&mut object_slots::emit(builder), storage);
             emit_js_guard(builder, plain, fallback);
             let slot = slot.read(builder);
             let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot,
@@ -1440,42 +1411,24 @@ fn emit_js_cached_field_slot(
         builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
 
         builder.switch_to_block(holder_block);
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), object,
-            OBJECT.meta_offset as i32);
-        let proto = builder.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
-        let in_start = builder.ins().icmp_imm_u(
-            IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base),
-        );
-        let in_end = builder.ins().icmp_imm_u(
-            IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end),
-        );
-        let object_proto = builder.ins().band(in_start, in_end);
-        emit_js_guard(builder, object_proto, fallback);
-        let proto_id = builder.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
-        let proto_id = builder.ins().uextend(types::I64, proto_id);
-        let proto_offset = builder.ins().imul_imm_u(
-            proto_id, i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
-        );
-        let prototype = builder.ins().iadd(records, proto_offset);
+        let mut stage = object_slots::emit(builder);
+        let link = crate::staged::object::proto_link(&mut stage, object);
+        let id = crate::staged::object::proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
         let proto_shape = builder.ins().load(
             types::I32, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
         );
         let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
         emit_js_guard(builder, same_holder, fallback);
-        let proto_meta = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
-        );
-        let inline = builder.ins().band_imm_u(proto_meta, i64::from(OBJECT.inline_storage_mask));
+        let inline = object_slots::inline_storage(builder, prototype);
         let proto_storage = builder.ins().load(
             types::I64, MemFlagsData::trusted(), prototype,
             i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
         );
-        let tag = builder.ins().band_imm_u(proto_storage, OBJECT.extras_tag_mask as i64);
-        let extras = builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
+        let extras = crate::staged::object::has_extras(&mut object_slots::emit(builder), proto_storage);
         emit_js_guard(builder, extras, fallback);
-        let extras_pointer = builder.ins().band_imm_u(proto_storage, !OBJECT.extras_tag_mask as i64);
+        let extras_pointer = crate::staged::object::extras_pointer(&mut object_slots::emit(builder), proto_storage);
         let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
         emit_js_guard(builder, present, fallback);
         let displaced = builder.create_block();
@@ -1794,13 +1747,6 @@ struct LaneReceiver {
     properties: Variable,
 }
 
-/// Decode an already proved narrow integer without a process-local lookup table.
-fn emit_narrow_integer_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value) -> ir::Value {
-    let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let value = builder.ins().uextend(types::I64, value);
-    builder.ins().bor_imm_u(value, crate::value::ValueLayout::INT_TAG as i64)
-}
-
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
@@ -1865,23 +1811,11 @@ enum NarrowTable {
     Linked(u32),
 }
 
+/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
+/// passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     table: NarrowTable, join: ir::Block)
 {
-    let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
-    let integer_block = builder.create_block();
-    let reference_block = builder.create_block();
-    builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
-    builder.switch_to_block(integer_block);
-    builder.seal_block(integer_block);
-    let encoded = emit_narrow_integer_read(builder, narrow);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-    builder.switch_to_block(reference_block);
-    builder.seal_block(reference_block);
-    let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
-    let code = builder.ins().uextend(types::I64, code);
-    let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
     let table = match table {
         NarrowTable::Process => builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64),
         #[cfg(feature = "aot")]
@@ -1894,11 +1828,9 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
             builder.ins().symbol_value(types::I64, global)
         }
     };
-    let address = builder.ins().iadd(table, offset);
-    let upper = builder.ins().load(types::I64, invariant(), address, 0);
-    let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
-    let lower = builder.ins().uextend(types::I64, lower);
-    let encoded = builder.ins().bor(upper, lower);
+    let narrow = builder.ins().uextend(types::I64, narrow);
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }
 
@@ -1906,27 +1838,25 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
-    use crate::value::ValueLayout;
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
-        inline: builder.declare_var(types::I32),
+        inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
     let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
-    let zero = builder.ins().iconst(types::I32, 0);
     let null = builder.ins().iconst(types::I64, 0);
     builder.def_var(receiver.shape, none);
-    builder.def_var(receiver.inline, zero);
+    let outside = builder.ins().iconst(types::I8, 0);
+    builder.def_var(receiver.inline, outside);
     builder.def_var(receiver.object, null);
     let found = builder.create_block();
     let done = builder.create_block();
-    let family = builder.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), this);
     let record_id = builder.ins().ireduce(types::I32, this);
     let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
     let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
@@ -1941,8 +1871,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let address = builder.ins().iadd(records, offset);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
     let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
-    let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
-    let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+    let inline = object_slots::inline_storage(builder, address);
     builder.def_var(receiver.object, address);
     builder.def_var(receiver.shape, shape);
     builder.def_var(receiver.inline, inline);
@@ -2286,11 +2215,7 @@ impl<H: Host> Vm<H> {
 /// or strictly. Any other pair goes on to `other`.
 fn emit_identity_equality(builder: &mut FunctionBuilder<'_>, (left, right): (ir::Value, ir::Value), negated: bool,
     other: ir::Block, join: ir::Block) {
-    use crate::value::ValueLayout;
-    let object = |builder: &mut FunctionBuilder<'_>, bits| {
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-        builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64)
-    };
+    let object = |builder: &mut FunctionBuilder<'_>, bits| crate::staged::value::is_direct_object(&mut object_slots::emit(builder), bits);
     let identified = |builder: &mut FunctionBuilder<'_>, bits, object| {
         let null = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
         let undefined = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
@@ -2336,8 +2261,7 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     let equal = if comparison.strict {
         builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
     } else {
-        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), value);
         // A direct object cannot be nullish or IsHTMLDDA. Resolve that family
         // before inspecting the remaining canonical encodings.
         let remaining = builder.create_block();
@@ -2347,7 +2271,7 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         if html_dda {
             let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
             let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-            let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+            let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), value);
             let safe = builder.ins().bor(immediate, array);
             emit_js_guard(builder, safe, fallback);
         }
@@ -2421,9 +2345,9 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
     let scalar = !has_calls && unit.instructions.iter().all(|instruction|
-        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
-                | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return)
+        matches!(instruction.op().js_denotation(), JsDenotation::NumericBinary | JsDenotation::Noop
+                | JsDenotation::LoadConst | JsDenotation::Move | JsDenotation::Jump | JsDenotation::Return)
+            || matches!(instruction.op(), Op::IncDec | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
             || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
     // A region whose loops index arrays in place also gets its typed-array variant, which the
     // dispatcher enters at the same header where the dense one leaves there (it comes first
@@ -7430,17 +7354,14 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
             }
         }
     };
-    let hit = vm.primary_own_field_store_hit::<true>(
-        residual,
-        Value::from_bits(receiver),
-        atom as Atom,
-        Value::from_bits(value),
-        site as u16,
-        crate::heap::PropertyStoreLayout::PreserveNative,
-    );
+    // A receiver of another shape the site met stores through its polymorphic entries, as
+    // long as the store keeps the record's layout, which the caller's proofs rely on.
+    let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), crate::heap::PropertyStoreLayout::PreserveNative);
+    let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout)
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
-    if hit { general_store::record_store_class(vm, site as u16, Value::from_bits(value)); }
+    if hit { general_store::record_store_class(vm, site as u16, value); }
     u64::from(hit)
 }
 
@@ -7505,7 +7426,7 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
     // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_none()
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden).is_none()
         && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }
@@ -7531,7 +7452,7 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
     if !(vm.proved_field_add_hit(receiver, atom, value, site)
         || vm.primary_field_add_hit(residual, receiver, atom, value, site)
-        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site).is_some()) {
+        || vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden).is_some()) {
         return 0;
     }
     // A collection the add made due waits for the next back edge's safepoint
@@ -13159,8 +13080,9 @@ impl<H: Host> Vm<H> {
         // across the later promotion and no longer consult tiering.
         // Inlining may erase a short body's calls; a call-free candidate still has
         // to pay for native entry under the same cost policy.
-        candidate || self.js_general_tier_takes(program, function, &facts)
-            || (self.programs.js_jit_lane_methods_enabled() && (!facts.candidate || facts.has_calls))
+        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
+        candidate || self.js_general_tier_takes(program, function, &facts) || (self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
+            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions)))
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits

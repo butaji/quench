@@ -1438,6 +1438,9 @@ impl ProtoLink {
         Self(Object::encode_proto(prototype))
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_bits(bits: u32) -> Self { Self(bits) }
+
     /// The link as the object header encodes it (`OBJECT.proto_mask`).
     #[inline(always)]
     pub(crate) fn bits(self) -> u32 {
@@ -1456,14 +1459,9 @@ impl ProtoLink {
         // The object range starts at a power of two above its own power-of-two span, so a
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
-        const _: () = assert!(
-            PROTO_OBJECT_RECORD_BASE.is_power_of_two()
-                && RECORD_SPACE_CAPACITY.is_power_of_two()
-                && RECORD_SPACE_CAPACITY as u32 <= PROTO_OBJECT_RECORD_BASE
-        );
-        (PROTO_OBJECT_RECORD_BASE..PROTO_ARRAY_RECORD_BASE)
-            .contains(&self.0)
-            .then(|| self.0 & (RECORD_SPACE_CAPACITY as u32 - 1))
+        // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
+        let span = RECORD_SPACE_CAPACITY as u32;
+        (self.0 & !(span - 1) == PROTO_OBJECT_RECORD_BASE).then_some(self.0 & (span - 1))
     }
 
     /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).
@@ -2351,8 +2349,8 @@ impl Object {
     /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
     /// Without extras it was never a prototype; the move still retires shape readers.
     #[inline(always)]
-    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, target: crate::value_vec::TargetShape, shape: u32) {
-        properties.note_shape_target(shape, slot, value, target);
+    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+        properties.note_shape_value(shape, slot, value);
         debug_assert!(self.admits_plain_append(slot, value));
         match value.to_narrow().filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0) {
             Some(narrow) => self.store_payload_narrow(slot, narrow),

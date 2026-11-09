@@ -57,7 +57,6 @@ pub(crate) struct SlotDependency {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) ty: Type,
-    pub(crate) target_shape: Option<u32>,
 }
 
 type Link = Option<NonZeroU32>;
@@ -356,7 +355,7 @@ mod tests {
         arena.register_derived_shape(2, 2, Some((1, 1)));
         arena.note_slot_value(1, 0, Value::integer(1));
         let code: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
-        let dependency = SlotDependency { shape: 2, slot: 0, ty: Type::INT32, target_shape: None };
+        let dependency = SlotDependency { shape: 2, slot: 0, ty: Type::INT32 };
         assert!(arena.subscribe_slot(dependency, &code));
         arena.note_slot_value(1, 0, Value::integer(2));
         assert!(code.is_published(), "compatible parent-owner writes retain code");

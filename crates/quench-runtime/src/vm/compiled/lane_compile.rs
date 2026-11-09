@@ -186,7 +186,7 @@ impl<H: Host> Vm<H> {
             .map_or(&[][..], |_| self.programs.constants(active));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
-        let leaves: Vec<usize> = left_at.iter().copied().chain(generic.contains(&LaneExit::Entry).then(|| lane_region::entry_leave(&unit))).collect();
+        let leaves: Vec<usize> = left_at.iter().copied().chain(generic.contains(&LaneExit::Entry).then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &leaves, &direct_sites, &frame_captures)?;
         if lowered.region.native == 0 { return None; }
@@ -240,6 +240,15 @@ impl<H: Host> Vm<H> {
         let code = super::jit_backend::run_in_background(move || lane_code(native));
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Some(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code })
+    }
+
+    /// The unit PCs of stores whose sites added their property to some receiver (they hold
+    /// an add entry): each lowers as the store a previous body left at does, through the VM's
+    /// adding entries (`LaneHelper::FieldAdd`), which a direct own-slot store cannot be.
+    fn adding_stores<'a>(&'a self, unit: &'a lane_unit::Unit) -> impl Iterator<Item = usize> + 'a {
+        unit.instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().field_store().is_some()
+            && self.field_add_indices.get(self.field_cache_index(instruction.cache_site_index())) != crate::vm::NO_FIELD_ADD_SET)
+            .map(|(pc, _)| pc)
     }
 
     /// Does `work` for `function`'s lane body (`LaneBodyWork`), whose direct callees
@@ -454,41 +463,5 @@ impl LaneDependencies {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::LaneDependencies;
-    use crate::code_dependencies::{CodeReaders, DependentCode, PublishedCode, SlotDependency};
-    use crate::heap::{Heap, Object};
-    use crate::typed_ir::Type;
-    use crate::Value;
-    use std::rc::Rc;
-
-    /// An entry leave's word is its own, and it resumes at the activation's first record.
-    #[test]
-    fn an_entry_leave_round_trips_and_resumes_at_the_first_record() {
-        use super::LaneExit;
-        assert_eq!(LaneExit::decode(LaneExit::Entry.word()), LaneExit::Entry);
-        assert_ne!(LaneExit::decode(LaneExit::Entry.word()), LaneExit::At(0));
-        assert_eq!(LaneExit::Entry.resumed(), LaneExit::At(0));
-        assert_eq!(LaneExit::At(3).resumed(), LaneExit::At(3));
-    }
-
-    /// A receiver leaving its shape keeps a lane body's code (its field reads guard the
-    /// shape at each use); a holder leaving its shape retires it (its layout is read unguarded).
-    #[test]
-    fn lane_dependencies_retire_at_holder_departures_only() {
-        for (holder, retires) in [(false, false), (true, true)] {
-            let mut heap = Heap::new();
-            heap.track_slot_representations(&[(0, None), (1, None), (1, None)]);
-            let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], false);
-            let object = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
-            let dependencies = LaneDependencies {
-                slots: vec![SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }],
-                departure_shapes: if holder { vec![1] } else { Vec::new() },
-            };
-            let code: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));
-            assert!(dependencies.subscribe(&Default::default(), &code, &mut heap, &mut CodeReaders::default()));
-            heap.set_object_shape(object, 2);
-            assert_eq!(code.is_published(), !retires, "holder={holder}");
-        }
-    }
-}
+#[path = "lane_compile/tests.rs"]
+mod tests;
