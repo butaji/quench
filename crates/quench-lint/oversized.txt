@@ -1422,7 +1422,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 642
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
-file-lines crates/quench-runtime/src/heap.rs 4656
+file-lines crates/quench-runtime/src/heap.rs 4660
 file-lines crates/quench-runtime/src/heap/access.rs 869
 file-lines crates/quench-runtime/src/heap/array_elements.rs 664
 file-lines crates/quench-runtime/src/heap/cell.rs 3990
@@ -1463,7 +1463,7 @@ file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1944
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22072
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22103
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3029
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 650
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1497,7 +1497,7 @@ file-lines crates/quench-runtime/src/vm/object_integrity.rs 843
 file-lines crates/quench-runtime/src/vm/object_static.rs 891
 file-lines crates/quench-runtime/src/vm/object_symbols.rs 833
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
-file-lines crates/quench-runtime/src/vm/operations.rs 2660
+file-lines crates/quench-runtime/src/vm/operations.rs 2665
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
 file-lines crates/quench-runtime/src/vm/primitives.rs 683
 file-lines crates/quench-runtime/src/vm/program_store.rs 4026

@@ -13,7 +13,8 @@
 //! the home alone, so it outlives a new environment that finds the same home again (an arrow
 //! field's closure per instance).
 
-use super::Value;
+use super::{Atom, Host, ResidualProgram, Value, Vm};
+use crate::heap::PrivateBrand;
 
 /// Direct-mapped entries: a power of two that holds the private-name sites a request runs
 /// (a web `Request`'s and `Headers`' `#fields`) with few conflicts. Hono's query route meets
@@ -100,5 +101,51 @@ impl PrivateSiteHomes {
             };
             live(entry.environment) && live(entry.home) && element.is_none_or(&live)
         });
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
+    /// from `environment`: the home the site found last for that environment, inline, else
+    /// `site_private_brand_miss`. `None` leaves the access to the general path.
+    #[inline(always)]
+    pub(super) fn site_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        site: usize,
+        environment: Value,
+        function: u32,
+        frame: bool,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        match self.private_site_homes.home(site, environment) {
+            Some(home) => Some(PrivateBrand { home, name: atom }),
+            None => self.site_private_brand_miss(p, site, environment, function, frame, atom),
+        }
+    }
+
+    /// `site_private_brand` past the site's entry: the running frame's home
+    /// (`private_name_home`) when `frame` is set, or the memoized one
+    /// (`memoized_private_brand`) for a frameless activation, recorded for the site where no
+    /// eval-introduced private binding can change it.
+    #[inline(never)]
+    fn site_private_brand_miss(
+        &mut self,
+        p: &ResidualProgram,
+        site: usize,
+        environment: Value,
+        function: u32,
+        frame: bool,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        let brand = if frame {
+            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
+        } else {
+            self.memoized_private_brand(p, environment, function, atom)?
+        };
+        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            self.private_site_homes.record(site, environment, brand.home);
+        }
+        Some(brand)
     }
 }

@@ -64,22 +64,37 @@ pub(crate) fn is_top_level_value(program: &Program<'_>, start: u32) -> bool {
 
 /// `text` with the JSON text at `literal` replaced by the empty literal of its kind: its
 /// brackets stay and the bytes between them are blank but for line terminators, so every
-/// other byte and line keeps its place.
+/// other byte and line keeps its place. A character blanks to one space per byte, so the
+/// blanking is per byte: every byte but those of a line terminator becomes a space.
 fn substitute(text: &str, literal: std::ops::Range<usize>) -> String {
-    let inner = &text[literal.start + 1..literal.end - 1];
-    let mut substituted = String::with_capacity(text.len());
-    substituted.push_str(&text[..literal.start + 1]);
-    for character in inner.chars() {
-        if matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
-            substituted.push(character);
-        } else {
-            substituted.extend(std::iter::repeat_n(' ', character.len_utf8()));
-        }
+    let mut bytes = text.as_bytes().to_vec();
+    let inner = &mut bytes[literal.start + 1..literal.end - 1];
+    let mut at = 0;
+    while let Some(offset) = memchr::memchr3(b'\n', b'\r', SEPARATOR_PREFIX[0], &inner[at..]) {
+        inner[at..at + offset].fill(b' ');
+        at += offset;
+        let separator = inner[at..].starts_with(&SEPARATOR_PREFIX)
+            && inner.get(at + SEPARATOR_PREFIX.len()).is_some_and(|last| SEPARATOR_LAST.contains(last));
+        at += match inner[at] {
+            b'\n' | b'\r' => 1,
+            _ if separator => SEPARATOR_PREFIX.len() + 1,
+            _ => {
+                inner[at] = b' ';
+                1
+            }
+        };
     }
-    substituted.push_str(&text[literal.end - 1..]);
-    debug_assert_eq!(substituted.len(), text.len());
-    substituted
+    inner[at..].fill(b' ');
+    // SAFETY: each byte replaced was part of a character whose every byte became an ASCII
+    // space (a lead byte is never mistaken for a continuation byte), and the line
+    // terminators stay whole, so the bytes are UTF-8 as `text`'s were.
+    unsafe { String::from_utf8_unchecked(bytes) }
 }
+
+/// The UTF-8 encoding of U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR, the line
+/// terminators past ASCII (ECMA-262 12.3): a shared two-byte prefix and a last byte each.
+const SEPARATOR_PREFIX: [u8; 2] = [0xE2, 0x80];
+const SEPARATOR_LAST: [u8; 2] = [0xA8, 0xA9];
 
 /// The index past the whitespace and comments from `at`.
 fn skip_trivia(bytes: &[u8], mut at: usize) -> usize {
@@ -105,4 +120,25 @@ fn skip_trivia(bytes: &[u8], mut at: usize) -> usize {
 /// the whitespace between a declaration's keyword and its name.
 fn is_target_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'.') || byte.is_ascii_whitespace()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substitution_blanks_each_byte_and_keeps_line_terminators() {
+        let text = "x = {\"é\": \"a\u{2028}b\r\nc\u{2029}✓\", \"k\": [1]};";
+        let literal = 4..text.len() - 1;
+        let expected: String = text[..5]
+            .chars()
+            .chain(text[5..literal.end - 1].chars().flat_map(|character| {
+                let terminator = matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}');
+                let blanks = if terminator { 0 } else { character.len_utf8() };
+                std::iter::repeat_n(' ', blanks).chain(terminator.then_some(character))
+            }))
+            .chain(text[literal.end - 1..].chars())
+            .collect();
+        assert_eq!(substitute(text, literal), expected);
+    }
 }
