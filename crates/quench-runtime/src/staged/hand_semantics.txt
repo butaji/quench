@@ -102,7 +102,7 @@ vm/compiled/lane_unit.rs Unary 1
 vm/compiled/osr_loop.rs Binary 16
 vm/compiled/osr_loop.rs Call 3
 vm/compiled/osr_loop.rs CallArray 1
-vm/compiled/osr_loop.rs GetField 31
+vm/compiled/osr_loop.rs GetField 29
 vm/compiled/osr_loop.rs GetIndex 20
 vm/compiled/osr_loop.rs IncDec 9
 vm/compiled/osr_loop.rs Jump 7
