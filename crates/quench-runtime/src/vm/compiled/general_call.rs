@@ -73,13 +73,15 @@ fn lower_call(
         (false, None) => return false,
         (true, _) => emit_returning_continuation(builder, (arguments, payload), (destination, fallback), strict, exact),
     };
-    if let Some(builtin) = builtin_call(instruction, register_offset) {
-        emit_builtin_shortcut(builder, (arguments, payload), builtin, (destination, next));
-    }
+    // A user callee runs frameless first; a native's in-place case is asked only where no
+    // frameless activation takes the callee.
     let framed = builder.create_block();
     if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
         destination, framed).is_none() { builder.ins().jump(framed, &[]); }
     builder.switch_to_block(framed);
+    if let Some(builtin) = builtin_call(instruction, register_offset) {
+        emit_builtin_shortcut(builder, (arguments, payload), builtin, (destination, next));
+    }
     emit_user_call(builder, (pc, next, fallback), payload, exact);
     true
 }
