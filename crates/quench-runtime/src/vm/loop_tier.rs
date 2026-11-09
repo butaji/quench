@@ -85,12 +85,14 @@ impl LoopTier {
     }
 }
 
-/// Starts compiling `site`'s region, and looks for its code at once: a code generator
-/// without its own thread has it ready.
+/// Starts compiling `site`'s region from the running activation (`r`, `entry`), and looks
+/// for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
+    entry: &mut super::super::compiled::LoopEntry,
     tier: &mut LoopTier,
 ) {
     tier.compilations += 1;
@@ -103,22 +105,50 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let started = observe(machine, region, |observation| {
-        super::super::compiled::start_osr_region(region, observation,
+    let started = observe(machine, r, region, entry, &tier.widened, |observation| {
+        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt,
             machine.heap.memory_policy(), program.as_deref()?, function, helpers)
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);
 }
 
-/// Runs `compile` with the descriptors `region`'s native field reads use.
+/// Runs `compile` on what the running activation (`r`, `entry`) shows `region`'s values to be.
 fn observe<H: Host, T>(
     machine: &Vm<H>,
+    r: Registers,
     region: &super::super::compiled::LoopRegion,
+    entry: &super::super::compiled::LoopEntry,
+    widened: &std::collections::BTreeSet<super::super::compiled::Widening>,
     compile: impl FnOnce(&super::super::compiled::Observation<'_>) -> T,
 ) -> T {
+    let captures = entry.captures(region.captures.len());
+    let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
     let native_field_loads = native_field_loads(machine, region);
-    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads })
+    let heap = &machine.heap;
+    // A field's array is the value its entry word holds, not yet the register's.
+    let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
+        Some(super::super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(region, *index),
+        _ => r.get(register),
+    };
+    let int32_elements = |register| {
+        heap.record_array(array_value(register)).is_some_and(|array| {
+            array.elements().iter().take(TIERS.loops.element_sample).all(|value| value.as_int().is_some())
+        })
+    };
+    let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
+    // An inlined callee's register is no register of the running activation: it holds
+    // nothing at entry.
+    let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
+    compile(&super::super::compiled::Observation {
+        register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
+        int32_elements: &int32_elements,
+        only_int32: &only_int32,
+        captures: &captures,
+        fields: &fields,
+        native_field_loads: &native_field_loads,
+        widened,
+    })
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.

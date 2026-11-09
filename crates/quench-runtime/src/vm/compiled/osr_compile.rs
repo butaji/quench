@@ -2,7 +2,7 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_code, native_dump_directory, lane_unit, osr_loop,
+    compile_native_function, dump_native_code, native_dump_directory, lane_unit, osr_loop, poll_address,
     publish_entry, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts, Widening,
 };
@@ -10,6 +10,12 @@ use crate::bytecode::{FieldLookup, Function, ResidualProgram};
 use super::super::specializer::Specializer;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests that exercise the lane OSR plan force it ahead of the verified lowering.
+    pub(super) static FORCE_LANE_OSR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// What a region's code relies on beyond its entry guards: the exits that widen a value,
 /// and the facts its own-field descriptors embed, which retire it when they change.
@@ -29,7 +35,7 @@ impl OsrFacts {
     /// The value the code held as an `i32` that its exit at `pc` found none.
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
         let found = self.widenings.binary_search_by_key(&pc, |&(exit, _)| exit).ok()?;
-        self.widenings.get(found).map(|&(_, widening)| widening)
+        Some(self.widenings[found].1)
     }
 
     /// Subscribes `code` to the facts; whether all hold. A receiver shape is guarded at each
@@ -146,6 +152,7 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
 pub(in crate::vm) fn start_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
+    interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
     program: &ResidualProgram,
     function_id: u32,
@@ -172,10 +179,32 @@ pub(in crate::vm) fn start_osr_region(
             views: super::lane_region::ElementViews::Dense,
         },
     }.specialize(program).ok()).flatten();
-    // The lane specializer is the only OSR publication. A loop it declines stays in the
-    // interpreter; there is no second lowering path.
-    let lowered = lane?;
-    let (function, widenings, lane) = (lowered.function, BTreeMap::new(), true);
+    // The loop tier's verified lowering is the production path: it carries the whole
+    // admitted region's facts, widenings and entry record. The lane specializer remains a
+    // second plan over the same region, used where the verified lowering declines, until
+    // its coverage matches (float unary, appends, inlining, return accounting, widening).
+    let verified = || osr_loop::verify_region(region, observation).ok()
+        .and_then(|verified| osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt)));
+    #[cfg(test)]
+    let prefer_lane = FORCE_LANE_OSR.with(|force| force.get());
+    #[cfg(not(test))]
+    let prefer_lane = false;
+    let lane_plan = |lane: Option<super::lane_region::LoweredRegion>| lane.map(|region|
+        (region.function, BTreeMap::new(), true));
+    let (function, widenings, lane) = if prefer_lane {
+        match lane_plan(lane) {
+            Some(plan) => plan,
+            None => match verified() {
+                Some((function, widenings)) => (function, widenings, false),
+                None => return None,
+            },
+        }
+    } else {
+        match verified() {
+            Some((function, widenings)) => (function, widenings, false),
+            None => lane_plan(lane)?,
+        }
+    };
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let loads = || observation.native_field_loads.iter().flatten();
     let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
@@ -237,6 +266,7 @@ mod tests {
     /// through the loop tier's private lowering.
     #[test]
     fn a_simple_loop_is_planned_by_the_region_specializer() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
         let program = crate::Engine::specialize(
             "function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);",
             "loop-plan.js").unwrap();
@@ -251,8 +281,14 @@ mod tests {
         }).expect("the function has a loop");
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge)
             .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[] };
-        let pending = start_osr_region(&region, &observation,
+        let observation = Observation {
+            register: Some(&|_| crate::Value::UNDEFINED),
+            int32_elements: &|_| false, only_int32: &|_| false,
+            captures: &[], fields: &[], native_field_loads: &[],
+            widened: &std::collections::BTreeSet::new(),
+        };
+        let interrupt = crate::ExecutionInterrupt::default();
+        let pending = start_osr_region(&region, &observation, &interrupt,
             crate::MemoryPolicy::Throughput, &program, id,
             super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>())
             .expect("the loop plans");
@@ -262,6 +298,7 @@ mod tests {
     /// The lane-ABI code the region specializer planned executes the loop correctly.
     #[test]
     fn a_loop_compiled_by_the_region_specializer_runs() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
         super::super::LANE_OSR_RUNS.with(|count| count.set(0));
         let program = crate::Engine::specialize(
             "function run(){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){s=s+i;} } return s; } throw run();",
@@ -280,6 +317,7 @@ mod tests {
     /// A loop reading a static own field lowers through the lane unit's field sites.
     #[test]
     fn a_field_loop_compiled_by_the_region_specializer_runs() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
         super::super::LANE_OSR_RUNS.with(|count| count.set(0));
         let program = crate::Engine::specialize(
             "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+o.x)|0; } } return s; } throw helper({x:1});",
@@ -297,6 +335,7 @@ mod tests {
     /// A loop indexing a dense record array lowers through the lane unit's array views.
     #[test]
     fn an_array_loop_compiled_by_the_region_specializer_runs() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
         super::super::LANE_OSR_RUNS.with(|count| count.set(0));
         let program = crate::Engine::specialize(
             "function helper(arr){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+arr[i&3])|0; } } return s; } throw helper([1,2,3,4]);",
@@ -314,6 +353,7 @@ mod tests {
     /// A loop reading a captured binding carries the loop entry's capture view.
     #[test]
     fn a_capture_loop_keeps_its_capture_value() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
         super::super::LANE_OSR_RUNS.with(|count| count.set(0));
         let program = crate::Engine::specialize(
             "function helper(){ let add=1; let f=()=>add; let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=s+i+add; } } return s; } function main(){ return helper(); } throw main();",
@@ -391,6 +431,7 @@ mod tests {
     /// An inlined callee's loop executes through the lane unit when it lowers.
     #[test]
     fn an_inlined_call_loop_runs_through_the_lane_unit() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
         super::super::LANE_OSR_RUNS.with(|count| count.set(0));
         let program = crate::Engine::specialize(
             "function callee(o){ return o.x; } function caller(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+callee(o))|0; } } return s; } throw caller({x:1});",

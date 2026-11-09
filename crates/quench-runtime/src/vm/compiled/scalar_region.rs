@@ -9,14 +9,180 @@ pub(crate) struct ScalarRegion {
     pub(crate) function: ir::Function,
 }
 
-/// Scalar regions were published by a second lowering. They stay disabled until the lane
-/// unit carries these ranges; the typed lane regions remain the AOT path.
+fn scalar(instruction: WideInstruction, constants: &[Value]) -> bool {
+    if instruction.result_flags() != 0
+        || instruction.writes_current_this()
+        || instruction.numeric_local_target().is_some()
+    {
+        return false;
+    }
+    match instruction.op() {
+        Op::Move | Op::IncDec | Op::ToNumeric | Op::GetField => true,
+        Op::LoadConst => constants
+            .get(instruction.constant_index())
+            .is_some_and(|v| v.as_number().is_some()),
+        op if op.js_denotation() == JsDenotation::NumericUnary => {
+            super::super::operations::NumberUnary::from_js_instruction(
+                op,
+                instruction.unary_operator(),
+            )
+            .is_some()
+        }
+        op if op.js_denotation() == JsDenotation::NumericBinary => {
+            super::super::operations::NumberArithmetic::from_js_instruction(
+                op,
+                instruction.binary_operator(),
+            )
+            .is_some()
+                || super::super::operations::NumberBitwise::from_operator(
+                    instruction.binary_operator(),
+                )
+                .is_some()
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn lower_regions(
-    _program: &ResidualProgram,
-    _function_id: u32,
-    _isa: &dyn cranelift_codegen::isa::TargetIsa,
+    program: &ResidualProgram,
+    function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Vec<ScalarRegion> {
-    Vec::new()
+    if isa.pointer_type() != types::I64 {
+        return Vec::new();
+    }
+    let function = program.function(function_id as usize);
+    let decoded: Vec<_> = function
+        .code
+        .iter()
+        .map(|packed| super::super::dispatch_fast::decoded_instruction(function, *packed))
+        .collect();
+    // Scalar admission only consumes Number constants; other constants must
+    // remain outside the numeric domain without materializing guest objects.
+    let constants: Vec<_> = program
+        .constants
+        .iter()
+        .map(|constant| super::facts::immediate(constant).filter(|value| value.as_number().is_some())
+            .unwrap_or(Value::UNDEFINED))
+        .collect();
+    let mut leaders = std::collections::BTreeSet::new();
+    for instruction in &decoded {
+        if instruction.op().control_flow_layout().jumps() {
+            leaders.insert(instruction.jump_target() as usize);
+        }
+    }
+    // Without liveness, the OSR fallback conservatively treats every register
+    // as live. A fresh function can have uninitialized temporaries, so such a
+    // region would guard unused values and never enter its numeric path.
+    let Some(live) = program.shared_register_root_masks(function_id) else {
+        return Vec::new();
+    };
+    let no_int32_elements = |_: u16| false;
+    let widened = std::collections::BTreeSet::new();
+    let observation = Observation {
+        register: None,
+        int32_elements: &no_int32_elements,
+        only_int32: &no_int32_elements,
+        captures: &[],
+        fields: &[],
+        native_field_loads: &[],
+        widened: &widened,
+    };
+    let lower = |range: std::ops::Range<usize>| {
+        let (start, end) = (range.start, range.end);
+        let arithmetic = decoded[range.clone()]
+            .iter()
+            .filter(|instruction| {
+                !matches!(
+                    instruction.op(),
+                    Op::Move | Op::LoadConst | Op::ToNumeric | Op::GetField
+                )
+            })
+            .count();
+        let mut produced = std::collections::BTreeSet::new();
+        let mut removes_roundtrip = false;
+        for instruction in &decoded[range.clone()] {
+            removes_roundtrip |= instruction.op() == Op::IncDec
+                || osr_loop::number_reads(*instruction)
+                    .iter()
+                    .any(|register| produced.contains(register));
+            if let Some(register) = instruction.defined_register() {
+                produced.insert(register);
+            }
+        }
+        // Retain a region when it removes a boxed producer/consumer roundtrip
+        // or an IncDec semantic callout; isolated already-native math needs no wrapper.
+        if end < decoded.len()
+            && arithmetic != 0
+            && removes_roundtrip
+            && let (Ok(header), Ok(last)) = (u32::try_from(start), u32::try_from(end - 1))
+            && let Ok(region) = osr_loop::region(
+                function,
+                &decoded,
+                &constants,
+                &program.field_sites,
+                Some(live),
+                header,
+                last,
+            )
+            && region.arrays.is_empty()
+            && region.captures.is_empty()
+            && !region.reads_heap_natively()
+            && region.field_store_sites.is_empty()
+            // One field plus one operation only trades a frame transfer for
+            // an entry-record transfer. Keep its existing numeric region;
+            // field binding needs shared inputs or a longer arithmetic chain.
+            && (region.fields.len() != 1 || arithmetic > 1)
+            && let Some((native, _)) = osr_loop::lower(&region, &observation, isa, None)
+        {
+            Some(ScalarRegion {
+                frame: region.entry_registers().collect(),
+                range,
+                fields: region.fields,
+                function: native,
+            })
+        } else {
+            None
+        }
+    };
+    let mut regions = Vec::new();
+    let mut start = 0;
+    while start < decoded.len() {
+        if !scalar(decoded[start], &constants) {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < decoded.len() && !leaders.contains(&end) && scalar(decoded[end], &constants) {
+            end += 1;
+        }
+        if let Some(region) = lower(start..end) {
+            regions.push(region);
+        } else {
+            // A changing receiver cannot be snapshotted. Preserve the existing
+            // arithmetic regions on each side of field reads rather than
+            // letting an inadmissible heap projection erase numeric coverage.
+            let mut scalar_start = start;
+            for (pc, instruction) in decoded.iter().enumerate().take(end).skip(start) {
+                if instruction.op() == Op::GetField {
+                    if scalar_start < pc
+                        && let Some(region) = lower(scalar_start..pc)
+                    {
+                        regions.push(region);
+                    }
+                    scalar_start = pc + 1;
+                }
+            }
+            if scalar_start > start
+                && scalar_start < end
+                && let Some(region) = lower(scalar_start..end)
+            {
+                regions.push(region);
+            }
+        }
+        start = end;
+    }
+    regions
 }
 
 /// Connect a typed region to the canonical frame and exact baseline PC entries.
@@ -188,4 +354,241 @@ pub(super) fn emit_entry(
     let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
     builder.ins().br_table(selector, table);
     call
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bound_data_fields_reach_native_arithmetic_after_cache_warmup() {
+        use cranelift_codegen::cursor::{Cursor, FuncCursor};
+        let program = crate::Engine::specialize(
+            r#"
+            function calc(o) { let x=o.left, y=o.right; let sum=x+y; return sum*3; }
+            const o={pad:0,left:2,right:3}; let total=0;
+            for(let i=0;i<32;i++) total+=calc(o);
+            if(total!==480) throw 'wrong field arithmetic';
+        "#,
+            "bound-fields.js",
+        )
+        .unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let arithmetic = Rc::new(std::cell::Cell::new(0_u64));
+        let mut code = Vec::new();
+        let mut operands = Vec::new();
+        let mut entries = Vec::new();
+        for id in 0..program.function_count() {
+            let regions = if id == 0 {
+                Vec::new()
+            } else {
+                lower_regions(&program, id as u32, &*isa)
+            };
+            if regions.is_empty() {
+                let (memory, entry, sites) =
+                    super::super::tests::live_native_function(&program, id as u32, None);
+                code.push(memory);
+                operands.push(sites);
+                // SAFETY: only the opaque context's Rust spelling differs.
+                entries.push(unsafe {
+                    std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry)
+                });
+                continue;
+            }
+            let mut bound = Vec::new();
+            for mut region in regions {
+                let addition = region
+                    .function
+                    .layout
+                    .blocks()
+                    .flat_map(|block| region.function.layout.block_insts(block))
+                    .find(|instruction| {
+                        region.function.dfg.insts[*instruction].opcode() == ir::Opcode::Fadd
+                    })
+                    .expect("field addition in the typed body");
+                // Count after the entry guards, immediately before arithmetic.
+                // The counter belongs only to this test's live publication.
+                let mut cursor = FuncCursor::new(&mut region.function);
+                cursor.goto_inst(addition);
+                let address = cursor
+                    .ins()
+                    .iconst(types::I64, arithmetic.as_ptr() as usize as i64);
+                let previous = cursor
+                    .ins()
+                    .load(types::I64, MemFlagsData::trusted(), address, 0);
+                let next = cursor.ins().iadd_imm_s(previous, 1);
+                cursor
+                    .ins()
+                    .store(MemFlagsData::trusted(), next, address, 0);
+                let memory = publish_eager_graph(region.function, &*isa).unwrap();
+                bound.push((region.range, region.fields, region.frame, memory));
+            }
+            let plans: Vec<_> = bound
+                .iter()
+                .map(|(range, fields, frame, memory)| StaticRegionEntry {
+                    range: range.clone(),
+                    target: StaticRegionTarget::Address(memory.pointer() as usize),
+                    fields,
+                    frame,
+                })
+                .collect();
+            let (native, _) = lower_js_general_dispatch(
+                &program,
+                id as u32,
+                &*isa,
+                JsGeneralCallout::Dynamic,
+                &plans,
+                &[],
+            )
+            .unwrap();
+            let memory = publish_eager_graph(native, &*isa).unwrap();
+            // SAFETY: the shared entry ABI and this exact program were used
+            // above; the program owner retains the body and every called region.
+            entries.push(unsafe {
+                std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(memory.pointer())
+            });
+            code.push(memory);
+            code.extend(bound.into_iter().map(|(_, _, _, memory)| memory));
+        }
+        // SAFETY: every entry belongs to its function and TestHost; the owner
+        // keeps all code, operand storage and the instrumentation address alive.
+        let native = unsafe {
+            crate::NativeJsProgram::from_entries(
+                program,
+                entries,
+                Rc::new((code, operands, arithmetic.clone())),
+            )
+        }
+        .unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        vm.execute_native_program(&native, true).unwrap();
+        assert!(
+            arithmetic.get() >= 30,
+            "warm calls must run the typed body, not only baseline fallback"
+        );
+    }
+
+    #[test]
+    fn data_fields_feed_the_shared_typed_region_without_callouts() {
+        let program = crate::Engine::specialize(
+            "function subject(o) { let x=o.left, y=o.right; let sum=x+y; return sum*3; }",
+            "typed-fields.js",
+        )
+        .unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let regions = lower_regions(&program, 1, &*isa);
+        let region = regions
+            .iter()
+            .find(|region| region.fields.len() == 2)
+            .unwrap_or_else(|| {
+                panic!(
+                    "two stable field inputs need a typed region:\n{}",
+                    program.disassemble()
+                )
+            });
+        assert!(
+            region
+                .function
+                .layout
+                .blocks()
+                .flat_map(|block| region.function.layout.block_insts(block))
+                .all(|instruction| !matches!(
+                    region.function.dfg.insts[instruction].opcode(),
+                    ir::Opcode::Call | ir::Opcode::CallIndirect
+                ))
+        );
+        assert!(region.function.to_string().contains("fadd"));
+        assert!(
+            region
+                .fields
+                .iter()
+                .all(|field| matches!(field.receiver, FieldReceiver::Register(_)))
+        );
+    }
+
+    #[test]
+    fn isolated_data_reads_do_not_create_numeric_regions() {
+        let program = crate::Engine::specialize(
+            "function subject(o) { let x=o.left; let y=x; return y; }",
+            "field-copy.js",
+        )
+        .unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        assert!(lower_regions(&program, 1, &*isa).is_empty());
+    }
+
+    #[test]
+    fn one_field_increment_keeps_its_existing_numeric_region() {
+        let program = crate::Engine::specialize(
+            "function subject(o) { let n=o.count; n++; return n; }",
+            "field-increment.js",
+        )
+        .unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let regions = lower_regions(&program, 1, &*isa);
+        assert!(!regions.is_empty());
+        assert!(regions.iter().all(|region| region.fields.is_empty()));
+    }
+
+    #[test]
+    fn changing_field_receivers_keep_existing_arithmetic_regions() {
+        let program = crate::Engine::specialize(
+            "function subject(o, other, x) { const v=(x+1)*(x-1); const left=o.left; o=other; const right=o.right; const sum=left+right; return sum+v; }",
+            "changing-fields.js",
+        ).unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        assert!(
+            lower_regions(&program, 1, &*isa)
+                .iter()
+                .any(|region| region.fields.is_empty()
+                    && region.function.to_string().contains("fmul"))
+        );
+    }
+
+    #[test]
+    fn arithmetic_region_reads_each_number_input_once() {
+        let program = crate::Engine::specialize(
+            "function region(x, y) { return ((x + y) * (x - y)) / 3; }",
+            "scalar-region.js",
+        )
+        .unwrap();
+        let id = program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .is_some_and(|name| &program.atoms[name as usize] == "region")
+            })
+            .unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let regions = lower_regions(&program, id as u32, &*isa);
+        let region = regions
+            .iter()
+            .find(|region| region.range.len() >= 3)
+            .expect("adjacent arithmetic must share a typed region");
+        let entry = region.function.layout.entry_block().unwrap();
+        let registers = region.function.dfg.block_params(entry)[1];
+        let frame_loads = region
+            .function
+            .layout
+            .blocks()
+            .flat_map(|block| region.function.layout.block_insts(block))
+            .filter(|inst| {
+                region.function.dfg.insts[*inst].opcode() == ir::Opcode::Load
+                    && region.function.dfg.inst_args(*inst).first() == Some(&registers)
+            })
+            .count();
+        assert_eq!(
+            frame_loads,
+            2,
+            "only the two live-in Numbers are loaded from canonical homes; {:?}\n{}\n{}",
+            region.range,
+            program.disassemble(),
+            region.function.display()
+        );
+        let ir = region.function.display().to_string();
+        assert!(ir.contains("fadd") && ir.contains("fsub") && ir.contains("fmul"));
+    }
 }

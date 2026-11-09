@@ -265,7 +265,7 @@ fn a_narrow_decode_inverts_every_narrow_encoding() {
 const LAYOUT_DECODES: &[(&str, &str, usize)] = &[
     ("vm/compiled.rs", include_str!("../vm/compiled.rs"), 9),
     ("vm/compiled/lane_region.rs", include_str!("../vm/compiled/lane_region.rs"), 5),
-    ("vm/compiled/osr_loop.rs", include_str!("../vm/compiled/osr_loop.rs"), 0),
+    ("vm/compiled/osr_loop.rs", include_str!("../vm/compiled/osr_loop.rs"), 1),
     ("vm/compiled/object_slots.rs", include_str!("../vm/compiled/object_slots.rs"), 2),
     ("vm/js_compiled.rs", include_str!("../vm/js_compiled.rs"), 0),
     ("vm/dispatch_fast.rs", include_str!("../vm/dispatch_fast.rs"), 0),
