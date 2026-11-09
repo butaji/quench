@@ -11301,24 +11301,40 @@ impl<H: Host> Vm<H> {
             && target.this_binding.binds_receiver())
     }
 
+    /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
+    fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
+        known: ScriptCallTarget) -> Option<ScriptCallTarget> {
+        let capture = if known.view.is_null() { std::ptr::null() } else { self.target_capture(code, program, env) };
+        // An arrow's `this` is its own closure's environment's, like `capture`.
+        let (this_binding, lexical_this) = match known.this_binding {
+            ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
+                Some(this) if this.is_deleted() => return None,
+                Some(this) => (ThisBinding::Lexical, this),
+                None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
+            },
+            binding => (binding, Value::UNDEFINED),
+        };
+        Some(ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known })
+    }
+
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
     fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
-        let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
+        let (program, function, env) = self.same_realm_user_target(callee)?;
+        // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
+        if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
+            let target = self.closure_target(code, program, callee, env, known)?;
+            self.lane_stack.remember_script_target(target, self.heap.memory_policy());
+            return Some(target);
+        }
+        let numeric = self.numeric_body(program, function);
         #[cfg(feature = "profile-lane-exits")]
-        if let Some(body) = self.programs.residual(program).and_then(|code| {
-            let body = code.function_get(function as usize)?;
-            Some(format!(
-                "resolve {} span={:?} cross={} known={}",
-                body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
-                body.source_span.map(|span| span.start),
-                program != self.active_program,
-                self.lane_stack.function_target(program, function, program != self.active_program).is_some(),
-            ))
-        }) {
+        if let Some(body) = self.programs.residual(program).and_then(|code| { let body = code.function_get(function as usize)?;
+            Some(format!("resolve {} span={:?} cross={}", body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                body.source_span.map(|span| span.start), program != self.active_program)) }) {
             super::lane_exits::record_detail(body);
         }
         // A callee of another program runs its own residual, which the program store keeps
@@ -11328,13 +11344,9 @@ impl<H: Host> Vm<H> {
         let code: &ResidualProgram = if cross {
             // SAFETY: as above; no program is installed or retired while a call resolves.
             let callee_code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
-            if numeric || !self.lane_admits(callee_code) {
-                return None;
-            }
+            if numeric || !self.lane_admits(callee_code) { return None; }
             callee_code
-        } else {
-            code
-        };
+        } else { code };
         // The JavaScript tier enters a frameless activation at its prologue as it enters a
         // frame (`lane_tier_prologue`), so a function it may claim is cached like any other.
         if function == super::ROOT_FUNCTION_ID {
@@ -11343,21 +11355,7 @@ impl<H: Host> Vm<H> {
         // A numeric body's target differs from its plain closures' (below), so only plain
         // closures share their function's.
         if !numeric && let Some(known) = self.lane_stack.function_target(program, function, cross) {
-            let capture = if known.view.is_null() {
-                std::ptr::null()
-            } else {
-                self.target_capture(code, program, env)
-            };
-            // An arrow's `this` is its own closure's environment's, like `capture`.
-            let (this_binding, lexical_this) = match known.this_binding {
-                ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
-                    Some(this) if this.is_deleted() => return None,
-                    Some(this) => (ThisBinding::Lexical, this),
-                    None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
-                },
-                binding => (binding, Value::UNDEFINED),
-            };
-            let target = ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known };
+            let target = self.closure_target(code, program, callee, env, known)?;
             let policy = self.heap.memory_policy();
             if cross {
                 self.lane_stack.remember_cross_target(target, policy);
@@ -11406,7 +11404,7 @@ impl<H: Host> Vm<H> {
                 && body
                     .code
                     .iter()
-                    .any(|packed| decoded_instruction(body, *packed).op() == Op::Construct)
+                    .any(|packed| decoded_instruction(body, *packed).op().is_construct())
         {
             None
         } else {
@@ -18400,7 +18398,7 @@ fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
     call.result_flags() == 0
         && ImmediateLayout::argument_count(call.imm()) == 0
         && decoded.get(pc + 1).is_some_and(|next| {
-            next.op() == Op::RequireIteratorResult && next.register_b() == call.result_register()
+            next.op().is_require_iterator_result() && next.register_b() == call.result_register()
         })
 }
 
@@ -18493,13 +18491,13 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
     });
     single_register(direct).or_else(|| {
         let vector = single_register(
-            instructions().filter(|instruction| instruction.op() == Op::WasmMemoryAddress).map(|instruction| instruction.c()),
+            instructions().filter(|instruction| instruction.op().is_wasm_memory_address()).map(|instruction| instruction.c()),
         )?;
         instructions()
             .take_while(|instruction| {
                 matches!(instruction.op(), Op::WasmFillRegisters | Op::WasmInstanceBinding)
             })
-            .any(|instruction| instruction.op() == Op::WasmInstanceBinding && instruction.a() == vector)
+            .any(|instruction| instruction.op().is_wasm_instance_binding() && instruction.a() == vector)
             .then_some(vector)
     })
 }
@@ -18659,7 +18657,7 @@ fn derive_lane_view<'live, H: Host>(
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
                 let forwards = decoded.get(pc + 1).is_some_and(|next| {
-                    next.op() == Op::CallForwardingArguments
+                    next.op().is_call_forwarding_arguments()
                         && next.call_window().last() == Some(instruction.result_register())
                 });
                 Some(LaneHandler {
@@ -18790,7 +18788,7 @@ fn derive_lane_view<'live, H: Host>(
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
         for (pc, &instruction) in decoded.iter().enumerate() {
-            if instruction.op() == Op::WasmBranchTable
+            if instruction.op().is_wasm_branch_table()
                 && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
             {
                 records[pc].handler = lane_exit::<H> as Handler as *const ();
@@ -18807,15 +18805,15 @@ fn derive_lane_view<'live, H: Host>(
             let next = decoded[pc + 1];
             let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
             let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
-            if instruction.op() == Op::WasmI32AddImmediate
+            if instruction.op().is_wasm_i32_add_immediate()
                 && plain_add
                 && carried_load
                 && let Some(fused) = add_load_handler::<H>(next.op())
             {
                 // A float operator taking the loaded f64 joins the fusion.
-                let operator = (next.op() == Op::WasmF64Load && pc + 2 < records.len())
+                let operator = (next.op().is_wasm_f64_load() && pc + 2 < records.len())
                     .then(|| decoded[pc + 2])
-                    .filter(|third| third.op() == Op::WasmF64Binary)
+                    .filter(|third| third.op().is_wasm_f64_binary())
                     .and_then(|third| {
                         let second = float_arithmetic(third.op(), third.imm())?;
                         let left = [ACC_B, ACC_C].into_iter().find(|acc| {
@@ -18873,7 +18871,7 @@ fn derive_lane_view<'live, H: Host>(
             let load = decoded[pc];
             let combine = decoded[pc + 1];
             let store = decoded[pc + 2];
-            if load.op() != Op::WasmI32Load || store.op() != Op::WasmI32Store {
+            if !load.op().is_wasm_i32_load() || !store.op().is_wasm_i32_store() {
                 continue;
             }
             let field = [ACC_NONE, ACC_C]
@@ -18948,7 +18946,7 @@ fn derive_lane_view<'live, H: Host>(
                 continue;
             };
             if !matches!(first.op(), Op::WasmI32AddImmediate | Op::WasmI32SubtractImmediate)
-                || mask.op() != Op::WasmI32AndImmediate
+                || !mask.op().is_wasm_i32_and_immediate()
                 || mask.b() != first.a()
                 || jump.a() != mask.a()
                 || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::WasmI32AndImmediate, acc))
@@ -18988,7 +18986,7 @@ fn derive_lane_view<'live, H: Host>(
                 continue;
             };
             let (load, next) = (decoded[pc], decoded[pc + 1]);
-            let fused = if load.op() == Op::WasmI32Load
+            let fused = if load.op().is_wasm_i32_load()
                 && i32_load(&records, pc + 1).is_some()
                 && next.c() == load.a()
             {
@@ -19191,7 +19189,7 @@ fn derive_lane_view<'live, H: Host>(
             let instruction = decoded[pc];
             let next = decoded[pc + 1];
             let pair = (|| {
-                if next.op() != Op::WasmF64Binary {
+                if !next.op().is_wasm_f64_binary() {
                     return None;
                 }
                 let second = float_arithmetic(next.op(), next.imm())?;
@@ -19205,7 +19203,7 @@ fn derive_lane_view<'live, H: Host>(
                         })
                         .map(|acc| acc == ACC_B)
                 };
-                if instruction.op() == Op::WasmF64Load {
+                if instruction.op().is_wasm_f64_load() {
                     let plain = tables[0][usize::from(ACC_NONE)][Op::WasmF64Load as usize]?;
                     if records[pc].handler != plain.handler as *const () {
                         return None;
@@ -19216,7 +19214,7 @@ fn derive_lane_view<'live, H: Host>(
                     let updates =
                         pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
                             let store = decoded[pc + 2];
-                            store.op() == Op::WasmF64Store
+                            store.op().is_wasm_f64_store()
                                 && store.a() == next.a()
                                 && [ACC_NONE, ACC_A]
                                     .into_iter()
@@ -19233,7 +19231,7 @@ fn derive_lane_view<'live, H: Host>(
                         2,
                     ));
                 }
-                if instruction.op() != Op::WasmF64Binary {
+                if !instruction.op().is_wasm_f64_binary() {
                     return None;
                 }
                 let first = float_arithmetic(instruction.op(), instruction.imm())?;
@@ -19261,9 +19259,9 @@ fn derive_lane_view<'live, H: Host>(
                 let store_runs = [ACC_NONE, ACC_A]
                     .into_iter()
                     .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
-                if instruction.op() != Op::WasmF64Binary
+                if !instruction.op().is_wasm_f64_binary()
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
-                    || next.op() != Op::WasmF64Store
+                    || !next.op().is_wasm_f64_store()
                     || next.a() != instruction.a()
                     || jump_targets.contains(pc + 1)
                     || !store_runs
@@ -19470,7 +19468,7 @@ fn derive_lane_view<'live, H: Host>(
                     && !jump_targets.contains(pc + 1)
                     && !jump_targets.contains(pc + 2)
                     && !jump_targets.contains(pc + 3)
-                    && decoded[pc + 3].op() == Op::Move
+                    && decoded[pc + 3].op().is_move()
                     && let Some(store_op) = Some(decoded[pc + 2].op())
                     && let Some(fused) = store_move_handler::<H>(store_op, ACC_NONE)
                     && records[pc + 2].handler == fused as *const ()
@@ -19491,7 +19489,7 @@ fn derive_lane_view<'live, H: Host>(
             else {
                 continue;
             };
-            if decoded[pc].op() != Op::WasmI32ShiftRightUnsignedAndImmediate
+            if !decoded[pc].op().is_wasm_i32_shift_right_unsigned_and_immediate()
                 || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op(), acc))
             {
                 continue;
@@ -19766,7 +19764,7 @@ fn install_loop_sites<'live, H: Host>(
     let live = || *masks.get_or_init(live);
     let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
-        .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
+        .filter(|pc| records[*pc].handler == backward && decoded[*pc].op().is_jump() && !fused_into(*pc))
         .map(|pc| {
             let header = decoded[pc].jump_target();
             let (region, promotion_only, analysis_failure, call_boundary_pcs) = match super::compiled::analyze_osr_region_detailed(
@@ -20893,7 +20891,7 @@ fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<
 fn may_loop(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, packed)| {
         let instruction = decoded_instruction(function, *packed);
-        instruction.op() == Op::WasmBranchTable
+        instruction.op().is_wasm_branch_table()
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
     })
@@ -20914,7 +20912,7 @@ fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, foll
     for _ in 0..cap {
         let mut changed = false;
         for pc in (0..exits.len()).rev() {
-            let run = if decoded[pc].op() == Op::Await {
+            let run = if decoded[pc].op().is_await() {
                 cap
             } else if exits[pc] {
                 0
@@ -21003,7 +21001,7 @@ impl InstructionSet {
 fn branch_table_entry_records(instructions: &[WideInstruction]) -> InstructionSet {
     let mut entries = InstructionSet::new(instructions.len());
     for (pc, &instruction) in instructions.iter().enumerate() {
-        if instruction.op() == Op::WasmBranchTable {
+        if instruction.op().is_wasm_branch_table() {
             for entry in crate::bytecode::branch_table_entries(pc, instruction) {
                 entries.insert(entry);
             }

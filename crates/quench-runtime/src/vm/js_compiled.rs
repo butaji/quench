@@ -7,7 +7,7 @@
 //! entries (`compile_js_general_dispatch`). Neither matches a program's shape: an interpreter
 //! change reaches both.
 
-use crate::bytecode::{Function, Op, ProgramKind, ResidualProgram};
+use crate::bytecode::{Function, ProgramKind, ResidualProgram, Traits};
 
 /// Native code and its result interpretation for a JavaScript function.
 pub(super) struct JsJitArtifact {
@@ -124,26 +124,7 @@ fn activation_is_irrelevant(function: &Function) -> bool {
     function.arguments_slot.is_none()
         && !function.inherited_with_scope
         && function.wide.is_empty()
-        && function.code.iter().all(|packed| {
-            matches!(
-                packed.as_wide().op(),
-                Op::LoadConst
-                    | Op::Move
-                    | Op::Unary
-                    | Op::Binary
-                    | Op::NumericAdd
-                    | Op::NumericMultiply
-                    | Op::LoadLocal
-                    | Op::LoadLocalPlain
-                    | Op::StoreLocal
-                    | Op::StoreLocalPlain
-                    | Op::Jump
-                    | Op::JumpFalse
-                    | Op::JumpTrue
-                    | Op::JumpBinaryFalse
-                    | Op::Return
-            )
-        })
+        && function.code.iter().all(|packed| packed.as_wide().op().traits().has(Traits::ACTIVATION_FREE))
 }
 
 /// What the tier finds in a function at its entries. Each fact depends only on the function and

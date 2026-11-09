@@ -279,6 +279,24 @@ fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
     }
 }
 
+/// The staged ToBoolean decides every value the interpreter's `Value::truthiness` decides
+/// from its word alone, the same way, and leaves exactly the heap values whose cell decides.
+#[test]
+fn staged_truthiness_agrees_with_the_interpreter() {
+    let mut heap = Heap::new();
+    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let text = heap.alloc(Cell::Error("text".into()));
+    let numbers = [0.0, -0.0, 1.0, -2.5, f64::NAN, f64::INFINITY, 1e300].map(Value::number);
+    let values = [Value::TRUE, Value::FALSE, Value::NULL, Value::UNDEFINED, Value::DELETED,
+        Value::integer(0), Value::integer(7), Value::integer(-1), object, text];
+    for value in numbers.into_iter().chain(values) {
+        let (undecided, truthy) = super::value::tagged_truthiness(&mut Concrete::new(std::ptr::null()), value.to_bits());
+        let interpreter = value.truthiness().filter(|_| value.direct_object_index().is_some() || !value.is_heap()
+            || value.direct_array_index().is_some());
+        assert_eq!((!undecided).then_some(truthy), interpreter, "{value:?}");
+    }
+}
+
 /// Hand-written decodes of the object and narrow layouts outside `staged`, per native-tier
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.

@@ -400,7 +400,7 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
             operand(input_operand.0, fields)
         }
         FieldLayout::FieldBase => field_base(instruction, fields),
-        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(RegisterSet::default(), register_bit),
+        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or_else(RegisterSet::default, register_bit),
         FieldLayout::ConstructArguments => match instruction.construct_arguments() {
             crate::bytecode::ConstructArguments::Registers(window) => {
                 range(window.base, window.count)
@@ -453,7 +453,7 @@ fn general_definitions(
         .code
         .iter()
         .fold(RegisterSet::default(), |mask, nested| {
-            mask | nested_member(*nested).map_or(RegisterSet::default(), |nested| definitions(nested, superinstructions))
+            mask | nested_member(*nested).map_or_else(RegisterSet::default, |nested| definitions(nested, superinstructions))
         }),
         _ => RegisterSet::default(),
     };
@@ -464,10 +464,10 @@ fn field_definitions(instruction: WideInstruction, field: InstructionField) -> R
     let layout = instruction.op().field_layout(field);
     match layout {
         layout if layout.writes_register() => register_bit(field_register(instruction, field)),
-        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or(RegisterSet::default(), register_bit),
+        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or_else(RegisterSet::default, register_bit),
         FieldLayout::NumericLocalTarget => instruction
             .numeric_local_store_target()
-            .map_or(RegisterSet::default(), |target| register_bit(target.register)),
+            .map_or_else(RegisterSet::default, |target| register_bit(target.register)),
         _ => RegisterSet::default(),
     }
 }
@@ -482,8 +482,8 @@ fn field_base(instruction: WideInstruction, fields: &[FieldSite]) -> RegisterSet
         Some(FieldLookup::Site(index)) => fields
             .get(index)
             .and_then(|site| site.base.register_index())
-            .map_or(RegisterSet::default(), register_bit),
-        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or(RegisterSet::default(), register_bit),
+            .map_or_else(RegisterSet::default, register_bit),
+        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or_else(RegisterSet::default, register_bit),
     }
 }
 
@@ -496,7 +496,7 @@ fn operand(value: u16, fields: &[FieldSite]) -> RegisterSet {
         return fields
             .get(operand.payload() as usize)
             .and_then(|site| site.base.register_index())
-            .map_or(RegisterSet::default(), register_bit);
+            .map_or_else(RegisterSet::default, register_bit);
     }
     RegisterSet::default()
 }

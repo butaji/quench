@@ -10,7 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
-use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
+use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
 #[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
@@ -163,7 +163,7 @@ impl Unit {
                 Some(parent) => (callees[parent], suspended[parent]),
             };
             let call = frame.call as usize;
-            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or_default() & !frame.result.map_or(RegisterSet::default(), |result| register_bit(result - frame.parent_base(&self.frames))));
+            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or_default() & !frame.result.map_or_else(RegisterSet::default, |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
             callees.push(program.register_root_masks(frame.target.function)?);
         }
@@ -233,8 +233,7 @@ const MAX_INLINING_DEPTH: usize = 5;
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
     match instruction.op() {
-        Op::Return | Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
-        | Op::JumpBinaryFalse | Op::GetIndex | Op::SetIndex => plain,
+        op if op.traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
         Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,

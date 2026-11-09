@@ -21,6 +21,7 @@ pub(crate) mod numeric;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
+pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod value;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
@@ -65,6 +66,14 @@ pub(crate) trait Stage {
     fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
+    /// Whether either condition holds.
+    fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
+    /// `then` where `cond` holds, else `otherwise`.
+    fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
+    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
+    fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
+    /// Whether the shape word `shape` is one of `shapes`, sorted.
+    fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
@@ -321,13 +330,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Step::Value(value)
         }
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => match frame.truthiness(stage, register) {
-            Some(condition) => {
-                let condition = if taken { condition } else { stage.not(condition) };
-                Step::Control(frame.branch(stage, condition))
-            }
-            None => Step::Unresolved,
-        },
+        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
@@ -340,7 +343,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             }
             None => Step::Unresolved,
         },
-        heap => return heap_step(stage, frame, heap),
+        heap => heap_step(stage, frame, heap),
     }
 }
 
@@ -369,6 +372,15 @@ fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         },
         _ => Step::Unresolved,
     }
+}
+
+/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
+/// the stage cannot tell its truthiness.
+fn jump_if<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool)
+    -> Step<S::Word, F::Control> {
+    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
+    let condition = if taken { condition } else { stage.not(condition) };
+    Step::Control(frame.branch(stage, condition))
 }
 
 /// The activation's `this` into `destination`, where the activation holds it.
@@ -479,6 +491,16 @@ impl Stage for Concrete {
     }
     #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
+    #[inline(always)]
+    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
+    #[inline(always)]
+    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
+    #[inline(always)]
+    fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
+    #[inline(always)]
+    fn shape_in(&mut self, shape: u64, shapes: &[u32]) -> bool {
+        u32::try_from(shape).is_ok_and(|shape| shapes.binary_search(&shape).is_ok())
+    }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }

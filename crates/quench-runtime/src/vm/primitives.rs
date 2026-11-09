@@ -61,13 +61,13 @@ impl<H: Host> Vm<H> {
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value, bool)> {
-        let (program, id, env) = self.same_realm_user_target(callee)?;
-        let numeric = self
-            .programs
-            .residual(program)
-            .and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))
-            == Some(crate::bytecode::DispatchClass::Numeric);
-        Some((program, id, env, numeric))
+        self.same_realm_user_target(callee).map(|(program, id, env)| (program, id, env, self.numeric_body(program, id)))
+    }
+
+    /// Whether function `id` of `program` has a numeric body (`DispatchClass::Numeric`).
+    pub(super) fn numeric_body(&self, program: super::ProgramId, id: u32) -> bool {
+        self.programs.residual(program).and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))
+            == Some(crate::bytecode::DispatchClass::Numeric)
     }
 
     pub(super) fn non_callable_target(

@@ -233,6 +233,12 @@ impl Traits {
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
     /// A Wasm memory access through the function's memory register.
     pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
+    /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
+    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17);
+    /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
+    pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
+    /// An indexed element read or write, which a loop region views its arrays for.
+    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -240,19 +246,19 @@ impl Traits {
 
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
-    (Nop) => { Traits::LEAF_VALUE };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE) };
+    (Nop) => { Traits::LEAF_VALUE.union(Traits::SCALAR_REGION) };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::SCALAR_REGION) };
+    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -276,8 +282,8 @@ macro_rules! traits_of {
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
     (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (SetIndex) => { Traits::INLINABLE };
+    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::ELEMENT_ACCESS) };
+    (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS) };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
     (WasmMemoryFill) => { Traits::WASM_MEMORY };
@@ -285,8 +291,13 @@ macro_rules! traits_of {
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
+    (LoadLocal) => { Traits::ACTIVATION_FREE };
+    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
+    (StoreLocal) => { Traits::ACTIVATION_FREE };
+    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
     ($other:ident) => { Traits::NONE };
 }
+
 
 /// The guarded JavaScript denotation available to the shared compiled region
 /// analyzer. This describes an instruction operation, never a source pattern.

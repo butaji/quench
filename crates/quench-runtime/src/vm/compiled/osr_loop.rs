@@ -456,11 +456,8 @@ fn tagged_registers_with_failure(
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
-        .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
-            Op::GetIndex => instruction.operand_b().register_index(),
-            Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
-            _ => None,
-        }).filter(|register| !dynamic_arrays.contains(register)))
+        .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
+            .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
@@ -540,15 +537,13 @@ fn tagged_registers_with_failure(
         // A field receiver the region's field reads give holds an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(receiver)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(receiver)
+            field_reads_alone_define(instructions, receiver).then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
             let value = instruction.register_a();
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
+            field_reads_alone_define(instructions, value).then_some(value)
         }))
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
@@ -559,8 +554,7 @@ fn tagged_registers_with_failure(
         // which the entry's barrier on the receiver covers (`lane_loop_entry`).
         .chain(instructions.iter().filter(|instruction| admitted_store(instruction.op())).filter_map(|instruction| {
             let value = instruction.register_a();
-            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
+            field_reads_alone_define(instructions, value).then_some(value)
         }))
         .collect();
     loop {
@@ -817,9 +811,23 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
+        _ if let Some(array) = array_read(instruction) => Some(array),
+        _ => instruction.field_store_register(),
+    }
+}
+
+/// Whether `register` has definitions in `instructions` and every one is a field read, which
+/// may give an object.
+fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+    let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
+    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
+}
+
+/// The register an indexed access, or the coercibility check before one, reads as its array.
+fn array_read(instruction: WideInstruction) -> Option<Register> {
+    match instruction.op() {
         Op::GetIndex => instruction.operand_b().register_index(),
         Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
-        _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
         _ => None,
     }
 }
