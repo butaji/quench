@@ -6830,6 +6830,8 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     if let Some(length) = vm.array_length_field(Value::from_bits(receiver), atom) {
         return length.to_bits();
     }
+    // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
+    if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
     if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {

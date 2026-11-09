@@ -206,23 +206,26 @@ fn emit_user_call(builder: &mut FunctionBuilder<'_>, (pc, next, fallback): (usiz
     exact.emit(builder, fallback);
 }
 
-/// The registers of a call with at most one argument, which may be a native's in-place case
-/// (`Vm::in_place_native_value`, which tests the callee itself): callee, receiver and the
-/// argument, if any.
+/// The registers of a call that may be a native's in-place case (`Vm::in_place_native_value`,
+/// which tests the callee itself): callee, receiver, and the window of its arguments.
 struct BuiltinCall {
     callee: i32,
     receiver: i32,
-    argument: Option<i32>,
+    window: i32,
     count: u16,
 }
 
 fn builtin_call(instruction: WideInstruction, register_offset: &dyn Fn(u16) -> Option<i32>) -> Option<BuiltinCall> {
     let window = instruction.call_window();
-    if window.count > 1 { return None; }
+    // Every register of the window is the frame's, so the window is one run of them.
+    let base = match window.count {
+        0 => 0,
+        count => { register_offset(window.base + count - 1)?; register_offset(window.base)? }
+    };
     Some(BuiltinCall {
         callee: register_offset(instruction.register_b())?,
         receiver: register_offset(instruction.register_c())?,
-        argument: if window.count == 1 { Some(register_offset(window.base)?) } else { None },
+        window: base,
         count: window.count,
     })
 }
@@ -230,30 +233,28 @@ fn builtin_call(instruction: WideInstruction, register_offset: &dyn Fn(u16) -> O
 fn emit_builtin_call(builder: &mut FunctionBuilder<'_>, (arguments, payload): (ir::Value, ir::Value), call: BuiltinCall) -> ir::Value {
     let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, call.callee);
     let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, call.receiver);
-    let argument = match call.argument {
-        Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        None => builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64),
-    };
+    let window = builder.ins().iadd_imm_s(arguments, i64::from(call.window));
     let count = builder.ins().iconst(types::I64, i64::from(call.count));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_call));
-    emit_lane_helper_call(builder, payload, helper, &[payload, callee, receiver, argument, count])
+    emit_lane_helper_call(builder, payload, helper, &[payload, callee, receiver, window, count])
 }
 
-/// A native's in-place case (`Vm::in_place_native_value`): its value, else `Value::DELETED`
-/// before any effect.
+/// A native's in-place case (`Vm::in_place_native_value`) of the `count` registers at `window`:
+/// its value, else `Value::DELETED` before any effect.
 pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, receiver: u64,
-    argument: u64, count: u64) -> u64 {
+    window: u64, count: u64) -> u64 {
     // SAFETY: as `lane_field_add`.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
     let native = match vm.heap.function(Value::from_bits(callee)).map(|record| &record.kind) {
         Some(crate::heap::FunctionKind::Native(native)) => *native,
         _ => return Value::DELETED.to_bits(),
     };
-    let argument = [Value::from_bits(argument)];
-    let Some(args) = argument.get(..usize::try_from(count).unwrap_or(usize::MAX)) else { return Value::DELETED.to_bits() };
+    // The values are copied out of the frame's registers, which the native's VM borrow owns.
+    // SAFETY: the caller passes `count` registers of the running frame at `window`.
+    let args: smallvec::SmallVec<[Value; 4]> = unsafe { std::slice::from_raw_parts(window as *const Value, count as usize) }.into();
     // SAFETY: the running entry's program, live for the call.
     let code = unsafe { &*(residual as *const ResidualProgram) };
-    let Some(value) = vm.in_place_native_value(code, native, Value::from_bits(callee), Value::from_bits(receiver), args)
+    let Some(value) = vm.in_place_native_value(code, native, Value::from_bits(callee), Value::from_bits(receiver), &args)
         else { return Value::DELETED.to_bits() };
     // As `lane_store_miss`: a due collection waits for the next back edge's safepoint.
     dispatch.refresh_object_bases(vm);
