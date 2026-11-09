@@ -130,4 +130,31 @@ mod tests {
         assert_eq!(concrete(&heap, &read(own, own), object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), prototype), None);
     }
+
+    /// The interpreter keeps its typed prototype read (`Heap::holder_property_get_flat`),
+    /// which routing through `run` made slower (deltablue +1.6%); it reads what the staged
+    /// `LoadPrototypeSlot` reads at every slot of a prototype, of narrow and wide layouts.
+    #[test]
+    fn the_interpreters_prototype_read_agrees_with_the_staged_one() {
+        let mut heap = Heap::new();
+        let wide = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
+        for shape in 1..=wide as u32 {
+            heap.register_property_shape(shape, shape as usize, None);
+        }
+        for len in [1, wide] {
+            let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+            for slot in 0..len {
+                heap.property_add(prototype, Value::number(slot as f64 + 0.5), slot as u32 + 1);
+            }
+            heap.object_record_mut(prototype).unwrap().mark_as_prototype();
+            let object = heap.alloc(Cell::Object(Object::new(prototype)));
+            let holder = heap.object(prototype).unwrap();
+            for slot in 0..len {
+                // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
+                let interpreter = unsafe { heap.holder_property_get_flat(holder, slot) };
+                assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
+                    "slot {slot} of {len}");
+            }
+        }
+    }
 }
