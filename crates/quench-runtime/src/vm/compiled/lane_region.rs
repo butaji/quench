@@ -522,7 +522,7 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
         match instruction.op() {
             Op::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
-            Op::Nop | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return => true,
+            op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
             op => op.js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
