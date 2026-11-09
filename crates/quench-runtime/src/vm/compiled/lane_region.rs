@@ -3808,9 +3808,9 @@ impl Lowering<'_, '_> {
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
-            let stored = self.helper_call(LaneHelper::IndexSet, &[base, key, value]);
-            let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-            emit_js_guard(&mut self.builder, hit, exit);
+            let proof = super::EmitProof::IndexSetHelper { miss: exit };
+            self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                crate::staged::Operation::IndexSetHelper { base, key, value, proof });
             self.reload_dense_arrays(pc as usize);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(done);

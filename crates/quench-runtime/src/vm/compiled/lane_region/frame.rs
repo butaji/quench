@@ -1,7 +1,7 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 
 use super::*;
-#[path = "frame_safepoint.rs"] mod safepoint;
+#[path = "frame_calls.rs"] mod calls;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -136,11 +136,19 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(())
     }
 
+    /// The element store's host helper: its nonzero answer means the store landed.
+    #[inline(always)]
+    fn index_set_helper(&mut self, stage: &mut Emit<'_, '_>, base: ir::Value, key: ir::Value,
+        value: ir::Value, proof: EmitProof) -> Option<()> {
+        calls::index_set_helper(self, stage, base, key, value, proof)
+    }
+
+
     /// The interrupt/collection safepoint: a fault-polling body records its poll instruction,
     /// any other leaves at the miss edge when the flag is set.
     #[inline(always)]
     fn safepoint(&mut self, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
-        safepoint::safepoint(self, stage, proof)
+        calls::safepoint(self, stage, proof)
     }
 
 
@@ -152,7 +160,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let payload = self.payload;
         let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObject);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
-        finish_allocation(stage, self, destination, value, miss);
+        calls::finish_allocation(stage, self, destination, value, miss);
         Some(value)
     }
 
@@ -164,7 +172,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let payload = self.payload;
         let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewArray);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, length, elements]);
-        finish_allocation(stage, self, destination, value, miss);
+        calls::finish_allocation(stage, self, destination, value, miss);
         Some(value)
     }
 
@@ -207,16 +215,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 }
 
-/// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the
-/// literal is the destination's tagged value.
-#[inline(always)]
-fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
-    value: ir::Value, miss: ir::Block) {
-    let made = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-    super::super::emit_js_guard(stage.builder, made, miss);
-    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
-        RegisterFact::definition(Type::ANY, Representation::Tagged));
-}
 
 /// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose
 /// truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `miss`.

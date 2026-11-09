@@ -199,6 +199,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
 
+    /// The element store's host helper; `None` where the frame has no helper table.
+    #[inline(always)]
+    fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -254,6 +258,9 @@ pub(crate) enum Operation<W, P> {
     MakeArray { destination: Register, length: W, elements: W, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
+    /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
+    /// miss edge takes a failed store.
+    IndexSetHelper { base: W, key: W, value: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
