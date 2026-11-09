@@ -1093,6 +1093,28 @@ impl<H: Host> Vm<H> {
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }
 
+    /// `MarkPrivateName`: brands `object` with private method name `atom` of the class home
+    /// `home` (PrivateMethodOrAccessorAdd), which raises for a non-extensible object or one
+    /// already branded; the class itself, as its own home, takes its static methods' brand.
+    pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
+        let brand = PrivateBrand { home, name: atom };
+        if object != home {
+            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), data.has_private_name(brand))) else {
+                return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
+            };
+            if !addable {
+                return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
+            }
+            if branded {
+                return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
+            }
+        }
+        if let Some(object) = self.object_data_mut(object) {
+            object.add_private_name(brand);
+        }
+        Ok(())
+    }
+
     pub(super) fn check_private_brand(
         &mut self,
         p: &ResidualProgram,
