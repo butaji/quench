@@ -3,7 +3,7 @@
 //! Instructions keep their original unit PCs, origins and recovery homes.
 
 use super::{facts, lane_unit::Unit};
-use crate::{Value, bytecode::{ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
+use crate::{Value, bytecode::{Class, ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
 use cranelift_codegen::bitset::CompoundBitSet;
 
@@ -62,21 +62,21 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         }
         return;
     }
-    let value = match instruction.op() {
-        Op::LoadConst => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
-        Op::Move => values.get(usize::from(instruction.register_b())).copied().flatten(),
-        Op::IncDec if instruction.numeric_local_target().is_none() => {
+    let value = match instruction.op().class() {
+        Class::LoadConst => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
+        Class::Move => values.get(usize::from(instruction.register_b())).copied().flatten(),
+        Class::IncDec if instruction.numeric_local_target().is_none() => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
                 .zip(instruction.boolean_flag()).map(|(value, decrement)| Value::number(if decrement { value - 1.0 } else { value + 1.0 }))
         }
-        op if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
+        _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
             let inputs = operand(program, values, instruction.operand_b()).and_then(Value::as_number)
                 .zip(operand(program, values, instruction.operand_c()).and_then(Value::as_number));
             inputs.and_then(|(left, right)| {
                 let operator = instruction.binary_operator();
-                if let Some(operation) = NumberArithmetic::from_js_instruction(op, operator) {
+                if let Some(operation) = NumberArithmetic::from_js_instruction(instruction.op(), operator) {
                     Some(Value::number(operation.apply(&mut NumberF64Stage, left, right)))
-                } else if let Some(operation) = NumberBitwise::from_js_instruction(op, operator) {
+                } else if let Some(operation) = NumberBitwise::from_js_instruction(instruction.op(), operator) {
                     Some(crate::vm::operations::number_bitwise_result(operation,
                         crate::value::number_to_u32(left) as i32, crate::value::number_to_u32(right) as i32))
                 } else {
@@ -94,7 +94,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
 
 fn scalar_body(instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
-        && (matches!(instruction.op(), Op::LoadConst | Op::Move | Op::IncDec)
+        && (matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::IncDec)
             || (instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
                 && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
                     || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()

@@ -34,6 +34,7 @@ impl Form {
 /// Whether packed values are read once, for a caller no store reaches, or at each read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PackedAccess {
+    #[allow(dead_code)]
     Snapshot,
     Reload,
 }
@@ -41,6 +42,7 @@ pub(crate) enum PackedAccess {
 /// Packed narrow values: the payload word as read once, or the record that holds it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Packed<W> {
+    #[allow(dead_code)]
     Snapshot(W),
     Record(W),
 }

@@ -33,7 +33,7 @@ mod tests {
         let mut ops = BTreeMap::new();
         for id in 1..program.function_count() {
             let function = program.function(id);
-            let lowered = lower_js_general_dispatch(&program, id as u32, &*isa, JsGeneralCallout::Address(0), &[], &[]);
+            let lowered = lower_js_general_dispatch(&program, id as u32, &*isa, JsGeneralCallout::Address(0), &[]);
             let pcs = lowered.map_or_else(|_| vec![PcLowering::Exact as u8; function.code.len()], |(_, pcs)| pcs);
             for (packed, _) in function.code.iter().zip(pcs).filter(|(_, lowering)| *lowering == PcLowering::Exact as u8) {
                 let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);

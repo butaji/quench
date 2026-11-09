@@ -16,7 +16,6 @@ pub(crate) enum Class {
     WasmFloatUnary32,
     WasmFloatUnary64,
     WasmI32AddRegister,
-    WasmI32Add,
     WasmI32AddImmediate,
     WasmI32SubtractImmediate,
     WasmI32AddJump,
@@ -48,6 +47,7 @@ pub(crate) enum Class {
     RequireObjectCoercible,
     ToNumeric,
     CallKnown,
+    CallMethod,
     ArgumentsLength,
     ArgumentGet,
     Throw,
@@ -63,6 +63,22 @@ pub(crate) enum Class {
     LoadName,
     WasmFillRegisters,
     WasmMemoryAddress,
+    WasmMemorySize,
+    WasmMemoryFill,
+    WasmMemoryCopy,
+    WasmIndirectTarget,
+    WasmRefFunc,
+    WasmUnreachable,
+    WasmRefGetDesc,
+    WasmArrayNewData,
+    WasmArrayNewElem,
+    WasmArrayNew,
+    WasmArrayNewDefault,
+    WasmArrayNewFixed,
+    WasmDescriptorTest,
+    WasmDescriptorCast,
+    WasmRefTest,
+    WasmRefCast,
     WasmMemoryLoad,
     WasmMemoryStore,
     CallArray,
@@ -124,7 +140,6 @@ macro_rules! class_of {
     (WasmF32Unary) => { Class::WasmFloatUnary32 };
     (WasmF64Unary) => { Class::WasmFloatUnary64 };
     (WasmI32Add) => { Class::WasmI32AddRegister };
-    (WasmI32Add) => { Class::WasmI32Add };
     (WasmI32AddImmediate) => { Class::WasmI32AddImmediate };
     (WasmI32SubtractImmediate) => { Class::WasmI32SubtractImmediate };
     (WasmI32AddImmediateJumpNonZero) => { Class::WasmI32AddJump };
@@ -156,6 +171,7 @@ macro_rules! class_of {
     (RequireObjectCoercible) => { Class::RequireObjectCoercible };
     (ToNumeric) => { Class::ToNumeric };
     (CallKnown) => { Class::CallKnown };
+    (CallMethod) => { Class::CallMethod };
     (ArgumentsLength) => { Class::ArgumentsLength };
     (ArgumentGet) => { Class::ArgumentGet };
     (Throw) => { Class::Throw };
@@ -172,6 +188,23 @@ macro_rules! class_of {
     (LoadName) => { Class::LoadName };
     (WasmFillRegisters) => { Class::WasmFillRegisters };
     (WasmMemoryAddress) => { Class::WasmMemoryAddress };
+    (WasmMemorySize) => { Class::WasmMemorySize };
+    (WasmMemoryFill) => { Class::WasmMemoryFill };
+    (WasmMemoryCopy) => { Class::WasmMemoryCopy };
+    (WasmIndirectTarget) => { Class::WasmIndirectTarget };
+    (WasmRefFunc) => { Class::WasmRefFunc };
+    (WasmUnreachable) => { Class::WasmUnreachable };
+    (WasmRefGetDesc) => { Class::WasmRefGetDesc };
+    (WasmArrayNewData) => { Class::WasmArrayNewData };
+    (WasmArrayNewElem) => { Class::WasmArrayNewElem };
+    (WasmArrayNew) => { Class::WasmArrayNew };
+    (WasmArrayNewDefault) => { Class::WasmArrayNewDefault };
+    (WasmArrayNewFixed) => { Class::WasmArrayNewFixed };
+    (WasmDescriptorTest) => { Class::WasmDescriptorTest };
+    (WasmDescriptorCast) => { Class::WasmDescriptorCast };
+    (WasmRefTest) => { Class::WasmRefTest };
+    (WasmRefCast) => { Class::WasmRefCast };
+
     (WasmMemoryLoad) => { Class::WasmMemoryLoad };
     (WasmMemoryStore) => { Class::WasmMemoryStore };
     (CallArray) => { Class::CallArray };
@@ -267,6 +300,8 @@ impl Traits {
     pub(crate) const CALL_LINK: Self = Self(1 << 26);
     /// A by-name load or store access.
     pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 27);
+    /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
+    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 28);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -314,8 +349,8 @@ macro_rules! traits_of {
     (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
-    (WasmMemoryFill) => { Traits::WASM_MEMORY };
-    (WasmMemoryCopy) => { Traits::WASM_MEMORY };
+    (WasmMemoryFill) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
+    (WasmMemoryCopy) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
@@ -350,34 +385,21 @@ macro_rules! traits_of {
     (CallMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
     (CallSpread) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
     (CallThisMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (WasmMemoryGrow) => { Traits::UNROLL_EXCLUDED };
+    (WasmMemoryInit) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableGet) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableSet) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableGrow) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableFill) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableCopy) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableInit) => { Traits::UNROLL_EXCLUDED };
+    (WasmTableSize) => { Traits::UNROLL_EXCLUDED };
+    (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
 
 
-/// The guarded JavaScript denotation available to the shared compiled region
-/// analyzer. This describes an instruction operation, never a source pattern.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsDenotation {
-    Unsupported,
-    Noop,
-    Jump,
-    LoadConst,
-    Move,
-    GetField,
-    FieldStore,
-    NumericBinary,
-    NumericUnary,
-    /// ToString of each register of a window, concatenated in order.
-    StringConcatenation,
-    CapturedValue,
-    PlainLocalLoad,
-    PlainLocalStore,
-    Return,
-    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
-    ObjectAllocation,
-    /// A literal's own data property definition, by name, through its cache site.
-    FieldDefinition,
-}
+pub(crate) use super::denotation::JsDenotation;
 
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
 /// table load (unlike `Op::class()`), for per-instruction loops.
@@ -412,6 +434,19 @@ op_predicates! {
     is_load_this => LoadThis,
     is_nop => Nop,
     is_call => Call,
+    is_call_array => CallArray,
+    is_load_name_call => LoadNameCall,
+    is_make_object => MakeObject,
+    is_store_capture => StoreCapture,
+    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
+    is_wasm_memory_copy => WasmMemoryCopy,
+    is_wasm_memory_fill => WasmMemoryFill,
+    is_wasm_memory_size => WasmMemorySize,
+    is_wasm_simd => WasmSimd,
+    is_yield_star => YieldStar,
+    is_call_known => CallKnown,
+    is_throw => Throw,
+    is_wasm_ref_cast => WasmRefCast,
     is_set_field => SetField,
     is_set_this_field => SetThisField,
     is_require_object_coercible => RequireObjectCoercible,
@@ -431,25 +466,12 @@ op_predicates! {
     is_wasm_f64_load => WasmF64Load,
     is_wasm_f64_store => WasmF64Store,
     is_wasm_f64_binary => WasmF64Binary,
-    is_throw => Throw,
-    is_wasm_simd => WasmSimd,
     is_wasm_simd_shuffle => WasmSimdShuffle,
     is_wasm_f64_unary => WasmF64Unary,
     is_wasm_fill_registers => WasmFillRegisters,
     is_store_env_local => StoreEnvLocal,
     is_wasm_i32_add => WasmI32Add,
     is_wasm_i32_subtract_immediate => WasmI32SubtractImmediate,
-    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
-    is_wasm_memory_size => WasmMemorySize,
-    is_wasm_memory_copy => WasmMemoryCopy,
-    is_wasm_memory_fill => WasmMemoryFill,
-    is_call_array => CallArray,
-    is_call_known => CallKnown,
-    is_load_name_call => LoadNameCall,
-    is_make_object => MakeObject,
-    is_store_capture => StoreCapture,
-    is_wasm_ref_cast => WasmRefCast,
-    is_yield_star => YieldStar,
 }
 
 #[cfg(test)]

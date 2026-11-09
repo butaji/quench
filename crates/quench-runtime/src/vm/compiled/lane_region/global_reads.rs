@@ -30,10 +30,10 @@ impl Lowering<'_, '_> {
             }
             GlobalRead::Stable { .. } | GlobalRead::Dynamic => {
                 let exit = self.guard_exit(state, pc as u32);
-                let value = self.global_get(instruction);
-                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, hit, exit);
-                self.set_tagged(state, register, value);
+                let proof = super::EmitProof::GlobalRead { miss: exit };
+                self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                    crate::staged::Operation::GlobalRead { destination: register,
+                        atom: instruction.atom_index(), site: instruction.cache_site_index(), proof });
             }
         }
         // A call's receiver is `undefined` for a binding of the global scope.
